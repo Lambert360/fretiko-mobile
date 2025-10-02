@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "fretiko-mobile",
+    "slug": "fretiko-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "scheme": "fretiko",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kinging.fretikomobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app needs access to the camera to take photos, videos, and for video calls.",
+        "NSPhotoLibraryUsageDescription": "This app needs access to the photo library to select profile pictures.",
+        "NSMicrophoneUsageDescription": "This app needs access to the microphone for video calls and real-time voice conversations with Iko AI.",
+        "UIBackgroundModes": ["audio"],
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "package": "com.kinging.fretikomobile",
+      "networkSecurityConfig": "./assets/network_security_config.xml"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-audio",
+      "expo-video",
+      "expo-dev-client",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to take photos and videos for video calls.",
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone for video calls and real-time voice conversations with Iko AI.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "@siteed/expo-audio-studio",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone for real-time voice streaming with Iko AI assistant."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "81969c14-245c-442b-9a46-ce19211e1c8e"
+      }
+    }
+  }
+}

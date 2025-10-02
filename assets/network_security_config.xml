@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext traffic for your local development server -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain>192.168.43.135</domain>
+        <domain>localhost</domain>
+        <domain>127.0.0.1</domain>
+        <domain>10.0.2.2</domain> <!-- Android emulator localhost -->
+    </domain-config>
+
+    <!-- Keep all other traffic secure -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>
