@@ -68,19 +68,48 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   };
 
   const renderMedia = () => {
-    const imageUri = product.mediaUrl || product.image || `https://picsum.photos/400/400?random=${product.id}`;
-    
+    // For video products, use the image if available, otherwise use placeholder
+    // Never try to render video URL as an image
+    const isVideo = product.mediaType === 'video';
+    let imageUri: string;
+
+    if (isVideo) {
+      // Video product: use image thumbnail or placeholder
+      imageUri = product.image || `https://picsum.photos/400/400?random=${product.id}`;
+      console.log('📹 Rendering video product card:', {
+        id: product.id,
+        name: product.title,
+        media_type: product.mediaType,
+        primary_image_url: product.image,
+        primary_video_url: product.mediaUrl,
+        has_videos: product.mediaUrl ? 1 : 0,
+      });
+    } else {
+      // Image product: use mediaUrl or image
+      imageUri = product.mediaUrl || product.image || `https://picsum.photos/400/400?random=${product.id}`;
+    }
+
+    console.log('🖼️ ProductCard renderMedia:', {
+      productId: product.id,
+      productTitle: product.title,
+      mediaType: product.mediaType,
+      resolvedUri: imageUri,
+      isVideo,
+    });
+
     return (
       <View style={[styles.mediaContainer, { height: getMediaHeight() }]}>
-        <Image 
-          source={{ uri: imageUri }} 
+        <Image
+          source={{ uri: imageUri }}
           style={styles.mediaContent}
           resizeMode="cover"
+          onError={(error) => console.error('❌ Image load error:', imageUri, error.nativeEvent)}
+          onLoad={() => console.log('✅ Image loaded successfully:', imageUri)}
         />
-        
-        {product.mediaType === 'video' && (
+
+        {isVideo && (
           <View style={styles.videoOverlay}>
-            <Ionicons name="play-circle" size={24} color="rgba(255,255,255,0.9)" />
+            <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.9)" />
           </View>
         )}
 
@@ -277,16 +306,21 @@ const styles = StyleSheet.create({
   },
   mediaContainer: {
     position: 'relative',
+    width: '100%',
   },
   mediaContent: {
     width: '100%',
-    resizeMode: 'cover',
+    height: '100%',
   },
   videoOverlay: {
     position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: [{ translateX: -12 }, { translateY: -12 }],
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.2)',
   },
   badgeContainer: {
     position: 'absolute',

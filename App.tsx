@@ -80,6 +80,9 @@ import WorkspaceScreen from './src/screens/WorkspaceScreen';
 import AnalyticsScreen from './src/screens/AnalyticsScreen';
 import VendorOrderDetailsScreen from './src/screens/VendorOrderDetailsScreen';
 
+// Import shared wishlist screen
+import SharedWishlistScreen from './src/screens/SharedWishlistScreen';
+
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
 
 const Stack = createStackNavigator();
@@ -98,6 +101,13 @@ const linking = {
         path: 'story/:storyId',
         parse: {
           storyId: (storyId: string) => storyId,
+        },
+      },
+      SharedWishlist: {
+        path: 'wishlist/:ownerId/:ownerUsername',
+        parse: {
+          ownerId: (ownerId: string) => ownerId,
+          ownerUsername: (ownerUsername: string) => decodeURIComponent(ownerUsername),
         },
       },
       ShareStory: 'share-story',
@@ -208,6 +218,7 @@ const AppNavigator: React.FC = () => {
               {/* Cart and checkout screens */}
               <Stack.Screen name="Cart" component={CartScreen} />
               <Stack.Screen name="Wishlist" component={WishlistScreen} />
+              <Stack.Screen name="SharedWishlist" component={SharedWishlistScreen} />
               <Stack.Screen name="Checkout" component={CheckoutScreen} />
               
               {/* Order and delivery screens */}

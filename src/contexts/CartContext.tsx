@@ -198,24 +198,27 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
   const addServiceToCart = async (serviceId: string, date: Date, time: string, notes?: string) => {
     try {
       setCartState(prev => ({ ...prev, loading: true }));
-      
-      // Create service booking and add to cart
-      await checkoutAPI.addServiceBooking({
+
+      // All services require date and time for booking
+      const bookingData = {
         serviceId,
         scheduledDate: date.toISOString(),
         scheduledTime: time,
         notes
-      });
-      
+      };
+
+      // Create service booking and add to cart
+      await checkoutAPI.addServiceBooking(bookingData);
+
       await refreshCart();
-      
-      Alert.alert('Service Booked', 'Service has been added to your cart!', [
+
+      Alert.alert('Added to Cart', 'Service has been added to your cart!', [
         { text: 'Continue', style: 'default' },
         { text: 'View Cart', style: 'default', onPress: showCart }
       ]);
     } catch (error) {
-      console.error('Error booking service:', error);
-      Alert.alert('Error', 'Failed to book service. Please try again.');
+      console.error('Error adding service to cart:', error);
+      Alert.alert('Error', 'Failed to add service to cart. Please try again.');
       setCartState(prev => ({ ...prev, loading: false }));
     }
   };

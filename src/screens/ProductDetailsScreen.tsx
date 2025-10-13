@@ -13,13 +13,17 @@ import {
   Modal,
   Share,
   Animated,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { productsAPI, Product as APIProduct } from '../services/productsAPI';
+import { wishlistAPI } from '../services/wishlistAPI';
 import { chatAPI } from '../services/chatAPI';
+import ProductVideoPlayer from '../components/ProductVideoPlayer';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -104,8 +108,8 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
 
   const checkWishlistStatus = async () => {
     try {
-      const wishlist = await productsAPI.getWishlist();
-      setIsInWishlist(wishlist.some(item => item.productId === productId));
+      const result = await wishlistAPI.checkIsInWishlist(productId);
+      setIsInWishlist(result.isInWishlist);
     } catch (error) {
       console.error('Error checking wishlist:', error);
     }
@@ -128,17 +132,17 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
 
   const handleToggleWishlist = async () => {
     if (!product || !user) return;
-    
+
     try {
       if (isInWishlist) {
-        await productsAPI.removeFromWishlist(productId);
+        await wishlistAPI.removeFromWishlist(productId);
         setIsInWishlist(false);
         Alert.alert('Removed', 'Product removed from wishlist');
       } else {
-        await productsAPI.addToWishlist({
+        await wishlistAPI.addToWishlist({
           productId: productId,
           productName: product.name,
-          productImage: product.images[0],
+          productImage: product.primary_image_url || product.images[0] || '',
           price: product.price,
         });
         setIsInWishlist(true);
@@ -181,10 +185,10 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
 
   const handleShareProduct = async () => {
     if (!product) return;
-    
+
     try {
       await Share.share({
-        message: `Check out this amazing product: ${product.name} for ₦${(product.price || 0).toFixed(2)} on Fretiko!`,
+        message: `Check out this amazing product: ${product.name} for ₣${(product.price || 0).toFixed(2)} on Fretiko!`,
         url: `fretiko://product/${product.id}`,
       });
     } catch (error) {
@@ -241,38 +245,76 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
   };
 
   const renderImageCarousel = () => {
-    if (!product?.images.length) return null;
+    // Check if product has video
+    const hasVideo = product?.media_type === 'video' && product?.primary_video_url;
+
+    if (!hasVideo && !product?.images.length) return null;
 
     return (
       <View style={styles.imageCarouselContainer}>
-        <FlatList
-          data={product.images}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onScroll={(event) => {
-            const index = Math.round(event.nativeEvent.contentOffset.x / screenWidth);
-            setCurrentImageIndex(index);
-          }}
-          renderItem={({ item }) => (
-            <Image source={{ uri: item }} style={styles.productImage} resizeMode="cover" />
-          )}
-          keyExtractor={(_, index) => index.toString()}
-        />
-        
-        {/* Image indicators */}
-        <View style={styles.imageIndicators}>
-          {product.images.map((_, index) => (
-            <View
-              key={index}
-              style={[
-                styles.indicator,
-                { backgroundColor: index === currentImageIndex ? '#3498DB' : 'rgba(255,255,255,0.4)' }
-              ]}
+        {hasVideo ? (
+          // Render video player with dynamic aspect ratio
+          <View style={{ width: screenWidth, height: screenHeight * 0.4, backgroundColor: '#000' }}>
+            <ProductVideoPlayer
+              videoUri={product.primary_video_url!}
+              shouldAutoPlay={true}
+              containerWidth={screenWidth}
+              maxHeight={screenHeight * 0.4}
             />
-          ))}
-        </View>
-        
+          </View>
+        ) : (
+          // Render image carousel
+          <FlatList
+            data={product.images}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onScroll={(event) => {
+              const index = Math.round(event.nativeEvent.contentOffset.x / screenWidth);
+              setCurrentImageIndex(index);
+            }}
+            renderItem={({ item }) => (
+              <Image source={{ uri: item }} style={styles.productImage} resizeMode="cover" />
+            )}
+            keyExtractor={(_, index) => index.toString()}
+          />
+        )}
+
+        {/* Image indicators (only show for images, not video) */}
+        {!hasVideo && product?.images && product.images.length > 1 && (
+          <View style={styles.imageIndicators}>
+            {product.images.map((_, index) => (
+              <View
+                key={index}
+                style={[
+                  styles.indicator,
+                  { backgroundColor: index === currentImageIndex ? '#3498DB' : 'rgba(255,255,255,0.4)' }
+                ]}
+              />
+            ))}
+          </View>
+        )}
+
+        {/* Video badge */}
+        {hasVideo && (
+          <View style={{
+            position: 'absolute',
+            top: 16,
+            left: 16,
+            backgroundColor: 'rgba(255,71,87,0.9)',
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+          }}>
+            <Ionicons name="videocam" size={16} color="white" />
+            <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold', marginLeft: 4 }}>
+              VIDEO PRODUCT
+            </Text>
+          </View>
+        )}
+
         {/* Wishlist button overlay */}
         <TouchableOpacity style={styles.wishlistButton} onPress={handleToggleWishlist}>
           <Ionicons
@@ -281,7 +323,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
             color={isInWishlist ? '#E74C3C' : '#FFF'}
           />
         </TouchableOpacity>
-        
+
         {/* Share button overlay */}
         <TouchableOpacity style={styles.shareButton} onPress={handleShareProduct}>
           <Ionicons name="share-outline" size={22} color="#FFF" />
@@ -293,19 +335,24 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
   const renderReviewItem = ({ item }: { item: Review }) => (
     <View style={styles.reviewItem}>
       <View style={styles.reviewHeader}>
-        <Image
-          source={{
-            uri: item.userAvatar || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=40&h=40&fit=crop&crop=face'
-          }}
-          style={styles.reviewerAvatar}
-        />
-        <View style={styles.reviewerInfo}>
-          <Text style={styles.reviewerName}>{item.userName}</Text>
-          <View style={styles.reviewRatingRow}>
-            {renderStars(item.rating || 0, 14)}
-            <Text style={styles.reviewDate}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+        <TouchableOpacity
+          style={styles.reviewerProfileButton}
+          onPress={() => navigation.navigate('PublicProfile', { userId: item.userId })}
+        >
+          <Image
+            source={{
+              uri: item.userAvatar || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=40&h=40&fit=crop&crop=face'
+            }}
+            style={styles.reviewerAvatar}
+          />
+          <View style={styles.reviewerInfo}>
+            <Text style={styles.reviewerName}>{item.userName}</Text>
+            <View style={styles.reviewRatingRow}>
+              {renderStars(item.rating || 0, 14)}
+              <Text style={styles.reviewDate}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+            </View>
           </View>
-        </View>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.helpfulButton}>
           <Ionicons name="thumbs-up-outline" size={16} color="#666" />
           <Text style={styles.helpfulText}>{item.helpful}</Text>
@@ -379,7 +426,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
           {/* Title and Price */}
           <Text style={styles.productTitle}>{product.name}</Text>
           <View style={styles.priceContainer}>
-            <Text style={styles.currentPrice}>₦{(product.price || 0).toFixed(2)}</Text>
+            <Text style={styles.currentPrice}>₣{(product.price || 0).toFixed(2)}</Text>
           </View>
 
           {/* Rating and Reviews */}
@@ -396,17 +443,23 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
             style={styles.sellerContainer}
             onPress={() => navigation.navigate('PublicProfile', { userId: product.user_id })}
           >
-            <Image
-              source={{
-                uri: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=40&h=40&fit=crop&crop=face'
-              }}
-              style={styles.sellerLogo}
-            />
+            {product.vendor_avatar ? (
+              <Image
+                source={{ uri: product.vendor_avatar }}
+                style={styles.sellerLogo}
+              />
+            ) : (
+              <View style={[styles.sellerLogo, styles.sellerLogoPlaceholder]}>
+                <Text style={styles.sellerLogoText}>
+                  {product.vendor_username?.charAt(0).toUpperCase() || 'V'}
+                </Text>
+              </View>
+            )}
             <View style={styles.sellerInfo}>
-              <Text style={styles.sellerName}>Seller</Text>
+              <Text style={styles.sellerName}>{product.vendor_username || 'Unknown Vendor'}</Text>
               <View style={styles.sellerRating}>
                 <Ionicons name="star" size={12} color="#FFD700" />
-                <Text style={styles.sellerRatingText}>Seller Rating</Text>
+                <Text style={styles.sellerRatingText}>Verified Seller</Text>
               </View>
             </View>
             <TouchableOpacity style={styles.chatButton} onPress={handleContactSeller}>
@@ -506,50 +559,71 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
 
       {/* Review Modal */}
       <Modal visible={showReviewModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.reviewModal}>
-            <Text style={styles.modalTitle}>Write a Review</Text>
-            
-            <Text style={styles.ratingLabel}>Your Rating:</Text>
-            <View style={styles.modalRatingContainer}>
-              {renderStars(selectedRating, 32, true, setSelectedRating)}
-            </View>
-            
-            <Text style={styles.commentLabel}>Your Review:</Text>
-            <TextInput
-              style={styles.commentInput}
-              value={reviewText}
-              onChangeText={setReviewText}
-              placeholder="Share your experience with this product..."
-              placeholderTextColor="#666"
-              multiline
-              numberOfLines={4}
-              textAlignVertical="top"
-            />
-            
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => {
-                  setShowReviewModal(false);
-                  setSelectedRating(0);
-                  setReviewText('');
-                }}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={styles.modalOverlay}
+            onPress={() => {
+              setShowReviewModal(false);
+              setSelectedRating(0);
+              setReviewText('');
+            }}
+          >
+            <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()}>
+              <ScrollView
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.submitButton}
-                onPress={handleSubmitReview}
-                disabled={submittingReview}
-              >
-                <Text style={styles.submitButtonText}>
-                  {submittingReview ? 'Submitting...' : 'Submit Review'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
+                <View style={styles.reviewModal}>
+                  <Text style={styles.modalTitle}>Write a Review</Text>
+
+                  <Text style={styles.ratingLabel}>Your Rating:</Text>
+                  <View style={styles.modalRatingContainer}>
+                    {renderStars(selectedRating, 32, true, setSelectedRating)}
+                  </View>
+
+                  <Text style={styles.commentLabel}>Your Review:</Text>
+                  <TextInput
+                    style={styles.commentInput}
+                    value={reviewText}
+                    onChangeText={setReviewText}
+                    placeholder="Share your experience with this product..."
+                    placeholderTextColor="#666"
+                    multiline
+                    numberOfLines={4}
+                    textAlignVertical="top"
+                  />
+
+                  <View style={styles.modalButtons}>
+                    <TouchableOpacity
+                      style={styles.cancelButton}
+                      onPress={() => {
+                        setShowReviewModal(false);
+                        setSelectedRating(0);
+                        setReviewText('');
+                      }}
+                    >
+                      <Text style={styles.cancelButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.submitButton}
+                      onPress={handleSubmitReview}
+                      disabled={submittingReview}
+                    >
+                      <Text style={styles.submitButtonText}>
+                        {submittingReview ? 'Submitting...' : 'Submit Review'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </ScrollView>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -713,6 +787,16 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     marginRight: 12,
   },
+  sellerLogoPlaceholder: {
+    backgroundColor: '#3498DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sellerLogoText: {
+    color: '#FFF',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
   sellerInfo: {
     flex: 1,
   },
@@ -849,6 +933,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  reviewerProfileButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
   reviewerAvatar: {
     width: 40,
     height: 40,
@@ -945,13 +1034,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.8)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  modalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: 20,
+    paddingVertical: 40,
   },
   reviewModal: {
     backgroundColor: '#1a1a1a',
     borderRadius: 16,
     padding: 24,
-    width: '100%',
+    width: screenWidth - 40,
     maxWidth: 400,
   },
   modalTitle: {

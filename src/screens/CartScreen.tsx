@@ -16,7 +16,7 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { cartAPI } from '../services/cartAPI';
-import { productsAPI } from '../services/productsAPI';
+import { wishlistAPI } from '../services/wishlistAPI';
 import { walletAPI } from '../services/walletAPI';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -176,7 +176,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
 
   const handleAddToWishlist = async (item: CartItem) => {
     try {
-      await productsAPI.addToWishlist({
+      await wishlistAPI.addToWishlist({
         productId: item.productId,
         productName: item.productName,
         productImage: item.productImage,

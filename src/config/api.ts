@@ -10,7 +10,7 @@
 export const API_CONFIG = {
   // Development configuration
   // Updated with your computer's IP address for Expo testing
-  BASE_URL: 'http://192.168.43.135:3000', // Your computer's current IP address
+  BASE_URL: 'http://172.20.23.146:3000', // Your computer's current IP address
   
   // Timeout settings - increased for better reliability
   TIMEOUT: 60000, // 60 seconds

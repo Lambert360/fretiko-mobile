@@ -55,7 +55,6 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [isPriceValid, setIsPriceValid] = useState(true);
   const [priceError, setPriceError] = useState<string>('');
-  const [bookingType, setBookingType] = useState<'add_to_cart' | 'book_now'>('add_to_cart');
   
   const supportedCurrencies = ['NGN', 'USD', 'EUR', 'GBP', 'CAD', 'AUD'];
 
@@ -215,7 +214,7 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
       }
       formData.append('availability', JSON.stringify(availability));
       formData.append('tags', JSON.stringify(tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0)));
-      formData.append('booking_type', bookingType);
+      // Services are always booking-based (schedule required)
 
       // Upload via backend endpoint
       const response = await fetch(`${API_BASE_URL}/services/upload`, {
@@ -430,62 +429,6 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.categoriesList}
           />
-        </View>
-
-        {/* Booking Type Selection */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Customer Purchase Type *</Text>
-          <Text style={styles.sectionSubtitle}>How do you want customers to purchase your service?</Text>
-          
-          <View style={styles.bookingTypeContainer}>
-            <TouchableOpacity
-              style={[styles.bookingTypeOption, bookingType === 'add_to_cart' && styles.selectedBookingType]}
-              onPress={() => setBookingType('add_to_cart')}
-            >
-              <View style={styles.bookingTypeContent}>
-                <Ionicons 
-                  name="basket" 
-                  size={24} 
-                  color={bookingType === 'add_to_cart' ? '#FFFFFF' : 'rgba(255,255,255,0.6)'} 
-                />
-                <View style={styles.bookingTypeText}>
-                  <Text style={[styles.bookingTypeTitle, bookingType === 'add_to_cart' && styles.selectedBookingTypeTitle]}>
-                    Add to Cart
-                  </Text>
-                  <Text style={[styles.bookingTypeDescription, bookingType === 'add_to_cart' && styles.selectedBookingTypeDescription]}>
-                    Customers can add your service to cart and checkout later
-                  </Text>
-                </View>
-              </View>
-              {bookingType === 'add_to_cart' && (
-                <Ionicons name="checkmark-circle" size={24} color="#27AE60" />
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.bookingTypeOption, bookingType === 'book_now' && styles.selectedBookingType]}
-              onPress={() => setBookingType('book_now')}
-            >
-              <View style={styles.bookingTypeContent}>
-                <Ionicons 
-                  name="calendar" 
-                  size={24} 
-                  color={bookingType === 'book_now' ? '#FFFFFF' : 'rgba(255,255,255,0.6)'} 
-                />
-                <View style={styles.bookingTypeText}>
-                  <Text style={[styles.bookingTypeTitle, bookingType === 'book_now' && styles.selectedBookingTypeTitle]}>
-                    Book Now
-                  </Text>
-                  <Text style={[styles.bookingTypeDescription, bookingType === 'book_now' && styles.selectedBookingTypeDescription]}>
-                    Customers select date/time and are guided to immediate checkout
-                  </Text>
-                </View>
-              </View>
-              {bookingType === 'book_now' && (
-                <Ionicons name="checkmark-circle" size={24} color="#27AE60" />
-              )}
-            </TouchableOpacity>
-          </View>
         </View>
 
         {/* Availability */}

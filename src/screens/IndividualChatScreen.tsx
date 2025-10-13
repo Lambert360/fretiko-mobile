@@ -25,8 +25,11 @@ import { userAPI, UserProfile } from '../services/userAPI';
 import { geminiAPI } from '../services/geminiAPI';
 import { realTimeAudioService } from '../services/realTimeAudioService';
 import { invoiceAPI, Invoice } from '../services/invoiceAPI';
+import { wishlistAPI } from '../services/wishlistAPI';
 import * as ImagePicker from 'expo-image-picker';
 import InvoiceMessageCard from '../components/InvoiceMessageCard';
+import ProductMessageCard from '../components/ProductMessageCard';
+import { WishlistShareModal } from '../components/WishlistShareModal';
 
 // Global WebSocket manager to persist across component remounts
 class GeminiWebSocketManager {
@@ -100,6 +103,13 @@ interface Message extends Omit<ChatMessage, 'timestamp'> {
     viewers: number;
     thumbnailUrl: string;
   };
+  productData?: {
+    id: string;
+    name: string;
+    price: number;
+    image: string;
+    vendor_username?: string;
+  };
 }
 
 interface ChatParams {
@@ -111,6 +121,14 @@ interface ChatParams {
   verified?: boolean;
   isAI?: boolean;
   otherUserId?: string;
+  bargainMode?: boolean;
+  productData?: {
+    id: string;
+    name: string;
+    price: number;
+    image: string;
+    vendor_username?: string;
+  };
 }
 
 const IndividualChatScreen = () => {
@@ -126,7 +144,7 @@ const IndividualChatScreen = () => {
 
   // Get chat params from navigation
   const chatParams = route.params as ChatParams;
-  const { chatId, chatName, chatAvatar, chatType, isOnline, verified, isAI, otherUserId } = chatParams;
+  const { chatId, chatName, chatAvatar, chatType, isOnline, verified, isAI, otherUserId, bargainMode, productData } = chatParams;
 
   // Debug log to check if chatName is being passed correctly
   console.log('📋 IndividualChatScreen params:', { chatId, chatName, chatType });
@@ -139,6 +157,7 @@ const IndividualChatScreen = () => {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [recordingInterval, setRecordingInterval] = useState<NodeJS.Timeout | null>(null);
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
+  const [showWishlistShareModal, setShowWishlistShareModal] = useState(false);
   const [showCallModal, setShowCallModal] = useState(false);
   const [isInCall, setIsInCall] = useState(false);
   const [callType, setCallType] = useState<'audio' | 'video'>('audio');
@@ -779,6 +798,20 @@ const IndividualChatScreen = () => {
     };
   }, []);
 
+  // Handle bargain mode initialization
+  const hasInitializedBargain = useRef(false);
+  useEffect(() => {
+    if (bargainMode && productData && !hasInitializedBargain.current) {
+      console.log('💰 Bargain mode activated with product:', productData);
+
+      // Pre-fill message with bargain text (only once)
+      setMessageText('Hey! 👋 Can we negotiate on this?');
+      hasInitializedBargain.current = true;
+
+      // Note: Product card will be sent as attachment when user sends the message
+    }
+  }, [bargainMode, productData]);
+
   const getChatTypeColor = (type: string) => {
     switch (type) {
       case 'ai': return '#E91E63';
@@ -894,11 +927,27 @@ const IndividualChatScreen = () => {
 
       } else {
         // Handle regular chat through backend API
-        const sentMessage = await chatAPI.sendMessage({
+        // Include product data if available (bargain mode)
+        const hasProductData = productData && Object.keys(productData).length > 0;
+        const messagePayload: any = {
           conversationId: chatId,
-          messageType: 'text',
+          messageType: 'text', // Use text type, product data goes in metadata
           content: messageContent,
-        });
+        };
+
+        // Add product data if available (will be stored in metadata)
+        if (hasProductData) {
+          messagePayload.productData = productData;
+          console.log('📦 Sending message with product data:', productData);
+        }
+
+        const sentMessage = await chatAPI.sendMessage(messagePayload);
+
+        // Clear bargain mode after sending message with product data
+        if (hasProductData) {
+          navigation.setParams({ bargainMode: false, productData: undefined });
+          console.log('✅ Bargain mode cleared after sending product message');
+        }
 
         // Update message with sent status and real ID
         setMessages(prev =>
@@ -910,6 +959,7 @@ const IndividualChatScreen = () => {
                   status: 'sent',
                   createdAt: sentMessage.createdAt,
                   updatedAt: sentMessage.updatedAt,
+                  productData: hasProductData ? productData : undefined,
                 }
               : msg
           )
@@ -1056,6 +1106,40 @@ const IndividualChatScreen = () => {
         buyerName: chatName || 'Customer',
       });
     }, 100);
+  };
+
+  const handleShareWishlist = async () => {
+    console.log('💖 Share Wishlist tapped');
+    setShowAttachmentModal(false);
+
+    // Don't allow sharing wishlist with AI
+    if (isAI) {
+      Alert.alert('Not Available', 'You cannot share your wishlist with Iko');
+      return;
+    }
+
+    // Open the wishlist share modal
+    setShowWishlistShareModal(true);
+  };
+
+  const handleWishlistShareSuccess = async (shareType: 'view_only' | 'view_and_add', itemCount: number) => {
+    // Show success message
+    const permission = shareType === 'view_and_add' ? 'view and add items to' : 'view';
+    Alert.alert(
+      'Wishlist Shared!',
+      `${itemCount} item${itemCount > 1 ? 's' : ''} shared with ${chatName}. They can ${permission} your wishlist.`,
+      [{ text: 'OK' }]
+    );
+
+    // Send a chat message notifying about the wishlist share
+    const shareNotification = `💖 I've shared ${itemCount} item${itemCount > 1 ? 's' : ''} from my wishlist with you!`;
+    setMessageText(shareNotification);
+    // Auto-send the notification message
+    setTimeout(() => {
+      if (shareNotification) {
+        sendMessage();
+      }
+    }, 500);
   };
 
   const startLiveStream = () => {
@@ -3107,6 +3191,18 @@ const IndividualChatScreen = () => {
       return <InvoiceMessageCard invoice={item.invoiceData} isCurrentUser={isCurrentUser} />;
     }
 
+    // Render product messages (bargain) - check metadata for productData
+    if (item.productData || item.metadata?.productData) {
+      const productInfo = item.productData || item.metadata?.productData;
+      return (
+        <ProductMessageCard
+          product={productInfo}
+          isCurrentUser={isCurrentUser}
+          messageText={item.text}
+        />
+      );
+    }
+
     return (
       <View style={[
         styles.messageContainer,
@@ -3313,6 +3409,35 @@ const IndividualChatScreen = () => {
 
   const renderMessageInput = () => (
     <View style={[styles.inputContainer, { paddingBottom: insets.bottom + 10 }]}>
+      {/* Product Preview Card for Bargain Mode */}
+      {bargainMode && productData && (
+        <View style={styles.productPreviewContainer}>
+          <View style={styles.productPreviewHeader}>
+            <Ionicons name="pricetag" size={16} color="#F39C12" />
+            <Text style={styles.productPreviewTitle}>Product for Negotiation</Text>
+            <TouchableOpacity onPress={() => {
+              // Clear bargain mode after first message
+              navigation.setParams({ bargainMode: false, productData: undefined });
+            }}>
+              <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.6)" />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.productPreviewContent}>
+            {productData.image ? (
+              <Image source={{ uri: productData.image }} style={styles.productPreviewImage} />
+            ) : (
+              <View style={[styles.productPreviewImage, styles.productPreviewImagePlaceholder]}>
+                <Ionicons name="image-outline" size={24} color="#888" />
+              </View>
+            )}
+            <View style={styles.productPreviewInfo}>
+              <Text style={styles.productPreviewName} numberOfLines={2}>{productData.name}</Text>
+              <Text style={styles.productPreviewPrice}>₦{productData.price.toLocaleString()}</Text>
+            </View>
+          </View>
+        </View>
+      )}
+
       <View style={styles.inputRow}>
         <TouchableOpacity 
           style={styles.attachButton}
@@ -3468,6 +3593,18 @@ const IndividualChatScreen = () => {
                 <Text style={styles.attachmentSubtitle}>Share files and documents</Text>
               </View>
             </TouchableOpacity>
+
+            {!isAI && (
+              <TouchableOpacity style={styles.attachmentOption} onPress={handleShareWishlist}>
+                <View style={styles.attachmentIconContainer}>
+                  <Ionicons name="heart" size={24} color="#E91E63" />
+                </View>
+                <View style={styles.attachmentTextContainer}>
+                  <Text style={styles.attachmentTitle}>Wishlist</Text>
+                  <Text style={styles.attachmentSubtitle}>Share your wishlist with this person</Text>
+                </View>
+              </TouchableOpacity>
+            )}
 
             {(userProfile?.isSeller || userProfile?.isRider) && !isAI && (
               <TouchableOpacity style={styles.attachmentOption} onPress={handleCreateInvoice}>
@@ -4183,6 +4320,15 @@ const IndividualChatScreen = () => {
       {renderImageViewer()}
       {renderVideoPlayer()}
       {renderReactionPicker()}
+
+      {/* Wishlist Share Modal */}
+      <WishlistShareModal
+        visible={showWishlistShareModal}
+        recipientId={otherUserId || ''}
+        recipientName={chatName}
+        onClose={() => setShowWishlistShareModal(false)}
+        onShareSuccess={handleWishlistShareSuccess}
+      />
     </KeyboardAvoidingView>
   );
 };
@@ -5302,6 +5448,56 @@ const styles = StyleSheet.create({
   videoPlayer: {
     width: '100%',
     height: '100%',
+  },
+  // Product Preview Styles
+  productPreviewContainer: {
+    backgroundColor: 'rgba(243, 156, 18, 0.1)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(243, 156, 18, 0.3)',
+  },
+  productPreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 6,
+  },
+  productPreviewTitle: {
+    flex: 1,
+    color: '#F39C12',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  productPreviewContent: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  productPreviewImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+  },
+  productPreviewImagePlaceholder: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  productPreviewInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  productPreviewName: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  productPreviewPrice: {
+    color: '#27AE60',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });
 

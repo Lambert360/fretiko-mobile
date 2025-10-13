@@ -121,21 +121,26 @@ const ServiceDetailsScreen = () => {
     if (!service || !user) return;
 
     try {
+      console.log('🔍 Starting chat with service provider:', service.userId);
+
       // Find existing conversation or create a new one with the service provider
       const conversation = await chatAPI.findOrCreateConversation(
         [service.userId], // The service provider's user ID
         'vendor' // Service providers are vendors
       );
 
+      console.log('✅ Conversation found/created:', conversation.id);
+
       // Navigate to IndividualChatScreen with proper parameters
       navigation.navigate('IndividualChatScreen', {
         chatId: conversation.id,
-        chatName: `Service: ${service.title}`, // Use service title as chat name
-        chatAvatar: service.thumbnail || 'https://via.placeholder.com/50', // Use service thumbnail as avatar
+        chatName: service.serviceProvider || 'Service Provider', // Use provider name
+        chatAvatar: service.userAvatar || 'https://via.placeholder.com/50', // Use provider avatar
         chatType: 'vendor' as const,
         isOnline: true, // Assume online for now
         verified: false, // Set based on provider verification status if available
         isAI: false,
+        otherUserId: service.userId, // Add the service provider's ID
       });
     } catch (error) {
       console.error('Error creating conversation with service provider:', error);
@@ -269,9 +274,9 @@ const ServiceDetailsScreen = () => {
           {/* Price Section */}
           <View style={styles.priceSection}>
             <Text style={styles.priceLabel}>Starting from</Text>
-            <Text style={styles.price}>₦{service.price?.toLocaleString()}</Text>
+            <Text style={styles.price}>₣{service.price?.toLocaleString()}</Text>
             {service.originalPrice && (
-              <Text style={styles.originalPrice}>₦{service.originalPrice.toLocaleString()}</Text>
+              <Text style={styles.originalPrice}>₣{service.originalPrice.toLocaleString()}</Text>
             )}
           </View>
 

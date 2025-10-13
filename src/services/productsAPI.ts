@@ -13,6 +13,9 @@ export interface Product {
   condition: string;
   images: string[];
   primary_image_url?: string;
+  videos?: string[];
+  primary_video_url?: string;
+  media_type?: 'image' | 'video';
   location?: string;
   shipping_options: {
     pickup: boolean;
@@ -26,8 +29,11 @@ export interface Product {
   like_count: number;
   save_count: number;
   average_rating?: number;
+  review_count?: number;
   created_at: string;
   updated_at: string;
+  vendor_username?: string;
+  vendor_avatar?: string;
 }
 
 export interface ProductCategory {

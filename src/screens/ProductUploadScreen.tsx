@@ -26,9 +26,10 @@ interface ProductUploadScreenProps {
   navigation: any;
 }
 
-interface ProductImage {
+interface ProductMedia {
   uri: string;
   id: string;
+  type: 'image' | 'video';
 }
 
 const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
@@ -41,7 +42,7 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
   const [category, setCategory] = useState('');
   const [condition, setCondition] = useState('new');
   const [quantity, setQuantity] = useState('1');
-  const [images, setImages] = useState<ProductImage[]>([]);
+  const [media, setMedia] = useState<ProductMedia[]>([]);
   const [tags, setTags] = useState('');
   const [location, setLocation] = useState('');
   const [shippingOptions, setShippingOptions] = useState({
@@ -83,14 +84,30 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
     { value: 'fair', label: 'Fair', icon: 'hand-left' },
   ];
 
-  const pickImages = async () => {
+  const pickMedia = async () => {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permissionResult.granted) {
-        Alert.alert('Permission Required', 'We need camera roll permissions to add photos.');
+        Alert.alert('Permission Required', 'We need camera roll permissions to add media.');
         return;
       }
 
+      Alert.alert(
+        'Select Media Type',
+        'What would you like to add?',
+        [
+          { text: 'Photo', onPress: () => pickImages() },
+          { text: 'Video', onPress: () => pickVideo() },
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
+    } catch (error) {
+      console.error('Error requesting permissions:', error);
+    }
+  };
+
+  const pickImages = async () => {
+    try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
@@ -101,9 +118,10 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
       if (!result.canceled && result.assets) {
         const newImages = result.assets.map(asset => ({
           uri: asset.uri,
-          id: Date.now().toString() + Math.random().toString()
+          id: Date.now().toString() + Math.random().toString(),
+          type: 'image' as const
         }));
-        setImages(prev => [...prev, ...newImages].slice(0, 5)); // Max 5 images
+        setMedia(prev => [...prev, ...newImages].slice(0, 6)); // Max 6 media items
       }
     } catch (error) {
       console.error('Error picking images:', error);
@@ -111,8 +129,36 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
     }
   };
 
-  const removeImage = (imageId: string) => {
-    setImages(prev => prev.filter(img => img.id !== imageId));
+  const pickVideo = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        if (asset.duration && asset.duration > 60000) { // 60 seconds
+          Alert.alert('Video Too Long', 'Please select a video shorter than 60 seconds.');
+          return;
+        }
+
+        const newVideo = {
+          uri: asset.uri,
+          id: Date.now().toString(),
+          type: 'video' as const
+        };
+        setMedia(prev => [newVideo, ...prev.filter(m => m.type !== 'video')].slice(0, 6));
+      }
+    } catch (error) {
+      console.error('Error picking video:', error);
+      Alert.alert('Error', 'Failed to pick video. Please try again.');
+    }
+  };
+
+  const removeMedia = (mediaId: string) => {
+    setMedia(prev => prev.filter(m => m.id !== mediaId));
   };
 
   const handleUpload = async () => {
@@ -126,8 +172,8 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
       return;
     }
 
-    if (images.length === 0) {
-      Alert.alert('No Images', 'Please add at least one image of your product.');
+    if (media.length === 0) {
+      Alert.alert('No Media', 'Please add at least one photo or video of your product.');
       return;
     }
 
@@ -149,12 +195,26 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
       // Create FormData for multipart upload
       const formData = new FormData();
 
+      // Separate images and videos
+      const images = media.filter(m => m.type === 'image');
+      const videos = media.filter(m => m.type === 'video');
+
       // Add image files to FormData
       images.forEach((image, index) => {
         const fileName = `product_${Date.now()}_${index}.jpg`;
         formData.append('images', {
           uri: image.uri,
           type: 'image/jpeg',
+          name: fileName,
+        } as any);
+      });
+
+      // Add video files to FormData
+      videos.forEach((video, index) => {
+        const fileName = `product_${Date.now()}_${index}.mp4`;
+        formData.append('videos', {
+          uri: video.uri,
+          type: 'video/mp4',
           name: fileName,
         } as any);
       });
@@ -207,11 +267,12 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
   const resetForm = () => {
     setProductName('');
     setDescription('');
-    setPrice('');
+    setLocalAmount('');
+    setFretiAmount('');
     setCategoryId('');
     setCondition('new');
     setQuantity('1');
-    setImages([]);
+    setMedia([]);
     setTags('');
     setLocation('');
     setShippingOptions({ pickup: false, delivery: false, shipping: false });
@@ -244,18 +305,30 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
     </TouchableOpacity>
   );
 
-  const renderImageItem = ({ item, index }: { item: ProductImage; index: number }) => (
+  const renderMediaItem = ({ item, index }: { item: ProductMedia; index: number }) => (
     <View style={styles.imageContainer}>
-      <Image source={{ uri: item.uri }} style={styles.productImage} />
+      {item.type === 'image' ? (
+        <Image source={{ uri: item.uri }} style={styles.productImage} />
+      ) : (
+        <View style={styles.productImage}>
+          <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.8)" />
+          <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 8 }}>Video</Text>
+        </View>
+      )}
       <TouchableOpacity
         style={styles.removeImageButton}
-        onPress={() => removeImage(item.id)}
+        onPress={() => removeMedia(item.id)}
       >
         <Ionicons name="close-circle" size={24} color="#E74C3C" />
       </TouchableOpacity>
       {index === 0 && (
         <View style={styles.primaryBadge}>
           <Text style={styles.primaryText}>Main</Text>
+        </View>
+      )}
+      {item.type === 'video' && (
+        <View style={[styles.primaryBadge, { top: 8, left: 8, backgroundColor: '#E74C3C' }]}>
+          <Text style={styles.primaryText}>Video</Text>
         </View>
       )}
     </View>
@@ -282,23 +355,23 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Product Images Section */}
+        {/* Product Media Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Product Images *</Text>
-          <Text style={styles.sectionSubtitle}>Add up to 5 high-quality images</Text>
-          
+          <Text style={styles.sectionTitle}>Product Media *</Text>
+          <Text style={styles.sectionSubtitle}>Add up to 6 photos or videos (max 60s)</Text>
+
           <FlatList
-            data={images}
+            data={media}
             horizontal
             showsHorizontalScrollIndicator={false}
-            renderItem={renderImageItem}
+            renderItem={renderMediaItem}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.imagesList}
             ListFooterComponent={
-              images.length < 5 ? (
-                <TouchableOpacity style={styles.addImageButton} onPress={pickImages}>
-                  <Ionicons name="camera" size={32} color="rgba(255,255,255,0.6)" />
-                  <Text style={styles.addImageText}>Add Photos</Text>
+              media.length < 6 ? (
+                <TouchableOpacity style={styles.addImageButton} onPress={pickMedia}>
+                  <Ionicons name="add-circle" size={32} color="rgba(255,255,255,0.6)" />
+                  <Text style={styles.addImageText}>Add Media</Text>
                 </TouchableOpacity>
               ) : null
             }

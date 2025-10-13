@@ -21,6 +21,7 @@ export interface ShareWishlistRequest {
   friendId: string;
   shareType?: 'view_only' | 'view_and_add';
   shareMessage?: string;
+  selectedItemIds?: string[]; // For selective sharing
 }
 
 export interface AddToFriendWishlistRequest {
@@ -174,12 +175,23 @@ class WishlistAPI {
     shareId: string;
     shareType: string;
     canAddItems: boolean;
+    sharedItemsCount?: number;
   }> {
     try {
       const response = await api.post('/wishlist/share', shareData);
       return response.data;
     } catch (error) {
       console.error('Error sharing wishlist:', error);
+      throw error;
+    }
+  }
+
+  async getSharedWishlistItems(ownerId: string): Promise<WishlistItem[]> {
+    try {
+      const response = await api.get(`/wishlist/shared/${ownerId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching shared wishlist items:', error);
       throw error;
     }
   }
@@ -230,9 +242,13 @@ class WishlistAPI {
     }
   }
 
-  async getShareableFriends(): Promise<ShareableFriend[]> {
+  async getShareableFriends(searchQuery?: string, limit?: number): Promise<ShareableFriend[]> {
     try {
-      const response = await api.get('/wishlist/shareable-friends');
+      const params = new URLSearchParams();
+      if (searchQuery) params.append('search', searchQuery);
+      if (limit) params.append('limit', limit.toString());
+
+      const response = await api.get(`/wishlist/shareable-friends?${params.toString()}`);
       return response.data;
     } catch (error) {
       console.error('Error fetching shareable friends:', error);

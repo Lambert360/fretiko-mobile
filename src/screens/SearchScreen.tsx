@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   Animated,
   FlatList,
@@ -16,16 +16,22 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { searchAPI, SearchType, UserResult, RiderResult } from '../services/searchAPI';
 import { useSearch, useDiscoverContent, useSearchSuggestions } from '../hooks/useSearch';
-import { 
-  PersonCard, 
-  ProviderCard, 
-  ProductCard, 
+import {
+  PersonCard,
+  ProviderCard,
+  ProductCard,
   ServiceCard,
-  type PersonData, 
-  type ProviderData, 
-  type ProductData, 
-  type ServiceData 
+  type PersonData,
+  type ProviderData,
+  type ProductData,
+  type ServiceData
 } from '../components/cards';
+import {
+  mapProductsArray,
+  mapServicesArray,
+  mapPeopleArray,
+  mapProvidersArray,
+} from '../utils/dataMappers';
 
 
 const SearchScreen = () => {
@@ -47,24 +53,33 @@ const SearchScreen = () => {
 
   const tabs = ['For You', 'Products', 'Services', 'Vendors', 'Riders', 'People'];
 
-  // Get data from discover content with fallbacks
+  // Get data from discover content with fallbacks and map to card format
   const trendingData = discoverContent?.trending || [
     { query: 'iPhone 15', count: 1250, category: 'Electronics' },
     { query: 'Web Development', count: 890, category: 'Services' },
     { query: 'Fashion Lagos', count: 567, category: 'Fashion' },
   ];
-  const featuredContent = discoverContent?.featured || {
-    products: [],
-    services: [],
-    people: [],
-    providers: [],
-  };
-  const recommendations = discoverContent?.recommendations || {
-    products: [],
-    services: [],
-    people: [],
-    providers: [],
-  };
+
+  // Map API data to card format using useMemo to prevent re-renders
+  const featuredContent = useMemo(() => {
+    const raw = discoverContent?.featured || { products: [], services: [], people: [], providers: [] };
+    return {
+      products: mapProductsArray(raw.products || []),
+      services: mapServicesArray(raw.services || []),
+      people: mapPeopleArray(raw.people || []),
+      providers: mapProvidersArray(raw.providers || []),
+    };
+  }, [discoverContent]);
+
+  const recommendations = useMemo(() => {
+    const raw = discoverContent?.recommendations || { products: [], services: [], people: [], providers: [] };
+    return {
+      products: mapProductsArray(raw.products || []),
+      services: mapServicesArray(raw.services || []),
+      people: mapPeopleArray(raw.people || []),
+      providers: mapProvidersArray(raw.providers || []),
+    };
+  }, [discoverContent]);
 
   // Get recent searches from search history
   const recentSearches = searchHistory;
@@ -97,272 +112,6 @@ const SearchScreen = () => {
     { id: '4', name: 'Top Rated', icon: 'star', color: '#FF9800' },
     { id: '5', name: 'Eco-Friendly', icon: 'leaf', color: '#4CAF50' },
     { id: '6', name: 'Bulk Orders', icon: 'car', color: '#673AB7' },
-  ];
-
-  // Featured people data
-  const featuredPeople: PersonData[] = [
-    {
-      id: '1',
-      username: 'sarah_okafor',
-      firstName: 'Sarah',
-      lastName: 'Okafor',
-      avatar: 'https://images.unsplash.com/photo-1494790108755-2616b612b1e0?w=400',
-      location: 'Lagos, Nigeria',
-      trustScore: 950,
-      isOnline: true,
-      mutualConnections: 12,
-      specialty: 'Fashion & Beauty',
-      followers: '2.4K',
-      verified: true,
-      recentActivity: 'Posted 2 hours ago',
-      mediaAspectRatio: 'portrait',
-      engagementRate: 15,
-    },
-    {
-      id: '2',
-      username: 'techguru_john',
-      firstName: 'John',
-      lastName: 'Adebayo',
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
-      location: 'Abuja, Nigeria',
-      trustScore: 890,
-      isOnline: false,
-      mutualConnections: 8,
-      specialty: 'Electronics & Gadgets',
-      followers: '1.8K',
-      verified: true,
-      recentActivity: 'Active 1 hour ago',
-      mediaAspectRatio: 'landscape',
-      engagementRate: 12,
-    },
-    {
-      id: '3',
-      username: 'foodie_amaka',
-      firstName: 'Amaka',
-      lastName: 'Nwosu',
-      avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=400',
-      location: 'Port Harcourt, Nigeria',
-      trustScore: 920,
-      isOnline: true,
-      mutualConnections: 5,
-      specialty: 'Food & Catering',
-      followers: '3.1K',
-      verified: false,
-      recentActivity: 'Live now',
-      mediaAspectRatio: 'square',
-      mediaType: 'video',
-      engagementRate: 23,
-    },
-  ];
-
-  // Featured riders/providers data
-  const featuredProviders: ProviderData[] = [
-    {
-      id: '1',
-      name: 'Ahmed Hassan',
-      avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=400',
-      rating: 4.9,
-      vehicleType: 'bike',
-      totalDeliveries: 1250,
-      isOnline: true,
-      distance: 0.5,
-      specialties: ['Fast delivery', 'Electronics', 'Same-day'],
-      completionRate: 98,
-      avgDeliveryTime: 25,
-      verified: true,
-      recentActivity: 'Delivered 5 min ago',
-      mediaAspectRatio: 'portrait',
-      customerSatisfaction: 98,
-    },
-    {
-      id: '2',
-      name: 'Kemi Adeleke',
-      avatar: 'https://images.unsplash.com/photo-1508214751196-bcfd4ca60f91?w=400',
-      rating: 4.8,
-      vehicleType: 'car',
-      totalDeliveries: 890,
-      isOnline: true,
-      distance: 1.2,
-      specialties: ['Bulk delivery', 'Long distance', 'Heavy items'],
-      completionRate: 97,
-      avgDeliveryTime: 35,
-      verified: true,
-      recentActivity: 'Available now',
-      mediaAspectRatio: 'landscape',
-      mediaType: 'video',
-      customerSatisfaction: 97,
-    },
-    {
-      id: '3',
-      name: 'Emeka Okonkwo',
-      avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400',
-      rating: 4.7,
-      vehicleType: 'wheelbarrow',
-      totalDeliveries: 670,
-      isOnline: false,
-      distance: 0.8,
-      specialties: ['Eco-friendly', 'Local delivery', 'Fresh produce'],
-      completionRate: 95,
-      avgDeliveryTime: 20,
-      verified: false,
-      recentActivity: 'Last seen 2 hours ago',
-      mediaAspectRatio: 'square',
-      customerSatisfaction: 95,
-    },
-  ];
-
-  // Featured products data for "For You" tab
-  const featuredProducts: ProductData[] = [
-    {
-      id: '1',
-      title: 'iPhone 15 Pro Max - 256GB',
-      price: 850000,
-      originalPrice: 1200000,
-      currency: '₦',
-      discount: 29,
-      vendor: {
-        id: 'v1',
-        name: 'TechHub Nigeria',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=50',
-        verified: true,
-        rating: 4.8,
-      },
-      category: 'Electronics',
-      rating: 4.9,
-      reviews: 156,
-      inStock: true,
-      fastShipping: true,
-      location: 'Lagos',
-      mediaAspectRatio: 'portrait',
-      likes: 234,
-      views: 1500,
-      isNew: true,
-      isTrending: true,
-      image: 'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?w=400',
-    },
-    {
-      id: '2',
-      title: 'Designer African Print Dress',
-      price: 25000,
-      originalPrice: 35000,
-      currency: '₦',
-      discount: 28,
-      vendor: {
-        id: 'v2',
-        name: 'AfriFashion Store',
-        avatar: 'https://images.unsplash.com/photo-1494790108755-2616b612b1e0?w=50',
-        verified: true,
-        rating: 4.7,
-      },
-      category: 'Fashion',
-      rating: 4.6,
-      reviews: 89,
-      inStock: true,
-      fastShipping: false,
-      location: 'Abuja',
-      mediaAspectRatio: 'portrait',
-      likes: 145,
-      views: 890,
-      isNew: false,
-      isFeatured: true,
-      image: 'https://images.unsplash.com/photo-1515372039744-b8f02a3ae446?w=400',
-    },
-  ];
-
-  // Featured services data for "For You" tab
-  const featuredServices: ServiceData[] = [
-    {
-      id: '1',
-      title: 'Professional Website Development',
-      description: 'Custom websites with modern design and full functionality',
-      price: 150000,
-      priceType: 'starting_at',
-      currency: '₦',
-      provider: {
-        id: 'p1',
-        name: 'CodeCraft Solutions',
-        avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=50',
-        verified: true,
-        rating: 4.9,
-        completedJobs: 127,
-      },
-      category: 'Web Development',
-      rating: 4.9,
-      reviews: 45,
-      isAvailable: true,
-      responseTime: 'Usually responds in 2 hours',
-      location: 'Lagos',
-      mediaAspectRatio: 'landscape',
-      isInstant: false,
-      isRemote: true,
-      skills: ['React', 'Node.js', 'Mobile Responsive'],
-      likes: 67,
-      views: 423,
-      bookings: 89,
-      isTopRated: true,
-      image: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=400',
-    },
-    {
-      id: '2',
-      title: 'Home Cleaning & Organization',
-      description: 'Deep cleaning and professional organizing services',
-      price: 15000,
-      priceType: 'fixed',
-      currency: '₦',
-      provider: {
-        id: 'p2',
-        name: 'CleanPro Services',
-        avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=50',
-        verified: false,
-        rating: 4.5,
-        completedJobs: 89,
-      },
-      category: 'Home Services',
-      rating: 4.5,
-      reviews: 34,
-      isAvailable: true,
-      responseTime: 'Usually responds in 30 minutes',
-      location: 'Abuja',
-      mediaAspectRatio: 'square',
-      isInstant: true,
-      isRemote: false,
-      skills: ['Deep Cleaning', 'Organization', 'Sanitization'],
-      likes: 23,
-      views: 156,
-      bookings: 45,
-      image: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
-    },
-  ];
-
-  // Trending people data
-  const trendingPeople = [
-    {
-      id: '1',
-      username: 'chef_amara',
-      growth: '+25%',
-      followers: '5.2K followers',
-      location: 'Trending in Lagos • Food',
-      activity: 'Live cooking show',
-      avatar: 'https://images.unsplash.com/photo-1508214751196-bcfd4ca60f91?w=100',
-    },
-    {
-      id: '2',
-      username: 'tech_solutions_ng',
-      growth: '+18%',
-      followers: '3.8K followers',
-      location: 'Trending in Nigeria • Electronics',
-      activity: 'New product launches',
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100',
-    },
-    {
-      id: '3',
-      username: 'fashion_forward_ada',
-      growth: '+33%',
-      followers: '7.1K followers',
-      location: 'Trending in Abuja • Fashion',
-      activity: 'Style challenges',
-      avatar: 'https://images.unsplash.com/photo-1494790108755-2616b612b1e0?w=100',
-    },
   ];
 
   useEffect(() => {
@@ -974,73 +723,386 @@ const SearchScreen = () => {
       
       case 'People':
         return (
-          <ScrollView 
-            style={styles.content} 
+          <ScrollView
+            style={styles.content}
             contentContainerStyle={styles.contentContainer}
             showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isLoadingDiscover}
+                onRefresh={refreshContent}
+                tintColor="rgba(255,255,255,0.8)"
+              />
+            }
           >
             {renderQuickFilters()}
-            
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Featured People</Text>
-              <FlatList
-                data={featuredPeople}
-                renderItem={renderFeaturedPersonItem}
-                keyExtractor={(item) => item.id}
-                scrollEnabled={false}
-              />
-            </View>
 
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Trending People</Text>
-                <TouchableOpacity>
-                  <Text style={styles.seeAllText}>See all</Text>
+            {isLoadingDiscover && !discoverContent && (
+              <View style={styles.loadingContainer}>
+                <Text style={styles.loadingText}>Loading people...</Text>
+              </View>
+            )}
+
+            {discoverError && (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle" size={24} color="#E74C3C" />
+                <Text style={styles.errorText}>{discoverError}</Text>
+                <TouchableOpacity onPress={refreshContent} style={styles.retryButton}>
+                  <Text style={styles.retryText}>Retry</Text>
                 </TouchableOpacity>
               </View>
-              <FlatList
-                data={trendingPeople}
-                renderItem={renderTrendingPersonItem}
-                keyExtractor={(item) => item.id}
-                scrollEnabled={false}
-              />
-            </View>
+            )}
+
+            {featuredContent.people.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Featured People</Text>
+                <FlatList
+                  data={featuredContent.people}
+                  renderItem={renderFeaturedPersonItem}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {recommendations.people.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Recommended People</Text>
+                  <TouchableOpacity>
+                    <Text style={styles.seeAllText}>See all</Text>
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  data={recommendations.people}
+                  renderItem={renderFeaturedPersonItem}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {featuredContent.people.length === 0 && recommendations.people.length === 0 && !isLoadingDiscover && (
+              <View style={styles.emptyState}>
+                <Ionicons name="people-outline" size={64} color="rgba(255,255,255,0.3)" />
+                <Text style={styles.emptyStateText}>No people found</Text>
+                <Text style={styles.emptyStateSubtext}>Check back later for featured people</Text>
+              </View>
+            )}
           </ScrollView>
         );
 
       case 'Riders':
         return (
-          <ScrollView 
-            style={styles.content} 
+          <ScrollView
+            style={styles.content}
             contentContainerStyle={styles.contentContainer}
             showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isLoadingDiscover}
+                onRefresh={refreshContent}
+                tintColor="rgba(255,255,255,0.8)"
+              />
+            }
           >
             {renderQuickFilters()}
-            
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Featured Riders</Text>
-              <FlatList
-                data={featuredProviders}
-                renderItem={renderFeaturedProviderItem}
-                keyExtractor={(item) => item.id}
-                scrollEnabled={false}
-              />
-            </View>
 
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Top Performers</Text>
-                <TouchableOpacity>
-                  <Text style={styles.seeAllText}>See all</Text>
+            {isLoadingDiscover && !discoverContent && (
+              <View style={styles.loadingContainer}>
+                <Text style={styles.loadingText}>Loading riders...</Text>
+              </View>
+            )}
+
+            {discoverError && (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle" size={24} color="#E74C3C" />
+                <Text style={styles.errorText}>{discoverError}</Text>
+                <TouchableOpacity onPress={refreshContent} style={styles.retryButton}>
+                  <Text style={styles.retryText}>Retry</Text>
                 </TouchableOpacity>
               </View>
-              <FlatList
-                data={featuredProviders.sort((a, b) => b.rating - a.rating)}
-                renderItem={renderFeaturedProviderItem}
-                keyExtractor={(item) => `top-${item.id}`}
-                scrollEnabled={false}
+            )}
+
+            {featuredContent.providers.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Featured Riders</Text>
+                <FlatList
+                  data={featuredContent.providers}
+                  renderItem={renderFeaturedProviderItem}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {recommendations.providers.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Top Performers</Text>
+                  <TouchableOpacity>
+                    <Text style={styles.seeAllText}>See all</Text>
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  data={recommendations.providers.sort((a, b) => (b.rating || 0) - (a.rating || 0))}
+                  renderItem={renderFeaturedProviderItem}
+                  keyExtractor={(item) => `top-${item.id}`}
+                  scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {featuredContent.providers.length === 0 && recommendations.providers.length === 0 && !isLoadingDiscover && (
+              <View style={styles.emptyState}>
+                <Ionicons name="bicycle-outline" size={64} color="rgba(255,255,255,0.3)" />
+                <Text style={styles.emptyStateText}>No riders found</Text>
+                <Text style={styles.emptyStateSubtext}>Check back later for available riders</Text>
+              </View>
+            )}
+          </ScrollView>
+        );
+
+      case 'Products':
+        return (
+          <ScrollView
+            style={styles.content}
+            contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isLoadingDiscover}
+                onRefresh={refreshContent}
+                tintColor="rgba(255,255,255,0.8)"
               />
-            </View>
+            }
+          >
+            {renderQuickFilters()}
+
+            {isLoadingDiscover && !discoverContent && (
+              <View style={styles.loadingContainer}>
+                <Text style={styles.loadingText}>Loading products...</Text>
+              </View>
+            )}
+
+            {discoverError && (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle" size={24} color="#E74C3C" />
+                <Text style={styles.errorText}>{discoverError}</Text>
+                <TouchableOpacity onPress={refreshContent} style={styles.retryButton}>
+                  <Text style={styles.retryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {featuredContent.products.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Featured Products</Text>
+                <FlatList
+                  data={featuredContent.products}
+                  renderItem={({ item }) => (
+                    <ProductCard
+                      product={item}
+                      variant="list"
+                      onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+                      onLike={() => console.log('Product liked:', item.id)}
+                      onBookmark={() => console.log('Product bookmarked:', item.id)}
+                    />
+                  )}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {recommendations.products.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Recommended Products</Text>
+                  <TouchableOpacity>
+                    <Text style={styles.seeAllText}>See all</Text>
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  data={recommendations.products}
+                  renderItem={({ item }) => (
+                    <ProductCard
+                      product={item}
+                      variant="grid"
+                      onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+                    />
+                  )}
+                  keyExtractor={(item) => item.id}
+                  numColumns={2}
+                  scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {featuredContent.products.length === 0 && recommendations.products.length === 0 && !isLoadingDiscover && (
+              <View style={styles.emptyState}>
+                <Ionicons name="cube-outline" size={64} color="rgba(255,255,255,0.3)" />
+                <Text style={styles.emptyStateText}>No products found</Text>
+                <Text style={styles.emptyStateSubtext}>Check back later for new products</Text>
+              </View>
+            )}
+          </ScrollView>
+        );
+
+      case 'Services':
+        return (
+          <ScrollView
+            style={styles.content}
+            contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isLoadingDiscover}
+                onRefresh={refreshContent}
+                tintColor="rgba(255,255,255,0.8)"
+              />
+            }
+          >
+            {renderQuickFilters()}
+
+            {isLoadingDiscover && !discoverContent && (
+              <View style={styles.loadingContainer}>
+                <Text style={styles.loadingText}>Loading services...</Text>
+              </View>
+            )}
+
+            {discoverError && (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle" size={24} color="#E74C3C" />
+                <Text style={styles.errorText}>{discoverError}</Text>
+                <TouchableOpacity onPress={refreshContent} style={styles.retryButton}>
+                  <Text style={styles.retryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {featuredContent.services.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Featured Services</Text>
+                <FlatList
+                  data={featuredContent.services}
+                  renderItem={({ item }) => (
+                    <ServiceCard
+                      service={item}
+                      variant="list"
+                      onPress={() => navigation.navigate('ServiceDetails', { serviceId: item.id })}
+                      onBookNow={() => console.log('Service booked:', item.id)}
+                      onAddToCart={() => console.log('Service added to cart:', item.id)}
+                    />
+                  )}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {recommendations.services.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Recommended Services</Text>
+                  <TouchableOpacity>
+                    <Text style={styles.seeAllText}>See all</Text>
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  data={recommendations.services}
+                  renderItem={({ item }) => (
+                    <ServiceCard
+                      service={item}
+                      variant="grid"
+                      onPress={() => navigation.navigate('ServiceDetails', { serviceId: item.id })}
+                    />
+                  )}
+                  keyExtractor={(item) => item.id}
+                  numColumns={2}
+                  scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {featuredContent.services.length === 0 && recommendations.services.length === 0 && !isLoadingDiscover && (
+              <View style={styles.emptyState}>
+                <Ionicons name="briefcase-outline" size={64} color="rgba(255,255,255,0.3)" />
+                <Text style={styles.emptyStateText}>No services found</Text>
+                <Text style={styles.emptyStateSubtext}>Check back later for new services</Text>
+              </View>
+            )}
+          </ScrollView>
+        );
+
+      case 'Vendors':
+        return (
+          <ScrollView
+            style={styles.content}
+            contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isLoadingDiscover}
+                onRefresh={refreshContent}
+                tintColor="rgba(255,255,255,0.8)"
+              />
+            }
+          >
+            {renderQuickFilters()}
+
+            {isLoadingDiscover && !discoverContent && (
+              <View style={styles.loadingContainer}>
+                <Text style={styles.loadingText}>Loading vendors...</Text>
+              </View>
+            )}
+
+            {discoverError && (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle" size={24} color="#E74C3C" />
+                <Text style={styles.errorText}>{discoverError}</Text>
+                <TouchableOpacity onPress={refreshContent} style={styles.retryButton}>
+                  <Text style={styles.retryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {featuredContent.people.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Featured Vendors</Text>
+                <FlatList
+                  data={featuredContent.people}
+                  renderItem={renderFeaturedPersonItem}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {recommendations.people.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Top Rated Vendors</Text>
+                  <TouchableOpacity>
+                    <Text style={styles.seeAllText}>See all</Text>
+                  </TouchableOpacity>
+                </View>
+                <FlatList
+                  data={recommendations.people}
+                  renderItem={renderFeaturedPersonItem}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {featuredContent.people.length === 0 && recommendations.people.length === 0 && !isLoadingDiscover && (
+              <View style={styles.emptyState}>
+                <Ionicons name="storefront-outline" size={64} color="rgba(255,255,255,0.3)" />
+                <Text style={styles.emptyStateText}>No vendors found</Text>
+                <Text style={styles.emptyStateSubtext}>Check back later for featured vendors</Text>
+              </View>
+            )}
           </ScrollView>
         );
 

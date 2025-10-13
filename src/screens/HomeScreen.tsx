@@ -28,10 +28,12 @@ import CommentsDrawer from '../components/CommentsDrawer';
 import LocationSelector from '../components/LocationSelector';
 import FilterDropdown, { FilterOptions } from '../components/FilterDropdown';
 import ServiceVideoPlayer from '../components/ServiceVideoPlayer';
+import ProductVideoPlayer from '../components/ProductVideoPlayer';
 import { productsAPI, Product, ProductCategory } from '../services/productsAPI';
 
 import { servicesAPI, VideoFeedItem } from '../services/servicesAPI';
 import { userAPI } from '../services/userAPI';
+import { chatAPI } from '../services/chatAPI';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 
@@ -158,7 +160,15 @@ const HomeScreen = () => {
 
       const results = await Promise.all(promises);
       const [productsData, categoriesData, profileData] = results;
-      
+
+      // Debug: Check for video products
+      const videoProducts = productsData.filter((p: any) => p.media_type === 'video');
+      console.log('📹 Total products loaded:', productsData.length);
+      console.log('📹 Video products found:', videoProducts.length);
+      if (videoProducts.length > 0) {
+        console.log('📹 First video product:', JSON.stringify(videoProducts[0], null, 2));
+      }
+
       setProducts(productsData);
       setCategories(categoriesData);
 
@@ -171,109 +181,17 @@ const HomeScreen = () => {
       // Load video data from API
       try {
         const videoData = await servicesAPI.getVideoFeed({ limit: 10 });
-        console.log('🎥 Video feed data received:', videoData);
-        console.log('🎥 First video item:', videoData[0]);
-
-        // If no video data from API, use mock data for testing
-        if (!videoData || videoData.length === 0) {
-          console.log('🎥 No video data from API, using mock data for testing');
-          const mockVideoData = [
-            {
-              id: 'mock-1',
-              title: 'Home Cleaning Service',
-              thumbnail: 'https://via.placeholder.com/400x600',
-              videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-              userId: 'user-1',
-              username: 'cleaner_pro',
-              userAvatar: 'https://via.placeholder.com/40x40',
-              description: 'Professional home cleaning services at affordable rates. Book now!',
-              likes: '125',
-              comments: '23',
-              shares: '8',
-              price: 45.00,
-              location: 'Lagos, Nigeria',
-              serviceProvider: 'CleanPro Services',
-              rating: 4.8,
-              completedJobs: '150',
-              isLiked: false,
-              isBookmarked: false
-            },
-            {
-              id: 'mock-2',
-              title: 'Hair Styling',
-              thumbnail: 'https://via.placeholder.com/400x600',
-              videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-              userId: 'user-2',
-              username: 'hair_stylist',
-              userAvatar: 'https://via.placeholder.com/40x40',
-              description: 'Transform your look with our professional hair styling services',
-              likes: '89',
-              comments: '15',
-              shares: '5',
-              price: 35.00,
-              location: 'Lagos, Nigeria',
-              serviceProvider: 'Style Studio',
-              rating: 4.5,
-              completedJobs: '95',
-              isLiked: false,
-              isBookmarked: false
-            }
-          ];
-          setVideoFeedData(mockVideoData);
-          console.log(`✅ Loaded mock data: ${productsData.length} products, ${categoriesData.length} categories, ${mockVideoData.length} videos`);
-        } else {
-          setVideoFeedData(videoData);
-          console.log(`✅ Loaded real data: ${productsData.length} products, ${categoriesData.length} categories, ${videoData.length} videos`);
+        console.log('🎥 Video feed data received:', videoData?.length || 0, 'services');
+        if (videoData && videoData.length > 0) {
+          console.log('🎥 First video item:', videoData[0]);
         }
+
+        setVideoFeedData(videoData || []);
+        console.log(`✅ Loaded real data: ${productsData.length} products, ${categoriesData.length} categories, ${videoData?.length || 0} services`);
       } catch (videoError) {
         console.warn('🔴 Error loading video data:', videoError);
-
-        // Fallback to mock data if API fails
-        console.log('🎥 API failed, using mock data for testing');
-        const mockVideoData = [
-          {
-            id: 'mock-1',
-            title: 'Home Cleaning Service',
-            thumbnail: 'https://via.placeholder.com/400x600',
-            videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-            userId: 'user-1',
-            username: 'cleaner_pro',
-            userAvatar: 'https://via.placeholder.com/40x40',
-            description: 'Professional home cleaning services at affordable rates. Book now!',
-            likes: '125',
-            comments: '23',
-            shares: '8',
-            price: 45.00,
-            location: 'Lagos, Nigeria',
-            serviceProvider: 'CleanPro Services',
-            rating: 4.8,
-            completedJobs: '150',
-            isLiked: false,
-            isBookmarked: false
-          },
-          {
-            id: 'mock-2',
-            title: 'Hair Styling',
-            thumbnail: 'https://via.placeholder.com/400x600',
-            videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-            userId: 'user-2',
-            username: 'hair_stylist',
-            userAvatar: 'https://via.placeholder.com/40x40',
-            description: 'Transform your look with our professional hair styling services',
-            likes: '89',
-            comments: '15',
-            shares: '5',
-            price: 35.00,
-            location: 'Lagos, Nigeria',
-            serviceProvider: 'Style Studio',
-            rating: 4.5,
-            completedJobs: '95',
-            isLiked: false,
-            isBookmarked: false
-          }
-        ];
-        setVideoFeedData(mockVideoData);
-        console.log(`✅ Loaded mock data: ${productsData.length} products, ${categoriesData.length} categories, ${mockVideoData.length} videos`);
+        // Set empty array if API fails - no mock data fallback
+        setVideoFeedData([]);
       }
     } catch (error) {
       console.error('🔴 Error loading data:', error);
@@ -330,10 +248,14 @@ const HomeScreen = () => {
     }
   }, [activeTab, isPlaying, videoFeedData.length]);
 
-  // Handle screen focus changes for video playback
+  // Handle screen focus changes for video playback and data refresh
   useFocusEffect(
     React.useCallback(() => {
-      // Screen is focused - resume playing if on services tab
+      // Screen is focused - reload data to update reviews/ratings
+      console.log('🔄 Screen focused - reloading data to update product reviews');
+      loadData(false); // Reload without showing loading indicator
+
+      // Resume playing if on services tab
       console.log(`🎬 Screen focused - activeTab: ${activeTab}, videoCount: ${videoFeedData.length}`);
       if (activeTab === 'services' && videoFeedData.length > 0) {
         console.log('🎬 Screen focused - setting isPlaying to true for services tab');
@@ -536,7 +458,7 @@ const HomeScreen = () => {
   // Enhanced ProductCard with real backend data transformation
   const renderEnhancedProductCard = (item: any, isHorizontal = false) => {
     const cardStyle = isHorizontal ? { width: screenWidth * 0.4, marginHorizontal: 6 } : {};
-    
+
     // Handle both mock data and real Product data structures
     const productData = {
       id: item.id || 'unknown',
@@ -544,9 +466,9 @@ const HomeScreen = () => {
       price: Number(item.price) || 0,
       originalPrice: item.originalPrice ? Number(item.originalPrice) : undefined,
       image: item.primary_image_url || item.images?.[0] || item.image || 'https://via.placeholder.com/300x300',
-      rating: Number(item.average_rating || item.rating) || 4.0,
-      sellerName: item.sellerName || 'Vendor',
-      sellerLogo: item.sellerLogo,
+      rating: Number(item.average_rating || item.rating) || 0,
+      sellerName: item.vendor_username || item.sellerName || 'Unknown Vendor',
+      sellerLogo: item.vendor_avatar || item.sellerLogo || null,
       soldCount: item.soldCount || (item.view_count ? String(Math.floor(Number(item.view_count) / 10)) : '0'),
       isTopSelling: Boolean(item.isTopSelling || item.is_featured),
       isTrending: Boolean(item.isTrending || (item.like_count && Number(item.like_count) > 20)),
@@ -1126,7 +1048,7 @@ const HomeScreen = () => {
             <>
               <View style={{ paddingHorizontal: 16, marginBottom: 16, marginTop: 8 }}>
                 <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#FFFFFF', marginBottom: 2 }}>
-                  {categories.find(c => c.id === selectedCategory)?.name || 
+                  {categories.find(c => c.id === selectedCategory)?.name ||
                     selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1)} Products
                 </Text>
                 <Text style={{ fontSize: 13, color: '#888', marginBottom: 2 }}>
@@ -1135,15 +1057,30 @@ const HomeScreen = () => {
               </View>
               <View style={{ paddingHorizontal: 12, marginBottom: 20 }}>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-                  {filteredProducts.map((item) => (
-                    <View key={item.id} style={{ width: '48%', marginBottom: 16 }}>
-                      <TouchableOpacity 
-                        onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
-                      >
-                        {renderEnhancedProductCard(item, false)}
-                      </TouchableOpacity>
-                    </View>
-                  ))}
+                  {filteredProducts.map((item) => {
+                    // Check if this is a video product
+                    const isVideoProduct = item.media_type === 'video' && item.primary_video_url;
+
+                    if (isVideoProduct) {
+                      // Render full-width video card
+                      return (
+                        <View key={item.id} style={{ width: '100%', marginBottom: 16 }}>
+                          {renderVideoProductCard(item)}
+                        </View>
+                      );
+                    } else {
+                      // Render normal grid product card
+                      return (
+                        <View key={item.id} style={{ width: '48%', marginBottom: 16 }}>
+                          <TouchableOpacity
+                            onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+                          >
+                            {renderEnhancedProductCard(item, false)}
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    }
+                  })}
                 </View>
               </View>
             </>
@@ -1195,7 +1132,11 @@ const HomeScreen = () => {
 
   const renderDynamicSection = (title: string, subtitle: string, products: Product[], index: number) => {
     if (products.length === 0) return null;
-    
+
+    // Separate video products from image products
+    const videoProducts = products.filter(p => p.media_type === 'video' && p.primary_video_url);
+    const imageProducts = products.filter(p => !(p.media_type === 'video' && p.primary_video_url));
+
     return (
       <View key={`section-${index}`} style={{ marginVertical: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 16 }}>
@@ -1208,21 +1149,36 @@ const HomeScreen = () => {
             <Text style={{ color: '#3498DB', fontSize: 12, fontWeight: '600' }}>See All</Text>
           </TouchableOpacity>
         </View>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingLeft: 16, paddingRight: 8 }}
-        >
-          {products.map((item) => (
-            <View key={item.id} style={{ width: screenWidth * 0.4, marginRight: 8 }}>
-              <TouchableOpacity 
-                onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
-              >
-                {renderEnhancedProductCard(item, true)}
-              </TouchableOpacity>
-            </View>
-          ))}
-        </ScrollView>
+
+        {/* Render video products as full-width cards first */}
+        {videoProducts.length > 0 && (
+          <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
+            {videoProducts.map((item) => (
+              <View key={item.id} style={{ marginBottom: 12 }}>
+                {renderVideoProductCard(item)}
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Render image products as horizontal scroll */}
+        {imageProducts.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingLeft: 16, paddingRight: 8 }}
+          >
+            {imageProducts.map((item) => (
+              <View key={item.id} style={{ width: screenWidth * 0.4, marginRight: 8 }}>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+                >
+                  {renderEnhancedProductCard(item, true)}
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        )}
       </View>
     );
   };
@@ -1264,7 +1220,7 @@ const HomeScreen = () => {
 
   const renderForYouSection = (title: string, subtitle: string, products: Product[], index: number) => {
     if (products.length === 0) return null;
-    
+
     return (
       <View key={`for-you-${index}`} style={{ marginVertical: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 16 }}>
@@ -1277,22 +1233,167 @@ const HomeScreen = () => {
             <Text style={{ color: '#3498DB', fontSize: 12, fontWeight: '600' }}>See All</Text>
           </TouchableOpacity>
         </View>
-        
-        {/* Display in twos - 2 columns grid */}
+
+        {/* Display in twos - 2 columns grid, with video products spanning full width */}
         <View style={{ paddingHorizontal: 12 }}>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-            {products.map((item) => (
-              <View key={item.id} style={{ width: '48%', marginBottom: 16 }}>
-                <TouchableOpacity 
-                  onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
-                >
-                  {renderEnhancedProductCard(item, false)}
-                </TouchableOpacity>
-              </View>
-            ))}
+            {products.map((item) => {
+              // Check if this is a video product
+              const isVideoProduct = item.media_type === 'video' && item.primary_video_url;
+
+              if (isVideoProduct) {
+                // Render full-width video card
+                return (
+                  <View key={item.id} style={{ width: '100%', marginBottom: 16 }}>
+                    {renderVideoProductCard(item)}
+                  </View>
+                );
+              } else {
+                // Render normal grid product card
+                return (
+                  <View key={item.id} style={{ width: '48%', marginBottom: 16 }}>
+                    <TouchableOpacity
+                      onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+                    >
+                      {renderEnhancedProductCard(item, false)}
+                    </TouchableOpacity>
+                  </View>
+                );
+              }
+            })}
           </View>
         </View>
       </View>
+    );
+  };
+
+  // Render video product card (full width) with auto-play
+  const renderVideoProductCard = (item: Product) => {
+    // Debug logging
+    console.log('📹 Rendering video product card:', {
+      id: item.id,
+      name: item.name,
+      media_type: item.media_type,
+      primary_video_url: item.primary_video_url,
+      primary_image_url: item.primary_image_url,
+      has_videos: item.videos?.length
+    });
+
+    return (
+      <TouchableOpacity
+        onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+        style={{
+          width: '100%',
+          backgroundColor: '#1a1a1a',
+          borderRadius: 12,
+          overflow: 'hidden',
+          position: 'relative',
+        }}
+      >
+        {/* Auto-playing video - let it determine its own height based on aspect ratio */}
+        {item.primary_video_url ? (
+          <ProductVideoPlayer
+            videoUri={item.primary_video_url}
+            shouldAutoPlay={activeTab === 'products'}
+            containerWidth={screenWidth}
+          />
+        ) : (
+          <Image
+            source={{ uri: item.primary_image_url || item.images?.[0] || 'https://via.placeholder.com/400x600' }}
+            style={{ width: '100%', height: screenWidth * (9/16) }}
+            resizeMode="cover"
+          />
+        )}
+
+        {/* Product info overlay at bottom - Original layout */}
+        <View style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: 'rgba(0,0,0,0.7)',
+          padding: 12,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold', marginBottom: 4 }} numberOfLines={1}>
+                {item.name}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ color: '#FFD700', fontSize: 18, fontWeight: 'bold', marginRight: 8 }}>
+                  ₣{item.price.toFixed(2)}
+                </Text>
+                {item.vendor_username && (
+                  <Text style={{ color: '#888', fontSize: 12 }}>
+                    by @{item.vendor_username}
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            {/* Action buttons on the right */}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleBargainPress(item.id);
+                }}
+                style={{
+                  backgroundColor: '#F39C12',
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 20,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                }}
+              >
+                <Ionicons name="chatbubble-ellipses-outline" size={16} color="white" />
+                <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold', marginLeft: 4 }}>
+                  Bargain
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleCartPress(item.id);
+                }}
+                style={{
+                  backgroundColor: '#3498DB',
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 20,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                }}
+              >
+                <Ionicons name="cart-outline" size={16} color="white" />
+                <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold', marginLeft: 4 }}>
+                  Add
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
+        {/* Video badge */}
+        <View style={{
+          position: 'absolute',
+          top: 12,
+          left: 12,
+          backgroundColor: 'rgba(255,255,255,0.9)',
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+          borderRadius: 12,
+          flexDirection: 'row',
+          alignItems: 'center',
+        }}>
+          <Ionicons name="videocam" size={12} color="#FF4757" />
+          <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold', marginLeft: 4 }}>
+            VIDEO
+          </Text>
+        </View>
+      </TouchableOpacity>
     );
   };
 
@@ -1301,6 +1402,36 @@ const HomeScreen = () => {
     console.log('🔍 handleVendorPress called with userId:', userId);
     console.log('🔍 userId type:', typeof userId);
     (navigation as any).navigate('PublicProfile', { userId });
+  };
+
+  // Handler for chat button on services (directly opens chat)
+  const handleChatWithServiceProvider = async (serviceItem: VideoFeedItem) => {
+    try {
+      console.log('🔍 Starting chat with service provider:', serviceItem.userId);
+
+      // Find existing conversation or create a new one with the service provider
+      const conversation = await chatAPI.findOrCreateConversation(
+        [serviceItem.userId], // The service provider's user ID
+        'vendor' // Service providers are vendors
+      );
+
+      console.log('✅ Conversation found/created:', conversation.id);
+
+      // Navigate to IndividualChatScreen with proper parameters
+      navigation.navigate('IndividualChatScreen', {
+        chatId: conversation.id,
+        chatName: serviceItem.serviceProvider || serviceItem.username || 'Service Provider',
+        chatAvatar: serviceItem.userAvatar || 'https://via.placeholder.com/50',
+        chatType: 'vendor' as const,
+        isOnline: true,
+        verified: false,
+        isAI: false,
+        otherUserId: serviceItem.userId,
+      });
+    } catch (error) {
+      console.error('Error creating conversation with service provider:', error);
+      Alert.alert('Error', 'Unable to start conversation. Please try again.');
+    }
   };
 
   // Handler for product press (navigation to product details)
@@ -1318,15 +1449,58 @@ const HomeScreen = () => {
   };
 
   // Handler for bargain/negotiation button press
-  const handleBargainPress = (productId: string) => {
-    // TODO: Implement bargain/negotiation functionality
-    console.log('Bargain pressed for product:', productId);
-    // For now, just show an alert
-    Alert.alert(
-      'Coming Soon', 
-      'Bargaining feature will be available soon!',
-      [{ text: 'OK', style: 'default' }]
-    );
+  const handleBargainPress = async (productId: string) => {
+    try {
+      console.log('Bargain pressed for product:', productId);
+
+      // Find the product in our products list
+      const product = products.find(p => p.id === productId);
+
+      if (!product) {
+        Alert.alert('Error', 'Product not found');
+        return;
+      }
+
+      if (!product.user_id) {
+        Alert.alert('Error', 'Vendor information not available');
+        return;
+      }
+
+      console.log('🔍 Finding conversation with vendor:', product.user_id);
+      console.log('🔍 Current user:', user?.id);
+
+      // Find or create conversation with the vendor
+      const conversation = await chatAPI.findOrCreateConversation(
+        [product.user_id],
+        'vendor'
+      );
+
+      console.log('✅ Conversation found/created:', conversation.id);
+
+      // Navigate to chat with product context
+      navigation.navigate('IndividualChatScreen', {
+        chatId: conversation.id,
+        chatName: product.vendor_username || 'Vendor',
+        chatAvatar: product.vendor_avatar || 'https://via.placeholder.com/50',
+        chatType: 'vendor' as const,
+        isOnline: true,
+        verified: false,
+        isAI: false,
+        otherUserId: product.user_id,
+        // Bargain context
+        bargainMode: true,
+        productData: {
+          id: product.id,
+          name: product.name,
+          price: product.price,
+          image: product.primary_image_url || product.images?.[0] || '',
+          vendor_username: product.vendor_username,
+        },
+      });
+    } catch (error) {
+      console.error('Error initiating bargain:', error);
+      Alert.alert('Error', 'Unable to start conversation. Please try again.');
+    }
   };
 
   // Video item renderer using VideoCard component
@@ -1725,10 +1899,7 @@ const HomeScreen = () => {
                         borderRadius: 20,
                         marginRight: 12
                       }}
-                      onPress={() => {
-                        console.log('🎥 Chat button - Video item userId:', item.userId);
-                        handleVendorPress(item.userId);
-                      }}
+                      onPress={() => handleChatWithServiceProvider(item)}
                     >
                       <Ionicons name="chatbubble-outline" size={16} color="white" />
                       <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold', marginLeft: 6 }}>

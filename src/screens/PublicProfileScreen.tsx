@@ -207,10 +207,15 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
     if (!profile || !user) return;
 
     try {
+      // Determine chat type based on user role
+      // If they're a seller/vendor, use 'vendor' type to match bargain conversations
+      // Otherwise use 'friend' for regular users
+      const chatType = profile.isSeller ? 'vendor' : 'friend';
+
       // Find existing conversation or create a new one with the user
       const conversation = await chatAPI.findOrCreateConversation(
         [userId], // The profile user's ID
-        'friend' // Direct user chat is considered friend type
+        chatType
       );
 
       // Navigate to IndividualChatScreen with proper parameters
@@ -218,10 +223,11 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
         chatId: conversation.id,
         chatName: profile.username || 'User', // Use username as chat name
         chatAvatar: profile.avatarUrl || 'https://via.placeholder.com/50', // Use user avatar
-        chatType: 'friend' as const,
+        chatType: chatType as const,
         isOnline: true, // Assume online for now
         verified: false, // Set based on user verification status if available
         isAI: false,
+        otherUserId: userId,
       });
     } catch (error) {
       console.error('Error creating conversation with user:', error);

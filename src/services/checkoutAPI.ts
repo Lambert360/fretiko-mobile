@@ -229,8 +229,8 @@ class CheckoutAPI {
   // Add service booking to cart (for service scheduling)
   async addServiceBooking(bookingData: {
     serviceId: string;
-    scheduledDate: string;
-    scheduledTime: string;
+    scheduledDate?: string;
+    scheduledTime?: string;
     notes?: string;
   }): Promise<void> {
     try {

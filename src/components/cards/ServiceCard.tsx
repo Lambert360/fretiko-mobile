@@ -96,19 +96,30 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
   };
 
   const renderMedia = () => {
-    const imageUri = service.mediaUrl || service.image || `https://picsum.photos/400/400?random=${service.id}`;
-    
+    // For video services, use the image if available, otherwise use placeholder
+    // Never try to render video URL as an image
+    const isVideo = service.mediaType === 'video';
+    let imageUri: string;
+
+    if (isVideo) {
+      // Video service: use image thumbnail or placeholder
+      imageUri = service.image || `https://picsum.photos/400/400?random=${service.id}`;
+    } else {
+      // Image service: use mediaUrl or image
+      imageUri = service.mediaUrl || service.image || `https://picsum.photos/400/400?random=${service.id}`;
+    }
+
     return (
       <View style={[styles.mediaContainer, { height: getMediaHeight() }]}>
-        <Image 
-          source={{ uri: imageUri }} 
+        <Image
+          source={{ uri: imageUri }}
           style={styles.mediaContent}
           resizeMode="cover"
         />
-        
-        {service.mediaType === 'video' && (
+
+        {isVideo && (
           <View style={styles.videoOverlay}>
-            <Ionicons name="play-circle" size={24} color="rgba(255,255,255,0.9)" />
+            <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.9)" />
           </View>
         )}
 
@@ -358,13 +369,17 @@ const styles = StyleSheet.create({
   },
   mediaContent: {
     width: '100%',
-    resizeMode: 'cover',
+    height: '100%',
   },
   videoOverlay: {
     position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: [{ translateX: -12 }, { translateY: -12 }],
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.2)',
   },
   badgeContainer: {
     position: 'absolute',

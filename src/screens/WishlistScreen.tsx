@@ -13,6 +13,8 @@ import {
   Share,
   Modal,
   ScrollView,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -38,6 +40,8 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [shareableFriends, setShareableFriends] = useState<ShareableFriend[]>([]);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
   
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -68,15 +72,28 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
     }
   };
 
-  const loadShareableFriends = async () => {
+  const loadShareableFriends = async (search?: string) => {
     try {
-      const friends = await wishlistAPI.getShareableFriends();
+      setSearchLoading(true);
+      const friends = await wishlistAPI.getShareableFriends(search, 20);
       setShareableFriends(friends);
     } catch (error) {
       console.error('Error loading shareable friends:', error);
-      Alert.alert('Error', 'Failed to load friends');
+      Alert.alert('Error', 'Failed to load users');
+    } finally {
+      setSearchLoading(false);
     }
   };
+
+  // Debounce search to avoid too many API calls
+  useEffect(() => {
+    if (showShareModal) {
+      const timer = setTimeout(() => {
+        loadShareableFriends(searchQuery);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [searchQuery, showShareModal]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -225,7 +242,8 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
   };
 
   const handleShareWishlist = async () => {
-    // Load friends first
+    // Load users first
+    setSearchQuery(''); // Reset search
     await loadShareableFriends();
     setShowShareModal(true);
   };
@@ -253,9 +271,13 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
 
   const handleShareExternal = async () => {
     try {
-      const wishlistUrl = `fretiko://wishlist/${user?.id}`;
+      // Get user's username from user object or API
+      const username = (user as any)?.username || user?.email?.split('@')[0] || 'user';
+      const encodedUsername = encodeURIComponent(username);
+      const wishlistUrl = `fretiko://wishlist/${user?.id}/${encodedUsername}`;
+
       await Share.share({
-        message: `Check out my wishlist on Fretiko! I have ${wishlistItems.length} amazing items saved.`,
+        message: `Check out my wishlist on Fretiko! I have ${wishlistItems.length} amazing items saved.\n\n${wishlistUrl}`,
         url: wishlistUrl,
       });
       setShowShareModal(false);
@@ -407,12 +429,29 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
           </View>
 
           <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-            {/* Share with Friends Section */}
-            <Text style={styles.sectionTitle}>Share with Friends</Text>
+            {/* Search Input */}
+            <View style={styles.searchContainer}>
+              <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search users by username..."
+                placeholderTextColor="#666"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {searchLoading && (
+                <ActivityIndicator size="small" color="#3498DB" style={styles.searchLoader} />
+              )}
+            </View>
+
+            {/* Share with Users Section */}
+            <Text style={styles.sectionTitle}>Share with User</Text>
             <Text style={styles.sectionSubtitle}>
-              Friends can view and add items to your wishlist
+              Share your wishlist with any verified user
             </Text>
-            
+
             {shareableFriends.length > 0 ? (
               shareableFriends.map((friend) => (
                 <TouchableOpacity
@@ -439,9 +478,11 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
             ) : (
               <View style={styles.noFriendsContainer}>
                 <Ionicons name="people-outline" size={40} color="#666" />
-                <Text style={styles.noFriendsText}>No friends to share with</Text>
+                <Text style={styles.noFriendsText}>
+                  {searchQuery ? 'No users found' : 'Search for users'}
+                </Text>
                 <Text style={styles.noFriendsSubtext}>
-                  Connect with friends first to share your wishlist
+                  {searchQuery ? 'Try a different username' : 'Enter a username to find users to share with'}
                 </Text>
               </View>
             )}
@@ -803,6 +844,29 @@ const styles = StyleSheet.create({
   modalBody: {
     flex: 1,
     paddingHorizontal: 20,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    marginTop: 16,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#FFF',
+    fontSize: 16,
+    paddingVertical: 12,
+  },
+  searchLoader: {
+    marginLeft: 8,
   },
   sectionTitle: {
     color: '#FFF',
