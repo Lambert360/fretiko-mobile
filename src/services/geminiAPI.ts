@@ -42,6 +42,36 @@ export interface GeminiResponse {
   text?: string;
   functionCalls?: GeminiFunctionCall[];
   error?: string;
+  // IKO recommendation data
+  recommendedProducts?: Array<{
+    id: string;
+    name: string;
+    price: number;
+    image: string;
+    vendor_username?: string;
+  }>;
+  recommendedServices?: Array<{
+    id: string;
+    title: string;
+    price: number;
+    image?: string;
+    provider?: {
+      id: string;
+      name: string;
+      rating?: number;
+    };
+    category?: string;
+    duration?: string;
+    priceType?: 'fixed' | 'hourly' | 'starting_at' | 'negotiable';
+  }>;
+  // IKO schedule card data
+  scheduleCard?: {
+    type: 'meal_plan' | 'reminder' | 'purchase' | 'event' | 'task';
+    title: string;
+    description?: string;
+    suggestedDate?: string;
+    icon?: string;
+  };
 }
 
 export interface VoiceNoteRequest {
@@ -179,7 +209,7 @@ class GeminiAPI {
       // Process function calls if any
       const functionCalls = response.functionCalls();
       if (functionCalls && functionCalls.length > 0) {
-        const functionResults = await this.processFunctionCalls(functionCalls);
+        const { functionResults, extractedData } = await this.processFunctionCalls(functionCalls);
 
         // Send function results back to model
         const functionResponse = await chat.sendMessage(functionResults);
@@ -193,9 +223,19 @@ class GeminiAPI {
 
         await this.saveSession();
 
+        // Detect scheduling intent from function calls or response text
+        const scheduleCard = this.detectSchedulingIntent(
+          finalResponse.text() || '',
+          functionCalls,
+          extractedData
+        );
+
         return {
           text: finalResponse.text(),
           functionCalls: functionCalls.map(fc => ({ name: fc.name, args: fc.args })),
+          recommendedProducts: extractedData.products,
+          recommendedServices: extractedData.services,
+          scheduleCard,
         };
       } else {
         // Add model response to session
@@ -609,8 +649,16 @@ Your capabilities:
 Always be helpful, friendly, and respect user preferences. Use function calls when users want to search or get recommendations.`;
   }
 
-  private async processFunctionCalls(functionCalls: any[]): Promise<Part[]> {
+  private async processFunctionCalls(functionCalls: any[]): Promise<{
+    functionResults: Part[];
+    extractedData: {
+      products: any[];
+      services: any[];
+    };
+  }> {
     const results: Part[] = [];
+    const extractedProducts: any[] = [];
+    const extractedServices: any[] = [];
 
     for (const fc of functionCalls) {
       try {
@@ -619,15 +667,108 @@ Always be helpful, friendly, and respect user preferences. Use function calls wh
         switch (fc.name) {
           case 'search_products':
             result = await ikoSearchAPI.searchProducts(fc.args);
+            // Extract top 3 products for display
+            if (result.results && Array.isArray(result.results)) {
+              extractedProducts.push(...result.results.slice(0, 3).map((p: any) => ({
+                id: p.id,
+                name: p.title || p.name,
+                price: p.price,
+                image: p.images?.[0] || p.image || 'https://via.placeholder.com/60',
+                vendor_username: p.seller?.name || p.sellerName,
+              })));
+            }
             break;
           case 'search_services':
             result = await ikoSearchAPI.searchServices(fc.args);
-            break;
-          case 'search_users':
-            result = await ikoSearchAPI.searchUsers(fc.args);
+            // Extract top 3 services for display
+            if (result.results && Array.isArray(result.results)) {
+              extractedServices.push(...result.results.slice(0, 3).map((s: any) => ({
+                id: s.id,
+                title: s.title,
+                price: s.price,
+                image: s.images?.[0] || s.image,
+                provider: {
+                  id: s.provider?.id || s.providerId,
+                  name: s.provider?.name || s.providerName,
+                  rating: s.provider?.rating || s.providerRating,
+                },
+                category: s.category,
+                duration: s.duration,
+                priceType: s.priceType || 'fixed',
+              })));
+            }
             break;
           case 'get_recommendations':
             result = await ikoSearchAPI.getRecommendations(fc.args);
+            // Extract recommendations based on type
+            if (result.recommendations && Array.isArray(result.recommendations)) {
+              const recs = result.recommendations.slice(0, 3);
+              if (result.type === 'products' || result.type === 'mixed') {
+                const products = recs.filter((r: any) => r.type === 'product' || !r.type);
+                extractedProducts.push(...products.map((p: any) => ({
+                  id: p.id,
+                  name: p.title || p.name,
+                  price: p.price,
+                  image: p.images?.[0] || p.image || 'https://via.placeholder.com/60',
+                  vendor_username: p.seller?.name || p.sellerName,
+                })));
+              }
+              if (result.type === 'services' || result.type === 'mixed') {
+                const services = recs.filter((r: any) => r.type === 'service');
+                extractedServices.push(...services.map((s: any) => ({
+                  id: s.id,
+                  title: s.title,
+                  price: s.price,
+                  image: s.images?.[0] || s.image,
+                  provider: {
+                    id: s.provider?.id || s.providerId,
+                    name: s.provider?.name || s.providerName,
+                    rating: s.provider?.rating || s.providerRating,
+                  },
+                  category: s.category,
+                  duration: s.duration,
+                  priceType: s.priceType || 'fixed',
+                })));
+              }
+            }
+            break;
+          case 'get_product_details':
+            result = await ikoSearchAPI.getProductDetails(fc.args);
+            // Extract single product
+            if (result.product) {
+              const p = result.product;
+              extractedProducts.push({
+                id: p.id,
+                name: p.title || p.name,
+                price: p.price,
+                image: p.images?.[0] || p.image || 'https://via.placeholder.com/60',
+                vendor_username: p.seller?.name || p.sellerName,
+              });
+            }
+            break;
+          case 'get_service_details':
+            result = await ikoSearchAPI.getServiceDetails(fc.args);
+            // Extract single service
+            if (result.service) {
+              const s = result.service;
+              extractedServices.push({
+                id: s.id,
+                title: s.title,
+                price: s.price,
+                image: s.images?.[0] || s.image,
+                provider: {
+                  id: s.provider?.id || s.providerId,
+                  name: s.provider?.name || s.providerName,
+                  rating: s.provider?.rating || s.providerRating,
+                },
+                category: s.category,
+                duration: s.duration,
+                priceType: s.priceType || 'fixed',
+              });
+            }
+            break;
+          case 'search_users':
+            result = await ikoSearchAPI.searchUsers(fc.args);
             break;
           case 'book_service':
             result = await ikoSearchAPI.bookService(fc.args);
@@ -643,12 +784,6 @@ Always be helpful, friendly, and respect user preferences. Use function calls wh
             break;
           case 'set_budget_alert':
             result = await ikoSearchAPI.setBudgetAlert(fc.args);
-            break;
-          case 'get_product_details':
-            result = await ikoSearchAPI.getProductDetails(fc.args);
-            break;
-          case 'get_service_details':
-            result = await ikoSearchAPI.getServiceDetails(fc.args);
             break;
           case 'track_order':
             result = await ikoSearchAPI.trackOrder(fc.args);
@@ -690,7 +825,13 @@ Always be helpful, friendly, and respect user preferences. Use function calls wh
       }
     }
 
-    return results;
+    return {
+      functionResults: results,
+      extractedData: {
+        products: extractedProducts,
+        services: extractedServices,
+      },
+    };
   }
 
   private async readAudioFile(uri: string): Promise<string> {
@@ -746,6 +887,152 @@ Always be helpful, friendly, and respect user preferences. Use function calls wh
     } catch (error) {
       console.error('Error loading session:', error);
     }
+  }
+
+  /**
+   * Detect scheduling intent from AI response and function calls
+   */
+  private detectSchedulingIntent(
+    responseText: string,
+    functionCalls: any[],
+    extractedData: any
+  ): {
+    type: 'meal_plan' | 'reminder' | 'purchase' | 'event' | 'task';
+    title: string;
+    description?: string;
+    suggestedDate?: string;
+    icon?: string;
+  } | undefined {
+    const lowerText = responseText.toLowerCase();
+
+    // Check if there was a create_activity_plan function call
+    const activityPlanCall = functionCalls.find(fc => fc.name === 'create_activity_plan');
+    if (activityPlanCall) {
+      const args = activityPlanCall.args;
+      return {
+        type: this.mapActivityTypeToScheduleType(args.activityType || 'event'),
+        title: args.title || 'Plan Activity',
+        description: args.description,
+        suggestedDate: args.plannedDate,
+      };
+    }
+
+    // Detect meal planning intent
+    if (
+      lowerText.includes('meal plan') ||
+      lowerText.includes('weekly meals') ||
+      lowerText.includes('food schedule') ||
+      lowerText.includes('plan your meals')
+    ) {
+      return {
+        type: 'meal_plan',
+        title: 'Plan Your Weekly Meals',
+        description: 'Create a meal schedule for the week ahead',
+        suggestedDate: this.getNextWeekStart(),
+        icon: 'restaurant',
+      };
+    }
+
+    // Detect reminder intent
+    if (
+      lowerText.includes('remind') ||
+      lowerText.includes('reminder') ||
+      lowerText.includes("don't forget") ||
+      lowerText.includes('remember to')
+    ) {
+      // Extract what to remind about
+      const reminderMatch = responseText.match(/remind.*?(?:to|about)\s+(.+?)(?:\.|!|\?|$)/i);
+      const title = reminderMatch ? reminderMatch[1].trim() : 'Set a Reminder';
+      
+      return {
+        type: 'reminder',
+        title: `Reminder: ${title}`,
+        description: 'Set a reminder for this activity',
+        suggestedDate: this.getTomorrow(),
+        icon: 'notifications',
+      };
+    }
+
+    // Detect purchase planning intent
+    if (
+      (lowerText.includes('plan') || lowerText.includes('schedule')) &&
+      (lowerText.includes('buy') || lowerText.includes('purchase') || lowerText.includes('shopping'))
+    ) {
+      return {
+        type: 'purchase',
+        title: 'Plan Your Purchase',
+        description: 'Schedule when you want to make this purchase',
+        suggestedDate: this.getNextWeekStart(),
+        icon: 'cart',
+      };
+    }
+
+    // Detect event planning intent
+    if (
+      lowerText.includes('event') ||
+      lowerText.includes('party') ||
+      lowerText.includes('celebration') ||
+      lowerText.includes('meeting')
+    ) {
+      return {
+        type: 'event',
+        title: 'Plan an Event',
+        description: 'Schedule and organize your event',
+        suggestedDate: this.getNextWeekend(),
+        icon: 'calendar',
+      };
+    }
+
+    // Detect task/todo intent
+    if (
+      lowerText.includes('task') ||
+      lowerText.includes('to-do') ||
+      lowerText.includes('todo') ||
+      lowerText.includes('need to do')
+    ) {
+      return {
+        type: 'task',
+        title: 'Add a Task',
+        description: 'Schedule a task to complete',
+        suggestedDate: this.getTomorrow(),
+        icon: 'checkmark-circle',
+      };
+    }
+
+    return undefined;
+  }
+
+  private mapActivityTypeToScheduleType(activityType: string): 'meal_plan' | 'reminder' | 'purchase' | 'event' | 'task' {
+    const typeMap: { [key: string]: 'meal_plan' | 'reminder' | 'purchase' | 'event' | 'task' } = {
+      'meal_planning': 'meal_plan',
+      'shopping': 'purchase',
+      'event': 'event',
+      'reminder': 'reminder',
+      'task': 'task',
+    };
+    return typeMap[activityType] || 'event';
+  }
+
+  private getNextWeekStart(): string {
+    const date = new Date();
+    const dayOfWeek = date.getDay();
+    const daysUntilMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
+    date.setDate(date.getDate() + daysUntilMonday);
+    return date.toISOString().split('T')[0];
+  }
+
+  private getTomorrow(): string {
+    const date = new Date();
+    date.setDate(date.getDate() + 1);
+    return date.toISOString().split('T')[0];
+  }
+
+  private getNextWeekend(): string {
+    const date = new Date();
+    const dayOfWeek = date.getDay();
+    const daysUntilSaturday = dayOfWeek === 0 ? 6 : 6 - dayOfWeek;
+    date.setDate(date.getDate() + daysUntilSaturday);
+    return date.toISOString().split('T')[0];
   }
 }
 

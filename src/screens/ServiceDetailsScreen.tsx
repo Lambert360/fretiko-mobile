@@ -123,10 +123,25 @@ const ServiceDetailsScreen = () => {
     try {
       console.log('🔍 Starting chat with service provider:', service.userId);
 
+      // Determine chat type based on current user's role
+      // Service providers can be either vendors or riders
+      // Priority: rider > vendor > friend
+      let chatType: 'friend' | 'vendor' | 'rider' = 'vendor'; // Default to vendor for service providers
+
+      // Check if current user is a rider (highest priority)
+      if (user.is_rider) {
+        chatType = 'rider';
+      }
+      // If current user is seller, keep it as vendor
+      else if (user.is_seller) {
+        chatType = 'vendor';
+      }
+      // Service provider is assumed to be vendor, so default stays 'vendor'
+
       // Find existing conversation or create a new one with the service provider
       const conversation = await chatAPI.findOrCreateConversation(
         [service.userId], // The service provider's user ID
-        'vendor' // Service providers are vendors
+        chatType
       );
 
       console.log('✅ Conversation found/created:', conversation.id);
@@ -136,7 +151,7 @@ const ServiceDetailsScreen = () => {
         chatId: conversation.id,
         chatName: service.serviceProvider || 'Service Provider', // Use provider name
         chatAvatar: service.userAvatar || 'https://via.placeholder.com/50', // Use provider avatar
-        chatType: 'vendor' as const,
+        chatType: chatType as const,
         isOnline: true, // Assume online for now
         verified: false, // Set based on provider verification status if available
         isAI: false,

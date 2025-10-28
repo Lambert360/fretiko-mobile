@@ -18,7 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
-import { auctionsAPI, AuctionWithDetails, PublicBidHistoryItem } from '../services/auctionsAPI';
+import { auctionsAPI, auctionSocket, AuctionWithDetails, PublicBidHistoryItem } from '../services/auctionsAPI';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -48,6 +48,8 @@ const AuctionDetailsScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [bidAmount, setBidAmount] = useState('');
   const [bidModalVisible, setBidModalVisible] = useState(false);
+  const [proxyBidModalVisible, setProxyBidModalVisible] = useState(false);
+  const [maxBidAmount, setMaxBidAmount] = useState('');
   const [placingBid, setPlacingBid] = useState(false);
   const [watchlistLoading, setWatchlistLoading] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
@@ -55,6 +57,16 @@ const AuctionDetailsScreen = () => {
 
   // Refs
   const timeUpdateInterval = useRef<NodeJS.Timeout | null>(null);
+
+  // Load bid history separately for refresh
+  const loadBidHistory = async () => {
+    try {
+      const history = await auctionsAPI.getBidHistory(auctionId, 20);
+      setBidHistory(history);
+    } catch (error) {
+      console.error('Error loading bid history:', error);
+    }
+  };
 
   // Load auction data
   const loadAuctionData = async () => {
@@ -68,8 +80,7 @@ const AuctionDetailsScreen = () => {
       setBidAmount(nextBid.toString());
 
       // Load bid history
-      const history = await auctionsAPI.getBidHistory(auctionId, 20);
-      setBidHistory(history);
+      await loadBidHistory();
 
     } catch (error) {
       console.error('Error loading auction:', error);
@@ -93,6 +104,48 @@ const AuctionDetailsScreen = () => {
 
   useEffect(() => {
     loadAuctionData();
+
+    // Connect to WebSocket for real-time updates
+    auctionSocket.connect();
+    auctionSocket.joinAuction(auctionId, user?.id);
+
+    // Listen for real-time bid updates
+    const handleNewBid = (data: any) => {
+      if (data.auction_id === auctionId) {
+        // Update current bid
+        setAuction(prev => prev ? { ...prev, current_bid: data.amount, total_bids: (prev.total_bids || 0) + 1 } : null);
+        
+        // Refresh bid history
+        loadBidHistory();
+      }
+    };
+
+    const handleAuctionStatusChanged = (data: any) => {
+      if (data.auction_id === auctionId) {
+        loadAuctionData(); // Reload everything when status changes
+      }
+    };
+
+    const handleAuctionExtended = (data: any) => {
+      if (data.auction_id === auctionId && data.new_end_time) {
+        const newEndTime = new Date(data.new_end_time);
+        const now = new Date();
+        const newSecondsRemaining = Math.floor((newEndTime.getTime() - now.getTime()) / 1000);
+        setTimeRemaining(newSecondsRemaining);
+        Alert.alert('Auction Extended', `Auction extended by ${data.extension_seconds / 60} minutes due to late bid!`);
+      }
+    };
+
+    auctionSocket.on('new_bid', handleNewBid);
+    auctionSocket.on('auction_status_changed', handleAuctionStatusChanged);
+    auctionSocket.on('auction_extended', handleAuctionExtended);
+
+    return () => {
+      auctionSocket.off('new_bid', handleNewBid);
+      auctionSocket.off('auction_status_changed', handleAuctionStatusChanged);
+      auctionSocket.off('auction_extended', handleAuctionExtended);
+      auctionSocket.leaveAuction(auctionId);
+    };
   }, [auctionId]);
 
   // Start timer
@@ -147,6 +200,46 @@ const AuctionDetailsScreen = () => {
 
     } catch (error) {
       // Error handling is done in the API service
+    } finally {
+      setPlacingBid(false);
+    }
+  };
+
+  const handlePlaceProxyBid = async () => {
+    if (!user || !auction) return;
+
+    const currentBidAmount = parseFloat(bidAmount);
+    const maxBid = parseFloat(maxBidAmount);
+    const minimumBid = auction.current_bid + auction.bid_increment;
+
+    if (isNaN(currentBidAmount) || currentBidAmount < minimumBid) {
+      Alert.alert('Invalid Bid', `Minimum bid is ₣${minimumBid.toFixed(2)}`);
+      return;
+    }
+
+    if (isNaN(maxBid) || maxBid < currentBidAmount) {
+      Alert.alert('Invalid Max Bid', 'Maximum bid must be greater than current bid');
+      return;
+    }
+
+    setPlacingBid(true);
+
+    try {
+      await auctionsAPI.placeBid({
+        auction_id: auctionId,
+        amount: currentBidAmount,
+        bid_type: 'proxy',
+        max_bid_amount: maxBid,
+      });
+
+      setProxyBidModalVisible(false);
+      Alert.alert(
+        'Proxy Bid Set!',
+        `You'll automatically bid up to ₣${maxBid.toFixed(2)} to stay winning.`
+      );
+      loadAuctionData();
+    } catch (error: any) {
+      // Error handled in API
     } finally {
       setPlacingBid(false);
     }
@@ -429,18 +522,43 @@ const AuctionDetailsScreen = () => {
             </View>
           )}
 
-          {/* Active auction - Bid button */}
+          {/* Active auction - Bid button OR Watch Live */}
           {auction.time_status === 'active' && (
-            <TouchableOpacity
-              style={styles.bidButton}
-              onPress={openBidModal}
-              disabled={auction.seller_id === user.id}
-            >
-              <Text style={styles.bidButtonText}>
-                {auction.seller_id === user.id ? 'Your Auction' : 'Place Bid'}
-              </Text>
-              <Ionicons name="hammer" size={20} color="white" />
-            </TouchableOpacity>
+            <>
+              {auction.auction_type === 'live' && auction.stream_url && (
+                <TouchableOpacity
+                  style={[styles.bidButton, styles.liveButton]}
+                  onPress={() => navigation.navigate('AuctionLiveViewer', { auctionId: auction.id })}
+                >
+                  <View style={styles.liveDot} />
+                  <Text style={styles.bidButtonText}>Watch Live Stream</Text>
+                  <Ionicons name="videocam" size={20} color="white" />
+                </TouchableOpacity>
+              )}
+              
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  style={[styles.bidButton, { flex: 2 }, auction.auction_type === 'live' && styles.secondaryButton]}
+                  onPress={openBidModal}
+                  disabled={auction.seller_id === user.id}
+                >
+                  <Text style={styles.bidButtonText}>
+                    {auction.seller_id === user.id ? 'Your Auction' : 'Place Bid'}
+                  </Text>
+                  <Ionicons name="hammer" size={20} color="white" />
+                </TouchableOpacity>
+                
+                {auction.seller_id !== user.id && (
+                  <TouchableOpacity
+                    style={[styles.bidButton, styles.proxyBidButton, { flex: 1 }]}
+                    onPress={() => setProxyBidModalVisible(true)}
+                  >
+                    <Ionicons name="flash" size={18} color="white" />
+                    <Text style={[styles.bidButtonText, { fontSize: 14 }]}>Auto</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
           )}
 
           {/* Ended auction - Winner checkout button */}
@@ -515,6 +633,88 @@ const AuctionDetailsScreen = () => {
                   <ActivityIndicator size="small" color="white" />
                 ) : (
                   <Text style={styles.confirmButtonText}>Place Bid</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Proxy Bid Modal */}
+      <Modal
+        visible={proxyBidModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setProxyBidModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>⚡ Set Auto-Bid</Text>
+              <TouchableOpacity onPress={() => setProxyBidModalVisible(false)}>
+                <Ionicons name="close" size={24} color="white" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalDescription}>
+              Set a maximum bid and we'll automatically bid for you up to that amount to keep you winning.
+            </Text>
+
+            <Text style={styles.modalInfo}>
+              Current bid: ₣{auction?.current_bid.toFixed(2)}
+            </Text>
+            <Text style={styles.modalInfo}>
+              Minimum bid: ₣{auction ? (auction.current_bid + auction.bid_increment).toFixed(2) : '0.00'}
+            </Text>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Your Initial Bid</Text>
+              <TextInput
+                style={styles.bidInput}
+                value={bidAmount}
+                onChangeText={setBidAmount}
+                placeholder="Enter initial bid"
+                placeholderTextColor="#888"
+                keyboardType="numeric"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Maximum Bid (Auto-Bid Limit)</Text>
+              <TextInput
+                style={styles.bidInput}
+                value={maxBidAmount}
+                onChangeText={setMaxBidAmount}
+                placeholder="Enter max bid"
+                placeholderTextColor="#888"
+                keyboardType="numeric"
+              />
+            </View>
+
+            <View style={styles.proxyExplainer}>
+              <Ionicons name="information-circle" size={16} color="#3498DB" />
+              <Text style={styles.proxyExplainerText}>
+                We'll only bid what's needed to keep you winning, up to your maximum.
+              </Text>
+            </View>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setProxyBidModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.confirmButton, placingBid && styles.disabledButton]}
+                onPress={handlePlaceProxyBid}
+                disabled={placingBid}
+              >
+                {placingBid ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <Text style={styles.confirmButtonText}>Set Auto-Bid</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -863,6 +1063,20 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginRight: 8,
   },
+  liveButton: {
+    backgroundColor: '#E74C3C',
+    marginBottom: 12,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'white',
+    marginRight: 8,
+  },
+  secondaryButton: {
+    backgroundColor: '#555',
+  },
   checkoutButton: {
     backgroundColor: '#27AE60', // Green for winner
   },
@@ -946,6 +1160,38 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.6,
+  },
+  proxyBidButton: {
+    backgroundColor: '#F39C12',
+  },
+  modalDescription: {
+    color: '#aaa',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  proxyExplainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 20,
+  },
+  proxyExplainerText: {
+    color: '#3498DB',
+    fontSize: 12,
+    marginLeft: 8,
+    flex: 1,
   },
   upcomingNotice: {
     alignItems: 'center',

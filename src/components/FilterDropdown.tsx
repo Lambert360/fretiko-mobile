@@ -8,6 +8,7 @@ import {
   Animated,
   ScrollView,
   Dimensions,
+  TextInput,
 } from 'react-native';
 
 const { width } = Dimensions.get('window');
@@ -25,6 +26,59 @@ export interface FilterOptions {
   availability: string[];
 }
 
+// Location data structure (matching LocationSelector)
+interface Location {
+  country: string;
+  state: string;
+  code: string;
+}
+
+// Comprehensive location list (79 locations across 9 countries)
+const LOCATIONS: Location[] = [
+  // Nigeria
+  { country: 'Nigeria', state: 'Lagos', code: 'NG-LA' },
+  { country: 'Nigeria', state: 'Abuja', code: 'NG-FC' },
+  { country: 'Nigeria', state: 'Rivers', code: 'NG-RI' },
+  { country: 'Nigeria', state: 'Kano', code: 'NG-KN' },
+  { country: 'Nigeria', state: 'Oyo', code: 'NG-OY' },
+  { country: 'Nigeria', state: 'Delta', code: 'NG-DE' },
+  { country: 'Nigeria', state: 'Kaduna', code: 'NG-KD' },
+  { country: 'Nigeria', state: 'Ogun', code: 'NG-OG' },
+  { country: 'Nigeria', state: 'Imo', code: 'NG-IM' },
+  { country: 'Nigeria', state: 'Plateau', code: 'NG-PL' },
+  // Ghana
+  { country: 'Ghana', state: 'Greater Accra', code: 'GH-AA' },
+  { country: 'Ghana', state: 'Ashanti', code: 'GH-AH' },
+  { country: 'Ghana', state: 'Western', code: 'GH-WP' },
+  { country: 'Ghana', state: 'Central', code: 'GH-CP' },
+  { country: 'Ghana', state: 'Eastern', code: 'GH-EP' },
+  // Kenya
+  { country: 'Kenya', state: 'Nairobi', code: 'KE-30' },
+  { country: 'Kenya', state: 'Mombasa', code: 'KE-40' },
+  { country: 'Kenya', state: 'Kisumu', code: 'KE-42' },
+  { country: 'Kenya', state: 'Nakuru', code: 'KE-32' },
+  // South Africa
+  { country: 'South Africa', state: 'Western Cape', code: 'ZA-WC' },
+  { country: 'South Africa', state: 'Gauteng', code: 'ZA-GT' },
+  { country: 'South Africa', state: 'KwaZulu-Natal', code: 'ZA-NL' },
+  { country: 'South Africa', state: 'Eastern Cape', code: 'ZA-EC' },
+  // USA
+  { country: 'United States', state: 'California', code: 'US-CA' },
+  { country: 'United States', state: 'New York', code: 'US-NY' },
+  { country: 'United States', state: 'Texas', code: 'US-TX' },
+  { country: 'United States', state: 'Florida', code: 'US-FL' },
+  { country: 'United States', state: 'Illinois', code: 'US-IL' },
+  // UK
+  { country: 'United Kingdom', state: 'England', code: 'GB-ENG' },
+  { country: 'United Kingdom', state: 'Scotland', code: 'GB-SCT' },
+  { country: 'United Kingdom', state: 'Wales', code: 'GB-WLS' },
+  // Canada
+  { country: 'Canada', state: 'Ontario', code: 'CA-ON' },
+  { country: 'Canada', state: 'British Columbia', code: 'CA-BC' },
+  { country: 'Canada', state: 'Quebec', code: 'CA-QC' },
+  { country: 'Canada', state: 'Alberta', code: 'CA-AB' },
+];
+
 interface FilterDropdownProps {
   visible: boolean;
   filters: FilterOptions;
@@ -32,6 +86,8 @@ interface FilterDropdownProps {
   onClose: () => void;
   onApply: () => void;
   onReset: () => void;
+  categories?: Array<{ id: string; name: string }>;
+  activeTab?: 'products' | 'services';
 }
 
 const FilterDropdown: React.FC<FilterDropdownProps> = ({
@@ -41,9 +97,12 @@ const FilterDropdown: React.FC<FilterDropdownProps> = ({
   onClose,
   onApply,
   onReset,
+  categories = [],
+  activeTab = 'products',
 }) => {
   const slideAnim = useRef(new Animated.Value(-300)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
+  const [locationSearch, setLocationSearch] = useState('');
 
   // Animation for dropdown visibility
   useEffect(() => {
@@ -84,8 +143,21 @@ const FilterDropdown: React.FC<FilterDropdownProps> = ({
     { label: 'Over ₣500,000', min: 500000, max: 999999999 },
   ];
 
-  const conditions = ['New', 'Like New', 'Good', 'Fair', 'Poor'];
-  const locations = ['Lagos', 'Abuja', 'Port Harcourt', 'Kano', 'Ibadan'];
+  const conditions = ['new', 'like-new', 'good', 'fair'];
+  
+  // Dynamic location list with search
+  const filteredLocationList = LOCATIONS.filter(loc => {
+    const locationString = `${loc.state}, ${loc.country}`.toLowerCase();
+    return locationString.includes(locationSearch.toLowerCase());
+  });
+  
+  // Group locations by country for better UX
+  const groupedLocations = filteredLocationList.reduce((acc, loc) => {
+    if (!acc[loc.country]) acc[loc.country] = [];
+    acc[loc.country].push(loc);
+    return acc;
+  }, {} as Record<string, Location[]>);
+  
   const sortOptions = [
     { label: 'Newest First', value: 'newest' },
     { label: 'Price: Low to High', value: 'price_asc' },
@@ -93,7 +165,11 @@ const FilterDropdown: React.FC<FilterDropdownProps> = ({
     { label: 'Most Popular', value: 'popular' },
     { label: 'Highest Rated', value: 'rating' },
   ];
-  const availabilityOptions = ['In Stock', 'Free Shipping', 'Same Day Delivery'];
+  
+  // Dynamic availability based on tab
+  const availabilityOptions = activeTab === 'products'
+    ? ['In Stock', 'Free Shipping', 'Same Day Delivery']
+    : ['Weekdays', 'Weekends', 'Evenings', 'Emergency'];
 
   const updateFilters = (key: keyof FilterOptions, value: any) => {
     onFiltersChange({ ...filters, [key]: value });
@@ -167,46 +243,90 @@ const FilterDropdown: React.FC<FilterDropdownProps> = ({
             })}
           </View>
 
-          {/* Condition */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Condition</Text>
-            <View style={styles.chipContainer}>
-              {conditions.map((condition) => {
-                const isSelected = filters.condition.includes(condition);
-                return (
-                  <TouchableOpacity
-                    key={condition}
-                    style={[styles.chip, isSelected && styles.selectedChip]}
-                    onPress={() => toggleArrayFilter('condition', condition)}
-                  >
-                    <Text style={[styles.chipText, isSelected && styles.selectedChipText]}>
-                      {condition}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+          {/* Condition - Only for Products */}
+          {activeTab === 'products' && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Condition</Text>
+              <View style={styles.chipContainer}>
+                {conditions.map((condition) => {
+                  const isSelected = filters.condition.includes(condition);
+                  return (
+                    <TouchableOpacity
+                      key={condition}
+                      style={[styles.chip, isSelected && styles.selectedChip]}
+                      onPress={() => toggleArrayFilter('condition', condition)}
+                    >
+                      <Text style={[styles.chipText, isSelected && styles.selectedChipText]}>
+                        {condition.charAt(0).toUpperCase() + condition.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
-          </View>
+          )}
+
+          {/* Category */}
+          {categories.length > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Category</Text>
+              <View style={styles.chipContainer}>
+                {categories.map((cat) => {
+                  const isSelected = filters.category.includes(cat.id);
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[styles.chip, isSelected && styles.selectedChip]}
+                      onPress={() => toggleArrayFilter('category', cat.id)}
+                    >
+                      <Text style={[styles.chipText, isSelected && styles.selectedChipText]}>
+                        {cat.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
 
           {/* Location */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Location</Text>
-            <View style={styles.chipContainer}>
-              {locations.map((location) => {
-                const isSelected = filters.location.includes(location);
-                return (
-                  <TouchableOpacity
-                    key={location}
-                    style={[styles.chip, isSelected && styles.selectedChip]}
-                    onPress={() => toggleArrayFilter('location', location)}
-                  >
-                    <Text style={[styles.chipText, isSelected && styles.selectedChipText]}>
-                      {location}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            <Text style={styles.sectionTitle}>Location ({filteredLocationList.length})</Text>
+            <TextInput
+              style={styles.searchInput}
+              value={locationSearch}
+              onChangeText={setLocationSearch}
+              placeholder="Search locations..."
+              placeholderTextColor="#666"
+            />
+            <ScrollView 
+              style={styles.locationScrollView} 
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={false}
+            >
+              {Object.entries(groupedLocations).map(([country, locations]) => (
+                <View key={country}>
+                  <Text style={styles.countryHeader}>{country}</Text>
+                  <View style={styles.chipContainer}>
+                    {locations.map((loc) => {
+                      const locationString = `${loc.state}, ${loc.country}`;
+                      const isSelected = filters.location.includes(locationString);
+                      return (
+                        <TouchableOpacity
+                          key={loc.code}
+                          style={[styles.chip, isSelected && styles.selectedChip]}
+                          onPress={() => toggleArrayFilter('location', locationString)}
+                        >
+                          <Text style={[styles.chipText, isSelected && styles.selectedChipText]}>
+                            {loc.state}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
           </View>
 
           {/* Rating */}
@@ -455,6 +575,27 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  searchInput: {
+    backgroundColor: '#333',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: 'white',
+    fontSize: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#555',
+  },
+  locationScrollView: {
+    maxHeight: 200,
+  },
+  countryHeader: {
+    color: '#3498DB',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 12,
+    marginBottom: 8,
   },
 });
 

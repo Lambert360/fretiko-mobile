@@ -107,6 +107,11 @@ class OrdersAPI {
     }
   }
 
+  // Get basic order information (alias for getOrderDetails for compatibility)
+  async getOrder(orderId: string): Promise<OrderDetails> {
+    return this.getOrderDetails(orderId);
+  }
+
   // Get tracking information for an order
   async getOrderTracking(orderId: string): Promise<TrackingEvent[]> {
     try {
@@ -190,7 +195,73 @@ class OrdersAPI {
     }
   }
 
-  // Report order issue
+  // Get order tracking data (real-time location, rider info, etc.)
+  async getOrderTrackingData(orderId: string): Promise<any> {
+    try {
+      const response = await api.get(`/orders/${orderId}/tracking`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching order tracking data:', error);
+      throw error;
+    }
+  }
+
+  // Update order status
+  async updateOrderStatus(orderId: string, status: string): Promise<void> {
+    try {
+      await api.put(`/orders/${orderId}/status`, { status });
+    } catch (error) {
+      console.error('Error updating order status:', error);
+      throw error;
+    }
+  }
+
+  // Confirm order received (buyer action)
+  async confirmOrderReceived(orderId: string): Promise<void> {
+    try {
+      await api.post(`/orders/${orderId}/confirm-received`);
+    } catch (error) {
+      console.error('Error confirming order received:', error);
+      throw error;
+    }
+  }
+
+  // Auto-release escrow (system action)
+  async autoReleaseEscrow(orderId: string): Promise<void> {
+    try {
+      await api.post(`/orders/${orderId}/auto-release-escrow`);
+    } catch (error) {
+      console.error('Error auto-releasing escrow:', error);
+      throw error;
+    }
+  }
+
+  // ✅ Buyer confirms and releases funds immediately (no 24-hour wait)
+  async confirmAndReleaseFunds(orderId: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await api.post(`/orders/${orderId}/release-funds`);
+      return response.data;
+    } catch (error) {
+      console.error('Error releasing funds:', error);
+      throw error;
+    }
+  }
+
+  // ✅ Buyer reports issue with order (stops escrow, gets refund minus rider fee)
+  async reportIssue(orderId: string, reason: string, description?: string): Promise<{ success: boolean; message: string; refundAmount: number }> {
+    try {
+      const response = await api.post(`/orders/${orderId}/report-issue`, {
+        reason,
+        description,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error reporting issue:', error);
+      throw error;
+    }
+  }
+
+  // Report order issue (legacy method - keeping for backwards compatibility)
   async reportOrderIssue(orderId: string, issue: {
     type: 'delivery' | 'quality' | 'missing_items' | 'damaged' | 'other';
     description: string;
@@ -219,51 +290,30 @@ class OrdersAPI {
     }
   }
 
-  // Update order status (for milestone actions)
-  async updateOrderStatus(orderId: string, status: string): Promise<void> {
-    try {
-      await api.patch(`/orders/${orderId}/status`, { status });
-    } catch (error) {
-      console.error('Error updating order status:', error);
-      throw error;
-    }
-  }
 
-  // Confirm order received (buyer action)
-  async confirmOrderReceived(orderId: string): Promise<void> {
-    try {
-      await api.post(`/orders/${orderId}/confirm-receipt`);
-    } catch (error) {
-      console.error('Error confirming order receipt:', error);
-      throw error;
-    }
-  }
+  // ========== MULTI-VENDOR ORDER GROUP METHODS ==========
 
-  // Auto-release escrow funds
-  async autoReleaseEscrow(orderId: string): Promise<void> {
-    try {
-      await api.post(`/orders/${orderId}/auto-release-escrow`);
-    } catch (error) {
-      console.error('Error auto-releasing escrow:', error);
-      throw error;
-    }
-  }
-
-  // Get real-time order tracking data
-  async getOrderTrackingData(orderId: string): Promise<{
-    currentPhase: any;
-    timerInfo: any;
-    riderLocation?: any;
-    vendorLocation?: any;
-    buyerLocation?: any;
-    riderInfo?: any;
-    escrowInfo?: any;
+  // Get order group details
+  async getOrderGroup(orderGroupId: string): Promise<{
+    group: any;
+    orders: any[];
   }> {
     try {
-      const response = await api.get(`/orders/${orderId}/tracking-data`);
+      const response = await api.get(`/orders/group/${orderGroupId}`);
       return response.data;
     } catch (error) {
-      console.error('Error fetching tracking data:', error);
+      console.error('Error fetching order group:', error);
+      throw error;
+    }
+  }
+
+  // Confirm multiple orders (bulk)
+  async confirmMultipleOrders(orderIds: string[]): Promise<{ success: boolean; confirmed: number }> {
+    try {
+      const response = await api.post('/orders/confirm-multiple', { orderIds });
+      return response.data;
+    } catch (error) {
+      console.error('Error confirming multiple orders:', error);
       throw error;
     }
   }

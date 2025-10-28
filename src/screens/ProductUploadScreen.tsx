@@ -21,6 +21,7 @@ import { API_BASE_URL } from '../config/api';
 import * as SecureStore from 'expo-secure-store';
 import DualCurrencyInput from '../components/DualCurrencyInput';
 import { currencyAPI } from '../services/currencyAPI';
+import LocationSelector from '../components/LocationSelector';
 
 interface ProductUploadScreenProps {
   navigation: any;
@@ -55,6 +56,7 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
   const [categoryId, setCategoryId] = useState('');
   const [isPriceValid, setIsPriceValid] = useState(true);
   const [priceError, setPriceError] = useState<string>('');
+  const [isLocationSelectorVisible, setLocationSelectorVisible] = useState(false);
   
   const supportedCurrencies = ['NGN', 'USD', 'EUR', 'GBP', 'CAD', 'AUD'];
 
@@ -75,6 +77,11 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
   const handlePriceValidation = (isValid: boolean, error?: string) => {
     setIsPriceValid(isValid);
     setPriceError(error || '');
+  };
+
+  const handleLocationSelect = (selectedLocation: string) => {
+    setLocation(selectedLocation);
+    setLocationSelectorVisible(false);
   };
 
   const conditions = [
@@ -489,13 +496,21 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
 
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Location</Text>
-            <TextInput
-              style={styles.textInput}
-              value={location}
-              onChangeText={setLocation}
-              placeholder="City, State"
-              placeholderTextColor="rgba(255,255,255,0.5)"
-            />
+            <TouchableOpacity
+              style={styles.locationButton}
+              onPress={() => setLocationSelectorVisible(true)}
+            >
+              <View style={styles.locationButtonContent}>
+                <Ionicons name="location" size={20} color={location ? '#FFFFFF' : 'rgba(255,255,255,0.5)'} />
+                <Text style={[
+                  styles.locationButtonText,
+                  !location && styles.locationButtonPlaceholder
+                ]}>
+                  {location || 'Select location'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.3)" />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -567,6 +582,14 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Location Selector Modal */}
+      <LocationSelector
+        visible={isLocationSelectorVisible}
+        selectedLocation={location}
+        onLocationSelect={handleLocationSelect}
+        onClose={() => setLocationSelectorVisible(false)}
+      />
     </KeyboardAvoidingView>
   );
 };
@@ -826,6 +849,30 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 120,
     alignSelf: 'flex-start',
+  },
+  locationButton: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  locationButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  locationButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginLeft: 12,
+  },
+  locationButtonPlaceholder: {
+    color: 'rgba(255,255,255,0.5)',
   },
 });
 

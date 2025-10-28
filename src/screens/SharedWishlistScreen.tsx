@@ -13,6 +13,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { wishlistAPI, WishlistItem } from '../services/wishlistAPI';
+import { walletAPI } from '../services/walletAPI';
+import { WishlistAddItemDrawer } from '../components/WishlistAddItemDrawer';
+import MultiStepGiftPurchase from '../components/MultiStepGiftPurchase';
 
 interface SharedWishlistScreenProps {
   navigation: any;
@@ -27,6 +30,9 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [canAddItems, setCanAddItems] = useState(false);
+  const [isAddDrawerVisible, setIsAddDrawerVisible] = useState(false);
+  const [isMultiStepGiftVisible, setIsMultiStepGiftVisible] = useState(false);
+  const [selectedGiftItems, setSelectedGiftItems] = useState<WishlistItem[]>([]);
 
   useEffect(() => {
     loadSharedWishlist();
@@ -36,14 +42,17 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
     try {
       setLoading(true);
 
-      // Get the shared wishlist items
-      const items = await wishlistAPI.getCollaborativeWishlist(ownerId);
+      // Get the shared wishlist items (selective sharing)
+      const items = await wishlistAPI.getSharedWishlistItems(ownerId);
       setWishlistItems(items);
 
-      // Check if we have permission to add items
-      // This would be determined by the share_type in wishlist_shares
-      // For now, we'll assume view_and_add permission
-      setCanAddItems(true);
+      // Check permission from first item (all items have same permission)
+      if (items.length > 0 && items[0].canAddItems !== undefined) {
+        setCanAddItems(items[0].canAddItems);
+      } else {
+        // If no items or no permission info, assume view-only
+        setCanAddItems(false);
+      }
     } catch (error: any) {
       console.error('Error loading shared wishlist:', error);
       Alert.alert('Error', error.message || 'Failed to load wishlist');
@@ -60,12 +69,8 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
   };
 
   const handleBuyAsGift = (item: WishlistItem) => {
-    // Navigate to gift checkout screen
-    navigation.navigate('GiftCheckout', {
-      wishlistItem: item,
-      recipientId: ownerId,
-      recipientName: ownerUsername,
-    });
+    setSelectedGiftItems([item]);
+    setIsMultiStepGiftVisible(true);
   };
 
   const handleProductPress = (productId: string) => {
@@ -73,15 +78,32 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
   };
 
   const handleAddItemToWishlist = () => {
-    // Navigate to products/services to add items
-    Alert.alert(
-      'Add Item',
-      'Browse products and services to add items to this wishlist',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Browse Products', onPress: () => navigation.navigate('Home', { screen: 'HomeTab' }) },
-      ]
-    );
+    // Open the add item drawer
+    setIsAddDrawerVisible(true);
+  };
+
+  const handleItemAdded = () => {
+    // Refresh the wishlist when an item is added
+    loadSharedWishlist();
+  };
+
+  const calculateTotalPrice = () => {
+    return wishlistItems.reduce((total, item) => total + item.price, 0);
+  };
+
+  const handleBuyAllAsGift = () => {
+    if (wishlistItems.length === 0) {
+      Alert.alert('Empty Wishlist', 'There are no items in this wishlist to purchase.');
+      return;
+    }
+
+    setSelectedGiftItems(wishlistItems);
+    setIsMultiStepGiftVisible(true);
+  };
+
+  const handleGiftPurchaseComplete = () => {
+    // Refresh the wishlist to show updated items
+    loadSharedWishlist();
   };
 
   const renderWishlistItem = ({ item }: { item: WishlistItem }) => (
@@ -93,7 +115,7 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
 
       <View style={styles.itemInfo}>
         <Text style={styles.productName} numberOfLines={2}>{item.productName}</Text>
-        <Text style={styles.productPrice}>₦{item.price.toFixed(2)}</Text>
+        <Text style={styles.productPrice}>{walletAPI.formatFreti(item.price)}</Text>
         <Text style={styles.addedDate}>
           {item.addedByFriend
             ? `Added by ${item.addedByFriend}`
@@ -182,6 +204,40 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
           }
           ItemSeparatorComponent={() => <View style={styles.itemSeparator} />}
         />
+      )}
+
+      {/* Add Item Drawer */}
+      <WishlistAddItemDrawer
+        visible={isAddDrawerVisible}
+        onClose={() => setIsAddDrawerVisible(false)}
+        ownerId={ownerId}
+        onItemAdded={handleItemAdded}
+      />
+
+      <MultiStepGiftPurchase
+        visible={isMultiStepGiftVisible}
+        onClose={() => setIsMultiStepGiftVisible(false)}
+        items={selectedGiftItems}
+        recipientId={ownerId}
+        recipientName={ownerUsername}
+        onPurchaseComplete={handleGiftPurchaseComplete}
+      />
+
+      {/* Buy All as Gift Floating Action Button */}
+      {wishlistItems.length > 0 && (
+        <TouchableOpacity
+          style={styles.buyAllFAB}
+          onPress={handleBuyAllAsGift}
+          activeOpacity={0.9}
+        >
+          <View style={styles.fabContent}>
+            <Ionicons name="gift" size={24} color="#FFF" />
+            <View style={styles.fabTextContainer}>
+              <Text style={styles.fabText}>Buy All as Gift</Text>
+              <Text style={styles.fabPrice}>{walletAPI.formatFreti(calculateTotalPrice())}</Text>
+            </View>
+          </View>
+        </TouchableOpacity>
       )}
     </View>
   );
@@ -317,6 +373,45 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     lineHeight: 22,
+  },
+  buyAllFAB: {
+    position: 'absolute',
+    bottom: 30,
+    left: 20,
+    right: 20,
+    backgroundColor: '#E91E63',
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    shadowColor: '#E91E63',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  fabContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  fabTextContainer: {
+    alignItems: 'center',
+  },
+  fabText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  fabPrice: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
+    opacity: 0.9,
+    marginTop: 2,
   },
 });
 

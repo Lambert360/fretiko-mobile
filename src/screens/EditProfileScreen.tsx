@@ -13,6 +13,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { userAPI, UpdateProfileData } from '../services/userAPI';
 import { AvatarUpload } from '../components/AvatarUpload';
 import { BackgroundUpload } from '../components/BackgroundUpload';
@@ -40,12 +41,22 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
     location: initialProfile?.location || '',
     phone: initialProfile?.phone || '',
     dateOfBirth: initialProfile?.dateOfBirth || '',
+    gender: initialProfile?.gender || '',
     isSeller: becomeSeller || initialProfile?.isSeller || false,
+    isRider: initialProfile?.isRider || false,
   });
+  const [showGenderPicker, setShowGenderPicker] = useState(false);
   
   const [loading, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [backgroundUrl, setBackgroundUrl] = useState<string | undefined>(initialProfile?.bgPicUrl);
+
+  const genderOptions = [
+    { label: 'Male', value: 'male', icon: 'male' },
+    { label: 'Female', value: 'female', icon: 'female' },
+    { label: 'Other', value: 'other', icon: 'male-female' },
+    { label: 'Prefer not to say', value: 'prefer_not_to_say', icon: 'help-circle' },
+  ];
 
   useEffect(() => {
     // Auto-focus on becoming seller if that's the intent
@@ -55,8 +66,8 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
         'Enable seller mode to start selling products and services on Fretiko!',
         [
           { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Continue', 
+          {
+            text: 'Continue',
             onPress: () => setFormData(prev => ({ ...prev, isSeller: true }))
           }
         ]
@@ -130,19 +141,29 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
         location: formData.location.trim() || undefined,
         phone: formData.phone.trim() || undefined,
         dateOfBirth: formData.dateOfBirth || undefined,
+        gender: formData.gender || undefined,
         isSeller: formData.isSeller,
+        isRider: formData.isRider,
       };
 
       await userAPI.updateProfile(updateData);
       
+      // Determine success message based on role changes
+      let successMessage = 'Your profile has been updated successfully!';
+      if (formData.isSeller && !initialProfile?.isSeller) {
+        successMessage = '🎉 Welcome to Fretiko sellers! Your profile has been updated.';
+      } else if (formData.isRider && !initialProfile?.isRider) {
+        successMessage = '🏍️ Welcome to Fretiko riders! Your profile has been updated.';
+      } else if (formData.isSeller && formData.isRider && !initialProfile?.isSeller && !initialProfile?.isRider) {
+        successMessage = '🎉 Welcome to Fretiko sellers and riders! Your profile has been updated.';
+      }
+
       Alert.alert(
         'Success',
-        formData.isSeller && !initialProfile?.isSeller 
-          ? '🎉 Welcome to Fretiko sellers! Your profile has been updated.'
-          : 'Your profile has been updated successfully!',
+        successMessage,
         [
-          { 
-            text: 'OK', 
+          {
+            text: 'OK',
             onPress: () => navigation.goBack()
           }
         ]
@@ -159,13 +180,15 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
 
   const handleCancel = () => {
     // Check if there are unsaved changes
-    const hasChanges = 
+    const hasChanges =
       formData.username !== (initialProfile?.username || '') ||
       formData.bio !== (initialProfile?.bio || '') ||
       formData.location !== (initialProfile?.location || '') ||
       formData.phone !== (initialProfile?.phone || '') ||
       formData.dateOfBirth !== (initialProfile?.dateOfBirth || '') ||
-      formData.isSeller !== (initialProfile?.isSeller || false);
+      formData.gender !== (initialProfile?.gender || '') ||
+      formData.isSeller !== (initialProfile?.isSeller || false) ||
+      formData.isRider !== (initialProfile?.isRider || false);
 
     if (hasChanges) {
       Alert.alert(
@@ -309,6 +332,61 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
             {errors.dateOfBirth && <Text style={styles.errorText}>{errors.dateOfBirth}</Text>}
           </View>
 
+          {/* Gender */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Gender</Text>
+            <TouchableOpacity
+              style={styles.genderSelector}
+              onPress={() => setShowGenderPicker(!showGenderPicker)}
+            >
+              <Text style={[styles.genderText, !formData.gender && styles.genderPlaceholder]}>
+                {formData.gender
+                  ? genderOptions.find(g => g.value === formData.gender)?.label
+                  : 'Select your gender'}
+              </Text>
+              <Ionicons
+                name={showGenderPicker ? 'chevron-up' : 'chevron-down'}
+                size={20}
+                color="#666"
+              />
+            </TouchableOpacity>
+
+            {showGenderPicker && (
+              <View style={styles.genderOptions}>
+                {genderOptions.map((option) => (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.genderOption,
+                      formData.gender === option.value && styles.genderOptionSelected,
+                    ]}
+                    onPress={() => {
+                      updateFormData('gender', option.value);
+                      setShowGenderPicker(false);
+                    }}
+                  >
+                    <Ionicons
+                      name={option.icon as any}
+                      size={20}
+                      color={formData.gender === option.value ? '#007AFF' : '#666'}
+                    />
+                    <Text
+                      style={[
+                        styles.genderOptionText,
+                        formData.gender === option.value && styles.genderOptionTextSelected,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                    {formData.gender === option.value && (
+                      <Ionicons name="checkmark-circle" size={20} color="#007AFF" />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+
           {/* Seller Toggle */}
           <View style={styles.inputGroup}>
             <View style={styles.switchContainer}>
@@ -320,9 +398,63 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
               </View>
               <Switch
                 value={formData.isSeller}
-                onValueChange={(value) => updateFormData('isSeller', value)}
+                onValueChange={(value) => {
+                  if (value && formData.isRider) {
+                    Alert.alert(
+                      'Choose One Role',
+                      'You can only be a Seller or a Rider, not both. Do you want to switch to Seller?',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Switch to Seller',
+                          onPress: () => {
+                            setFormData(prev => ({ ...prev, isSeller: true, isRider: false }));
+                          }
+                        }
+                      ]
+                    );
+                  } else {
+                    updateFormData('isSeller', value);
+                  }
+                }}
                 trackColor={{ false: '#333', true: '#007AFF' }}
                 thumbColor={formData.isSeller ? '#FFFFFF' : '#BBBBBB'}
+              />
+            </View>
+          </View>
+
+          {/* Rider Toggle */}
+          <View style={styles.inputGroup}>
+            <View style={styles.switchContainer}>
+              <View style={styles.switchLabel}>
+                <Text style={styles.label}>🏍️ Rider Account</Text>
+                <Text style={styles.switchDescription}>
+                  Enable to deliver orders and earn money
+                </Text>
+              </View>
+              <Switch
+                value={formData.isRider}
+                onValueChange={(value) => {
+                  if (value && formData.isSeller) {
+                    Alert.alert(
+                      'Choose One Role',
+                      'You can only be a Seller or a Rider, not both. Do you want to switch to Rider?',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Switch to Rider',
+                          onPress: () => {
+                            setFormData(prev => ({ ...prev, isRider: true, isSeller: false }));
+                          }
+                        }
+                      ]
+                    );
+                  } else {
+                    updateFormData('isRider', value);
+                  }
+                }}
+                trackColor={{ false: '#333', true: '#FF9500' }}
+                thumbColor={formData.isRider ? '#FFFFFF' : '#BBBBBB'}
               />
             </View>
           </View>
@@ -336,6 +468,18 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
               <Text style={styles.benefitItem}>• Accept payments through Fretiko</Text>
               <Text style={styles.benefitItem}>• Access seller analytics</Text>
               <Text style={styles.benefitItem}>• Join the seller community</Text>
+            </View>
+          )}
+
+          {/* Rider Benefits (if becoming rider) */}
+          {formData.isRider && !initialProfile?.isRider && (
+            <View style={styles.riderBenefits}>
+              <Text style={styles.benefitsTitle}>🏍️ Rider Benefits:</Text>
+              <Text style={styles.benefitItem}>• Earn money from deliveries</Text>
+              <Text style={styles.benefitItem}>• Flexible working hours</Text>
+              <Text style={styles.benefitItem}>• Track earnings and trips</Text>
+              <Text style={styles.benefitItem}>• Build customer relationships</Text>
+              <Text style={styles.benefitItem}>• Be part of the delivery network</Text>
             </View>
           )}
         </ScrollView>
@@ -489,5 +633,56 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#B0B0B0',
     marginBottom: 4,
+  },
+  genderSelector: {
+    backgroundColor: '#1E1E1E',
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  genderText: {
+    fontSize: 16,
+    color: '#FFFFFF',
+  },
+  genderPlaceholder: {
+    color: '#666',
+  },
+  genderOptions: {
+    marginTop: 8,
+    backgroundColor: '#1E1E1E',
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  genderOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  genderOptionSelected: {
+    backgroundColor: 'rgba(0, 122, 255, 0.1)',
+  },
+  genderOptionText: {
+    flex: 1,
+    fontSize: 16,
+    color: '#FFFFFF',
+  },
+  genderOptionTextSelected: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  riderBenefits: {
+    backgroundColor: '#1E1E1E',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 8,
   },
 });

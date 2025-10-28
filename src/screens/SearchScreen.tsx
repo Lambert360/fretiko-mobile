@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   Animated,
   FlatList,
@@ -11,7 +11,10 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View
+  View,
+  Modal,
+  ActivityIndicator,
+  Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { searchAPI, SearchType, UserResult, RiderResult } from '../services/searchAPI';
@@ -40,6 +43,21 @@ const SearchScreen = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('For You');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
+  const [filters, setFilters] = useState({
+    showOnSale: false,
+    showNewArrivals: false,
+    showLiveNow: false,
+    showNearMe: false,
+    showTopRated: false,
+    showFreeShipping: false,
+    showVerifiedOnly: false,
+    priceRange: 'all', // 'all', 'under50', '50to200', 'over200'
+    sortBy: 'relevance', // 'relevance', 'price_low', 'price_high', 'newest', 'rating'
+  });
+  
+  // Debounce timer
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
   
   // Use our search hooks
   const { search, searchResults, isSearching, searchError, searchHistory, clearSearch } = useSearch();
@@ -114,6 +132,15 @@ const SearchScreen = () => {
     { id: '6', name: 'Bulk Orders', icon: 'car', color: '#673AB7' },
   ];
 
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (isSearchFocused) {
       Animated.parallel([
@@ -144,15 +171,8 @@ const SearchScreen = () => {
     }
   }, [isSearchFocused]);
 
-  const handleSearch = async (query: string) => {
-    setSearchQuery(query);
-    
-    // Clear search if query is empty
-    if (query.trim().length === 0) {
-      clearSearch();
-      return;
-    }
-
+  // Debounced search function
+  const performSearch = useCallback(async (query: string) => {
     // Validate query length
     if (query.trim().length < 2) {
       return; // Too short, wait for more input
@@ -195,23 +215,41 @@ const SearchScreen = () => {
       console.error('Search handling error:', error);
       // Error is already handled by the useSearch hook
     }
+  }, [activeTab, search]);
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    
+    // Clear search if query is empty
+    if (query.trim().length === 0) {
+      clearSearch();
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+      return;
+    }
+
+    // Clear existing timer
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+    }
+
+    // Set new timer - 500ms debounce
+    debounceTimer.current = setTimeout(() => {
+      performSearch(query);
+    }, 500);
   };
 
   const renderHeader = () => (
     <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
       <View style={styles.headerContent}>
-        <View style={styles.profileSection}>
-          <TouchableOpacity style={styles.profileButton}>
-            <Image
-              source={require('../../assets/horse.png')}
-              style={styles.profileImage}
-            />
-          </TouchableOpacity>
-        </View>
-
         <Animated.View style={[styles.searchContainer, { transform: [{ scale: scaleAnim }] }]}>
           <View style={styles.searchInputContainer}>
-            <Ionicons name="search" size={20} color="rgba(255,255,255,0.6)" style={styles.searchIcon} />
+            {isSearching ? (
+              <ActivityIndicator size="small" color="#3498DB" style={styles.searchIcon} />
+            ) : (
+              <Ionicons name="search" size={20} color="rgba(255,255,255,0.6)" style={styles.searchIcon} />
+            )}
             <TextInput
               style={styles.searchInput}
               placeholder="Search products, services, vendors..."
@@ -221,10 +259,13 @@ const SearchScreen = () => {
               onFocus={() => setIsSearchFocused(true)}
               onBlur={() => setIsSearchFocused(false)}
             />
-            {searchQuery.length > 0 && (
+            {searchQuery.length > 0 && !isSearching && (
               <TouchableOpacity onPress={() => {
                 setSearchQuery('');
                 clearSearch();
+                if (debounceTimer.current) {
+                  clearTimeout(debounceTimer.current);
+                }
               }} style={styles.clearButton}>
                 <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.6)" />
               </TouchableOpacity>
@@ -232,8 +273,14 @@ const SearchScreen = () => {
           </View>
         </Animated.View>
 
-        <TouchableOpacity style={styles.settingsButton}>
+        <TouchableOpacity 
+          style={styles.settingsButton}
+          onPress={() => setIsFilterModalVisible(true)}
+        >
           <Ionicons name="options-outline" size={22} color="#FFFFFF" />
+          {(filters.showOnSale || filters.showNearMe || filters.showTopRated || filters.showVerifiedOnly) && (
+            <View style={styles.filterActiveBadge} />
+          )}
         </TouchableOpacity>
       </View>
 
@@ -1117,11 +1164,178 @@ const SearchScreen = () => {
     }
   };
 
+  const renderFilterModal = () => (
+    <Modal
+      visible={isFilterModalVisible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={() => setIsFilterModalVisible(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          {/* Header */}
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Search Filters</Text>
+            <TouchableOpacity onPress={() => setIsFilterModalVisible(false)}>
+              <Ionicons name="close" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+            {/* Quick Filters */}
+            <Text style={styles.filterSectionTitle}>Quick Filters</Text>
+            <View style={styles.filterOptions}>
+              <View style={styles.filterRow}>
+                <Text style={styles.filterLabel}>On Sale</Text>
+                <Switch
+                  value={filters.showOnSale}
+                  onValueChange={(val) => setFilters({ ...filters, showOnSale: val })}
+                  trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#27AE60' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+              <View style={styles.filterRow}>
+                <Text style={styles.filterLabel}>New Arrivals</Text>
+                <Switch
+                  value={filters.showNewArrivals}
+                  onValueChange={(val) => setFilters({ ...filters, showNewArrivals: val })}
+                  trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#27AE60' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+              <View style={styles.filterRow}>
+                <Text style={styles.filterLabel}>Live Now</Text>
+                <Switch
+                  value={filters.showLiveNow}
+                  onValueChange={(val) => setFilters({ ...filters, showLiveNow: val })}
+                  trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#27AE60' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+              <View style={styles.filterRow}>
+                <Text style={styles.filterLabel}>Near Me</Text>
+                <Switch
+                  value={filters.showNearMe}
+                  onValueChange={(val) => setFilters({ ...filters, showNearMe: val })}
+                  trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#27AE60' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+              <View style={styles.filterRow}>
+                <Text style={styles.filterLabel}>Top Rated</Text>
+                <Switch
+                  value={filters.showTopRated}
+                  onValueChange={(val) => setFilters({ ...filters, showTopRated: val })}
+                  trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#27AE60' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+              <View style={styles.filterRow}>
+                <Text style={styles.filterLabel}>Free Shipping</Text>
+                <Switch
+                  value={filters.showFreeShipping}
+                  onValueChange={(val) => setFilters({ ...filters, showFreeShipping: val })}
+                  trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#27AE60' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+              <View style={styles.filterRow}>
+                <Text style={styles.filterLabel}>Verified Only</Text>
+                <Switch
+                  value={filters.showVerifiedOnly}
+                  onValueChange={(val) => setFilters({ ...filters, showVerifiedOnly: val })}
+                  trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#27AE60' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+            </View>
+
+            {/* Price Range */}
+            <Text style={styles.filterSectionTitle}>Price Range</Text>
+            <View style={styles.priceOptions}>
+              {['all', 'under50', '50to200', 'over200'].map((range) => (
+                <TouchableOpacity
+                  key={range}
+                  style={[styles.priceOption, filters.priceRange === range && styles.priceOptionActive]}
+                  onPress={() => setFilters({ ...filters, priceRange: range })}
+                >
+                  <Text style={[styles.priceOptionText, filters.priceRange === range && styles.priceOptionTextActive]}>
+                    {range === 'all' ? 'All Prices' : range === 'under50' ? 'Under ₣50' : range === '50to200' ? '₣50 - ₣200' : 'Over ₣200'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Sort By */}
+            <Text style={styles.filterSectionTitle}>Sort By</Text>
+            <View style={styles.sortOptions}>
+              {[
+                { id: 'relevance', label: 'Relevance', icon: 'star' },
+                { id: 'price_low', label: 'Price: Low to High', icon: 'arrow-up' },
+                { id: 'price_high', label: 'Price: High to Low', icon: 'arrow-down' },
+                { id: 'newest', label: 'Newest First', icon: 'time' },
+                { id: 'rating', label: 'Highest Rated', icon: 'trophy' },
+              ].map((sort) => (
+                <TouchableOpacity
+                  key={sort.id}
+                  style={[styles.sortOption, filters.sortBy === sort.id && styles.sortOptionActive]}
+                  onPress={() => setFilters({ ...filters, sortBy: sort.id })}
+                >
+                  <Ionicons 
+                    name={sort.icon as any} 
+                    size={18} 
+                    color={filters.sortBy === sort.id ? '#3498DB' : 'rgba(255,255,255,0.6)'} 
+                  />
+                  <Text style={[styles.sortOptionText, filters.sortBy === sort.id && styles.sortOptionTextActive]}>
+                    {sort.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+
+          {/* Footer Actions */}
+          <View style={styles.modalFooter}>
+            <TouchableOpacity
+              style={styles.resetButton}
+              onPress={() => setFilters({
+                showOnSale: false,
+                showNewArrivals: false,
+                showLiveNow: false,
+                showNearMe: false,
+                showTopRated: false,
+                showFreeShipping: false,
+                showVerifiedOnly: false,
+                priceRange: 'all',
+                sortBy: 'relevance',
+              })}
+            >
+              <Text style={styles.resetButtonText}>Reset All</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.applyButton}
+              onPress={() => {
+                setIsFilterModalVisible(false);
+                // Re-trigger search with filters if search query exists
+                if (searchQuery.trim().length >= 2) {
+                  performSearch(searchQuery);
+                }
+              }}
+            >
+              <Text style={styles.applyButtonText}>Apply Filters</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
   return (
     <View style={styles.container}>
       {renderHeader()}
       {!isSearchFocused && renderTabs()}
       {renderContent()}
+      {renderFilterModal()}
     </View>
   );
 };
@@ -1142,19 +1356,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-  },
-  profileSection: {
-    width: 40,
-  },
-  profileButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  profileImage: {
-    width: '100%',
-    height: '100%',
   },
   searchContainer: {
     flex: 1,
@@ -1190,6 +1391,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
+    position: 'relative',
+  },
+  filterActiveBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#27AE60',
+    borderWidth: 1,
+    borderColor: '#000000',
   },
   searchSuggestions: {
     backgroundColor: 'rgba(255,255,255,0.05)',
@@ -1938,6 +2151,150 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.6)',
     fontSize: 12,
     marginTop: 2,
+  },
+  
+  // Filter Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#0a0a0a',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '90%',
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+  },
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  modalBody: {
+    padding: 20,
+  },
+  filterSectionTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  filterOptions: {
+    gap: 8,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  filterLabel: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  priceOptions: {
+    gap: 8,
+  },
+  priceOption: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  priceOptionActive: {
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    borderColor: '#3498DB',
+  },
+  priceOptionText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 15,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  priceOptionTextActive: {
+    color: '#3498DB',
+    fontWeight: '600',
+  },
+  sortOptions: {
+    gap: 8,
+  },
+  sortOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    gap: 12,
+  },
+  sortOptionActive: {
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    borderColor: '#3498DB',
+  },
+  sortOptionText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  sortOptionTextActive: {
+    color: '#3498DB',
+    fontWeight: '600',
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    padding: 20,
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
+  resetButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+  },
+  resetButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  applyButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#3498DB',
+    alignItems: 'center',
+  },
+  applyButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

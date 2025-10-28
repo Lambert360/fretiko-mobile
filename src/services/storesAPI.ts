@@ -1,10 +1,12 @@
 import { API_BASE_URL } from '../config/api';
+import * as SecureStore from 'expo-secure-store';
 
 export interface VerifiedStore {
   id: string;
   username: string;
   bio?: string;
   avatar_url?: string;
+  background_image_url?: string;
   is_verified: boolean;
   is_seller: boolean;
   store_rating?: number;
@@ -48,10 +50,19 @@ export interface StoreCategoryResponse {
 }
 
 class StoresAPI {
-  private getAuthHeaders(): Record<string, string> {
-    // TODO: Implement auth token retrieval
-    // For now returning empty headers - will be implemented when auth context is integrated
-    return {};
+  private async getAuthHeaders(): Promise<Record<string, string>> {
+    try {
+      const accessToken = await SecureStore.getItemAsync('accessToken');
+      if (accessToken) {
+        return {
+          'Authorization': `Bearer ${accessToken}`,
+        };
+      }
+      return {};
+    } catch (error) {
+      console.error('Error getting auth token:', error);
+      return {};
+    }
   }
 
   /**
@@ -62,13 +73,14 @@ class StoresAPI {
     offset: number = 0
   ): Promise<StorePaginationResponse> {
     try {
+      const authHeaders = await this.getAuthHeaders();
       const response = await fetch(
         `${API_BASE_URL}/stores/verified?limit=${limit}&offset=${offset}`,
         {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
-            ...this.getAuthHeaders(),
+            ...authHeaders,
           },
         }
       );
@@ -89,11 +101,12 @@ class StoresAPI {
    */
   async getStoreById(storeId: string): Promise<VerifiedStore | null> {
     try {
+      const authHeaders = await this.getAuthHeaders();
       const response = await fetch(`${API_BASE_URL}/stores/${storeId}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          ...this.getAuthHeaders(),
+          ...authHeaders,
         },
       });
 
@@ -120,6 +133,7 @@ class StoresAPI {
     offset: number = 0
   ): Promise<StoreSearchResponse> {
     try {
+      const authHeaders = await this.getAuthHeaders();
       const encodedQuery = encodeURIComponent(query);
       const response = await fetch(
         `${API_BASE_URL}/stores/search?q=${encodedQuery}&limit=${limit}&offset=${offset}`,
@@ -127,7 +141,7 @@ class StoresAPI {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
-            ...this.getAuthHeaders(),
+            ...authHeaders,
           },
         }
       );
@@ -152,6 +166,7 @@ class StoresAPI {
     offset: number = 0
   ): Promise<StoreCategoryResponse> {
     try {
+      const authHeaders = await this.getAuthHeaders();
       const encodedCategory = encodeURIComponent(categoryName);
       const response = await fetch(
         `${API_BASE_URL}/stores/category/${encodedCategory}?limit=${limit}&offset=${offset}`,
@@ -159,7 +174,7 @@ class StoresAPI {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
-            ...this.getAuthHeaders(),
+            ...authHeaders,
           },
         }
       );
@@ -180,11 +195,12 @@ class StoresAPI {
    */
   async getStoreStats(storeId: string): Promise<StoreStats & { store_id: string }> {
     try {
+      const authHeaders = await this.getAuthHeaders();
       const response = await fetch(`${API_BASE_URL}/stores/${storeId}/stats`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          ...this.getAuthHeaders(),
+          ...authHeaders,
         },
       });
 
@@ -204,11 +220,12 @@ class StoresAPI {
    */
   async getVerifiedStoresCount(): Promise<{ count: number }> {
     try {
+      const authHeaders = await this.getAuthHeaders();
       const response = await fetch(`${API_BASE_URL}/stores/verified/count`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          ...this.getAuthHeaders(),
+          ...authHeaders,
         },
       });
 

@@ -1,376 +1,356 @@
 import { io, Socket } from 'socket.io-client';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_CONFIG } from '../config/api';
-
-// Event interfaces for type safety
-export interface SocketEvents {
-  // Connection events
-  authenticated: { success: boolean };
-  authentication_error: { message: string };
-  
-  // Stream events
-  joined_stream: { streamId: string; success: boolean; viewerCount: number };
-  left_stream: { streamId: string; success: boolean };
-  viewer_joined: { userId: string; timestamp: string };
-  viewer_left: { userId: string; timestamp: string };
-  viewer_count_update: { streamId: string; count: number };
-  
-  // Real-time interactions
-  new_comment: {
-    id: string;
-    user: { id: string; username: string; profile_pic_url?: string };
-    message: string;
-    timestamp: string;
-    isOwn: boolean;
-  };
-  new_reaction: {
-    userId: string;
-    reactionType: string;
-    timestamp: string;
-  };
-  new_gift: {
-    senderId: string;
-    giftType: string;
-    quantity: number;
-    message?: string;
-    timestamp: string;
-  };
-  
-  // Commerce events
-  product_purchased: {
-    productId: string;
-    quantity: number;
-    timestamp: string;
-  };
-  service_booked: {
-    date: string;
-    time: string;
-    notes?: string;
-    timestamp: string;
-  };
-  
-  // Vendor events
-  vendor_message: {
-    message: string;
-    type: string;
-    timestamp: string;
-  };
-  gift_received: {
-    senderId: string;
-    giftType: string;
-    quantity: number;
-    message?: string;
-    timestamp: string;
-  };
-  sale_made: {
-    productId: string;
-    quantity: number;
-    buyerId: string;
-    timestamp: string;
-  };
-  
-  // Error events
-  error: { message: string };
-}
+import * as SecureStore from 'expo-secure-store';
 
 /**
- * Live Stream WebSocket Service
+ * Live Stream Socket Service
  * 
- * Handles real-time communication for live streams including:
- * - Stream joining/leaving
- * - Live comments and reactions
- * - Gift sending and receiving
- * - Live commerce events
+ * Handles real-time WebSocket communication for live streams:
+ * - Comments
+ * - Reactions
+ * - Gifts
+ * - Live purchases/bookings
  * - Viewer count updates
+ * - Stream status updates
  */
+
+export interface LiveComment {
+  id: string;
+  user: {
+    id: string;
+    username: string;
+    avatar_url?: string;
+  };
+  message: string;
+  is_pinned: boolean;
+  created_at: string;
+}
+
+export interface LiveReaction {
+  user: {
+    id: string;
+    username: string;
+  };
+  reaction_type: string;
+  timestamp: number;
+}
+
+export interface LiveGift {
+  id: string;
+  sender: {
+    id: string;
+    username: string;
+    avatar_url?: string;
+  };
+  gift_type: string;
+  quantity: number;
+  message?: string;
+  total_value: number;
+  timestamp: number;
+}
+
+export interface LivePurchase {
+  buyer_username: string;
+  product_name: string;
+  quantity: number;
+  total_amount: number;
+  timestamp: number;
+}
+
+export interface ViewerCountUpdate {
+  current_viewers: number;
+  total_viewers: number;
+}
+
+export interface StreamStatusUpdate {
+  status: 'live' | 'paused' | 'ended';
+  message?: string;
+}
+
 class LiveStreamSocketService {
   private socket: Socket | null = null;
-  private isConnected = false;
+  private isConnecting = false;
   private currentStreamId: string | null = null;
-  private eventCallbacks: Map<string, Function[]> = new Map();
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+
+  // Event listeners registry
+  private listeners: Map<string, Set<Function>> = new Map();
 
   /**
-   * Connect to the live stream WebSocket server
+   * Initialize socket connection
    */
   async connect(): Promise<void> {
+    if (this.socket?.connected) {
+      console.log('✅ LiveStream Socket already connected');
+      return;
+    }
+
+    if (this.isConnecting) {
+      console.log('⏳ LiveStream Socket connection in progress...');
+      return;
+    }
+
+    this.isConnecting = true;
+
     try {
-      if (this.socket?.connected) {
-        return; // Already connected
+      // Get auth token
+      const accessToken = await SecureStore.getItemAsync('accessToken');
+      if (!accessToken) {
+        throw new Error('No auth token found');
       }
 
-      // Get auth token for authentication
-      const token = await AsyncStorage.getItem('token');
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
+      console.log('🔌 Connecting to LiveStream Socket...');
 
       // Create socket connection
       this.socket = io(`${API_CONFIG.BASE_URL}/live-sales`, {
         auth: {
-          token,
+          token: accessToken,
         },
         transports: ['websocket'],
-        timeout: 10000,
+        reconnection: true,
+        reconnectionAttempts: this.maxReconnectAttempts,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
       });
 
-      // Setup connection event handlers
-      this.setupConnectionHandlers();
+      // Setup event listeners
+      this.setupSocketListeners();
 
-      // Wait for connection
       return new Promise((resolve, reject) => {
-        if (!this.socket) {
-          reject(new Error('Socket not initialized'));
-          return;
-        }
+        const timeout = setTimeout(() => {
+          reject(new Error('Connection timeout'));
+        }, 10000);
 
-        this.socket.on('connect', () => {
-          console.log('Live stream socket connected');
-          this.isConnected = true;
-          this.authenticateUser();
+        this.socket?.on('connect', () => {
+          clearTimeout(timeout);
+          console.log('✅ LiveStream Socket connected');
+          this.isConnecting = false;
+          this.reconnectAttempts = 0;
           resolve();
         });
 
-        this.socket.on('connect_error', (error) => {
-          console.error('Live stream socket connection error:', error);
-          this.isConnected = false;
+        this.socket?.on('connect_error', (error) => {
+          clearTimeout(timeout);
+          console.error('❌ LiveStream Socket connection error:', error);
+          this.isConnecting = false;
           reject(error);
         });
-
-        // Timeout fallback
-        setTimeout(() => {
-          if (!this.isConnected) {
-            reject(new Error('Connection timeout'));
-          }
-        }, 10000);
       });
     } catch (error) {
-      console.error('Error connecting to live stream socket:', error);
+      this.isConnecting = false;
+      console.error('💥 LiveStream Socket connection failed:', error);
       throw error;
     }
   }
 
   /**
-   * Disconnect from the WebSocket server
+   * Setup socket event listeners
    */
-  disconnect(): void {
-    if (this.currentStreamId) {
-      this.leaveStream(this.currentStreamId);
-    }
+  private setupSocketListeners(): void {
+    if (!this.socket) return;
 
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
-    }
-
-    this.isConnected = false;
-    this.currentStreamId = null;
-    this.eventCallbacks.clear();
-  }
-
-  /**
-   * Authenticate user with the server
-   */
-  private async authenticateUser(): Promise<void> {
-    try {
-      const token = await AsyncStorage.getItem('token');
-      const userId = await AsyncStorage.getItem('userId');
-
-      if (!token || !userId) {
-        throw new Error('Missing authentication data');
+    // Connection events
+    this.socket.on('connect', () => {
+      console.log('✅ LiveStream Socket connected');
+      this.reconnectAttempts = 0;
+      // Rejoin stream if there was a disconnection
+      if (this.currentStreamId) {
+        this.joinStream(this.currentStreamId).catch(console.error);
       }
-
-      this.emit('authenticate', { token, userId });
-    } catch (error) {
-      console.error('Error authenticating user:', error);
-    }
-  }
-
-  /**
-   * Setup connection event handlers
-   */
-  private setupConnectionHandlers(): void {
-    if (!this.socket) return;
-
-    this.socket.on('disconnect', () => {
-      console.log('Live stream socket disconnected');
-      this.isConnected = false;
     });
 
-    this.socket.on('authenticated', (data) => {
-      console.log('Live stream socket authenticated:', data);
-      this.triggerCallbacks('authenticated', data);
+    this.socket.on('disconnect', (reason) => {
+      console.log('❌ LiveStream Socket disconnected:', reason);
     });
 
-    this.socket.on('authentication_error', (data) => {
-      console.error('Live stream authentication error:', data);
-      this.triggerCallbacks('authentication_error', data);
+    this.socket.on('reconnect_attempt', (attemptNumber) => {
+      this.reconnectAttempts = attemptNumber;
+      console.log(`🔄 LiveStream Socket reconnecting (${attemptNumber}/${this.maxReconnectAttempts})...`);
     });
 
-    // Setup all event listeners
-    this.setupEventListeners();
-  }
-
-  /**
-   * Setup all event listeners for live stream events
-   */
-  private setupEventListeners(): void {
-    if (!this.socket) return;
+    this.socket.on('reconnect_failed', () => {
+      console.error('💥 LiveStream Socket reconnection failed');
+    });
 
     // Stream events
-    this.socket.on('joined_stream', (data) => this.triggerCallbacks('joined_stream', data));
-    this.socket.on('left_stream', (data) => this.triggerCallbacks('left_stream', data));
-    this.socket.on('viewer_joined', (data) => this.triggerCallbacks('viewer_joined', data));
-    this.socket.on('viewer_left', (data) => this.triggerCallbacks('viewer_left', data));
-    this.socket.on('viewer_count_update', (data) => this.triggerCallbacks('viewer_count_update', data));
+    this.socket.on('new_comment', (comment: LiveComment) => {
+      this.emit('comment', comment);
+    });
 
-    // Real-time interactions
-    this.socket.on('new_comment', (data) => this.triggerCallbacks('new_comment', data));
-    this.socket.on('new_reaction', (data) => this.triggerCallbacks('new_reaction', data));
-    this.socket.on('new_gift', (data) => this.triggerCallbacks('new_gift', data));
+    this.socket.on('new_reaction', (reaction: LiveReaction) => {
+      this.emit('reaction', reaction);
+    });
 
-    // Commerce events
-    this.socket.on('product_purchased', (data) => this.triggerCallbacks('product_purchased', data));
-    this.socket.on('service_booked', (data) => this.triggerCallbacks('service_booked', data));
+    this.socket.on('new_gift', (gift: LiveGift) => {
+      this.emit('gift', gift);
+    });
 
-    // Vendor events
-    this.socket.on('vendor_message', (data) => this.triggerCallbacks('vendor_message', data));
-    this.socket.on('gift_received', (data) => this.triggerCallbacks('gift_received', data));
-    this.socket.on('sale_made', (data) => this.triggerCallbacks('sale_made', data));
+    this.socket.on('new_purchase', (purchase: LivePurchase) => {
+      this.emit('purchase', purchase);
+    });
 
-    // Error events
-    this.socket.on('error', (data) => this.triggerCallbacks('error', data));
+    this.socket.on('viewer_count_update', (data: ViewerCountUpdate) => {
+      this.emit('viewer_count', data);
+    });
+
+    this.socket.on('stream_status_update', (data: StreamStatusUpdate) => {
+      this.emit('stream_status', data);
+    });
+
+    this.socket.on('error', (error: any) => {
+      console.error('❌ LiveStream Socket error:', error);
+      this.emit('error', error);
+    });
   }
 
   /**
-   * Join a live stream
+   * Join a live stream room
    */
-  joinStream(streamId: string): void {
-    if (!this.isConnected || !this.socket) {
-      throw new Error('Socket not connected');
+  async joinStream(streamId: string, role: 'viewer' | 'vendor' = 'viewer'): Promise<void> {
+    if (!this.socket?.connected) {
+      await this.connect();
     }
 
-    if (this.currentStreamId && this.currentStreamId !== streamId) {
-      // Leave current stream first
-      this.leaveStream(this.currentStreamId);
-    }
+    return new Promise((resolve, reject) => {
+      console.log(`🚪 Joining stream: ${streamId} as ${role}`);
 
-    this.currentStreamId = streamId;
-    this.emit('join_stream', { streamId });
+      this.socket?.emit('join_stream', { streamId, role }, (response: any) => {
+        if (response?.success) {
+          console.log('✅ Joined stream successfully');
+          this.currentStreamId = streamId;
+          resolve();
+        } else {
+          console.error('❌ Failed to join stream:', response?.error);
+          reject(new Error(response?.error || 'Failed to join stream'));
+        }
+      });
+    });
   }
 
   /**
-   * Leave a live stream
+   * Leave current stream
    */
-  leaveStream(streamId: string): void {
-    if (!this.isConnected || !this.socket) {
+  leaveStream(): void {
+    if (!this.currentStreamId) return;
+
+    console.log(`🚪 Leaving stream: ${this.currentStreamId}`);
+    this.socket?.emit('leave_stream', { streamId: this.currentStreamId });
+    this.currentStreamId = null;
+  }
+
+  /**
+   * Send a comment
+   */
+  sendComment(message: string): void {
+    if (!this.currentStreamId) {
+      console.error('❌ Not in a stream');
       return;
     }
 
-    this.emit('leave_stream', { streamId });
-    
-    if (this.currentStreamId === streamId) {
-      this.currentStreamId = null;
+    this.socket?.emit('post_comment', {
+      streamId: this.currentStreamId,
+      message,
+    });
+  }
+
+  /**
+   * Send a reaction
+   */
+  sendReaction(reactionType: string): void {
+    if (!this.currentStreamId) {
+      console.error('❌ Not in a stream');
+      return;
     }
+
+    this.socket?.emit('send_reaction', {
+      streamId: this.currentStreamId,
+      reaction_type: reactionType,
+    });
   }
 
   /**
-   * Send a comment to the live stream
+   * Send a gift
    */
-  sendComment(streamId: string, message: string): void {
-    this.emit('send_comment', { streamId, message });
-  }
-
-  /**
-   * Send a reaction to the live stream
-   */
-  sendReaction(streamId: string, reactionType: string): void {
-    this.emit('send_reaction', { streamId, reactionType });
-  }
-
-  /**
-   * Send a gift to the stream vendor
-   */
-  sendGift(streamId: string, giftType: string, quantity: number, message?: string): void {
-    this.emit('send_gift', { streamId, giftType, quantity, message });
-  }
-
-  /**
-   * Purchase a product during live stream
-   */
-  purchaseProduct(streamId: string, productId: string, quantity: number): void {
-    this.emit('product_purchase', { streamId, productId, quantity });
-  }
-
-  /**
-   * Book a service during live stream
-   */
-  bookService(streamId: string, date: string, time: string, notes?: string): void {
-    this.emit('service_booking', { streamId, date, time, notes });
-  }
-
-  /**
-   * Send vendor message (vendor only)
-   */
-  sendVendorMessage(streamId: string, message: string, type: string): void {
-    this.emit('vendor_message', { streamId, message, type });
-  }
-
-  /**
-   * Register event callback
-   */
-  on<K extends keyof SocketEvents>(event: K, callback: (data: SocketEvents[K]) => void): void {
-    if (!this.eventCallbacks.has(event)) {
-      this.eventCallbacks.set(event, []);
+  sendGift(giftType: string, quantity: number, message?: string): void {
+    if (!this.currentStreamId) {
+      console.error('❌ Not in a stream');
+      return;
     }
-    this.eventCallbacks.get(event)!.push(callback);
+
+    this.socket?.emit('send_gift', {
+      streamId: this.currentStreamId,
+      gift_type: giftType,
+      quantity,
+      message,
+    });
   }
 
   /**
-   * Unregister event callback
+   * Register an event listener
    */
-  off<K extends keyof SocketEvents>(event: K, callback: (data: SocketEvents[K]) => void): void {
-    const callbacks = this.eventCallbacks.get(event);
-    if (callbacks) {
-      const index = callbacks.indexOf(callback);
-      if (index > -1) {
-        callbacks.splice(index, 1);
-      }
+  on(event: string, callback: Function): void {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, new Set());
     }
+    this.listeners.get(event)?.add(callback);
   }
 
   /**
-   * Emit event to server
+   * Unregister an event listener
+   */
+  off(event: string, callback: Function): void {
+    this.listeners.get(event)?.delete(callback);
+  }
+
+  /**
+   * Emit an event to registered listeners
    */
   private emit(event: string, data: any): void {
-    if (!this.socket || !this.isConnected) {
-      console.warn(`Cannot emit ${event}: socket not connected`);
-      return;
-    }
-
-    this.socket.emit(event, data);
-  }
-
-  /**
-   * Trigger registered callbacks for an event
-   */
-  private triggerCallbacks(event: string, data: any): void {
-    const callbacks = this.eventCallbacks.get(event);
+    const callbacks = this.listeners.get(event);
     if (callbacks) {
       callbacks.forEach(callback => {
         try {
           callback(data);
         } catch (error) {
-          console.error(`Error in ${event} callback:`, error);
+          console.error(`Error in listener for ${event}:`, error);
         }
       });
     }
   }
 
   /**
-   * Get connection status
+   * Clear all event listeners
    */
-  isSocketConnected(): boolean {
-    return this.isConnected && !!this.socket?.connected;
+  clearListeners(event?: string): void {
+    if (event) {
+      this.listeners.delete(event);
+    } else {
+      this.listeners.clear();
+    }
+  }
+
+  /**
+   * Disconnect socket
+   */
+  disconnect(): void {
+    if (this.currentStreamId) {
+      this.leaveStream();
+    }
+
+    this.socket?.disconnect();
+    this.socket = null;
+    this.currentStreamId = null;
+    this.isConnecting = false;
+    this.listeners.clear();
+    console.log('🔌 LiveStream Socket disconnected');
+  }
+
+  /**
+   * Check if connected
+   */
+  isConnected(): boolean {
+    return !!this.socket?.connected;
   }
 
   /**

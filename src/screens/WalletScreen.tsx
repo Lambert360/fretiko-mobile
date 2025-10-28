@@ -4,6 +4,8 @@ import { Alert, Dimensions, FlatList, Modal, RefreshControl, ScrollView, StyleSh
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { walletAPI, Wallet, WalletStats, WalletTransaction } from '../services/walletAPI';
 import { rewardsAPI, WalletDisplayRewards } from '../services/rewardsAPI';
+import * as SecureStore from 'expo-secure-store';
+import { realtimeAPI } from '../services/realtimeAPI';
 
 interface WalletScreenProps {
   navigation: any;
@@ -17,6 +19,7 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
   const [walletStats, setWalletStats] = useState<WalletStats | null>(null);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [rewards, setRewards] = useState<WalletDisplayRewards | null>(null);
+  const [pendingEscrows, setPendingEscrows] = useState<{ vendorAmount: number; riderAmount: number; totalPending: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showCurrencySelector, setShowCurrencySelector] = useState(false);
@@ -30,21 +33,76 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
 
   useEffect(() => {
     loadWalletData();
-  }, []);
+
+    // Setup real-time wallet balance updates
+    const walletBalanceListener = realtimeAPI.subscribe('wallet_balance_update', (data: any) => {
+      console.log('💰 Wallet balance update received:', data);
+      
+      // Refresh wallet data from API instead of using realtime balance data
+      // This ensures we get the correct balance after transactions
+      loadWalletData();
+    });
+
+    // ✅ NEW: Listen for escrow release events
+    const escrowReleaseListener = realtimeAPI.subscribe('escrow_released', (data: any) => {
+      console.log('💸 Escrow released received:', data);
+      
+      // Show notification
+      Alert.alert(
+        'Payment Released! 💰',
+        `₣${data.amount.toLocaleString()} has been credited to your wallet for order #${data.orderNumber}`,
+        [{ text: 'OK', onPress: () => loadWalletData() }]
+      );
+      
+      // Reload wallet data to get updated balances
+      loadWalletData();
+    });
+
+    // Cleanup on unmount
+    return () => {
+      walletBalanceListener();
+      escrowReleaseListener();
+    };
+  }, [wallet]);
 
   const loadWalletData = async () => {
     try {
-      const [walletData, statsData, transactionsData, rewardsData] = await Promise.all([
+      // Get JWT token from SecureStore
+      const token = await SecureStore.getItemAsync('accessToken');
+      
+      const [walletData, statsData, transactionsData] = await Promise.all([
         walletAPI.getWallet(),
         walletAPI.getWalletStats(),
         walletAPI.getTransactionHistory({ limit: 50 }),
-        rewardsAPI.getWalletDisplayRewards('token') // TODO: Get actual token
       ]);
       
       setWallet(walletData);
       setWalletStats(statsData);
       setTransactions(transactionsData);
-      setRewards(rewardsData);
+
+      // ✅ Extract pending escrows from wallet data (already included in getWallet response)
+      if (walletData) {
+        setPendingEscrows({
+          vendorAmount: walletData.pendingVendorEarnings || 0,
+          riderAmount: walletData.pendingRiderEarnings || 0,
+          totalPending: walletData.totalPendingEarnings || 0,
+        });
+        console.log('💰 Pending escrows loaded:', {
+          vendor: walletData.pendingVendorEarnings,
+          rider: walletData.pendingRiderEarnings,
+          total: walletData.totalPendingEarnings,
+        });
+      }
+
+      // Load rewards separately with error handling
+      try {
+        const rewardsData = await rewardsAPI.getWalletDisplayRewards();
+        setRewards(rewardsData);
+      } catch (rewardsError) {
+        console.warn('⚠️  Rewards data unavailable:', rewardsError);
+        // Continue without rewards - not critical
+        setRewards(null);
+      }
     } catch (error: any) {
       console.error('Error loading wallet data:', error);
       Alert.alert('Error', 'Failed to load wallet data. Please try again.');
@@ -78,7 +136,9 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
 
   const renderTransaction = ({ item }: { item: WalletTransaction }) => {
     const typeInfo = walletAPI.getTransactionTypeDisplay(item.transactionType);
-    const isPositive = item.availableDelta > 0;
+    const availableDelta = item.availableDelta ?? 0;
+    const availableBalanceAfter = item.availableBalanceAfter ?? 0;
+    const isPositive = availableDelta > 0;
     
     return (
       <TouchableOpacity style={styles.transactionCard}>
@@ -96,10 +156,10 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
         </View>
         <View style={styles.transactionAmount}>
           <Text style={[styles.transactionAmountText, { color: isPositive ? '#27AE60' : '#E74C3C' }]}>
-            {isPositive ? '+' : ''}{walletAPI.formatFreti(item.availableDelta)}
+            {isPositive ? '+' : ''}{walletAPI.formatFreti(availableDelta)}
           </Text>
           <Text style={styles.transactionBalance}>
-            Bal: {walletAPI.formatFreti(item.availableBalanceAfter)}
+            Bal: {walletAPI.formatFreti(availableBalanceAfter)}
           </Text>
         </View>
       </TouchableOpacity>
@@ -189,6 +249,56 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
                   </Text>
                 </View>
               )}
+            </View>
+          </View>
+        )}
+
+        {/* ✅ NEW: Pending Earnings Section */}
+        {pendingEscrows && pendingEscrows.totalPending > 0 && (
+          <View style={styles.pendingEarningsCard}>
+            <View style={styles.rewardsHeader}>
+              <Text style={styles.sectionTitle}>Pending Earnings 🔒</Text>
+              <TouchableOpacity onPress={() => Alert.alert('Pending Earnings', 'These funds are held in escrow and will be released 24 hours after delivery confirmation.')}>
+                <Ionicons name="information-circle-outline" size={20} color="rgba(255,255,255,0.6)" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.pendingEarningsRow}>
+              {pendingEscrows.vendorAmount > 0 && (
+                <View style={styles.pendingEarningItem}>
+                  <Ionicons name="storefront-outline" size={24} color="#F39C12" />
+                  <Text style={styles.pendingEarningLabel}>Vendor Earnings</Text>
+                  <Text style={styles.pendingEarningAmount}>
+                    {walletAPI.formatFreti(pendingEscrows.vendorAmount)}
+                  </Text>
+                  <Text style={styles.pendingEarningSubtext}>Held in escrow</Text>
+                </View>
+              )}
+              
+              {pendingEscrows.riderAmount > 0 && (
+                <View style={styles.pendingEarningItem}>
+                  <Ionicons name="bicycle-outline" size={24} color="#27AE60" />
+                  <Text style={styles.pendingEarningLabel}>Delivery Fees</Text>
+                  <Text style={styles.pendingEarningAmount}>
+                    {walletAPI.formatFreti(pendingEscrows.riderAmount)}
+                  </Text>
+                  <Text style={styles.pendingEarningSubtext}>Held in escrow</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.pendingEarningsTotalRow}>
+              <Text style={styles.pendingEarningsTotal}>Total Pending</Text>
+              <Text style={styles.pendingEarningsTotalAmount}>
+                {walletAPI.formatFreti(pendingEscrows.totalPending)}
+              </Text>
+            </View>
+
+            <View style={styles.pendingEarningsInfo}>
+              <Ionicons name="time-outline" size={14} color="rgba(255,255,255,0.5)" />
+              <Text style={styles.pendingEarningsInfoText}>
+                Funds release 24hrs after delivery
+              </Text>
             </View>
           </View>
         )}
@@ -748,6 +858,81 @@ const styles = StyleSheet.create({
   },
   progressInfoText: {
     color: 'rgba(255,255,255,0.6)',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  // ✅ NEW: Pending Earnings styles
+  pendingEarningsCard: {
+    backgroundColor: 'rgba(255, 152, 0, 0.1)',
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 152, 0, 0.3)',
+  },
+  pendingEarningsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  pendingEarningItem: {
+    flex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+  },
+  pendingEarningLabel: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 8,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  pendingEarningAmount: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    opacity: 0.6, // Faded to show it's locked
+    textAlign: 'center',
+  },
+  pendingEarningSubtext: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 10,
+    fontWeight: '500',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  pendingEarningsTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+    marginBottom: 12,
+  },
+  pendingEarningsTotal: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  pendingEarningsTotalAmount: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    opacity: 0.6, // Faded to show it's locked
+  },
+  pendingEarningsInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  pendingEarningsInfoText: {
+    color: 'rgba(255,255,255,0.5)',
     fontSize: 11,
     fontWeight: '500',
   },

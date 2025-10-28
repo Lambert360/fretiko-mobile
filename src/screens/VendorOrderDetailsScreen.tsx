@@ -41,6 +41,10 @@ interface OrderDetailsData extends WorkspaceOrder {
     timestamp: string;
     note?: string;
   }>;
+  pickupPin?: string;
+  deliveryPin?: string;
+  pickupPinVerifiedAt?: string;
+  deliveryPinVerifiedAt?: string;
 }
 
 const VendorOrderDetailsScreen: React.FC = () => {
@@ -342,6 +346,57 @@ const VendorOrderDetailsScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* PIN Verification Section - Only show to Rider (pickup) or Buyer (delivery) */}
+        {(orderDetails.pickupPin || orderDetails.deliveryPin) && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>🔐 Verification PINs</Text>
+            
+            {/* Pickup PIN - Show to Rider */}
+            {orderDetails.pickupPin && (
+              <View style={styles.pinCard}>
+                <View style={styles.pinHeader}>
+                  <Ionicons name="bag-check-outline" size={24} color="#007AFF" />
+                  <Text style={styles.pinTitle}>Pickup PIN</Text>
+                  {orderDetails.pickupPinVerifiedAt && (
+                    <View style={styles.verifiedBadge}>
+                      <Ionicons name="checkmark-circle" size={16} color="#34C759" />
+                      <Text style={styles.verifiedText}>Verified</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.pinDescription}>
+                  Show this PIN to the vendor when picking up the order
+                </Text>
+                <View style={styles.pinDisplay}>
+                  <Text style={styles.pinText}>{orderDetails.pickupPin}</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Delivery PIN - Show to Buyer */}
+            {orderDetails.deliveryPin && (
+              <View style={styles.pinCard}>
+                <View style={styles.pinHeader}>
+                  <Ionicons name="home-outline" size={24} color="#FF9500" />
+                  <Text style={styles.pinTitle}>Delivery PIN</Text>
+                  {orderDetails.deliveryPinVerifiedAt && (
+                    <View style={styles.verifiedBadge}>
+                      <Ionicons name="checkmark-circle" size={16} color="#34C759" />
+                      <Text style={styles.verifiedText}>Verified</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.pinDescription}>
+                  Give this PIN to the rider upon delivery
+                </Text>
+                <View style={styles.pinDisplay}>
+                  <Text style={styles.pinText}>{orderDetails.deliveryPin}</Text>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Delivery Information */}
         {orderDetails.deliveryAddress && (
@@ -807,6 +862,61 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     marginLeft: 8,
+  },
+  // PIN Display Styles
+  pinCard: {
+    backgroundColor: '#111',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: 'rgba(0, 122, 255, 0.3)',
+  },
+  pinHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  pinTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: 'white',
+    marginLeft: 12,
+    flex: 1,
+  },
+  verifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(52, 199, 89, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  verifiedText: {
+    color: '#34C759',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  pinDescription: {
+    fontSize: 14,
+    color: '#999',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  pinDisplay: {
+    backgroundColor: 'rgba(0, 122, 255, 0.1)',
+    borderRadius: 12,
+    padding: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 122, 255, 0.3)',
+  },
+  pinText: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: '#007AFF',
+    letterSpacing: 8,
   },
   loadingContainer: {
     flex: 1,

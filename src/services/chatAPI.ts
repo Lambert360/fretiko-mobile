@@ -14,6 +14,7 @@ export interface ChatConversation {
   isPinned?: boolean;
   chatType: 'friend' | 'vendor' | 'support' | 'ai' | 'rider';
   verified?: boolean;
+  otherUserId?: string; // For 1:1 chats, the other participant's user ID
 }
 
 export interface ChatMessage {
@@ -71,9 +72,33 @@ class ChatAPI {
       const response = await api.get('/chat/conversations', {
         params: { page, limit }
       });
-      
+
+      // Map backend response to frontend ChatConversation format
+      const backendConversations = response.data.data || [];
+      const mappedConversations: ChatConversation[] = backendConversations.map((conv: any) => {
+        // 🔥 FIX: Defensive name handling - handle null, undefined, empty strings, and whitespace
+        const conversationName = conv.name && conv.name.trim() !== ''
+          ? conv.name.trim()
+          : 'Unknown';
+
+        return {
+          id: conv.id,
+          name: conversationName,
+          avatar: conv.avatarUrl || 'https://via.placeholder.com/56',
+          lastMessage: conv.lastMessage?.content || conv.lastMessage || '',
+          timestamp: conv.lastMessageAt || conv.createdAt,
+          unreadCount: conv.unreadCount || 0,
+          isOnline: conv.isOnline || false,
+          isAI: conv.isAI,
+          isPinned: conv.isPinned,
+          chatType: conv.chatType,
+          verified: conv.verified,
+          otherUserId: conv.otherUserId,
+        };
+      });
+
       return {
-        conversations: response.data.data || [],
+        conversations: mappedConversations,
         pagination: response.data.pagination || { page, limit, total: 0 }
       };
     } catch (error) {
@@ -465,8 +490,48 @@ class ChatAPI {
 
       const response = await api.get('/chat/conversations', { params });
 
+      console.log('📥 Raw backend response structure:', JSON.stringify(response.data, null, 2));
+
+      // Map backend response to frontend ChatConversation format
+      const backendConversations = response.data.data || [];
+
+      if (backendConversations.length > 0) {
+        console.log('📊 First conversation keys:', Object.keys(backendConversations[0]));
+        console.log('📊 First conversation data:', JSON.stringify(backendConversations[0], null, 2));
+      }
+
+      const mappedConversations: ChatConversation[] = backendConversations.map((conv: any) => {
+        console.log(`🔍 Mapping conversation ${conv.id}:`);
+        console.log(`   - name: "${conv.name}" (type: ${typeof conv.name})`);
+        console.log(`   - avatarUrl: "${conv.avatarUrl}" (type: ${typeof conv.avatarUrl})`);
+        console.log(`   - chatType: "${conv.chatType}"`);
+        console.log(`   - isAI: ${conv.isAI}`);
+
+        // 🔥 FIX: Defensive name handling - handle null, undefined, empty strings, and whitespace
+        const conversationName = conv.name && conv.name.trim() !== ''
+          ? conv.name.trim()
+          : 'Unknown';
+
+        return {
+          id: conv.id,
+          name: conversationName,
+          avatar: conv.avatarUrl || 'https://via.placeholder.com/56', // Map avatarUrl to avatar
+          lastMessage: conv.lastMessage?.content || conv.lastMessage || '',
+          timestamp: conv.lastMessageAt || conv.createdAt, // Map lastMessageAt to timestamp
+          unreadCount: conv.unreadCount || 0,
+          isOnline: conv.isOnline || false,
+          isAI: conv.isAI,
+          isPinned: conv.isPinned,
+          chatType: conv.chatType,
+          verified: conv.verified,
+          otherUserId: conv.otherUserId,
+        };
+      });
+
+      console.log('✅ Mapped conversations:', JSON.stringify(mappedConversations.slice(0, 2), null, 2));
+
       return {
-        conversations: response.data.data || [],
+        conversations: mappedConversations,
         pagination: response.data.pagination || { page: params.page, limit: params.limit, total: 0 }
       };
     } catch (error) {

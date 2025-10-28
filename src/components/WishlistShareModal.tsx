@@ -18,7 +18,7 @@ interface WishlistShareModalProps {
   recipientId: string;
   recipientName: string;
   onClose: () => void;
-  onShareSuccess: (shareType: 'view_only' | 'view_and_add', itemCount: number) => void;
+  onShareSuccess: (shareType: 'view_only' | 'view_and_add', itemCount: number, chatMessageData?: any) => void;
 }
 
 export const WishlistShareModal: React.FC<WishlistShareModalProps> = ({
@@ -80,14 +80,15 @@ export const WishlistShareModal: React.FC<WishlistShareModalProps> = ({
 
     try {
       setSharing(true);
-      await wishlistAPI.shareWishlist({
+      const response = await wishlistAPI.shareWishlist({
         friendId: recipientId,
         shareType,
         shareMessage: `Check out my wishlist!`,
         selectedItemIds,
       });
 
-      onShareSuccess(shareType, selectedItemIds.length);
+      // Pass the chat message data back to the parent
+      onShareSuccess(shareType, selectedItemIds.length, response.chatMessage);
       onClose();
     } catch (error: any) {
       console.error('Error sharing wishlist:', error);
@@ -285,7 +286,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#111',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: '90%',
+    height: '90%',
     paddingBottom: 20,
   },
   header: {
@@ -388,6 +389,8 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
     paddingTop: 16,
+    minHeight: 200,
+    maxHeight: 400,
   },
   itemsHeader: {
     flexDirection: 'row',
@@ -407,7 +410,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   itemsList: {
-    flex: 1,
+    maxHeight: 300,
   },
   itemCard: {
     flexDirection: 'row',

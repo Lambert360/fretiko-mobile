@@ -24,6 +24,8 @@ import { fileUploadService } from '../services/fileUploadService';
 import * as ImagePicker from 'expo-image-picker';
 import ProductCard from '../components/ProductCard';
 import VideoCard from '../components/VideoCard';
+import { GridMediaCard } from '../components/GridMediaCard';
+import { GridCardActionModal } from '../components/GridCardActionModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -69,6 +71,10 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
   const [isUploadModalVisible, setIsUploadModalVisible] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingBackground, setUploadingBackground] = useState(false);
+
+  // Action modal state
+  const [isActionModalVisible, setIsActionModalVisible] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<{ id: string; type: 'product' | 'service' } | null>(null);
 
   // Animation values
   const springAnim = useRef(new Animated.Value(1)).current;
@@ -252,6 +258,75 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
       title,
       username: profile?.username || 'Unknown User'
     });
+  };
+
+  const handleLongPress = (itemId: string, itemType: 'product' | 'service') => {
+    setSelectedItem({ id: itemId, type: itemType });
+    setIsActionModalVisible(true);
+  };
+
+  const handleViewItem = () => {
+    if (!selectedItem) return;
+
+    setIsActionModalVisible(false);
+
+    if (selectedItem.type === 'product') {
+      navigation.navigate('ProductDetails', { productId: selectedItem.id });
+    } else {
+      navigation.navigate('ServiceDetails', { serviceId: selectedItem.id });
+    }
+
+    setSelectedItem(null);
+  };
+
+  const handleDeleteItem = async () => {
+    if (!selectedItem) return;
+
+    // Close modal first
+    setIsActionModalVisible(false);
+
+    // Show confirmation alert
+    Alert.alert(
+      'Confirm Delete',
+      `Are you sure you want to delete this ${selectedItem.type}? This action cannot be undone.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => setSelectedItem(null),
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              if (selectedItem.type === 'product') {
+                await productsAPI.deleteProduct(selectedItem.id);
+                // Remove from local state - flexbox will auto-rearrange
+                setProducts(prev => prev.filter(p => p.id !== selectedItem.id));
+                // Small delay to ensure UI updates before showing success message
+                setTimeout(() => {
+                  Alert.alert('Success', 'Product deleted successfully');
+                }, 100);
+              } else {
+                await servicesAPI.deleteService(selectedItem.id);
+                // Remove from local state - flexbox will auto-rearrange
+                setServices(prev => prev.filter(s => s.id !== selectedItem.id));
+                // Small delay to ensure UI updates before showing success message
+                setTimeout(() => {
+                  Alert.alert('Success', 'Service deleted successfully');
+                }, 100);
+              }
+            } catch (error) {
+              console.error('Error deleting item:', error);
+              Alert.alert('Error', `Failed to delete ${selectedItem.type}. Please try again.`);
+            } finally {
+              setSelectedItem(null);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const getUserRole = () => {
@@ -518,33 +593,18 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
                 <Text style={styles.loadingContentText}>Loading products...</Text>
               </View>
             ) : products.length > 0 ? (
-              <FlatList
-                key={`products-${activeTab}`}
-                data={products}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.productCardWrapper}
-                    onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
-                    activeOpacity={0.8}
-                  >
-                    <ProductCard
-                      title={item.name || 'Product'}
-                      price={item.price || 0}
-                      image={item.primary_image_url ? { uri: item.primary_image_url } : { uri: 'https://via.placeholder.com/300x300/333/fff?text=No+Image' }}
-                      rating={item.average_rating || 0}
-                      sellerName={profile?.username || 'Seller'}
-                      sellerLogo={profile?.avatarUrl}
+              <View style={styles.productsGrid}>
+                {products.map((item) => (
+                  <View key={item.id} style={styles.gridItem}>
+                    <GridMediaCard
+                      imageUrl={item.primary_image_url || 'https://via.placeholder.com/300x300/333/fff?text=No+Image'}
                       onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+                      onLongPress={() => handleLongPress(item.id, 'product')}
+                      isVideo={false}
                     />
-                  </TouchableOpacity>
-                )}
-                keyExtractor={(item) => item.id}
-                numColumns={2}
-                columnWrapperStyle={styles.productRow}
-                contentContainerStyle={styles.productsGrid}
-                scrollEnabled={false}
-                showsVerticalScrollIndicator={false}
-              />
+                  </View>
+                ))}
+              </View>
             ) : (
               <View style={styles.emptyContentContainer}>
                 <Text style={styles.emptyContentIcon}>📦</Text>
@@ -562,38 +622,18 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
                 <Text style={styles.loadingContentText}>Loading services...</Text>
               </View>
             ) : services.length > 0 ? (
-              <FlatList
-                key={`services-${activeTab}`}
-                data={services}
-                renderItem={({ item, index }) => {
-                  console.log('🎥 Rendering VideoCard for:', item.title, 'at index:', index);
-                  return (
-                    <TouchableOpacity
-                      style={styles.videoCardContainer}
+              <View style={styles.servicesGrid}>
+                {services.map((item) => (
+                  <View key={item.id} style={styles.gridItem}>
+                    <GridMediaCard
+                      imageUrl={item.thumbnailUrl || item.videoUrl || 'https://via.placeholder.com/300x300/333/fff?text=No+Video'}
                       onPress={() => navigation.navigate('ServiceDetails', { serviceId: item.id })}
-                      activeOpacity={0.9}
-                    >
-                      <VideoCard
-                        item={item}
-                        isActive={false}
-                        isPlaying={false}
-                        onVideoTouch={() => navigation.navigate('ServiceDetails', { serviceId: item.id })}
-                        onLike={() => {}}
-                        onComment={() => {}}
-                        onBookmark={() => {}}
-                        onShare={() => {}}
-                        onBook={() => navigation.navigate('ServiceBooking', { serviceId: item.id })}
-                        onVendorPress={() => {}}
-                      />
-                    </TouchableOpacity>
-                  );
-                }}
-                keyExtractor={(item) => item.id}
-                numColumns={3}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.servicesGrid}
-                scrollEnabled={false}
-              />
+                      onLongPress={() => handleLongPress(item.id, 'service')}
+                      isVideo={true}
+                    />
+                  </View>
+                ))}
+              </View>
             ) : (
               <View style={styles.emptyContentContainer}>
                 <Text style={styles.emptyContentIcon}>
@@ -678,6 +718,18 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
           </TouchableOpacity>
         </Modal>
       )}
+
+      {/* Action Modal for Grid Card Options */}
+      <GridCardActionModal
+        visible={isActionModalVisible}
+        onClose={() => {
+          setIsActionModalVisible(false);
+          setSelectedItem(null);
+        }}
+        onView={handleViewItem}
+        onDelete={handleDeleteItem}
+        itemType={selectedItem?.type || 'product'}
+      />
     </SafeAreaView>
   );
 };
@@ -1003,28 +1055,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   productsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     paddingHorizontal: 20,
     paddingBottom: 20,
+    gap: 4, // Space between items
   },
-  productRow: {
+  gridItem: {
+    width: (SCREEN_WIDTH - 48) / 3, // 3 items per row with padding and gap
+  },
+  gridRow: {
     justifyContent: 'space-between',
-    paddingHorizontal: 10,
   },
   servicesScroll: {
     paddingHorizontal: 20,
   },
   servicesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     paddingHorizontal: 20,
     paddingBottom: 20,
-  },
-  videoCardContainer: {
-    width: (SCREEN_WIDTH - 60) / 3, // 3 videos per row with margins
-    height: 200, // Reduced height for 3 per row
-    marginRight: 10,
-    marginBottom: 10,
-    backgroundColor: '#333',
-    borderRadius: 8,
-    overflow: 'hidden',
+    gap: 4, // Space between items
   },
   emptyContentIcon: {
     fontSize: 64,
@@ -1042,10 +1093,6 @@ const styles = StyleSheet.create({
     color: '#B0B0B0',
     textAlign: 'center',
     lineHeight: 24,
-  },
-  productCardWrapper: {
-    flex: 1,
-    margin: 5,
   },
   avatarWrapper: {
     position: 'relative',

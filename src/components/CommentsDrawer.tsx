@@ -13,6 +13,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { servicesAPI, ServiceComment } from '../services/servicesAPI';
@@ -25,21 +26,24 @@ interface CommentsDrawerProps {
   visible: boolean;
   serviceId: string | null;
   onClose: () => void;
+  onCommentAdded?: (serviceId: string) => void; // Callback when a comment is added
 }
 
 const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   visible,
   serviceId,
   onClose,
+  onCommentAdded,
 }) => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const translateY = useRef(new Animated.Value(DRAWER_HEIGHT)).current;
-  
+
   const [comments, setComments] = useState<ServiceComment[]>([]);
   const [loading, setLoading] = useState(false);
   const [newComment, setNewComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   // Animation for drawer visibility
   useEffect(() => {
@@ -51,6 +55,28 @@ const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
     }).start();
   }, [visible]);
 
+  // Keyboard handling
+  useEffect(() => {
+    const keyboardWillShow = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        setKeyboardHeight(e.endCoordinates.height);
+      }
+    );
+
+    const keyboardWillHide = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
+      }
+    );
+
+    return () => {
+      keyboardWillShow.remove();
+      keyboardWillHide.remove();
+    };
+  }, []);
+
   // Load comments when serviceId changes
   useEffect(() => {
     if (serviceId && visible) {
@@ -60,34 +86,16 @@ const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
   const loadComments = async () => {
     if (!serviceId) return;
-    
+
     try {
       setLoading(true);
       const commentsData = await servicesAPI.getServiceComments(serviceId);
       setComments(commentsData);
+      console.log('✅ Loaded', commentsData.length, 'comments for service:', serviceId);
     } catch (error) {
-      console.error('Error loading comments:', error);
-      // Show mock data as fallback
-      setComments([
-        {
-          id: '1',
-          userId: 'user1',
-          userName: 'Sarah Johnson',
-          userAvatar: 'https://via.placeholder.com/40',
-          comment: 'Great service! Very professional and timely.',
-          createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2 hours ago
-          likes: 5,
-        },
-        {
-          id: '2',
-          userId: 'user2',
-          userName: 'Mike Chen',
-          userAvatar: 'https://via.placeholder.com/40',
-          comment: 'Highly recommend! Excellent work quality.',
-          createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(), // 5 hours ago
-          likes: 3,
-        },
-      ]);
+      console.error('❌ Error loading comments:', error);
+      // Show empty state - no mock data fallback
+      setComments([]);
     } finally {
       setLoading(false);
     }
@@ -95,14 +103,21 @@ const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
   const handleAddComment = async () => {
     if (!serviceId || !newComment.trim()) return;
-    
+
     try {
       setSubmitting(true);
       const comment = await servicesAPI.addComment(serviceId, newComment.trim());
-      
+
       // Add comment to local state
       setComments(prev => [comment, ...prev]);
       setNewComment('');
+
+      // Notify parent component that a comment was added
+      if (onCommentAdded) {
+        onCommentAdded(serviceId);
+      }
+
+      console.log('✅ Comment added and parent notified');
     } catch (error) {
       console.error('Error adding comment:', error);
       // Add optimistic comment on error (will sync later)
@@ -117,6 +132,11 @@ const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
       };
       setComments(prev => [optimisticComment, ...prev]);
       setNewComment('');
+
+      // Still notify parent even on error (optimistic update)
+      if (onCommentAdded) {
+        onCommentAdded(serviceId);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -180,12 +200,12 @@ const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
       </Animated.View>
 
       {/* Drawer */}
-      <Animated.View 
+      <Animated.View
         style={[
           styles.drawer,
           {
             transform: [{ translateY }],
-            paddingBottom: insets.bottom + 20,
+            paddingBottom: Math.max(insets.bottom, keyboardHeight) + 20,
           }
         ]}
       >
@@ -225,10 +245,7 @@ const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
         )}
 
         {/* Comment Input */}
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.inputContainer}
-        >
+        <View style={styles.inputContainer}>
           <View style={styles.inputRow}>
             <Image 
               source={{ uri: user?.id ? 'https://via.placeholder.com/40' : 'https://via.placeholder.com/40' }}
@@ -260,7 +277,7 @@ const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
               )}
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Animated.View>
     </>
   );

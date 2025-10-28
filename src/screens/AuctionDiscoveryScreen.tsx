@@ -149,6 +149,15 @@ const AuctionDiscoveryScreen = () => {
 
       <View style={styles.auctionOverlay}>
         <View style={styles.auctionHeader}>
+          {/* Live Streaming Badge for Live Auctions */}
+          {item.auction_type === 'live' && item.time_status === 'active' && item.stream_url && (
+            <View style={styles.liveStreamBadge}>
+              <View style={styles.livePulseDot} />
+              <Ionicons name="videocam" size={12} color="white" />
+              <Text style={styles.liveStreamText}>STREAMING</Text>
+            </View>
+          )}
+          
           <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(item.time_status) }]}>
             <Text style={styles.statusText}>
               {item.time_status === 'active' ? 'LIVE' : item.time_status.toUpperCase()}
@@ -562,6 +571,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.6)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  liveStreamBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E74C3C',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  livePulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'white',
+    marginRight: 4,
+  },
+  liveStreamText: {
+    color: 'white',
+    fontSize: 9,
+    fontWeight: 'bold',
+    marginLeft: 2,
   },
   auctionDetails: {
     position: 'absolute',

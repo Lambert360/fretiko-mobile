@@ -2,6 +2,8 @@ import { StorageClient } from '@supabase/storage-js';
 import * as FileSystem from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import { fileUploadService } from './fileUploadService';
 import { API_BASE_URL } from '../config/api';
 
@@ -23,6 +25,22 @@ export interface CreateStoryData {
   thumbnail_url?: string;
   caption?: string;
   duration?: number;
+}
+
+export interface StoryDraft {
+  id: string;
+  fileUri: string;
+  fileName: string;
+  fileType: string;
+  caption?: string;
+  duration?: number;
+  timestamp: number;
+}
+
+export interface RetryConfig {
+  maxRetries: number;
+  currentRetry: number;
+  backoffMs: number;
 }
 
 // Get current user from mobile app's auth system
@@ -443,6 +461,172 @@ class StoryUploadService {
       return 0;
     } catch {
       return 0;
+    }
+  }
+
+  /**
+   * Compress image before upload
+   * @param imageUri Local image URI
+   * @returns Compressed image URI
+   */
+  async compressImage(imageUri: string): Promise<string> {
+    try {
+      console.log('🗜️ Compressing image...');
+      
+      const result = await manipulateAsync(
+        imageUri,
+        [{ resize: { width: 1080 } }], // Resize to max width 1080px
+        {
+          compress: 0.7, // 70% quality
+          format: SaveFormat.JPEG,
+        }
+      );
+
+      console.log('✅ Image compressed successfully');
+      return result.uri;
+    } catch (error) {
+      console.error('❌ Image compression failed:', error);
+      return imageUri; // Return original if compression fails
+    }
+  }
+
+  /**
+   * Generate video thumbnail
+   * @param videoUri Local video URI
+   * @returns Thumbnail URI
+   */
+  async generateVideoThumbnailClient(videoUri: string): Promise<string | null> {
+    try {
+      console.log('🎬 Generating video thumbnail...');
+      
+      const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, {
+        time: 1000, // 1 second into video
+      });
+
+      console.log('✅ Thumbnail generated:', uri);
+      return uri;
+    } catch (error) {
+      console.error('❌ Thumbnail generation failed:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Save story draft
+   * @param draft Story draft data
+   */
+  async saveDraft(draft: StoryDraft): Promise<void> {
+    try {
+      const drafts = await this.getDrafts();
+      const updatedDrafts = [...drafts.filter(d => d.id !== draft.id), draft];
+      
+      await AsyncStorage.setItem('story_drafts', JSON.stringify(updatedDrafts));
+      console.log('💾 Draft saved:', draft.id);
+    } catch (error) {
+      console.error('❌ Failed to save draft:', error);
+    }
+  }
+
+  /**
+   * Get all saved drafts
+   * @returns Array of story drafts
+   */
+  async getDrafts(): Promise<StoryDraft[]> {
+    try {
+      const draftsJson = await AsyncStorage.getItem('story_drafts');
+      return draftsJson ? JSON.parse(draftsJson) : [];
+    } catch (error) {
+      console.error('❌ Failed to get drafts:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Delete a draft
+   * @param draftId Draft ID to delete
+   */
+  async deleteDraft(draftId: string): Promise<void> {
+    try {
+      const drafts = await this.getDrafts();
+      const updatedDrafts = drafts.filter(d => d.id !== draftId);
+      
+      await AsyncStorage.setItem('story_drafts', JSON.stringify(updatedDrafts));
+      console.log('🗑️ Draft deleted:', draftId);
+    } catch (error) {
+      console.error('❌ Failed to delete draft:', error);
+    }
+  }
+
+  /**
+   * Upload with retry logic
+   * @param uploadFn Upload function to retry
+   * @param retryConfig Retry configuration
+   * @returns Upload result
+   */
+  async uploadWithRetry<T>(
+    uploadFn: () => Promise<T>,
+    retryConfig: RetryConfig = { maxRetries: 3, currentRetry: 0, backoffMs: 1000 }
+  ): Promise<T> {
+    try {
+      return await uploadFn();
+    } catch (error) {
+      if (retryConfig.currentRetry < retryConfig.maxRetries) {
+        const delay = retryConfig.backoffMs * Math.pow(2, retryConfig.currentRetry);
+        console.log(`⏳ Retrying upload in ${delay}ms (attempt ${retryConfig.currentRetry + 1}/${retryConfig.maxRetries})`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        return this.uploadWithRetry(uploadFn, {
+          ...retryConfig,
+          currentRetry: retryConfig.currentRetry + 1,
+        });
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Upload complete story with compression and retry
+   */
+  async uploadCompleteStoryEnhanced(
+    fileUri: string,
+    fileName: string,
+    fileType: string,
+    caption?: string,
+    duration?: number
+  ): Promise<{ uploadResult: StoryUploadResult; storyData?: any }> {
+    
+    try {
+      console.log('🚀 Starting enhanced story upload...');
+
+      // Compress image if it's an image
+      let processedUri = fileUri;
+      if (fileType.startsWith('image/')) {
+        processedUri = await this.compressImage(fileUri);
+      }
+
+      // Upload with retry logic
+      return await this.uploadWithRetry(async () => {
+        return await this.uploadCompleteStory(
+          processedUri,
+          fileName,
+          fileType,
+          caption,
+          duration
+        );
+      });
+
+    } catch (error) {
+      console.error('💥 Enhanced upload error:', error);
+      return {
+        uploadResult: {
+          publicUrl: '',
+          path: '',
+          success: false,
+          error: error instanceof Error ? error.message : 'Upload failed',
+        },
+      };
     }
   }
 }

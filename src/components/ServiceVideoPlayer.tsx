@@ -51,6 +51,8 @@ export const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = ({
 
     const timeUpdateSubscription = player.addListener('timeUpdate', ({ currentTime, duration }) => {
       if (onPlaybackStatusUpdate && duration) {
+        // Temporarily log to verify updates are being sent
+        // console.log(`📊 Progress: ${currentTime?.toFixed(1)}s / ${duration?.toFixed(1)}s`);
         onPlaybackStatusUpdate({
           currentTime: currentTime || 0,
           duration: duration || 0,
@@ -77,7 +79,6 @@ export const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = ({
         left: 0
       }}
       contentFit="contain"
-      showsControls={false}
     />
   );
 };

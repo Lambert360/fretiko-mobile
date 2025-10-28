@@ -65,11 +65,19 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
   const refreshCart = async () => {
     try {
       setCartState(prev => ({ ...prev, loading: true }));
-      
+
       const [items, summary] = await Promise.all([
-        cartAPI.getCartItems().catch(() => []), // Return empty array if API fails
-        cartAPI.getCartSummary().catch(() => ({ total: 0 })) // Return empty summary if API fails
+        cartAPI.getCartItems().catch((err) => {
+          console.error('Failed to get cart items:', err);
+          return [];
+        }),
+        cartAPI.getCartSummary().catch((err) => {
+          console.error('Failed to get cart summary:', err);
+          return { total: 0 };
+        })
       ]);
+
+      console.log('📦 Cart refreshed - Items:', items.length, 'Total count:', items.reduce((total, item) => total + item.quantity, 0));
 
       setCartState(prev => ({
         ...prev,
@@ -81,12 +89,12 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     } catch (error) {
       console.error('Error refreshing cart:', error);
       // Set fallback empty state
-      setCartState(prev => ({ 
-        ...prev, 
-        items: [], 
-        itemCount: 0, 
-        totalAmount: 0, 
-        loading: false 
+      setCartState(prev => ({
+        ...prev,
+        items: [],
+        itemCount: 0,
+        totalAmount: 0,
+        loading: false
       }));
     }
   };
@@ -131,22 +139,37 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
 
   const removeFromCart = async (itemId: string) => {
     try {
+      console.log('🗑️ CartContext: Removing item from cart:', itemId);
+      console.log('📊 CartContext: Current cart before removal:', {
+        totalItems: cartState.items.length,
+        items: cartState.items.map(i => ({ id: i.id, name: i.productName }))
+      });
       setCartState(prev => ({ ...prev, loading: true }));
-      
+
       try {
         await cartAPI.removeFromCart(itemId);
+        console.log('✅ CartContext: Item removed from backend, refreshing cart...');
         await refreshCart();
+        console.log('✅ CartContext: Cart refresh complete after removal');
+        console.log('📊 CartContext: Cart after refresh:', {
+          totalItems: cartState.items.length,
+          items: cartState.items.map(i => ({ id: i.id, name: i.productName }))
+        });
       } catch (apiError) {
-        console.warn('Backend cart API failed for remove operation:', apiError);
+        console.warn('CartContext: Backend cart API failed for remove operation:', apiError);
         // Fallback: Update local state
-        setCartState(prev => ({
-          ...prev,
-          itemCount: Math.max(0, prev.itemCount - 1),
-          loading: false
-        }));
+        setCartState(prev => {
+          const newCount = Math.max(0, prev.itemCount - 1);
+          console.log('📦 CartContext: Fallback: Updating local cart count to', newCount);
+          return {
+            ...prev,
+            itemCount: newCount,
+            loading: false
+          };
+        });
       }
     } catch (error) {
-      console.error('Error removing from cart:', error);
+      console.error('CartContext: Error removing from cart:', error);
       Alert.alert('Error', 'Failed to remove item from cart.');
       setCartState(prev => ({ ...prev, loading: false }));
     }

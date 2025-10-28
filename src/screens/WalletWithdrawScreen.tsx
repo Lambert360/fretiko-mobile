@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Alert, 
   Dimensions, 
@@ -8,13 +8,18 @@ import {
   ScrollView, 
   StyleSheet, 
   Text, 
+  TextInput,
   TouchableOpacity, 
   View 
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { walletAPI, Wallet } from '../services/walletAPI';
 import DualCurrencyInput from '../components/DualCurrencyInput';
 import { currencyAPI } from '../services/currencyAPI';
+import { PINVerification } from '../components/PINVerification';
+import { bankAccountAPI, BankAccount } from '../services/bankAccountAPI';
+import { pinAPI } from '../services/pinAPI';
 
 interface WalletWithdrawScreenProps {
   navigation: any;
@@ -25,8 +30,13 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
   const [localAmount, setLocalAmount] = useState('');
   const [fretiAmount, setFretiAmount] = useState('');
   const [localCurrency, setLocalCurrency] = useState('NGN');
+  const [selectedBankAccount, setSelectedBankAccount] = useState<string>('');
+  const [showPINModal, setShowPINModal] = useState(false);
+  const [pendingWithdrawal, setPendingWithdrawal] = useState<{fretiValue: number, localValue: number} | null>(null);
   const [loading, setLoading] = useState(false);
   const [wallet, setWallet] = useState<Wallet | null>(null);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [isValid, setIsValid] = useState(true);
   const [validationError, setValidationError] = useState<string>('');
   
@@ -35,6 +45,34 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
   useEffect(() => {
     loadWalletData();
   }, []);
+
+  // Reload bank accounts when screen comes into focus (e.g., after adding a new account)
+  useFocusEffect(
+    useCallback(() => {
+      loadBankAccounts();
+    }, [])
+  );
+
+  const loadBankAccounts = async () => {
+    try {
+      setLoadingAccounts(true);
+      const accounts = await bankAccountAPI.getBankAccounts();
+      setBankAccounts(accounts);
+
+      // Set default account
+      const defaultAccount = accounts.find(acc => acc.isDefault);
+      if (defaultAccount) {
+        setSelectedBankAccount(defaultAccount.id);
+      } else if (accounts.length > 0) {
+        setSelectedBankAccount(accounts[0].id);
+      }
+    } catch (error) {
+      console.error('Error loading bank accounts:', error);
+      Alert.alert('Error', 'Failed to load bank accounts. Please try again.');
+    } finally {
+      setLoadingAccounts(false);
+    }
+  };
 
   const loadWalletData = async () => {
     try {
@@ -74,18 +112,69 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
       return;
     }
 
-    Alert.alert(
-      'Confirm Withdrawal',
-      `You are about to withdraw ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} which equals ${currencyAPI.formatCurrency(localValue, localCurrency)}.\n\nFunds will be processed within 1-3 business days.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Confirm', 
-          style: 'default',
-          onPress: () => processWithdrawal(fretiValue, localValue)
-        }
-      ]
-    );
+    if (!selectedBankAccount) {
+      Alert.alert('Error', 'Please select a bank account for withdrawal');
+      return;
+    }
+
+    // Check if user has a PIN set up
+    try {
+      const pinStatus = await pinAPI.getPinStatus();
+      
+      if (!pinStatus.hasPin) {
+        // User needs to create a PIN first
+        Alert.alert(
+          'PIN Required',
+          'For security, you need to create a 6-digit PIN before making withdrawals.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Create PIN',
+              onPress: () => navigation.navigate('CreatePIN', { returnScreen: 'WalletWithdraw' }),
+            },
+          ]
+        );
+        return;
+      }
+
+      if (pinStatus.isLocked) {
+        Alert.alert(
+          'PIN Locked',
+          `Your PIN is temporarily locked due to too many failed attempts. Please try again ${pinStatus.lockedUntil ? 'after ' + new Date(pinStatus.lockedUntil).toLocaleTimeString() : 'later'}.`,
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      // PIN exists and is not locked, proceed with withdrawal
+      const selectedAccount = bankAccounts.find(acc => acc.id === selectedBankAccount);
+
+      Alert.alert(
+        'Confirm Withdrawal',
+        `You are about to withdraw ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} which equals ${currencyAPI.formatCurrency(localValue, localCurrency)}.\n\nWithdraw to:\n${selectedAccount?.bankName} - ${selectedAccount?.accountNumber}\n\nFunds will be processed within 1-3 business days.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Verify with PIN', 
+            style: 'default',
+            onPress: () => {
+              setPendingWithdrawal({ fretiValue, localValue });
+              setShowPINModal(true);
+            }
+          }
+        ]
+      );
+    } catch (error: any) {
+      console.error('Error checking PIN status:', error);
+      Alert.alert('Error', 'Failed to verify PIN status. Please try again.');
+    }
+  };
+
+  const handlePINVerificationSuccess = () => {
+    if (pendingWithdrawal) {
+      processWithdrawal(pendingWithdrawal.fretiValue, pendingWithdrawal.localValue);
+      setPendingWithdrawal(null);
+    }
   };
 
   const processWithdrawal = async (fretiValue: number, localValue: number) => {
@@ -96,18 +185,41 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
         localCurrency: localCurrency
       });
 
+      // Graceful handling for pending payment integration
+      const statusMessage = result.status === 'requested' || result.status === 'pending'
+        ? '\n\n⚠️ Note: Payout integration is currently being configured. Your withdrawal will be processed once our payment gateway is active. Funds are securely held in your pending withdrawal balance.'
+        : '';
+
       Alert.alert(
-        'Withdrawal Requested', 
-        `Your withdrawal has been requested successfully!\n\nFreti Amount: ${currencyAPI.formatCurrency(fretiValue, 'FRETI')}\nLocal Amount: ${currencyAPI.formatCurrency(localValue, localCurrency)}\nStatus: ${result.status}`,
+        'Withdrawal Request Created', 
+        `Your withdrawal has been requested successfully!\n\nFreti Amount: ${currencyAPI.formatCurrency(fretiValue, 'FRETI')}\nLocal Amount: ${currencyAPI.formatCurrency(localValue, localCurrency)}\nStatus: ${result.status.toUpperCase()}${statusMessage}\n\nProcessing Time: 1-3 business days (once gateway is active)`,
         [
           { 
             text: 'OK', 
-            onPress: () => navigation.goBack() 
+            onPress: () => {
+              // Navigate to Wallet screen (not goBack, to avoid going to CreatePIN)
+              navigation.navigate('Wallet');
+            }
           }
         ]
       );
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to create withdrawal');
+      console.error('❌ Withdrawal error:', error);
+      
+      // Provide user-friendly error messages
+      let errorMessage = 'Failed to create withdrawal. Please try again.';
+      
+      if (error.message?.includes('Insufficient')) {
+        errorMessage = error.message; // Show insufficient balance error as-is
+      } else if (error.message?.includes('limit')) {
+        errorMessage = error.message; // Show limit error as-is
+      } else if (error.message?.includes('network') || error.message?.includes('Network')) {
+        errorMessage = 'Network error. Please check your internet connection and try again.';
+      } else if (error.message?.includes('Unable to load wallet')) {
+        errorMessage = 'Unable to verify your wallet balance. Please try again.';
+      }
+      
+      Alert.alert('Withdrawal Error', errorMessage);
     } finally {
       setLoading(false);
     }
@@ -169,8 +281,8 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
               <Text style={styles.currencySymbol}>₣</Text>
               <TextInput
                 style={styles.amountInput}
-                value={withdrawAmount}
-                onChangeText={setWithdrawAmount}
+                value={fretiAmount}
+                onChangeText={setFretiAmount}
                 placeholder="0.00"
                 placeholderTextColor="#666"
                 keyboardType="numeric"
@@ -192,7 +304,7 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
                       <TouchableOpacity
                         key={percentage}
                         style={styles.quickAmountButton}
-                        onPress={() => setWithdrawAmount(quickAmount.toFixed(2))}
+                        onPress={() => setFretiAmount(quickAmount?.toFixed(2) || '0')}
                       >
                         <Text style={styles.quickAmountText}>{percentage}%</Text>
                         <Text style={styles.quickAmountValue}>
@@ -205,7 +317,7 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
                 })}
                 <TouchableOpacity
                   style={styles.quickAmountButton}
-                  onPress={() => setWithdrawAmount(wallet.availableBalance.toFixed(6))}
+                  onPress={() => setFretiAmount(wallet?.availableBalance?.toFixed(6) || '0')}
                 >
                   <Text style={styles.quickAmountText}>All</Text>
                   <Text style={styles.quickAmountValue}>
@@ -216,6 +328,69 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
             </View>
           )}
 
+          {/* Bank Account Selection */}
+          <View style={styles.inputGroup}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.inputLabel}>Withdraw To</Text>
+              <TouchableOpacity onPress={() => navigation.navigate('AddBankAccount')}>
+                <Text style={styles.addAccountText}>+ Add Account</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.bankAccounts}>
+              {loadingAccounts ? (
+                <View style={styles.loadingContainer}>
+                  <Text style={styles.loadingText}>Loading bank accounts...</Text>
+                </View>
+              ) : bankAccounts.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="business-outline" size={48} color="rgba(255,255,255,0.3)" />
+                  <Text style={styles.emptyText}>No bank accounts added</Text>
+                  <Text style={styles.emptySubtext}>Add a bank account to withdraw funds</Text>
+                </View>
+              ) : (
+                bankAccounts.map((account) => (
+                <TouchableOpacity
+                  key={account.id}
+                  style={[
+                    styles.bankAccountCard,
+                    selectedBankAccount === account.id && styles.bankAccountCardActive
+                  ]}
+                  onPress={() => setSelectedBankAccount(account.id)}
+                >
+                  <View style={[
+                    styles.bankAccountIcon,
+                    selectedBankAccount === account.id && styles.bankAccountIconActive
+                  ]}>
+                    <Ionicons 
+                      name="business" 
+                      size={20} 
+                      color={selectedBankAccount === account.id ? '#F39C12' : '#FFFFFF'} 
+                    />
+                  </View>
+                  <View style={styles.bankAccountInfo}>
+                    <Text style={[
+                      styles.bankAccountName,
+                      selectedBankAccount === account.id && styles.bankAccountNameActive
+                    ]}>
+                      {account.bankName}
+                    </Text>
+                    <Text style={styles.bankAccountNumber}>{account.accountNumber}</Text>
+                    <Text style={styles.bankAccountHolder}>{account.accountName}</Text>
+                  </View>
+                  {selectedBankAccount === account.id && (
+                    <Ionicons name="checkmark-circle" size={24} color="#F39C12" />
+                  )}
+                  {account.isDefault && (
+                    <View style={styles.defaultBadge}>
+                      <Text style={styles.defaultBadgeText}>Default</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+                ))
+              )}
+            </View>
+          </View>
+
           {/* Currency Selector */}
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Receive Currency</Text>
@@ -224,7 +399,7 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
               showsHorizontalScrollIndicator={false}
               style={styles.currencyScroll}
             >
-              {currencies.map((currency) => (
+              {supportedCurrencies.map((currency) => (
                 <TouchableOpacity
                   key={currency}
                   style={[
@@ -245,19 +420,19 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
           </View>
 
           {/* Conversion Display */}
-          {withdrawAmount && parseFloat(withdrawAmount) > 0 && (
+          {fretiAmount && parseFloat(fretiAmount) > 0 && (
             <View style={styles.conversionCard}>
               <Text style={styles.conversionTitle}>Conversion</Text>
               <View style={styles.conversionRow}>
                 <Text style={styles.conversionLabel}>You withdraw:</Text>
                 <Text style={styles.conversionValueFreti}>
-                  {walletAPI.formatFreti(parseFloat(withdrawAmount))}
+                  {walletAPI.formatFreti(parseFloat(fretiAmount))}
                 </Text>
               </View>
               <View style={styles.conversionRow}>
                 <Text style={styles.conversionLabel}>You receive:</Text>
                 <Text style={styles.conversionValue}>
-                  {walletAPI.formatCurrency(parseFloat(withdrawAmount), localCurrency)}
+                  {walletAPI.formatCurrency(parseFloat(fretiAmount), localCurrency)}
                 </Text>
               </View>
               <View style={styles.conversionRow}>
@@ -295,16 +470,28 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
         <TouchableOpacity
           style={[
             styles.withdrawButton,
-            (!withdrawAmount || parseFloat(withdrawAmount) <= 0 || loading) && styles.withdrawButtonDisabled
+            (!fretiAmount || parseFloat(fretiAmount) <= 0 || loading) && styles.withdrawButtonDisabled
           ]}
           onPress={handleWithdraw}
-          disabled={!withdrawAmount || parseFloat(withdrawAmount) <= 0 || loading}
+          disabled={!fretiAmount || parseFloat(fretiAmount) <= 0 || loading}
         >
           <Text style={styles.withdrawButtonText}>
-            {loading ? 'Processing...' : `Withdraw ${withdrawAmount ? walletAPI.formatFreti(parseFloat(withdrawAmount)) : 'Funds'}`}
+            {loading ? 'Processing...' : `Withdraw ${fretiAmount ? walletAPI.formatFreti(parseFloat(fretiAmount)) : 'Funds'}`}
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* PIN Verification Modal */}
+      <PINVerification
+        visible={showPINModal}
+        onClose={() => {
+          setShowPINModal(false);
+          setPendingWithdrawal(null);
+        }}
+        onSuccess={handlePINVerificationSuccess}
+        title="Verify Withdrawal"
+        subtitle="Enter your 6-digit PIN to confirm withdrawal"
+      />
     </KeyboardAvoidingView>
   );
 };
@@ -579,6 +766,106 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  addAccountText: {
+    color: '#F39C12',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  bankAccounts: {
+    gap: 12,
+  },
+  bankAccountCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2A2A2A',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    position: 'relative',
+  },
+  bankAccountCardActive: {
+    backgroundColor: 'rgba(243, 156, 18, 0.1)',
+    borderColor: '#F39C12',
+  },
+  bankAccountIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  bankAccountIconActive: {
+    backgroundColor: 'rgba(243, 156, 18, 0.2)',
+  },
+  bankAccountInfo: {
+    flex: 1,
+  },
+  bankAccountName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 3,
+  },
+  bankAccountNameActive: {
+    color: '#F39C12',
+  },
+  bankAccountNumber: {
+    fontSize: 13,
+    color: '#CCCCCC',
+    marginBottom: 2,
+    fontFamily: 'monospace',
+  },
+  bankAccountHolder: {
+    fontSize: 11,
+    color: '#999999',
+  },
+  defaultBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  defaultBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  loadingContainer: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 14,
+  },
+  emptyContainer: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  emptyText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  emptySubtext: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });
 

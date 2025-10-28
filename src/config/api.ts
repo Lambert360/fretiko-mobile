@@ -1,17 +1,49 @@
 // API Configuration for Fretiko Mobile App
+import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
 // For Expo development:
-// 1. Find your computer's IP address:
-//    - Windows: run "ipconfig" in Command Prompt, look for "IPv4 Address"
-//    - Mac/Linux: run "ifconfig" in Terminal, look for "inet" under your network interface
-// 2. Replace "localhost" with your IP address below
-// 3. Make sure your backend is running on the same network
+// Automatically detects the correct backend URL based on environment
+// - iOS Simulator: Uses localhost (127.0.0.1)
+// - Android Emulator: Uses 10.0.2.2 (Android's special alias for host)
+// - Physical Device/Expo Go: Uses your computer's LAN IP from Expo manifest
+
+/**
+ * Get the appropriate backend URL based on the runtime environment
+ */
+const getBackendUrl = (): string => {
+  // Production URL (when deployed)
+  // Uncomment and set this when deploying to production
+  // if (!__DEV__) {
+  //   return 'https://your-production-api.com';
+  // }
+
+  // Development: Auto-detect based on platform and environment
+  const localhost = Platform.select({
+    ios: 'localhost',      // iOS Simulator uses localhost
+    android: '10.0.2.2',   // Android Emulator uses this special IP
+    default: 'localhost'
+  });
+
+  // If running on Expo Go or physical device, try to get the host IP from Expo
+  const expoHostUri = Constants.expoConfig?.hostUri;
+
+  if (expoHostUri) {
+    // Extract IP from Expo's host URI (e.g., "192.168.1.5:8081" -> "192.168.1.5")
+    const host = expoHostUri.split(':')[0];
+    console.log('📱 Detected Expo host IP:', host);
+    return `http://${host}:3000`;
+  }
+
+  // Fallback to localhost/emulator IP
+  console.log('💻 Using local environment:', localhost);
+  return `http://${localhost}:3000`;
+};
 
 export const API_CONFIG = {
-  // Development configuration
-  // Updated with your computer's IP address for Expo testing
-  BASE_URL: 'http://172.20.23.146:3000', // Your computer's current IP address
-  
+  // Development configuration - auto-detects correct URL
+  BASE_URL: getBackendUrl(),
+
   // Timeout settings - increased for better reliability
   TIMEOUT: 60000, // 60 seconds
   CALL_TIMEOUT: 90000, // 90 seconds for call-related operations

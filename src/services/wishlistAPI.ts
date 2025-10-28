@@ -139,6 +139,27 @@ class WishlistAPI {
     }
   }
 
+  // Add item to shared wishlist (for collaborators)
+  async addToSharedWishlist(ownerId: string, itemData: {
+    productId: string;
+    productName: string;
+    productImage: string;
+    price: number;
+    collaborationNote?: string;
+  }): Promise<{ message: string; item: any }> {
+    try {
+      const response = await api.post(`/wishlist/shared/${ownerId}/add`, itemData);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error adding to shared wishlist:', error);
+      // Provide user-friendly error messages
+      if (error.response?.data?.message) {
+        throw new Error(error.response.data.message);
+      }
+      throw new Error('Failed to add item to shared wishlist');
+    }
+  }
+
   async removeFromWishlist(productId: string): Promise<{ message: string }> {
     try {
       const response = await api.delete(`/wishlist/${productId}`);
@@ -176,6 +197,11 @@ class WishlistAPI {
     shareType: string;
     canAddItems: boolean;
     sharedItemsCount?: number;
+    chatMessage?: {
+      messageId: string;
+      conversationId: string;
+      wishlistData: any;
+    };
   }> {
     try {
       const response = await api.post('/wishlist/share', shareData);
@@ -301,6 +327,31 @@ class WishlistAPI {
     } catch (error) {
       console.error('Error checking gift purchase eligibility:', error);
       throw error;
+    }
+  }
+
+  // Multi-step gift purchase validation
+  async validateGiftPurchase(items: Array<{ wishlistItemId: string; quantity?: number }>): Promise<{
+    valid: boolean;
+    totalPrice: number;
+    availableItems: any[];
+    validationResults: any[];
+    summary: {
+      totalItems: number;
+      validItems: number;
+      invalidItems: number;
+    };
+  }> {
+    try {
+      const response = await api.post('/wishlist/validate-gift-purchase', { items });
+      return response.data;
+    } catch (error: any) {
+      console.error('Error validating gift purchase:', error);
+      // Provide user-friendly error messages
+      if (error.response?.data?.message) {
+        throw new Error(error.response.data.message);
+      }
+      throw new Error('Failed to validate gift purchase');
     }
   }
 }

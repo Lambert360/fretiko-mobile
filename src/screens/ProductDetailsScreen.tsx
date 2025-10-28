@@ -201,10 +201,25 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
     if (!product || !user) return;
 
     try {
+      // Determine chat type based on current user's role
+      // Since this is a product, the seller is a vendor
+      // Priority: rider > vendor > friend
+      let chatType: 'friend' | 'vendor' | 'rider' = 'vendor'; // Default to vendor since it's a product
+
+      // Check if current user is a rider (highest priority)
+      if (user.is_rider) {
+        chatType = 'rider';
+      }
+      // If current user is seller, keep it as vendor
+      else if (user.is_seller) {
+        chatType = 'vendor';
+      }
+      // Product owner is assumed to be vendor, so default stays 'vendor'
+
       // Find existing conversation or create a new one with the product owner
       const conversation = await chatAPI.findOrCreateConversation(
         [product.user_id], // The product owner
-        'vendor' // Since this is about a product, it's vendor communication
+        chatType
       );
 
       // Navigate to IndividualChatScreen with proper parameters
@@ -212,7 +227,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
         chatId: conversation.id,
         chatName: `Product: ${product.name}`, // Use product name as chat name
         chatAvatar: product.images[0] || 'https://via.placeholder.com/50', // Use product image as avatar
-        chatType: 'vendor' as const,
+        chatType: chatType as const,
         isOnline: true, // Assume online for now
         verified: false, // Set based on user verification status if available
         isAI: false,

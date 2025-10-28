@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI, UserStats } from '../services/userAPI';
 import { walletAPI, Wallet, WalletStats } from '../services/walletAPI';
+import { ordersAPI, Order } from '../services/ordersAPI';
 import { fileUploadService } from '../services/fileUploadService';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -34,6 +35,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
   const [stats, setStats] = useState<UserStats | null>(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [walletStats, setWalletStats] = useState<WalletStats | null>(null);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isOptionsVisible, setIsOptionsVisible] = useState(false);
@@ -120,18 +122,21 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
 
   const loadProfile = async () => {
     try {
-      // Load profile, stats, and wallet in parallel
-      const [profileData, statsData, walletData, walletStatsData] = await Promise.all([
+      // Load profile, stats, wallet, and orders in parallel
+      const [profileData, statsData, walletData, walletStatsData, ordersData] = await Promise.all([
         userAPI.getProfile(),
         userAPI.getStats(),
         walletAPI.getWallet(),
-        walletAPI.getWalletStats()
+        walletAPI.getWalletStats(),
+        ordersAPI.getMyOrders({ status: ['delivered', 'shipped', 'processing', 'cancelled'] })
       ]);
       
       setProfile(profileData);
       setStats(statsData);
       setWallet(walletData);
       setWalletStats(walletStatsData);
+      // Get latest 10 orders for profile display
+      setOrders(ordersData.slice(0, 10));
     } catch (error: any) {
       console.error('Error loading profile:', error);
       
@@ -314,12 +319,23 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
     }
   };
 
-  const defaultOrders = [
-    { id: '1', title: 'Wireless Earbuds', date: 'Jul 30, 2025', status: 'Delivered', image: 'https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?w=100' },
-    { id: '2', title: 'Phone Case', date: 'Jul 29, 2025', status: 'Shipped', image: 'https://images.unsplash.com/photo-1556656793-08538906a9f8?w=100' },
-    { id: '3', title: 'Smartwatch', date: 'Jul 28, 2025', status: 'Processing', image: 'https://images.unsplash.com/photo-1608043152269-423dbba4e7e1?w=100' },
-    { id: '4', title: 'Headphones', date: 'Jul 27, 2025', status: 'Canceled', image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=100' },
-  ];
+  const formatOrderDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const getStatusDisplay = (status: string) => {
+    const statusMap: { [key: string]: string } = {
+      'delivered': 'Delivered',
+      'shipped': 'Shipped',
+      'out_for_delivery': 'Out for Delivery',
+      'processing': 'Processing',
+      'confirmed': 'Confirmed',
+      'pending': 'Pending',
+      'cancelled': 'Canceled'
+    };
+    return statusMap[status] || status;
+  };
 
   const trendItems = [
     { id: '1', price: '$99.99', trend: '+15%', image: 'https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?w=150' },
@@ -350,10 +366,6 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
     recentTransactions: walletStats.recentTransactionCount,
     monthlySpending: walletStats.monthlySpending,
     monthlyDeposits: walletStats.monthlyDeposits,
-    orders: defaultOrders.map(o => ({
-      ...o,
-      title: profile.isSeller ? `Sold ${o.title}` : profile.isRider ? `Delivered ${o.title}` : o.title
-    })),
   } : null;
 
   const renderFloatingParticles = () => (
@@ -647,40 +659,75 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
 
             {/* Enhanced Order History */}
             <Animated.View style={[styles.modernCard]}>
-              <Text style={styles.sectionTitle}>Order History</Text>
-              <FlatList
-                data={userData.orders}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                renderItem={({ item }) => (
-                  <View style={styles.orderCard}>
-                    <View style={styles.orderImageContainer}>
-                      <Image source={{ uri: item.image }} style={styles.orderImage} />
-                      <View
-                        style={[
-                          styles.statusBadge,
-                          {
-                            backgroundColor:
-                              item.status === 'Delivered'
-                                ? '#27AE60'
-                                : item.status === 'Canceled'
-                                ? '#E74C3C'
-                                : '#F39C12',
-                          },
-                        ]}
-                      >
-                        <Text style={styles.statusText}>{item.status}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.orderDetails}>
-                      <Text style={styles.orderTitle}>{item.title}</Text>
-                      <Text style={styles.orderDate}>{item.date}</Text>
-                    </View>
-                  </View>
+              <View style={styles.cardHeader}>
+                <Text style={styles.sectionTitle}>Order History</Text>
+                {orders.length > 0 && (
+                  <TouchableOpacity 
+                    style={styles.viewAllButton}
+                    onPress={() => navigation.navigate('Orders')}
+                  >
+                    <Text style={styles.viewAllText}>View All</Text>
+                    <Ionicons name="chevron-forward" size={14} color="#3498DB" />
+                  </TouchableOpacity>
                 )}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={styles.orderList}
-              />
+              </View>
+              {orders.length > 0 ? (
+                <FlatList
+                  data={orders}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  renderItem={({ item }) => {
+                    // Get first item for display
+                    const firstItem = item.items?.[0];
+                    const displayImage = firstItem?.image || 'https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?w=100';
+                    const displayTitle = firstItem?.name || `Order #${item.orderNumber}`;
+                    
+                    return (
+                      <TouchableOpacity
+                        style={styles.orderCard}
+                        onPress={() => navigation.navigate('OrderTracking', { orderId: item.id })}
+                      >
+                        <View style={styles.orderImageContainer}>
+                          <Image source={{ uri: displayImage }} style={styles.orderImage} />
+                          <View
+                            style={[
+                              styles.statusBadge,
+                              {
+                                backgroundColor:
+                                  item.status === 'delivered'
+                                    ? '#27AE60'
+                                    : item.status === 'cancelled'
+                                    ? '#E74C3C'
+                                    : item.status === 'shipped' || item.status === 'out_for_delivery'
+                                    ? '#3498DB'
+                                    : '#F39C12',
+                              },
+                            ]}
+                          >
+                            <Text style={styles.statusText}>{getStatusDisplay(item.status)}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.orderDetails}>
+                          <Text style={styles.orderTitle} numberOfLines={1}>{displayTitle}</Text>
+                          {item.itemCount > 1 && (
+                            <Text style={styles.orderItemCount}>+{item.itemCount - 1} more item{item.itemCount > 2 ? 's' : ''}</Text>
+                          )}
+                          <Text style={styles.orderDate}>{formatOrderDate(item.orderDate)}</Text>
+                          <Text style={styles.orderTotal}>{walletAPI.formatFreti(item.total)}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  }}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.orderList}
+                />
+              ) : (
+                <View style={styles.emptyOrdersContainer}>
+                  <Ionicons name="cube-outline" size={48} color="rgba(255,255,255,0.3)" />
+                  <Text style={styles.emptyOrdersText}>No orders yet</Text>
+                  <Text style={styles.emptyOrdersSubtext}>Start shopping to see your orders here</Text>
+                </View>
+              )}
             </Animated.View>
 
             {/* Enhanced Trends Section */}
@@ -750,6 +797,14 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                   <Ionicons name="bar-chart-outline" size={20} color="#FFFFFF" />
                 </View>
                 <Text style={styles.modalText}>Workspace</Text>
+              </TouchableOpacity>
+            )}
+            {profile?.isRider && (
+              <TouchableOpacity style={styles.modalOption} onPress={() => handleButtonPress(() => { navigation.navigate('RiderDetailScreen'); setIsOptionsVisible(false); })}>
+                <View style={styles.modalIconContainer}>
+                  <Ionicons name="bicycle" size={20} color="#FFFFFF" />
+                </View>
+                <Text style={styles.modalText}>Set Rider Profile</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity style={styles.modalOption} onPress={() => handleButtonPress(handleLogout)}>
@@ -1262,9 +1317,51 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  orderItemCount: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
   orderDate: {
     color: 'rgba(255,255,255,0.6)',
     fontSize: 12,
+  },
+  orderTotal: {
+    color: '#F39C12',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  emptyOrdersContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  emptyOrdersText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 12,
+  },
+  emptyOrdersSubtext: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 14,
+    marginTop: 4,
+  },
+  viewAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(52, 152, 219, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 152, 219, 0.3)',
+  },
+  viewAllText: {
+    color: '#3498DB',
+    fontSize: 12,
+    fontWeight: '600',
+    marginRight: 4,
   },
   trendIndicator: {
     backgroundColor: 'rgba(231, 76, 60, 0.2)',

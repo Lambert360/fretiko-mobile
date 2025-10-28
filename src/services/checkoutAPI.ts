@@ -61,6 +61,13 @@ export interface CreateOrderRequest {
     deliveryPrice: number;
     estimatedArrival: number;
   };
+  // NEW: Multi-vendor fields
+  riderAssignments?: any[];
+  totalRiderFee?: number;
+  useRewards?: boolean;
+  rewardsAmount?: number;
+  // NEW: Selective checkout - product/service IDs to include
+  selectedItemIds?: string[];
 }
 
 export interface Order {
@@ -74,9 +81,12 @@ export interface Order {
 
 class CheckoutAPI {
   // Get checkout summary for cart items
-  async getCheckoutSummary(): Promise<OrderSummary> {
+  async getCheckoutSummary(selectedItemIds?: string[]): Promise<OrderSummary> {
     try {
-      const response = await api.get('/checkout/summary');
+      const params = selectedItemIds && selectedItemIds.length > 0 
+        ? { selectedItemIds: selectedItemIds.join(',') } 
+        : {};
+      const response = await api.get('/checkout/summary', { params });
       return response.data;
     } catch (error) {
       console.error('Error fetching checkout summary:', error);
@@ -142,6 +152,17 @@ class CheckoutAPI {
     }
   }
 
+  // Get all delivery addresses
+  async getAllAddresses(): Promise<DeliveryAddress[]> {
+    try {
+      const response = await api.get('/checkout/addresses');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching addresses:', error);
+      throw error;
+    }
+  }
+
   // Save delivery address
   async saveAddress(address: DeliveryAddress): Promise<DeliveryAddress> {
     try {
@@ -149,6 +170,39 @@ class CheckoutAPI {
       return response.data;
     } catch (error) {
       console.error('Error saving address:', error);
+      throw error;
+    }
+  }
+
+  // Update delivery address
+  async updateAddress(addressId: string, address: DeliveryAddress): Promise<DeliveryAddress> {
+    try {
+      const response = await api.put(`/checkout/address/${addressId}`, address);
+      return response.data;
+    } catch (error) {
+      console.error('Error updating address:', error);
+      throw error;
+    }
+  }
+
+  // Delete delivery address
+  async deleteAddress(addressId: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await api.delete(`/checkout/address/${addressId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting address:', error);
+      throw error;
+    }
+  }
+
+  // Set default address
+  async setDefaultAddress(addressId: string): Promise<DeliveryAddress> {
+    try {
+      const response = await api.post(`/checkout/address/${addressId}/set-default`);
+      return response.data;
+    } catch (error) {
+      console.error('Error setting default address:', error);
       throw error;
     }
   }
@@ -237,6 +291,40 @@ class CheckoutAPI {
       await api.post('/cart/service', bookingData);
     } catch (error) {
       console.error('Error adding service booking:', error);
+      throw error;
+    }
+  }
+
+  // ========== MULTI-VENDOR CHECKOUT METHODS ==========
+
+  // Preview rider assignments for multi-vendor checkout
+  async previewRiderAssignments(previewData: {
+    buyerLocation: {
+      address: string;
+      city: string;
+      state: string;
+    };
+    orderDetails: {
+      weight: number;
+      itemCount: number;
+    };
+  }): Promise<any> {
+    try {
+      const response = await api.post('/checkout/preview-riders', previewData);
+      return response.data;
+    } catch (error) {
+      console.error('Error previewing rider assignments:', error);
+      throw error;
+    }
+  }
+
+  // Create grouped order
+  async createGroupedOrder(orderData: CreateOrderRequest): Promise<any> {
+    try {
+      const response = await api.post('/checkout/grouped-order', orderData);
+      return response.data;
+    } catch (error) {
+      console.error('Error creating grouped order:', error);
       throw error;
     }
   }

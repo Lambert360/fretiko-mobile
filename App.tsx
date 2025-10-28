@@ -13,14 +13,19 @@ import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { CartProvider } from './src/contexts/CartContext';
 
 // Import auth screens
+import { SplashScreen } from './src/screens/SplashScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { SignupScreen } from './src/screens/SignupScreen';
+import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
+import { WelcomeScreen } from './src/screens/WelcomeScreen';
 
 // Import profile and user screens
 import { EditProfileScreen } from './src/screens/EditProfileScreen';
 import { AccountSettingsScreen } from './src/screens/AccountSettingsScreen';
 import { RoleSelectionScreen } from './src/screens/RoleSelectionScreen';
 import { ConnectionsListScreen } from './src/screens/ConnectionsListScreen';
+import { ConnectionDetailsScreen } from './src/screens/ConnectionDetailsScreen';
+import ConnectionRequestsScreen from './src/screens/ConnectionRequestsScreen';
 import PublicProfileScreen from './src/screens/PublicProfileScreen';
 import { PublicStoreScreen } from './src/screens/PublicStoreScreen';
 
@@ -29,6 +34,8 @@ import { WalletScreen } from './src/screens/WalletScreen';
 import { WalletHistoryScreen } from './src/screens/WalletHistoryScreen';
 import WalletDepositScreen from './src/screens/WalletDepositScreen';
 import WalletWithdrawScreen from './src/screens/WalletWithdrawScreen';
+import AddBankAccountScreen from './src/screens/AddBankAccountScreen';
+import CreatePINScreen from './src/screens/CreatePINScreen';
 
 // Import product and service screens
 import ProductUploadScreen from './src/screens/ProductUploadScreen';
@@ -41,11 +48,16 @@ import ServiceBookingScreen from './src/screens/ServiceBookingScreen';
 import CartScreen from './src/screens/CartScreen';
 import WishlistScreen from './src/screens/WishlistScreen';
 import CheckoutScreen from './src/screens/CheckoutScreen';
+import GiftCheckoutScreen from './src/screens/GiftCheckoutScreen';
+import AddressBookScreen from './src/screens/AddressBookScreen';
 
 // Import order and delivery screens
 import OrdersScreen from './src/screens/OrdersScreen';
 import OrderTrackingScreen from './src/screens/OrderTrackingScreen';
+import GroupedOrderScreen from './src/screens/GroupedOrderScreen';
 import RiderSelectionScreen from './src/screens/RiderSelectionScreen';
+import RiderDetailScreen from './src/screens/RiderDetailScreen';
+import RateOrderScreen from './src/screens/RateOrderScreen';
 
 // Import communication screens
 import IndividualChatScreen from './src/screens/IndividualChatScreen';
@@ -65,8 +77,10 @@ import AuctionDetailsScreen from './src/screens/AuctionDetailsScreen';
 import CreateAuctionScreen from './src/screens/CreateAuctionScreen';
 import LiveStreamViewerScreen from './src/screens/LiveStreamViewerScreen';
 import LiveStreamHostScreen from './src/screens/LiveStreamHostScreen';
+import LiveStreamBroadcastScreen from './src/screens/LiveStreamBroadcastScreen';
 import LiveStreamSetupScreen from './src/screens/LiveStreamSetupScreen';
 import LiveMiniCheckoutScreen from './src/screens/LiveMiniCheckoutScreen';
+import AuctionLiveViewerScreen from './src/screens/AuctionLiveViewerScreen';
 import StoresScreen from './src/screens/StoresScreen';
 
 // Import stories screens
@@ -182,91 +196,84 @@ const AppNavigator: React.FC = () => {
         }}
       >
         {isAuthenticated ? (
-          // User is logged in
           isNewUser ? (
-            // New user - show role selection first
-            <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
-          ) : (
-            // Existing user - show main app with bottom tabs
             <>
-              {/* Main app with bottom tabs */}
+              <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
+              <Stack.Screen name="Welcome" component={WelcomeScreen} />
+            </>
+          ) : (
+            <>
               <Stack.Screen name="Main" component={BottomTabNavigator} />
-              
-              {/* Profile and user management screens */}
               <Stack.Screen name="EditProfile" component={EditProfileScreen} />
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
               <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
               <Stack.Screen name="ConnectionsList" component={ConnectionsListScreen} />
+              <Stack.Screen name="ConnectionDetails" component={ConnectionDetailsScreen} />
+              <Stack.Screen name="ConnectionRequests" component={ConnectionRequestsScreen} />
               <Stack.Screen name="PublicProfile" component={PublicProfileScreen} />
               <Stack.Screen name="PublicStore" component={PublicStoreScreen} />
-              
-              {/* Wallet screens */}
               <Stack.Screen name="Wallet" component={WalletScreen} />
               <Stack.Screen name="WalletHistory" component={WalletHistoryScreen} />
               <Stack.Screen name="WalletDeposit" component={WalletDepositScreen} />
               <Stack.Screen name="WalletWithdraw" component={WalletWithdrawScreen} />
-              
-              {/* Product screens */}
+              <Stack.Screen name="AddBankAccount" component={AddBankAccountScreen} />
+              <Stack.Screen name="CreatePIN" component={CreatePINScreen} />
               <Stack.Screen name="ProductUpload" component={ProductUploadScreen} />
               <Stack.Screen name="ProductDetails" component={ProductDetailsScreen} />
-              
-              {/* Service screens */}
               <Stack.Screen name="ServiceUpload" component={ServiceUploadScreen} />
               <Stack.Screen name="ServiceDetails" component={ServiceDetailsScreen} />
               <Stack.Screen name="ServiceBooking" component={ServiceBookingScreen} />
-              
-              {/* Cart and checkout screens */}
               <Stack.Screen name="Cart" component={CartScreen} />
               <Stack.Screen name="Wishlist" component={WishlistScreen} />
               <Stack.Screen name="SharedWishlist" component={SharedWishlistScreen} />
               <Stack.Screen name="Checkout" component={CheckoutScreen} />
-              
-              {/* Order and delivery screens */}
+              <Stack.Screen name="AddressBook" component={AddressBookScreen} />
+              <Stack.Screen name="GiftCheckout" component={GiftCheckoutScreen} />
               <Stack.Screen name="Orders" component={OrdersScreen} />
               <Stack.Screen name="OrderTracking" component={OrderTrackingScreen} />
+              <Stack.Screen name="GroupedOrder" component={GroupedOrderScreen} />
+              <Stack.Screen 
+                name="RateOrder" 
+                component={RateOrderScreen} 
+                options={{ 
+                  presentation: 'modal',
+                  headerShown: false,
+                  gestureEnabled: true,
+                  cardOverlayEnabled: true,
+                }} 
+              />
               <Stack.Screen name="RiderSelection" component={RiderSelectionScreen} />
-              
-              {/* Communication screens */}
+              <Stack.Screen name="RiderDetailScreen" component={RiderDetailScreen} />
               <Stack.Screen name="IndividualChatScreen" component={IndividualChatScreen} />
-
-              {/* Invoice screens */}
               <Stack.Screen name="CreateInvoice" component={CreateInvoiceScreen} />
               <Stack.Screen name="InvoiceDetails" component={InvoiceDetailsScreen} />
-
-              {/* Live sales screens */}
               <Stack.Screen name="LiveSales" component={LiveSalesScreen} />
               <Stack.Screen name="LiveStreamViewer" component={LiveStreamViewerScreen} />
               <Stack.Screen name="LiveStreamHost" component={LiveStreamHostScreen} />
+              <Stack.Screen name="LiveStreamBroadcast" component={LiveStreamBroadcastScreen} />
               <Stack.Screen name="LiveStreamSetup" component={LiveStreamSetupScreen} />
               <Stack.Screen name="LiveMiniCheckout" component={LiveMiniCheckoutScreen} />
-              
-              {/* Stores screen */}
               <Stack.Screen name="Stores" component={StoresScreen} />
-
-              {/* Stories screens */}
               <Stack.Screen name="Stories" component={StoriesScreen} />
               <Stack.Screen name="StoryUpload" component={StoryUploadScreen} />
               <Stack.Screen name="ShareStory" component={ShareStoryScreen} />
               <Stack.Screen name="StoryDeepLink" component={StoryDeepLinkScreen} />
-
-              {/* Workspace screens */}
               <Stack.Screen name="Workspace" component={WorkspaceScreen} />
               <Stack.Screen name="Analytics" component={AnalyticsScreen} />
               <Stack.Screen name="VendorOrderDetails" component={VendorOrderDetailsScreen} />
-
-              {/* Auction screens */}
               <Stack.Screen name="AuctionDiscovery" component={AuctionDiscoveryScreen} />
               <Stack.Screen name="AuctionCategory" component={AuctionCategoryScreen} />
               <Stack.Screen name="AuctionList" component={AuctionListScreen} />
               <Stack.Screen name="AuctionDetails" component={AuctionDetailsScreen} />
+              <Stack.Screen name="AuctionLiveViewer" component={AuctionLiveViewerScreen} />
               <Stack.Screen name="CreateAuction" component={CreateAuctionScreen} />
             </>
           )
         ) : (
-          // User is not logged in - show auth screens
           <>
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Signup" component={SignupScreen} />
+            <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
           </>
         )}
       </Stack.Navigator>

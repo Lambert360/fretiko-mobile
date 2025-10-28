@@ -10,7 +10,7 @@ import {
   Alert,
   RefreshControl,
   ActivityIndicator,
-  FlatList
+  Dimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
@@ -20,6 +20,9 @@ import { servicesAPI, VideoFeedItem, Service } from '../services/servicesAPI';
 import { chatAPI } from '../services/chatAPI';
 import ProductCard from '../components/ProductCard';
 import VideoCard from '../components/VideoCard';
+import { GridMediaCard } from '../components/GridMediaCard';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface UserProfile {
   id: string;
@@ -207,10 +210,23 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
     if (!profile || !user) return;
 
     try {
-      // Determine chat type based on user role
-      // If they're a seller/vendor, use 'vendor' type to match bargain conversations
-      // Otherwise use 'friend' for regular users
-      const chatType = profile.isSeller ? 'vendor' : 'friend';
+      // Determine chat type based on BOTH users' roles
+      // Priority: rider > vendor > friend
+      // Check if either the current user OR target user is a rider/vendor
+      let chatType: 'friend' | 'vendor' | 'rider' = 'friend';
+
+      // Check if either user is a rider (highest priority)
+      if (user.is_rider || profile.isRider) {
+        chatType = 'rider';
+      }
+      // Check if either user is a seller/vendor
+      else if (user.is_seller || profile.isSeller) {
+        chatType = 'vendor';
+      }
+      // Otherwise, both are regular users (citizens)
+      else {
+        chatType = 'friend';
+      }
 
       // Find existing conversation or create a new one with the user
       const conversation = await chatAPI.findOrCreateConversation(
@@ -491,26 +507,18 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
                 <Text style={styles.loadingContentText}>Loading products...</Text>
               </View>
             ) : products.length > 0 ? (
-              <FlatList
-                key="products-list"
-                data={products}
-                renderItem={({ item }) => (
-                  <ProductCard
-                    title={item.name}
-                    price={item.price}
-                    image={item.images && item.images.length > 0 ? { uri: item.images[0] } : { uri: 'https://via.placeholder.com/300x300' }}
-                    rating={item.average_rating || 0}
-                    sellerName={profile?.username || 'Seller'}
-                    sellerLogo={profile?.avatarUrl}
-                    onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
-                  />
-                )}
-                keyExtractor={(item) => item.id}
-                numColumns={2}
-                columnWrapperStyle={styles.productRow}
-                contentContainerStyle={styles.productsGrid}
-                scrollEnabled={false}
-              />
+              <View style={styles.productsGrid}>
+                {products.map((item) => (
+                  <View key={item.id} style={styles.gridItem}>
+                    <GridMediaCard
+                      imageUrl={item.images && item.images.length > 0 ? item.images[0] : 'https://via.placeholder.com/300x300/333/fff?text=No+Image'}
+                      onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+                      onLongPress={() => {}}
+                      isVideo={false}
+                    />
+                  </View>
+                ))}
+              </View>
             ) : (
               <View style={styles.emptyContentContainer}>
                 <Text style={styles.emptyContentIcon}>📦</Text>
@@ -527,80 +535,22 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
                 <Text style={styles.loadingContentText}>Loading services...</Text>
               </View>
             ) : services.length > 0 ? (
-              <FlatList
-                key="services-list"
-                data={services}
-                renderItem={({ item, index }) => {
-                  console.log(`🎬 Transforming service ${index}:`, {
-                    id: item.id,
-                    name: item.name,
-                    hasImages: item.images?.length > 0,
-                    hasVideos: item.videos?.length > 0,
-                    firstImage: item.images?.[0],
-                    firstVideo: item.videos?.[0]
-                  });
-
-                  // Transform Service to VideoFeedItem format
-                  const videoItem: VideoFeedItem = {
-                    id: item.id,
-                    title: item.name,
-                    thumbnail: item.images && item.images.length > 0 ? item.images[0] : undefined,
-                    videoUri: item.videos && item.videos.length > 0 ? item.videos[0] : undefined,
-                    userId: item.user_id,
-                    username: profile?.username || 'user',
-                    userAvatar: profile?.avatarUrl || '',
-                    description: item.description || '',
-                    likes: item.like_count?.toString() || '0',
-                    comments: '0',
-                    shares: '0',
-                    price: item.base_price || 0,
-                    originalPrice: undefined,
-                    location: item.location || '',
-                    serviceProvider: profile?.username || 'Provider',
-                    rating: 0,
-                    completedJobs: item.booking_count?.toString() || '0',
-                    isLiked: false,
-                    isBookmarked: false,
-                  };
-
-                  console.log(`🎬 Final videoItem ${index}:`, {
-                    id: videoItem.id,
-                    title: videoItem.title,
-                    thumbnail: videoItem.thumbnail,
-                    videoUri: videoItem.videoUri,
-                    price: videoItem.price
-                  });
-
-                  return (
-                    <View style={{
-                      width: 110,
-                      height: 160,
-                      backgroundColor: '#333',
-                      marginRight: 8,
-                      borderRadius: 8,
-                      overflow: 'hidden'
-                    }}>
-                      <VideoCard
-                        item={videoItem}
-                        isActive={false}
-                        isPlaying={false}
-                        onVideoTouch={() => {}}
-                        onLike={() => {}}
-                        onComment={() => {}}
-                        onBookmark={() => {}}
-                        onShare={() => {}}
-                        onBook={() => {}}
-                        onVendorPress={() => {}}
-                      />
-                    </View>
-                  );
-                }}
-                keyExtractor={(item) => item.id}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.servicesScroll}
-                scrollEnabled={false}
-              />
+              <View style={styles.servicesGrid}>
+                {services.map((item) => (
+                  <View key={item.id} style={styles.gridItem}>
+                    <GridMediaCard
+                      imageUrl={
+                        (item.images && item.images.length > 0 ? item.images[0] : undefined) ||
+                        (item.videos && item.videos.length > 0 ? item.videos[0] : undefined) ||
+                        'https://via.placeholder.com/300x300/333/fff?text=No+Video'
+                      }
+                      onPress={() => navigation.navigate('ServiceDetails', { serviceId: item.id })}
+                      onLongPress={() => {}}
+                      isVideo={true}
+                    />
+                  </View>
+                ))}
+              </View>
             ) : (
               <View style={styles.emptyContentContainer}>
                 <Text style={styles.emptyContentIcon}>
@@ -980,12 +930,24 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   productsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     paddingHorizontal: 20,
     paddingBottom: 20,
+    gap: 4, // Space between items
   },
-  productRow: {
+  gridItem: {
+    width: (SCREEN_WIDTH - 48) / 3, // 3 items per row with padding and gap
+  },
+  gridRow: {
     justifyContent: 'space-between',
-    paddingHorizontal: 10,
+  },
+  servicesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    gap: 4, // Space between items
   },
   servicesScroll: {
     paddingHorizontal: 20,

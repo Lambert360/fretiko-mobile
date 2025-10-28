@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import PagerView from 'react-native-pager-view';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   Alert,
   Animated,
@@ -14,6 +14,7 @@ import {
   Platform,
   RefreshControl,
   ScrollView,
+  Share,
   Text,
   TouchableOpacity,
   TouchableWithoutFeedback,
@@ -36,6 +37,8 @@ import { userAPI } from '../services/userAPI';
 import { chatAPI } from '../services/chatAPI';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
+import { mapProductToCard } from '../utils/dataMappers';
+import { ProductCard as ModernProductCard } from '../components/cards/ProductCard';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -97,9 +100,13 @@ const HomeScreen = () => {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [isSidebarVisible, setSidebarVisible] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
-  
+  const [isScreenFocused, setIsScreenFocused] = useState(true);
+
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
   const [focusedVideoId, setFocusedVideoId] = useState<string | null>(null);
+
+  // Track visible video products in viewport (max 2 at a time)
+  const [visibleVideoProducts, setVisibleVideoProducts] = useState<Set<string>>(new Set());
   
   // Modal states
   const [isLocationSelectorVisible, setLocationSelectorVisible] = useState(false);
@@ -183,13 +190,17 @@ const HomeScreen = () => {
         const videoData = await servicesAPI.getVideoFeed({ limit: 10 });
         console.log('🎥 Video feed data received:', videoData?.length || 0, 'services');
         if (videoData && videoData.length > 0) {
-          console.log('🎥 First video item:', videoData[0]);
+          console.log('🎥 First video item:', JSON.stringify(videoData[0], null, 2));
+          console.log('🎥 Video has URI?', !!videoData[0]?.videoUri);
+          console.log('🎥 Video URI:', videoData[0]?.videoUri);
         }
 
         setVideoFeedData(videoData || []);
         console.log(`✅ Loaded real data: ${productsData.length} products, ${categoriesData.length} categories, ${videoData?.length || 0} services`);
+        console.log('✅ VideoFeedData state updated with', videoData?.length || 0, 'items');
       } catch (videoError) {
         console.warn('🔴 Error loading video data:', videoError);
+        console.error('🔴 Full error:', videoError);
         // Set empty array if API fails - no mock data fallback
         setVideoFeedData([]);
       }
@@ -218,10 +229,31 @@ const HomeScreen = () => {
   };
 
 
-  // Load data when component mounts
+  // Load data when component mounts - only once
   useEffect(() => {
     loadData();
   }, []);
+
+  // Load data only when screen regains focus (not on every focus)
+  useFocusEffect(
+    React.useCallback(() => {
+      // Only reload data if we don't have any data yet
+      if (products.length === 0 && videoFeedData.length === 0) {
+        console.log('🔄 Loading data on first focus');
+        loadData(false);
+      }
+    }, []) // Empty dependency array - only run once
+  );
+
+  // Initialize visible video products (first 2) when products load
+  useEffect(() => {
+    if (products.length > 0) {
+      const videoProducts = products.filter(p => p.media_type === 'video' && p.primary_video_url);
+      const firstTwo = videoProducts.slice(0, 2).map(p => p.id);
+      setVisibleVideoProducts(new Set(firstTwo));
+      console.log('🎬 Initialized visible video products:', firstTwo);
+    }
+  }, [products]);
 
   // Debug: Track isPlaying state changes
   useEffect(() => {
@@ -240,38 +272,70 @@ const HomeScreen = () => {
     }
   }, [activeTab, videoFeedData.length]);
 
-  // AGGRESSIVE FIX: Continuously ensure isPlaying is true when on services tab
+  // Auto-play for services tab - ONLY when screen is focused
   useEffect(() => {
+    if (!isScreenFocused) {
+      console.log('⏸️ Auto-play paused - screen unfocused');
+      return; // Don't auto-play if screen not focused
+    }
+
     if (activeTab === 'services' && !isPlaying && videoFeedData.length > 0) {
-      console.log('🚨 AGGRESSIVE FIX: Forcing isPlaying to true on services tab');
+      console.log('🎬 Auto-play: Setting isPlaying to true on services tab');
       setIsPlaying(true);
     }
-  }, [activeTab, isPlaying, videoFeedData.length]);
+  }, [activeTab, isPlaying, videoFeedData.length, isScreenFocused]);
 
-  // Handle screen focus changes for video playback and data refresh
+  // Handle screen focus changes for video playback and cleanup
   useFocusEffect(
     React.useCallback(() => {
-      // Screen is focused - reload data to update reviews/ratings
-      console.log('🔄 Screen focused - reloading data to update product reviews');
-      loadData(false); // Reload without showing loading indicator
+      // Screen is focused
+      console.log('✅ HomeScreen FOCUSED');
+      setIsScreenFocused(true);
 
       // Resume playing if on services tab
-      console.log(`🎬 Screen focused - activeTab: ${activeTab}, videoCount: ${videoFeedData.length}`);
       if (activeTab === 'services' && videoFeedData.length > 0) {
-        console.log('🎬 Screen focused - setting isPlaying to true for services tab');
+        console.log('🎬 Screen focused - resuming video playback');
         setIsPlaying(true);
       }
 
+      // Restore visible video products when screen refocuses (for products tab)
+      if (activeTab === 'products' && products.length > 0) {
+        const videoProducts = products.filter(p => p.media_type === 'video' && p.primary_video_url);
+        const firstTwo = videoProducts.slice(0, 2).map(p => p.id);
+        setVisibleVideoProducts(new Set(firstTwo));
+        console.log('🎬 Screen focused - restored visible video products:', firstTwo);
+      }
+
       return () => {
-        // Screen is unfocused - pause video
-        console.log('🎬 Screen unfocused - setting isPlaying to false');
+        // Screen is unfocused - CRITICAL CLEANUP
+        console.log('❌ HomeScreen UNFOCUSED - Running cleanup');
+        setIsScreenFocused(false);
+
+        // Stop ALL videos immediately
         setIsPlaying(false);
+
+        // Clear visible video products to stop rendering them
+        setVisibleVideoProducts(new Set());
+
+        // Clear services UI timer
+        if (servicesUITimer.current) {
+          clearTimeout(servicesUITimer.current);
+          servicesUITimer.current = null;
+        }
+
+        console.log('✅ Cleanup complete - videos stopped, timers cleared');
       };
-    }, [activeTab, videoFeedData.length])
+    }, [activeTab, products]) // Added products to dependencies
   );
 
-  // Countdown timer effect
+  // Countdown timer effect - ONLY runs when screen is focused
   useEffect(() => {
+    if (!isScreenFocused) {
+      console.log('⏸️ Countdown timer paused - screen unfocused');
+      return; // Don't start timer if screen not focused
+    }
+
+    console.log('▶️ Countdown timer started - screen focused');
     const timer = setInterval(() => {
       setTimeLeft(prevTime => {
         if (prevTime.seconds > 0) {
@@ -285,8 +349,11 @@ const HomeScreen = () => {
       });
     }, 1000);
 
-    return () => clearInterval(timer);
-  }, []);
+    return () => {
+      console.log('🛑 Countdown timer cleared');
+      clearInterval(timer);
+    };
+  }, [isScreenFocused]);
 
   // Video interaction handlers for VideoCard
   const handleVideoTouch = () => {
@@ -306,21 +373,35 @@ const HomeScreen = () => {
         return newSet;
       });
 
-      // Update video data
-      setVideoFeedData(prev => prev.map(video => 
-        video.id === itemId 
-          ? { 
-              ...video, 
+      // Optimistic UI update
+      setVideoFeedData(prev => prev.map(video =>
+        video.id === itemId
+          ? {
+              ...video,
               isLiked: !video.isLiked,
-              likes: video.isLiked 
+              likes: video.isLiked
                 ? (parseInt(video.likes) - 1).toString()
                 : (parseInt(video.likes) + 1).toString()
             }
           : video
       ));
 
-      // Call API
-      await servicesAPI.toggleLike(itemId);
+      // Call API and get actual response
+      const response = await servicesAPI.toggleLike(itemId);
+      console.log('✅ Like API response:', response);
+
+      // Update with ACTUAL values from backend to ensure persistence
+      setVideoFeedData(prev => prev.map(video =>
+        video.id === itemId
+          ? {
+              ...video,
+              isLiked: response.liked,
+              likes: response.likeCount.toString()
+            }
+          : video
+      ));
+
+      console.log('✅ Updated videoFeedData with backend response - liked:', response.liked, 'count:', response.likeCount);
     } catch (error) {
       console.error('Error liking service:', error);
       // Revert optimistic update on error
@@ -333,6 +414,19 @@ const HomeScreen = () => {
         }
         return newSet;
       });
+
+      // Revert UI update on error
+      setVideoFeedData(prev => prev.map(video =>
+        video.id === itemId
+          ? {
+              ...video,
+              isLiked: !video.isLiked,
+              likes: video.isLiked
+                ? (parseInt(video.likes) + 1).toString()
+                : (parseInt(video.likes) - 1).toString()
+            }
+          : video
+      ));
     }
   };
 
@@ -340,29 +434,109 @@ const HomeScreen = () => {
     setCommentsServiceId(itemId);
   };
 
+  const handleCommentAdded = (serviceId: string) => {
+    // When a comment is added, increment the comment count in videoFeedData
+    setVideoFeedData(prev => prev.map(video =>
+      video.id === serviceId
+        ? {
+            ...video,
+            comments: (parseInt(video.comments) + 1).toString()
+          }
+        : video
+    ));
+    console.log('✅ Comment count incremented for service:', serviceId);
+  };
+
   const handleBookmark = async (itemId: string) => {
     try {
       // Optimistic update
-      setVideoFeedData(prev => prev.map(video => 
-        video.id === itemId 
+      setVideoFeedData(prev => prev.map(video =>
+        video.id === itemId
+          ? {
+              ...video,
+              isBookmarked: !video.isBookmarked
+            }
+          : video
+      ));
+
+      // Call bookmark API
+      const result = await servicesAPI.toggleBookmark(itemId);
+      console.log('✅ Bookmark toggled:', result.bookmarked ? 'Added' : 'Removed');
+
+      // Update with actual state from backend
+      setVideoFeedData(prev => prev.map(video =>
+        video.id === itemId
+          ? {
+              ...video,
+              isBookmarked: result.bookmarked
+            }
+          : video
+      ));
+    } catch (error) {
+      console.error('Error bookmarking service:', error);
+      // Revert optimistic update on error
+      setVideoFeedData(prev => prev.map(video =>
+        video.id === itemId
           ? { ...video, isBookmarked: !video.isBookmarked }
           : video
       ));
-      
-      // TODO: Call bookmark API when available
-      console.log('Bookmark service:', itemId);
-    } catch (error) {
-      console.error('Error bookmarking service:', error);
     }
   };
 
   const handleShare = async (itemId: string) => {
     try {
-      const result = await servicesAPI.shareService(itemId);
-      console.log('Share URL:', result.shareUrl);
-      // TODO: Open native share sheet
-    } catch (error) {
+      // Get service details for sharing
+      const service = videoFeedData.find(s => s.id === itemId);
+      if (!service) {
+        console.error('Service not found for sharing');
+        return;
+      }
+
+      // Prepare share content
+      const shareMessage = `Check out this service: ${service.title}\n\nPrice: ₣${service.price}\nProvider: @${service.username}\n\nView on Fretiko: https://fretiko.app/service/${itemId}`;
+
+      // Open native share sheet
+      const shareResult = await Share.share({
+        message: shareMessage,
+        title: service.title,
+        url: `https://fretiko.app/service/${itemId}`, // Deep link URL
+      });
+
+      // If user completed share (not dismissed)
+      if (shareResult.action === Share.sharedAction) {
+        console.log('✅ User shared the service');
+
+        // Optimistic update - increment share count
+        setVideoFeedData(prev => prev.map(video =>
+          video.id === itemId
+            ? {
+                ...video,
+                shares: (parseInt(video.shares) + 1).toString()
+              }
+            : video
+        ));
+
+        // Call share API to update backend count
+        const result = await servicesAPI.shareService(itemId);
+        console.log('✅ Share count updated in backend:', result.shareCount);
+
+        // Update with actual count from backend
+        setVideoFeedData(prev => prev.map(video =>
+          video.id === itemId
+            ? {
+                ...video,
+                shares: result.shareCount.toString()
+              }
+            : video
+        ));
+      } else if (shareResult.action === Share.dismissedAction) {
+        console.log('User dismissed share sheet');
+      }
+    } catch (error: any) {
       console.error('Error sharing service:', error);
+      if (error.message !== 'User dismissed share sheet') {
+        Alert.alert('Error', 'Failed to share service. Please try again.');
+      }
     }
   };
 
@@ -382,11 +556,149 @@ const HomeScreen = () => {
     }
   };
 
-  const filteredProducts = products.filter(product => 
-    selectedCategory === 'all' || 
-    product.category_id === selectedCategory ||
-    categories.find(cat => cat.id === product.category_id)?.name.toLowerCase() === selectedCategory
-  );
+  // Memoize filtered and sorted products
+  const filteredProducts = useMemo(() => {
+    if (!isScreenFocused) {
+      return []; // Don't process when unfocused
+    }
+    
+    let filtered = products.filter(product => {
+      // Category filter (from horizontal chips)
+      const categoryMatch = selectedCategory === 'all' ||
+      product.category_id === selectedCategory ||
+        categories.find(cat => cat.id === product.category_id)?.name.toLowerCase() === selectedCategory;
+      
+      if (!categoryMatch) return false;
+      
+      // Advanced filters
+      // Price range
+      const priceMatch = product.price >= filters.priceRange.min && product.price <= filters.priceRange.max;
+      if (!priceMatch) return false;
+      
+      // Condition (only if filters applied)
+      if (filters.condition.length > 0) {
+        const conditionMatch = filters.condition.includes(product.condition);
+        if (!conditionMatch) return false;
+      }
+      
+      // Location (only if filters applied)
+      if (filters.location.length > 0 && product.location) {
+        // Check if product location matches any selected filter locations
+        const locationMatch = filters.location.some(filterLoc => {
+          // Handle both "City, Country" and "City" formats
+          return product.location?.includes(filterLoc) || filterLoc.includes(product.location);
+        });
+        if (!locationMatch) return false;
+      }
+      
+      // Rating (only if rating filter > 0)
+      if (filters.rating > 0) {
+        const ratingMatch = (product.average_rating || 0) >= filters.rating;
+        if (!ratingMatch) return false;
+      }
+      
+      // Category (from advanced filters, only if filters applied)
+      if (filters.category.length > 0) {
+        const categoryFilterMatch = filters.category.includes(product.category_id);
+        if (!categoryFilterMatch) return false;
+      }
+      
+      // Availability (shipping options)
+      if (filters.availability.length > 0 && product.shipping_options) {
+        const availabilityMatch = filters.availability.some(avail => {
+          if (avail === 'In Stock') return product.quantity > 0;
+          if (avail === 'Free Shipping') return product.shipping_options?.shipping === true;
+          if (avail === 'Same Day Delivery') return product.shipping_options?.delivery === true;
+          return false;
+        });
+        if (!availabilityMatch) return false;
+      }
+      
+      return true;
+    });
+    
+    // Sorting
+    switch (filters.sortBy) {
+      case 'price_asc':
+        filtered.sort((a, b) => a.price - b.price);
+        break;
+      case 'price_desc':
+        filtered.sort((a, b) => b.price - a.price);
+        break;
+      case 'popular':
+        filtered.sort((a, b) => (b.view_count || 0) - (a.view_count || 0));
+        break;
+      case 'rating':
+        filtered.sort((a, b) => (b.average_rating || 0) - (a.average_rating || 0));
+        break;
+      case 'newest':
+      default:
+        filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        break;
+    }
+    
+    return filtered;
+  }, [products, selectedCategory, categories, isScreenFocused, filters]);
+
+  // Memoize filtered and sorted services
+  const filteredServices = useMemo(() => {
+    if (!isScreenFocused) {
+      return [];
+    }
+    
+    let filtered = videoFeedData.filter(service => {
+      // Price range
+      const priceMatch = service.price >= filters.priceRange.min && service.price <= filters.priceRange.max;
+      if (!priceMatch) return false;
+      
+      // Location (only if filters applied)
+      if (filters.location.length > 0 && service.location) {
+        const locationMatch = filters.location.some(filterLoc => {
+          return service.location?.includes(filterLoc) || filterLoc.includes(service.location);
+        });
+        if (!locationMatch) return false;
+      }
+      
+      // Rating (only if rating filter > 0)
+      if (filters.rating > 0) {
+        const ratingMatch = service.rating >= filters.rating;
+        if (!ratingMatch) return false;
+      }
+      
+      // Availability (service-specific: weekdays, weekends, evenings, emergency)
+      // Note: This would need availability data in VideoFeedItem interface
+      // For now, we'll skip this check as the data structure doesn't include it
+      
+      return true;
+    });
+    
+    // Sorting
+    switch (filters.sortBy) {
+      case 'price_asc':
+        filtered.sort((a, b) => a.price - b.price);
+        break;
+      case 'price_desc':
+        filtered.sort((a, b) => b.price - a.price);
+        break;
+      case 'rating':
+        filtered.sort((a, b) => b.rating - a.rating);
+        break;
+      case 'popular':
+        // Sort by likes count
+        filtered.sort((a, b) => {
+          const aLikes = parseInt(a.likes) || 0;
+          const bLikes = parseInt(b.likes) || 0;
+          return bLikes - aLikes;
+        });
+        break;
+      case 'newest':
+      default:
+        // Services don't have created_at in VideoFeedItem, keep original order
+        break;
+    }
+    
+    return filtered;
+  }, [videoFeedData, isScreenFocused, filters]);
 
   const handleTabPress = (tab: 'products' | 'services') => {
     const targetPage = tab === 'products' ? 0 : 1;
@@ -417,8 +729,23 @@ const HomeScreen = () => {
 
   const handleApplyFilters = () => {
     setFilterVisible(false);
-    // TODO: Apply filters to product list
-    console.log('Applying filters:', filters);
+    if (isSidebarVisible) {
+      toggleSidebar(); // Close sidebar when applying filters
+    }
+    
+    // Debug logging
+    console.log('✅ Filters applied:', {
+      priceRange: filters.priceRange,
+      condition: filters.condition,
+      location: filters.location,
+      rating: filters.rating,
+      category: filters.category,
+      sortBy: filters.sortBy,
+      availability: filters.availability,
+      activeCount: activeFilterCount
+    });
+    console.log(`📊 Total products: ${products.length}`);
+    console.log(`📊 Filtered products: ${filteredProducts.length}`);
   };
 
   const handleResetFilters = () => {
@@ -432,6 +759,19 @@ const HomeScreen = () => {
       availability: [],
     });
   };
+
+  // Calculate active filter count for badge
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (filters.priceRange.min > 0 || filters.priceRange.max < 999999999) count++;
+    if (filters.condition.length > 0) count++;
+    if (filters.location.length > 0) count++;
+    if (filters.rating > 0) count++;
+    if (filters.category.length > 0) count++;
+    if (filters.sortBy !== 'newest') count++;
+    if (filters.availability.length > 0) count++;
+    return count;
+  }, [filters]);
 
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const currentScrollY = event.nativeEvent.contentOffset.y;
@@ -455,85 +795,39 @@ const HomeScreen = () => {
     lastScrollY.current = currentScrollY;
   };
 
-  // Enhanced ProductCard with real backend data transformation
-  const renderEnhancedProductCard = (item: any, isHorizontal = false) => {
+  // Enhanced ProductCard with centralized data mapper
+  const renderEnhancedProductCard = useCallback((item: any, isHorizontal = false) => {
+    // Don't render when screen is unfocused
+    if (!isScreenFocused) {
+      return null;
+    }
+
     const cardStyle = isHorizontal ? { width: screenWidth * 0.4, marginHorizontal: 6 } : {};
 
-    // Handle both mock data and real Product data structures
-    const productData = {
-      id: item.id || 'unknown',
-      title: item.name || item.title || 'Unknown Product',
-      price: Number(item.price) || 0,
-      originalPrice: item.originalPrice ? Number(item.originalPrice) : undefined,
-      image: item.primary_image_url || item.images?.[0] || item.image || 'https://via.placeholder.com/300x300',
-      rating: Number(item.average_rating || item.rating) || 0,
-      sellerName: item.vendor_username || item.sellerName || 'Unknown Vendor',
-      sellerLogo: item.vendor_avatar || item.sellerLogo || null,
-      soldCount: item.soldCount || (item.view_count ? String(Math.floor(Number(item.view_count) / 10)) : '0'),
-      isTopSelling: Boolean(item.isTopSelling || item.is_featured),
-      isTrending: Boolean(item.isTrending || (item.like_count && Number(item.like_count) > 20)),
-      isChoice: Boolean(item.isChoice),
-      discount: item.discount ? Number(item.discount) : undefined,
-    };
-    
-    // Comprehensive validation
-    if (!productData.title || !productData.price) {
-      console.warn('ProductCard: Missing required data', productData);
-      return <FallbackCard error="Missing product data" />;
-    }
-
-    // Check if ProductCard component is available
-    if (!ProductCard || typeof ProductCard !== 'function') {
-      console.error('ProductCard component is not available');
-      return <FallbackCard error="Component not available" />;
-    }
-    
     try {
+      // Use centralized mapper to ensure consistent data transformation
+      const productData = mapProductToCard(item);
+
+      // Comprehensive validation
+      if (!productData.title || !productData.price) {
+        console.warn('ProductCard: Missing required data', productData);
+        return <FallbackCard error="Missing product data" />;
+      }
+
       return (
-        <View style={[cardStyle, { position: 'relative' }]}>
-          {/* Social proof badges */}
-          <View style={{ position: 'absolute', top: 8, left: 8, zIndex: 10, flexDirection: 'column' }}>
-            {productData.isChoice && (
-              <View style={{ backgroundColor: '#FFD700', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginBottom: 4 }}>
-                <Text style={{ color: '#000', fontSize: 9, fontWeight: 'bold' }}>Choice</Text>
-              </View>
-            )}
-            {productData.isTopSelling && (
-              <View style={{ backgroundColor: '#FF4757', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginBottom: 4 }}>
-                <Text style={{ color: 'white', fontSize: 9, fontWeight: 'bold' }}>Featured</Text>
-              </View>
-            )}
-            {productData.isTrending && (
-              <View style={{ backgroundColor: '#2ED573', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginBottom: 4 }}>
-                <Text style={{ color: 'white', fontSize: 9, fontWeight: 'bold' }}>Trending</Text>
-              </View>
-            )}
-            {productData.discount && (
-              <View style={{ backgroundColor: '#FF4757', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                <Text style={{ color: 'white', fontSize: 9, fontWeight: 'bold' }}>{String(productData.discount)}% off</Text>
-              </View>
-            )}
-          </View>
-          
-          {/* View count badge */}
-          {productData.soldCount && String(productData.soldCount) && (
-            <View style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-              <Text style={{ color: 'white', fontSize: 9, fontWeight: '600' }}>{String(productData.soldCount)} views</Text>
-            </View>
-          )}
-          
-          {/* Render the actual ProductCard */}
-          <StableProductCard
-            title={productData.title}
-            price={productData.price}
-            originalPrice={productData.originalPrice}
-            image={{ uri: productData.image }}
-            rating={productData.rating}
-            sellerName={productData.sellerName}
-            sellerLogo={productData.sellerLogo}
+        <View style={[cardStyle, { width: isHorizontal ? screenWidth * 0.4 : '100%' }]}>
+          <ModernProductCard
+            product={productData}
+            variant={isHorizontal ? 'grid' : 'featured'}
             onPress={() => handleProductPress(productData.id)}
-            onCartPress={() => handleCartPress(productData.id)}
-            onBargainPress={() => handleBargainPress(productData.id)}
+            onLike={() => console.log('Like product:', productData.id)}
+            onBookmark={() => console.log('Bookmark product:', productData.id)}
+            onVendorPress={(vendorId) => {
+              console.log('Navigate to vendor:', vendorId);
+              navigation.navigate('PublicProfile', { userId: vendorId });
+            }}
+            onCartPress={(product) => handleCartPress(product.id)}
+            onBargainPress={(product) => handleBargainPress(product.id)}
           />
         </View>
       );
@@ -541,7 +835,7 @@ const HomeScreen = () => {
       console.error('Error in renderEnhancedProductCard:', error);
       return <FallbackCard error={`Render error: ${error.message}`} />;
     }
-  };
+  }, [isScreenFocused, navigation, handleCartPress, handleBargainPress]);
 
   const renderCategoryChips = () => {
     // Create combined categories with "All" at the beginning (if not already present)
@@ -868,8 +1162,20 @@ const HomeScreen = () => {
               handleFilterPress();
             }}
           >
-            <View style={{ width: 36, height: 36, backgroundColor: '#E67E22', borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}><Ionicons name="funnel-outline" size={18} color="white" /></View>
-            <View style={{ flex: 1 }}><Text style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>Filters</Text><Text style={{ color: '#888', fontSize: 11, marginTop: 1 }}>Advanced search options</Text></View>
+            <View style={{ width: 36, height: 36, backgroundColor: '#E67E22', borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+              <Ionicons name="funnel-outline" size={18} color="white" />
+              {activeFilterCount > 0 && (
+                <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: '#E74C3C', borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
+                  <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>{activeFilterCount}</Text>
+                </View>
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>Filters</Text>
+              <Text style={{ color: '#888', fontSize: 11, marginTop: 1 }}>
+                {activeFilterCount > 0 ? `${activeFilterCount} filter${activeFilterCount > 1 ? 's' : ''} active` : 'Advanced search options'}
+              </Text>
+            </View>
             <Ionicons name="chevron-forward" size={14} color="#888" />
           </TouchableOpacity>
           <TouchableOpacity
@@ -923,8 +1229,13 @@ const HomeScreen = () => {
     loadHeroImages();
   }, []);
 
-  // Alibaba-style Products View
-  const renderProductsTab = () => {
+  // Memoize mixed content generation - EXPENSIVE OPERATION
+  const mixedContent = useMemo(() => {
+    // Don't generate content when screen is unfocused
+    if (!isScreenFocused) {
+      return [];
+    }
+
     // Algorithm-based sections using existing database fields
     const getTrendingProducts = () => products
       .filter(p => {
@@ -936,21 +1247,21 @@ const HomeScreen = () => {
       .slice(0, 8);
 
     const getHotPicks = () => products.filter(p => p.is_featured).slice(0, 8);
-    const getSeasonalRave = () => products.filter(p => 
-      p.tags?.some(tag => 
+    const getSeasonalRave = () => products.filter(p =>
+      p.tags?.some(tag =>
         ['seasonal', 'summer', 'winter', 'spring', 'fall', 'holiday', 'christmas', 'valentine'].includes(tag.toLowerCase())
       )
     ).slice(0, 8);
-    const getCombodeals = () => products.filter(p => 
+    const getCombodeals = () => products.filter(p =>
       p.tags?.some(tag => ['combo', 'bundle', 'set', 'package'].includes(tag.toLowerCase()))
     ).slice(0, 8);
-    const getFlashSales = () => products.filter(p => 
+    const getFlashSales = () => products.filter(p =>
       p.tags?.some(tag => ['sale', 'flash', 'deal', 'discount'].includes(tag.toLowerCase()))
     ).slice(0, 8);
     const getForYou = () => products.slice(0, 20); // TODO: Base on user history
 
     // Generate mixed content with periodic heroes and banners
-    const generateMixedContent = () => {
+    const generateContent = () => {
       const mixedContent: any[] = [];
       let cardCount = 0;
       let heroIndex = 0;
@@ -1003,6 +1314,20 @@ const HomeScreen = () => {
       return mixedContent;
     };
 
+    return generateContent();
+  }, [products, heroImages, isScreenFocused]);
+
+  // Alibaba-style Products View
+  const renderProductsTab = () => {
+    // Don't render content when screen is unfocused to prevent background processing
+    if (!isScreenFocused) {
+      return (
+        <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ color: '#888', fontSize: 16 }}>Screen not focused</Text>
+        </View>
+      );
+    }
+
     return (
       <View style={{ flex: 1 }}>
         <ScrollView
@@ -1027,9 +1352,48 @@ const HomeScreen = () => {
           {/* Category Chips */}
           {renderCategoryChips()}
 
+          {/* Active Filters Banner */}
+          {activeFilterCount > 0 && (
+            <View style={{
+              marginHorizontal: 12,
+              marginTop: 8,
+              marginBottom: 8,
+              backgroundColor: '#1a1a1a',
+              borderRadius: 12,
+              padding: 12,
+              flexDirection: 'row',
+              alignItems: 'center',
+              borderLeftWidth: 3,
+              borderLeftColor: '#3498DB',
+            }}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <Ionicons name="funnel" size={14} color="#3498DB" />
+                  <Text style={{ color: '#3498DB', fontSize: 13, fontWeight: '600', marginLeft: 6 }}>
+                    {activeFilterCount} Filter{activeFilterCount > 1 ? 's' : ''} Active
+                  </Text>
+                </View>
+                <Text style={{ color: '#888', fontSize: 11 }}>
+                  {filteredProducts.length} of {products.length} products shown
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={handleResetFilters}
+                style={{
+                  backgroundColor: '#3498DB',
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  borderRadius: 8,
+                }}
+              >
+                <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>Clear</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {selectedCategory === 'all' ? (
-            // Show dynamic mixed content for "All"
-            generateMixedContent().map((item, index) => {
+            // Show dynamic mixed content for "All" - using memoized content
+            mixedContent.map((item, index) => {
               switch (item.type) {
                 case 'hero':
                   return renderPeriodicHero(item.data, index);
@@ -1267,16 +1631,23 @@ const HomeScreen = () => {
     );
   };
 
-  // Render video product card (full width) with auto-play
-  const renderVideoProductCard = (item: Product) => {
-    // Debug logging
-    console.log('📹 Rendering video product card:', {
+  // Render video product card (full width) with lazy loading
+  const renderVideoProductCard = useCallback((item: Product) => {
+    // Don't render video products when screen is unfocused
+    if (!isScreenFocused) {
+      return null;
+    }
+
+    // Check if this video is in viewport (visible)
+    const isInViewport = visibleVideoProducts.has(item.id);
+    const shouldPlayVideo = activeTab === 'products' && isInViewport && isScreenFocused;
+
+    console.log('📹 Video product card:', {
       id: item.id,
       name: item.name,
-      media_type: item.media_type,
-      primary_video_url: item.primary_video_url,
-      primary_image_url: item.primary_image_url,
-      has_videos: item.videos?.length
+      isInViewport,
+      shouldPlayVideo,
+      visibleCount: visibleVideoProducts.size
     });
 
     return (
@@ -1290,13 +1661,22 @@ const HomeScreen = () => {
           position: 'relative',
         }}
       >
-        {/* Auto-playing video - let it determine its own height based on aspect ratio */}
+        {/* Only render video player if in viewport */}
         {item.primary_video_url ? (
-          <ProductVideoPlayer
-            videoUri={item.primary_video_url}
-            shouldAutoPlay={activeTab === 'products'}
-            containerWidth={screenWidth}
-          />
+          isInViewport ? (
+            <ProductVideoPlayer
+              videoUri={item.primary_video_url}
+              shouldAutoPlay={shouldPlayVideo}
+              containerWidth={screenWidth}
+            />
+          ) : (
+            // Show thumbnail when not in viewport
+            <Image
+              source={{ uri: item.primary_image_url || item.images?.[0] || 'https://via.placeholder.com/400x600' }}
+              style={{ width: '100%', height: screenWidth * (9/16) }}
+              resizeMode="cover"
+            />
+          )
         ) : (
           <Image
             source={{ uri: item.primary_image_url || item.images?.[0] || 'https://via.placeholder.com/400x600' }}
@@ -1395,7 +1775,7 @@ const HomeScreen = () => {
         </View>
       </TouchableOpacity>
     );
-  };
+  }, [isScreenFocused, visibleVideoProducts, activeTab, navigation]);
 
   // Handler for vendor profile navigation
   const handleVendorPress = (userId: string) => {
@@ -1409,10 +1789,25 @@ const HomeScreen = () => {
     try {
       console.log('🔍 Starting chat with service provider:', serviceItem.userId);
 
+      // Determine chat type based on current user's role
+      // Service provider is assumed to be vendor
+      // Priority: rider > vendor > friend
+      let chatType: 'friend' | 'vendor' | 'rider' = 'vendor';
+
+      // Check if current user is a rider (highest priority)
+      if (user?.is_rider) {
+        chatType = 'rider';
+      }
+      // If current user is seller, keep it as vendor
+      else if (user?.is_seller) {
+        chatType = 'vendor';
+      }
+      // Service provider is vendor, so default stays 'vendor'
+
       // Find existing conversation or create a new one with the service provider
       const conversation = await chatAPI.findOrCreateConversation(
         [serviceItem.userId], // The service provider's user ID
-        'vendor' // Service providers are vendors
+        chatType
       );
 
       console.log('✅ Conversation found/created:', conversation.id);
@@ -1422,7 +1817,7 @@ const HomeScreen = () => {
         chatId: conversation.id,
         chatName: serviceItem.serviceProvider || serviceItem.username || 'Service Provider',
         chatAvatar: serviceItem.userAvatar || 'https://via.placeholder.com/50',
-        chatType: 'vendor' as const,
+        chatType: chatType as const,
         isOnline: true,
         verified: false,
         isAI: false,
@@ -1469,10 +1864,25 @@ const HomeScreen = () => {
       console.log('🔍 Finding conversation with vendor:', product.user_id);
       console.log('🔍 Current user:', user?.id);
 
+      // Determine chat type based on current user's role
+      // Product owner is a vendor, so default is 'vendor'
+      // Priority: rider > vendor > friend
+      let chatType: 'friend' | 'vendor' | 'rider' = 'vendor';
+
+      // Check if current user is a rider (highest priority)
+      if (user?.is_rider) {
+        chatType = 'rider';
+      }
+      // If current user is seller, keep it as vendor
+      else if (user?.is_seller) {
+        chatType = 'vendor';
+      }
+      // Product owner is vendor, so default stays 'vendor'
+
       // Find or create conversation with the vendor
       const conversation = await chatAPI.findOrCreateConversation(
         [product.user_id],
-        'vendor'
+        chatType
       );
 
       console.log('✅ Conversation found/created:', conversation.id);
@@ -1482,7 +1892,7 @@ const HomeScreen = () => {
         chatId: conversation.id,
         chatName: product.vendor_username || 'Vendor',
         chatAvatar: product.vendor_avatar || 'https://via.placeholder.com/50',
-        chatType: 'vendor' as const,
+        chatType: chatType as const,
         isOnline: true,
         verified: false,
         isAI: false,
@@ -1587,7 +1997,16 @@ const HomeScreen = () => {
   };
 
   const renderServicesTab = () => {
-    if (videoFeedData.length === 0) {
+    // Don't render content when screen is unfocused to prevent background processing
+    if (!isScreenFocused) {
+      return (
+        <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ color: '#888', fontSize: 16 }}>Screen not focused</Text>
+        </View>
+      );
+    }
+
+    if (filteredServices.length === 0) {
       return (
         <View style={{ 
           flex: 1, 
@@ -1605,6 +2024,47 @@ const HomeScreen = () => {
 
     return (
       <View style={{ flex: 1 }}>
+        {/* Active Filters Banner for Services */}
+        {activeFilterCount > 0 && (
+          <View style={{
+            position: 'absolute',
+            top: insets.top + 60,
+            left: 12,
+            right: 12,
+            backgroundColor: 'rgba(26, 26, 26, 0.95)',
+            borderRadius: 12,
+            padding: 12,
+            flexDirection: 'row',
+            alignItems: 'center',
+            borderLeftWidth: 3,
+            borderLeftColor: '#3498DB',
+            zIndex: 100,
+          }}>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                <Ionicons name="funnel" size={14} color="#3498DB" />
+                <Text style={{ color: '#3498DB', fontSize: 13, fontWeight: '600', marginLeft: 6 }}>
+                  {activeFilterCount} Filter{activeFilterCount > 1 ? 's' : ''} Active
+                </Text>
+              </View>
+              <Text style={{ color: '#888', fontSize: 11 }}>
+                {filteredServices.length} of {videoFeedData.length} services shown
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={handleResetFilters}
+              style={{
+                backgroundColor: '#3498DB',
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 8,
+              }}
+            >
+              <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>Clear</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        
         <PagerView
           style={{ flex: 1 }}
           orientation="vertical"
@@ -1616,6 +2076,11 @@ const HomeScreen = () => {
             setCurrentVideoIndex(newIndex);
             setFocusedVideoId(videoFeedData[newIndex]?.id);
 
+            // Reset progress bar for new video
+            setVideoProgress(0);
+            setVideoPosition(0);
+            setVideoDuration(0);
+
             // Ensure video is playing when switching
             if (activeTab === 'services') {
               console.log('🎥 Ensuring video plays after switching');
@@ -1625,65 +2090,73 @@ const HomeScreen = () => {
             showServicesUI(); // Show UI when switching videos
           }}
         >
-          {videoFeedData.map((item, index) => (
-            <View key={`video-${item.id}-${index}`} style={{
-              width: screenWidth,
-              height: screenHeight,
-              backgroundColor: '#000',
-              position: 'relative'
-            }}>
-              {/* Video container */}
-              <TouchableWithoutFeedback onPress={handleVideoTap}>
-                <View style={{
-                  width: screenWidth,
-                  height: screenHeight,
-                  justifyContent: 'center',
-                  alignItems: 'center'
-                }}>
-                  {/* Full screen video */}
-                  {item.videoUri ? (
-                    <ServiceVideoPlayer
-                      videoUri={item.videoUri}
-                      isCurrentVideo={activeTab === 'services' && index === currentVideoIndex}
-                      shouldAutoPlay={activeTab === 'services' && isPlaying}
-                      onLoad={(status) => {
-                        if (index === currentVideoIndex) {
-                          setVideoDuration(status.duration || 0);
-                          setVideoProgress(0);
-                          setVideoPosition(0);
-                        }
-                      }}
-                      onPlaybackStatusUpdate={(status) => {
-                        if (index === currentVideoIndex && status.duration) {
-                          // Only update if we have valid duration and position
-                          const currentPos = status.currentTime || 0;
-                          const duration = status.duration;
-                          const progress = duration > 0 ? currentPos / duration : 0;
+          {filteredServices.map((item, index) => {
+            // Only render videos within range of current index (±1)
+            const shouldRenderVideo = Math.abs(index - currentVideoIndex) <= 1;
+            const isCurrentVideo = index === currentVideoIndex;
+            const shouldPlay = activeTab === 'services' && isPlaying && isCurrentVideo;
 
-                          // Prevent unnecessary updates if values haven't changed much
-                          if (Math.abs(progress - videoProgress) > 0.01) {
-                            setVideoProgress(progress);
-                            setVideoPosition(currentPos * 1000); // Convert to milliseconds for consistency
-                            setVideoDuration(duration * 1000); // Convert to milliseconds for consistency
+            return (
+              <View key={`video-${item.id}-${index}`} style={{
+                width: screenWidth,
+                height: screenHeight,
+                backgroundColor: '#000',
+                position: 'relative'
+              }}>
+                {/* Video container */}
+                <TouchableWithoutFeedback onPress={handleVideoTap}>
+                  <View style={{
+                    width: screenWidth,
+                    height: screenHeight,
+                    justifyContent: 'center',
+                    alignItems: 'center'
+                  }}>
+                    {/* Only render video player if within range */}
+                    {shouldRenderVideo && item.videoUri ? (
+                      <ServiceVideoPlayer
+                        videoUri={item.videoUri}
+                        isCurrentVideo={isCurrentVideo}
+                        shouldAutoPlay={shouldPlay}
+                        onLoad={(status) => {
+                          if (isCurrentVideo) {
+                            setVideoDuration(status.duration || 0);
+                            setVideoProgress(0);
+                            setVideoPosition(0);
                           }
-                        }
-                      }}
-                    />
-                  ) : (
-                    <Image 
-                      source={{ uri: item.thumbnail || 'https://via.placeholder.com/400x600' }} 
-                      style={{ 
-                        width: screenWidth, 
-                        height: screenHeight,
-                        position: 'absolute',
-                        top: 0,
-                        left: 0
-                      }}
-                      resizeMode="contain"
-                    />
-                  )}
-                </View>
-              </TouchableWithoutFeedback>
+                        }}
+                        onPlaybackStatusUpdate={(status) => {
+                          if (isCurrentVideo && status.duration) {
+                            // Only update if we have valid duration and position
+                            const currentPos = status.currentTime || 0;
+                            const duration = status.duration;
+                            const progress = duration > 0 ? currentPos / duration : 0;
+
+                            // Update progress more frequently for smoother progress bar (0.005 = 0.5%)
+                            if (Math.abs(progress - videoProgress) > 0.005 || progress === 0) {
+                              console.log(`📊 Updating progress: ${(progress * 100).toFixed(1)}% (${currentPos.toFixed(1)}s / ${duration.toFixed(1)}s)`);
+                              setVideoProgress(progress);
+                              setVideoPosition(currentPos * 1000); // Convert to milliseconds for consistency
+                              setVideoDuration(duration * 1000); // Convert to milliseconds for consistency
+                            }
+                          }
+                        }}
+                      />
+                    ) : (
+                      // Show thumbnail for videos out of range or if no video URI
+                      <Image
+                        source={{ uri: item.thumbnail || 'https://via.placeholder.com/400x600' }}
+                        style={{
+                          width: screenWidth,
+                          height: screenHeight,
+                          position: 'absolute',
+                          top: 0,
+                          left: 0
+                        }}
+                        resizeMode="contain"
+                      />
+                    )}
+                  </View>
+                </TouchableWithoutFeedback>
 
               {/* Play Button - Simple and always visible when paused */}
               {!isPlaying && index === currentVideoIndex && (
@@ -2019,7 +2492,8 @@ const HomeScreen = () => {
                   </TouchableOpacity>
               </Animated.View>
             </View>
-          ))}
+            );
+          })}
         </PagerView>
       </View>
     );
@@ -2028,59 +2502,123 @@ const HomeScreen = () => {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000000' }}>
-      {/* Header */}
-      <Animated.View style={{ 
-        position: 'absolute', 
-        top: insets.top, 
-        left: 0, 
-        right: 0, 
-        height: HEADER_FULL_HEIGHT, 
-        backgroundColor: '#000000', 
-        zIndex: 1000, 
-        opacity: activeTab === 'services' ? 0 : headerOpacity 
+      {/* Header Container with Safe Area Background */}
+      <Animated.View style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: insets.top + HEADER_FULL_HEIGHT + SUB_HEADER_HEIGHT,
+        backgroundColor: '#000000',
+        zIndex: 1000,
+        opacity: activeTab === 'services' ? 0 : headerOpacity,
+        elevation: 10, // Android shadow for better layering
+        shadowColor: '#000', // iOS shadow
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
       }}>
-        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 }}>
-          <TouchableOpacity onPress={toggleSidebar} style={{ marginRight: 12, padding: 8 }}>
-            <Ionicons name="menu-outline" size={20} color="white" />
-          </TouchableOpacity>
-          
-          <View style={{ marginRight: 12, alignItems: 'center' }}>
-            <Image source={require('../../assets/images/logo.png')} style={{ width: 90, height: 22 }} resizeMode="contain" />
+        {/* Main Header Content */}
+        <View style={{
+          position: 'absolute',
+          top: insets.top,
+          left: 0,
+          right: 0,
+          height: HEADER_FULL_HEIGHT,
+        }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 }}>
+            <TouchableOpacity onPress={toggleSidebar} style={{ marginRight: 12, padding: 8 }}>
+              <Ionicons name="menu-outline" size={20} color="white" />
+            </TouchableOpacity>
+
+            <View style={{ marginRight: 12, alignItems: 'center' }}>
+              <Image source={require('../../assets/images/logo.png')} style={{ width: 90, height: 22 }} resizeMode="contain" />
+            </View>
+
+            {/* Spacer to push items to the right */}
+            <View style={{ flex: 1 }} />
+
+            <TouchableOpacity onPress={handleLocationPress} style={{ marginRight: 12, padding: 8, flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="location-outline" size={16} color="white" />
+              <Text style={{ color: 'white', fontSize: 12, marginLeft: 4, maxWidth: 80 }} numberOfLines={1}>
+                {selectedLocation.split(',')[0]}
+              </Text>
+              <Ionicons name="chevron-down" size={12} color="#888" style={{ marginLeft: 2 }} />
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={handleCartIconPress} style={{ padding: 8, position: 'relative' }}>
+              <Ionicons name="bag-outline" size={20} color="white" />
+              {itemCount > 0 && (
+                <View style={{
+                  position: 'absolute',
+                  top: 4,
+                  right: 4,
+                  backgroundColor: '#FF4757',
+                  borderRadius: 10,
+                  minWidth: 20,
+                  height: 20,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}>
+                  <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
+                    {itemCount > 99 ? '99+' : itemCount}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
           </View>
-          
-          <TouchableOpacity onPress={handleLocationPress} style={{ marginRight: 12, padding: 8, flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-            <Ionicons name="location-outline" size={16} color="white" />
-            <Text style={{ color: 'white', fontSize: 12, marginLeft: 4, maxWidth: 80 }} numberOfLines={1}>
-              {selectedLocation.split(',')[0]}
+        </View>
+
+        {/* Sub Header - now inside the main header container */}
+        <View style={{
+          position: 'absolute',
+          top: insets.top + HEADER_FULL_HEIGHT,
+          left: 0,
+          right: 0,
+          height: SUB_HEADER_HEIGHT,
+          flexDirection: 'row',
+          justifyContent: 'center',
+          alignItems: 'center',
+          borderBottomWidth: 1,
+          borderBottomColor: '#333',
+        }}>
+          <TouchableOpacity
+            style={{
+              marginRight: 24,
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderBottomWidth: activeTab === 'products' ? 3 : 0,
+              borderBottomColor: '#fff'
+            }}
+            onPress={() => handleTabPress('products')}
+          >
+            <Text style={{
+              color: activeTab === 'products' ? '#fff' : '#888',
+              fontSize: 15,
+              fontWeight: activeTab === 'products' ? '700' : '500'
+            }}>
+              Products
             </Text>
-            <Ionicons name="chevron-down" size={12} color="#888" style={{ marginLeft: 2 }} />
           </TouchableOpacity>
-          
-          <TouchableOpacity onPress={handleCartIconPress} style={{ marginLeft: 4, padding: 8, position: 'relative' }}>
-            <Ionicons name="bag-outline" size={20} color="white" />
-            {itemCount > 0 && (
-              <View style={{
-                position: 'absolute',
-                top: 4,
-                right: 4,
-                backgroundColor: '#FF4757',
-                borderRadius: 10,
-                minWidth: 20,
-                height: 20,
-                justifyContent: 'center',
-                alignItems: 'center',
-              }}>
-                <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
-                  {itemCount > 99 ? '99+' : itemCount}
-                </Text>
-              </View>
-            )}
+          <TouchableOpacity
+            style={{
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderBottomWidth: activeTab === 'services' ? 3 : 0,
+              borderBottomColor: '#fff'
+            }}
+            onPress={() => handleTabPress('services')}
+          >
+            <Text style={{
+              color: activeTab === 'services' ? '#fff' : '#888',
+              fontSize: 15,
+              fontWeight: activeTab === 'services' ? '700' : '500'
+            }}>
+              Services
+            </Text>
           </TouchableOpacity>
         </View>
       </Animated.View>
-
-      {/* Sub Header */}
-      {renderSubHeader()}
 
       {/* Main Content with Swipe */}
       <PagerView
@@ -2094,48 +2632,60 @@ const HomeScreen = () => {
           if (newTab !== activeTab) {
             setActiveTab(newTab);
             if (newTab === 'services') {
-              console.log('🎬 Switching to services - setting isPlaying to true');
+              console.log('🎬 Switching to services - clearing product videos and enabling service video');
+              // Clear visible product videos when switching to services
+              setVisibleVideoProducts(new Set());
               setIsPlaying(true);
               // Reset to first video when switching to services
               setCurrentVideoIndex(0);
               setFocusedVideoId(videoFeedData[0]?.id);
             } else {
-              console.log('🎬 Switching to products - setting isPlaying to false');
+              console.log('🎬 Switching to products - stopping service videos and re-initializing product videos');
               setIsPlaying(false);
+              // Re-initialize visible video products (first 2)
+              const videoProducts = products.filter(p => p.media_type === 'video' && p.primary_video_url);
+              const firstTwo = videoProducts.slice(0, 2).map(p => p.id);
+              setVisibleVideoProducts(new Set(firstTwo));
             }
           }
         }}
       >
         <View key="products" style={{ flex: 1 }}>
-          <ScrollView 
-            style={{ flex: 1 }} 
-            contentContainerStyle={{ flexGrow: 1 }}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            refreshControl={
-              <RefreshControl 
-                refreshing={refreshing} 
-                onRefresh={refreshData}
-                colors={['#3498DB']}
-                tintColor="#3498DB"
+          {activeTab === 'products' ? (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ flexGrow: 1 }}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={refreshData}
+                  colors={['#3498DB']}
+                  tintColor="#3498DB"
                 title="Pull to refresh"
               />
             }
           >
             {renderProductsTab()}
           </ScrollView>
+          ) : (
+            <View style={{ flex: 1, backgroundColor: '#000' }} />
+          )}
         </View>
         
         <View key="services" style={{ flex: 1 }}>
-          {/* Add invisible swipe area on left edge to go back to products */}
-          <View style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 50,
-            zIndex: 3000,
-          }}>
+          {activeTab === 'services' ? (
+            <>
+              {/* Add invisible swipe area on left edge to go back to products */}
+              <View style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: 50,
+                zIndex: 3000,
+              }}>
             <TouchableOpacity
               style={{ flex: 1 }}
               onPress={() => mainPagerRef.current?.setPage(0)}
@@ -2143,6 +2693,10 @@ const HomeScreen = () => {
             </TouchableOpacity>
           </View>
           {renderServicesTab()}
+            </>
+          ) : (
+            <View style={{ flex: 1, backgroundColor: '#000' }} />
+          )}
         </View>
       </PagerView>
 
@@ -2161,7 +2715,6 @@ const HomeScreen = () => {
       <CartModal
         visible={isCartVisible}
         onClose={() => hideCart()}
-        onCheckout={() => navigation.navigate('Checkout')}
       />
 
       <ServiceBookingModal
@@ -2175,6 +2728,7 @@ const HomeScreen = () => {
         visible={commentsServiceId !== null}
         serviceId={commentsServiceId}
         onClose={() => setCommentsServiceId(null)}
+        onCommentAdded={handleCommentAdded}
       />
 
       <LocationSelector
@@ -2191,6 +2745,8 @@ const HomeScreen = () => {
         onClose={() => setFilterVisible(false)}
         onApply={handleApplyFilters}
         onReset={handleResetFilters}
+        categories={categories}
+        activeTab={activeTab}
       />
     </View>
   );

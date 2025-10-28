@@ -207,6 +207,12 @@ class RealtimeAPI {
           console.log('📞 RAW call_event EVENT RECEIVED:', data);
           this.handleRealtimeMessage({ type: 'call_event', ...data });
         });
+        this.chatSocket.on('wallet_balance_update', (data) => {
+          console.log('💰 RAW wallet_balance_update EVENT RECEIVED:', data);
+          console.log('💎 Available Balance:', data.availableBalance);
+          console.log('🔒 Escrow Balance:', data.escrowBalance);
+          this.handleRealtimeMessage({ type: 'wallet_balance_update', ...data });
+        });
         this.chatSocket.on('call_signal', (data) => {
           console.log('📞 RAW call_signal RECEIVED:', data);
           // Directly notify call_signal listeners (don't go through handleRealtimeMessage)

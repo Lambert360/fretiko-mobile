@@ -20,16 +20,43 @@ interface WalletDepositScreenProps {
   navigation: any;
 }
 
+type PaymentMethod = 'bank_transfer' | 'card' | 'mobile_money';
+
 const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
   const insets = useSafeAreaInsets();
   const [localAmount, setLocalAmount] = useState('');
   const [fretiAmount, setFretiAmount] = useState('');
   const [localCurrency, setLocalCurrency] = useState('NGN'); // Default to Nigerian Naira
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bank_transfer');
   const [loading, setLoading] = useState(false);
   const [isValid, setIsValid] = useState(true);
   const [validationError, setValidationError] = useState<string>('');
   
   const supportedCurrencies = ['NGN', 'USD', 'EUR', 'GBP', 'CAD', 'AUD'];
+
+  const paymentMethods = [
+    { 
+      id: 'bank_transfer' as PaymentMethod, 
+      label: 'Bank Transfer', 
+      icon: 'business', 
+      description: 'Direct bank transfer',
+      processingTime: '1-3 business days'
+    },
+    { 
+      id: 'card' as PaymentMethod, 
+      label: 'Card Payment', 
+      icon: 'card', 
+      description: 'Credit/Debit card',
+      processingTime: 'Instant'
+    },
+    { 
+      id: 'mobile_money' as PaymentMethod, 
+      label: 'Mobile Money', 
+      icon: 'phone-portrait', 
+      description: 'Mobile wallet payment',
+      processingTime: 'Instant'
+    },
+  ];
 
   const handleValidationChange = (valid: boolean, error?: string) => {
     setIsValid(valid);
@@ -58,9 +85,17 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
         localCurrency: localCurrency
       });
 
+      // Get selected payment method details
+      const selectedMethod = paymentMethods.find(m => m.id === paymentMethod);
+      
+      // Graceful handling for pending payment integration
+      const statusMessage = result.status === 'pending' 
+        ? `\n\n⚠️ Note: Payment integration is currently being configured. This deposit will be processed once our payment gateway is active.\n\nPayment Method: ${selectedMethod?.label}\nProcessing Time: ${selectedMethod?.processingTime}`
+        : `\n\nPayment Method: ${selectedMethod?.label}\nProcessing Time: ${selectedMethod?.processingTime}`;
+
       Alert.alert(
-        'Deposit Created', 
-        `Your deposit of ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} has been initiated.\n\nYou'll pay: ${currencyAPI.formatCurrency(localValue, localCurrency)}\nStatus: ${result.status}`,
+        'Deposit Request Created', 
+        `Your deposit of ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} has been initiated.\n\nYou'll pay: ${currencyAPI.formatCurrency(localValue, localCurrency)}\nStatus: ${result.status.toUpperCase()}${statusMessage}`,
         [
           { 
             text: 'OK', 
@@ -69,7 +104,20 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
         ]
       );
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to create deposit');
+      console.error('❌ Deposit error:', error);
+      
+      // Provide user-friendly error messages
+      let errorMessage = 'Failed to create deposit. Please try again.';
+      
+      if (error.message?.includes('limit')) {
+        errorMessage = error.message; // Show limit error as-is
+      } else if (error.message?.includes('Duplicate')) {
+        errorMessage = 'A similar deposit request already exists. Please check your transaction history.';
+      } else if (error.message?.includes('network') || error.message?.includes('Network')) {
+        errorMessage = 'Network error. Please check your internet connection and try again.';
+      }
+      
+      Alert.alert('Deposit Error', errorMessage);
     } finally {
       setLoading(false);
     }
@@ -106,6 +154,51 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
 
         {/* Deposit Form */}
         <View style={styles.formCard}>
+          {/* Payment Method Selection */}
+          <View style={styles.paymentMethodSection}>
+            <Text style={styles.sectionTitle}>Payment Method</Text>
+            <View style={styles.paymentMethods}>
+              {paymentMethods.map((method) => (
+                <TouchableOpacity
+                  key={method.id}
+                  style={[
+                    styles.paymentMethodCard,
+                    paymentMethod === method.id && styles.paymentMethodCardActive
+                  ]}
+                  onPress={() => setPaymentMethod(method.id)}
+                >
+                  <View style={[
+                    styles.paymentMethodIcon,
+                    paymentMethod === method.id && styles.paymentMethodIconActive
+                  ]}>
+                    <Ionicons 
+                      name={method.icon as any} 
+                      size={24} 
+                      color={paymentMethod === method.id ? '#F39C12' : '#FFFFFF'} 
+                    />
+                  </View>
+                  <View style={styles.paymentMethodInfo}>
+                    <Text style={[
+                      styles.paymentMethodLabel,
+                      paymentMethod === method.id && styles.paymentMethodLabelActive
+                    ]}>
+                      {method.label}
+                    </Text>
+                    <Text style={styles.paymentMethodDescription}>
+                      {method.description}
+                    </Text>
+                    <Text style={styles.paymentMethodTime}>
+                      {method.processingTime}
+                    </Text>
+                  </View>
+                  {paymentMethod === method.id && (
+                    <Ionicons name="checkmark-circle" size={24} color="#F39C12" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
           <Text style={styles.sectionTitle}>Deposit Amount</Text>
           
           {/* Dual Currency Input */}
@@ -376,6 +469,59 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  paymentMethodSection: {
+    marginBottom: 24,
+  },
+  paymentMethods: {
+    gap: 12,
+  },
+  paymentMethodCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2A2A2A',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  paymentMethodCardActive: {
+    backgroundColor: 'rgba(243, 156, 18, 0.1)',
+    borderColor: '#F39C12',
+  },
+  paymentMethodIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  paymentMethodIconActive: {
+    backgroundColor: 'rgba(243, 156, 18, 0.2)',
+  },
+  paymentMethodInfo: {
+    flex: 1,
+  },
+  paymentMethodLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  paymentMethodLabelActive: {
+    color: '#F39C12',
+  },
+  paymentMethodDescription: {
+    fontSize: 13,
+    color: '#CCCCCC',
+    marginBottom: 2,
+  },
+  paymentMethodTime: {
+    fontSize: 11,
+    color: '#999999',
+    fontStyle: 'italic',
   },
 });
 

@@ -18,6 +18,14 @@ export interface Wallet {
   dailyWithdrawalLimit: number;
   createdAt: string;
   updatedAt: string;
+  // Pending escrow balances (locked until release)
+  pendingVendorEarnings?: number;
+  pendingRiderEarnings?: number;
+  totalPendingEarnings?: number;
+  // Sales tracking (cumulative revenue)
+  totalVendorSales?: number;
+  totalRiderEarnings?: number;
+  lifetimeRevenue?: number;
 }
 
 export interface WalletStats {
@@ -135,6 +143,50 @@ export interface WalletLimits {
 }
 
 // ================================
+// SALES TRACKING INTERFACES
+// ================================
+
+export interface SaleTransaction {
+  id: string;
+  transactionType: 'vendor_sale' | 'rider_delivery';
+  amount: number;
+  orderId?: string;
+  orderNumber?: string;
+  vendorSalesAfter: number;
+  riderEarningsAfter: number;
+  lifetimeRevenueAfter: number;
+  description?: string;
+  createdAt: string;
+}
+
+export interface SalesHistoryResponse {
+  sales: SaleTransaction[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SalesAnalytics {
+  summary: {
+    totalVendorSales: number;
+    totalRiderEarnings: number;
+    totalRevenue: number;
+    totalTransactions: number;
+    averagePerTransaction: number;
+    period: string;
+    startDate: string;
+    endDate: string;
+  };
+  chartData: Array<{
+    period: string;
+    vendorSales: number;
+    riderEarnings: number;
+    totalRevenue: number;
+    transactionCount: number;
+  }>;
+}
+
+// ================================
 // AUTH HELPER
 // ================================
 
@@ -167,6 +219,19 @@ export const walletAPI = {
     } catch (error: any) {
       console.error('❌ Failed to get wallet:', error.response?.data || error.message);
       throw new Error(error.response?.data?.message || 'Failed to get wallet information');
+    }
+  },
+
+  // ✅ NEW: Get pending escrow balances
+  getPendingEscrows: async (): Promise<{ vendorAmount: number; riderAmount: number; totalPending: number }> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.get('/wallet/pending-escrows', { headers });
+      console.log('🔒 Pending escrows loaded:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Failed to get pending escrows:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to get pending escrows');
     }
   },
 
@@ -359,7 +424,12 @@ export const walletAPI = {
   // ================================
 
   formatFreti: (amount: number): string => {
-    return `₣${amount.toFixed(6).replace(/\.?0+$/, '')}`;
+    // Format with commas using toLocaleString
+    const formatted = amount.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 6
+    });
+    return `₣${formatted}`;
   },
 
   formatCurrency: (amount: number, currency: string): string => {
@@ -368,11 +438,20 @@ export const walletAPI = {
       EUR: '€',
       GBP: '£',
       NGN: '₦',
-      FRETI: '₣'
+      FRETI: '₣',
+      CAD: 'C$',
+      AUD: 'A$'
     };
     
     const symbol = currencySymbols[currency.toUpperCase()] || currency;
-    return `${symbol}${amount.toFixed(2)}`;
+    const decimals = currency.toUpperCase() === 'NGN' ? 0 : 2;
+    
+    // Format with commas using toLocaleString
+    const formatted = amount.toLocaleString('en-US', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+    return `${symbol}${formatted}`;
   },
 
   getTransactionTypeDisplay: (type: string): { label: string; icon: string; color: string } => {
@@ -388,5 +467,70 @@ export const walletAPI = {
     };
     
     return types[type] || { label: type, icon: 'help-circle', color: '#95A5A6' };
+  },
+
+  // ================================
+  // SALES TRACKING
+  // ================================
+
+  getSalesHistory: async (params?: {
+    type?: 'vendor_sale' | 'rider_delivery';
+    limit?: number;
+    offset?: number;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<SalesHistoryResponse> => {
+    try {
+      const headers = await getAuthHeaders();
+      const queryParams = new URLSearchParams();
+      
+      if (params?.type) queryParams.append('type', params.type);
+      if (params?.limit) queryParams.append('limit', params.limit.toString());
+      if (params?.offset) queryParams.append('offset', params.offset.toString());
+      if (params?.startDate) queryParams.append('startDate', params.startDate);
+      if (params?.endDate) queryParams.append('endDate', params.endDate);
+
+      const url = `/wallet/sales-history${queryParams.toString() ? `?${queryParams}` : ''}`;
+      const response = await api.get(url, { headers });
+      
+      console.log('💰 Sales history loaded:', response.data?.sales?.length || 0, 'sales');
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Failed to get sales history:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to get sales history');
+    }
+  },
+
+  getSalesAnalytics: async (params?: {
+    period?: 'daily' | 'weekly' | 'monthly' | 'yearly';
+    startDate?: string;
+    endDate?: string;
+  }): Promise<SalesAnalytics> => {
+    try {
+      const headers = await getAuthHeaders();
+      const queryParams = new URLSearchParams();
+      
+      if (params?.period) queryParams.append('period', params.period);
+      if (params?.startDate) queryParams.append('startDate', params.startDate);
+      if (params?.endDate) queryParams.append('endDate', params.endDate);
+
+      const url = `/wallet/sales-analytics${queryParams.toString() ? `?${queryParams}` : ''}`;
+      const response = await api.get(url, { headers });
+      
+      console.log('📊 Sales analytics loaded:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Failed to get sales analytics:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to get sales analytics');
+    }
+  },
+
+  getSalesTypeDisplay: (type: 'vendor_sale' | 'rider_delivery'): { label: string; icon: string; color: string } => {
+    const types = {
+      'vendor_sale': { label: 'Vendor Sale', icon: 'storefront', color: '#27AE60' },
+      'rider_delivery': { label: 'Delivery Fee', icon: 'bicycle', color: '#3498DB' }
+    };
+    
+    return types[type] || { label: type, icon: 'cash', color: '#95A5A6' };
   }
 };

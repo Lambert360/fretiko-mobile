@@ -10,8 +10,12 @@ import {
   Platform,
   SafeAreaView,
   ActivityIndicator,
+  ImageBackground,
+  Dimensions,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface LoginScreenProps {
   navigation: any;
@@ -86,10 +90,19 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
-        style={styles.keyboardView} 
+      <KeyboardAvoidingView
+        style={styles.keyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
+        {/* Background Image */}
+        <ImageBackground
+          source={require('../../assets/images/login-pic.jpeg')}
+          style={styles.backgroundImage}
+          imageStyle={styles.backgroundImageStyle}
+        >
+          <View style={styles.overlay} />
+        </ImageBackground>
+
         <View style={styles.content}>
           {/* Logo/Title */}
           <View style={styles.header}>
@@ -162,6 +175,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
               )}
             </TouchableOpacity>
 
+            {/* Forgot Password Link */}
+            {!needsMigration && (
+              <TouchableOpacity
+                style={styles.forgotPasswordButton}
+                onPress={() => navigation.navigate('ForgotPassword')}
+              >
+                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+              </TouchableOpacity>
+            )}
+
             {needsMigration && (
               <TouchableOpacity
                 style={[styles.button, styles.buttonSecondary, { marginTop: 12 }]}
@@ -191,15 +214,30 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212', // Dark theme background
+    backgroundColor: '#000000',
   },
   keyboardView: {
     flex: 1,
   },
+  backgroundImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: SCREEN_HEIGHT * 0.45,
+  },
+  backgroundImageStyle: {
+    opacity: 0.8,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+  },
   content: {
     flex: 1,
     padding: 20,
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
+    paddingBottom: 40,
   },
   header: {
     marginBottom: 40,
@@ -210,10 +248,16 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#FFFFFF',
     marginBottom: 8,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
   subtitle: {
     fontSize: 16,
-    color: '#B0B0B0',
+    color: '#E0E0E0',
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   form: {
     marginBottom: 30,
@@ -228,13 +272,13 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   input: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: 'rgba(30, 30, 30, 0.95)',
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
     color: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#444',
   },
   inputDisabled: {
     backgroundColor: '#2A2A2A',
@@ -278,6 +322,15 @@ const styles = StyleSheet.create({
   linkText: {
     color: '#007AFF',
     fontSize: 16,
+    fontWeight: '500',
+  },
+  forgotPasswordButton: {
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  forgotPasswordText: {
+    color: '#3498DB',
+    fontSize: 15,
     fontWeight: '500',
   },
 });

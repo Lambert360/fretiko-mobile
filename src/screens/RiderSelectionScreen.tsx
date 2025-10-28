@@ -42,7 +42,7 @@ export interface Rider {
   avatar: string;
   rating: number;
   totalDeliveries: number;
-  vehicleType: 'wheelbarrow' | 'bike' | 'car';
+  vehicleType: 'wheelbarrow' | 'bike' | 'car' | 'van' | 'truck';
   price: number;
   distanceFromPickup: number;
   estimatedArrival: number;
@@ -50,6 +50,7 @@ export interface Rider {
   unavailableReason?: string;
   specialties: string[];
   isOnline: boolean;
+  deliveryPromise?: string; // Delivery promise message from rider profile
 }
 
 const RiderSelectionScreen: React.FC<RiderSelectionScreenProps> = ({ navigation, route }) => {
@@ -215,6 +216,13 @@ const RiderSelectionScreen: React.FC<RiderSelectionScreenProps> = ({ navigation,
           </Text>
         </View>
       </View>
+
+      {rider.deliveryPromise && (
+        <View style={styles.deliveryPromiseContainer}>
+          <Ionicons name="flash" size={14} color="#F39C12" />
+          <Text style={styles.deliveryPromiseText}>{rider.deliveryPromise}</Text>
+        </View>
+      )}
 
       {rider.specialties.length > 0 && (
         <View style={styles.specialtiesContainer}>
@@ -493,6 +501,22 @@ const styles = StyleSheet.create({
     color: '#3498DB',
     fontSize: 12,
     fontWeight: '500',
+  },
+  deliveryPromiseContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(243, 156, 18, 0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 8,
+    gap: 6,
+  },
+  deliveryPromiseText: {
+    color: '#F39C12',
+    fontSize: 12,
+    fontWeight: '500',
+    fontStyle: 'italic',
   },
   specialtiesContainer: {
     flexDirection: 'row',

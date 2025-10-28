@@ -64,6 +64,14 @@ export interface WorkspaceStats {
     auction: number;
     service_booking: number;
   };
+  // Escrow metrics (pending earnings)
+  escrowMetrics?: {
+    totalInEscrow: number; // Total funds held in escrow (vendor)
+    riderInEscrow: number; // Total delivery fees held in escrow (rider)
+    pendingRelease: number; // Funds releasing within 24 hours
+    releasedToday: number; // Funds released today
+    escrowCount: number; // Number of active escrows
+  };
 }
 
 export interface WorkspaceLiveStreamAnalytics {
@@ -237,7 +245,7 @@ class WorkspaceAPI {
   }
 
   /**
-   * Mark order as ready for pickup (vendor action)
+   * Mark order as ready for pickup (vendor action - rider delivery)
    */
   async markOrderReady(orderId: string): Promise<{ success: boolean; message: string }> {
     try {
@@ -255,7 +263,75 @@ class WorkspaceAPI {
 
       return await response.json();
     } catch (error) {
+      console.error('Error marking order ready:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Mark self-pickup order as ready (vendor action - no rider)
+   */
+  async markOrderReadyForPickup(orderId: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const headers = await getAuthHeaders();
+
+      const response = await fetch(`${API_BASE_URL}/workspace/orders/${orderId}/ready-for-pickup`, {
+        method: 'POST',
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`Failed to mark order ready for pickup: ${response.status} ${errorData}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error marking order ready for pickup:', error);
+      throw error;
+    }
+  }
+
+  async confirmPickupWithPin(orderId: string, pickupPin: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const headers = await getAuthHeaders();
+
+      const response = await fetch(`${API_BASE_URL}/workspace/orders/${orderId}/confirm-pickup`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ pickupPin }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`Failed to confirm pickup: ${response.status} ${errorData}`);
+      }
+
+      return await response.json();
+    } catch (error) {
       console.error('Mark order ready error:', error);
+      throw error;
+    }
+  }
+
+  async confirmSelfPickupWithPin(orderId: string, deliveryPin: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const headers = await getAuthHeaders();
+
+      const response = await fetch(`${API_BASE_URL}/workspace/orders/${orderId}/confirm-self-pickup`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ deliveryPin }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`Failed to confirm self-pickup: ${response.status} ${errorData}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Confirm self-pickup error:', error);
       throw error;
     }
   }
@@ -287,18 +363,14 @@ class WorkspaceAPI {
   /**
    * Mark order as delivered (rider action)
    */
-  async markDelivered(orderId: string, deliveryProof?: {
-    photo?: string;
-    signature?: string;
-    notes?: string;
-  }): Promise<{ success: boolean; message: string }> {
+  async markDelivered(orderId: string, deliveryPin: string): Promise<{ success: boolean; message: string }> {
     try {
       const headers = await getAuthHeaders();
 
       const response = await fetch(`${API_BASE_URL}/workspace/orders/${orderId}/delivered`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(deliveryProof || {}),
+        body: JSON.stringify({ deliveryPin }),
       });
 
       if (!response.ok) {
@@ -548,6 +620,35 @@ class WorkspaceAPI {
       return await response.json();
     } catch (error) {
       console.error('Get real-time workspace metrics error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Request manual escrow release for an order (vendor action)
+   */
+  async requestEscrowRelease(orderId: string, reason?: string): Promise<{
+    success: boolean;
+    message: string;
+    hoursRemaining?: number;
+  }> {
+    try {
+      const headers = await getAuthHeaders();
+
+      const response = await fetch(`${API_BASE_URL}/workspace/orders/${orderId}/release-escrow`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ reason: reason || 'Manual release requested by vendor' }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`Failed to request escrow release: ${response.status} ${errorData}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Request escrow release error:', error);
       throw error;
     }
   }

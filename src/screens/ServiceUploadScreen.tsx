@@ -6,6 +6,7 @@ import { API_BASE_URL } from '../config/api';
 import * as SecureStore from 'expo-secure-store';
 import DualCurrencyInput from '../components/DualCurrencyInput';
 import { currencyAPI } from '../services/currencyAPI';
+import LocationSelector from '../components/LocationSelector';
 import { 
   Alert, 
   Dimensions, 
@@ -55,6 +56,7 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [isPriceValid, setIsPriceValid] = useState(true);
   const [priceError, setPriceError] = useState<string>('');
+  const [isLocationSelectorVisible, setLocationSelectorVisible] = useState(false);
   
   const supportedCurrencies = ['NGN', 'USD', 'EUR', 'GBP', 'CAD', 'AUD'];
 
@@ -78,6 +80,11 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
   const handlePriceValidation = (isValid: boolean, error?: string) => {
     setIsPriceValid(isValid);
     setPriceError(error || '');
+  };
+
+  const handleLocationSelect = (selectedLocation: string) => {
+    setLocation(selectedLocation);
+    setLocationSelectorVisible(false);
   };
 
   const pickMedia = async () => {
@@ -512,13 +519,21 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
 
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Service Area</Text>
-            <TextInput
-              style={styles.textInput}
-              value={location}
-              onChangeText={setLocation}
-              placeholder="City or neighborhood you serve"
-              placeholderTextColor="rgba(255,255,255,0.5)"
-            />
+            <TouchableOpacity
+              style={styles.locationButton}
+              onPress={() => setLocationSelectorVisible(true)}
+            >
+              <View style={styles.locationButtonContent}>
+                <Ionicons name="location" size={20} color={location ? '#FFFFFF' : 'rgba(255,255,255,0.5)'} />
+                <Text style={[
+                  styles.locationButtonText,
+                  !location && styles.locationButtonPlaceholder
+                ]}>
+                  {location || 'Select service area'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.3)" />
+            </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
@@ -540,6 +555,14 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Location Selector Modal */}
+      <LocationSelector
+        visible={isLocationSelectorVisible}
+        selectedLocation={location}
+        onLocationSelect={handleLocationSelect}
+        onClose={() => setLocationSelectorVisible(false)}
+      />
     </KeyboardAvoidingView>
   );
 };
@@ -850,6 +873,30 @@ const styles = StyleSheet.create({
   },
   selectedBookingTypeDescription: {
     color: 'rgba(255,255,255,0.7)',
+  },
+  locationButton: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  locationButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  locationButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginLeft: 12,
+  },
+  locationButtonPlaceholder: {
+    color: 'rgba(255,255,255,0.5)',
   },
 });
 

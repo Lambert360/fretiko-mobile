@@ -35,6 +35,7 @@ const StoryUploadScreen = () => {
   const [caption, setCaption] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [showCaptionInput, setShowCaptionInput] = useState(false);
+  const [currentDraftId, setCurrentDraftId] = useState<string>(`draft-${Date.now()}`);
 
   const player = useVideoPlayer(selectedMedia?.uri || '', (player) => {
     player.loop = true;
@@ -131,6 +132,22 @@ const StoryUploadScreen = () => {
     );
   };
 
+  // Save draft when caption changes
+  React.useEffect(() => {
+    if (selectedMedia && caption) {
+      const draft = {
+        id: currentDraftId,
+        fileUri: selectedMedia.uri,
+        fileName: selectedMedia.name,
+        fileType: selectedMedia.mimeType,
+        caption: caption.trim(),
+        duration: selectedMedia.duration,
+        timestamp: Date.now(),
+      };
+      storyUploadService.saveDraft(draft);
+    }
+  }, [caption, selectedMedia, currentDraftId]);
+
   const uploadStory = async () => {
     if (!selectedMedia) {
       Alert.alert('No media selected', 'Please select a photo or video for your story.');
@@ -140,10 +157,10 @@ const StoryUploadScreen = () => {
     setIsUploading(true);
 
     try {
-      console.log('🚀 Starting story upload...');
+      console.log('🚀 Starting enhanced story upload...');
 
-      // Upload the complete story (media + database entry)
-      const result = await storyUploadService.uploadCompleteStory(
+      // Upload with compression and retry logic
+      const result = await storyUploadService.uploadCompleteStoryEnhanced(
         selectedMedia.uri,
         selectedMedia.name,
         selectedMedia.mimeType,
@@ -154,6 +171,9 @@ const StoryUploadScreen = () => {
       if (result.uploadResult.success && result.storyData) {
         console.log('✅ Story uploaded successfully');
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+        // Delete draft after successful upload
+        await storyUploadService.deleteDraft(currentDraftId);
 
         Alert.alert(
           'Story uploaded!',
@@ -168,8 +188,11 @@ const StoryUploadScreen = () => {
       console.error('Story upload error:', error);
       Alert.alert(
         'Upload failed',
-        error instanceof Error ? error.message : 'Failed to upload story. Please try again.',
-        [{ text: 'OK' }]
+        error instanceof Error ? error.message : 'Failed to upload story. Will retry automatically.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Retry Now', onPress: () => uploadStory() }
+        ]
       );
     } finally {
       setIsUploading(false);
@@ -192,7 +215,7 @@ const StoryUploadScreen = () => {
           <Image
             source={{ uri: selectedMedia.uri }}
             style={styles.media}
-            resizeMode="cover"
+            resizeMode="contain"
           />
         )}
 

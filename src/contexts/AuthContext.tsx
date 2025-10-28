@@ -27,7 +27,14 @@ export interface AuthState {
 
 export interface AuthContextType extends AuthState {
   signin: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string, firstName: string, lastName: string) => Promise<void>;
+  signup: (
+    email: string,
+    password: string,
+    firstName: string,
+    lastName: string,
+    dateOfBirth?: string,
+    gender?: string
+  ) => Promise<void>;
   migrate: (email: string, newPassword: string) => Promise<void>;
   signout: () => Promise<void>;
   logout: () => Promise<void>;
@@ -107,14 +114,68 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
             if (payload.exp && payload.exp > currentTime) {
               const userData = JSON.parse(userDataString);
-              setAuthState({
-                user: userData,
-                accessToken,
-                isLoading: false,
-                isAuthenticated: true,
-                isNewUser: false,
-              });
-              console.log('✅ Valid token loaded, expires at:', new Date(payload.exp * 1000));
+              
+              // ✅ Fetch fresh user profile to get role info (is_seller, is_rider)
+              try {
+                const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/users/profile`, {
+                  headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json',
+                  },
+                });
+                
+                if (response.ok) {
+                  const profileData = await response.json();
+                  console.log('🔍 Profile data from API:', profileData);
+                  
+                  // Merge profile data with stored user data
+                  // Add BOTH naming conventions for compatibility
+                  const enrichedUserData = {
+                    ...userData,
+                    // Backend returns camelCase
+                    isSeller: profileData.isSeller,
+                    isRider: profileData.isRider,
+                    // Also add snake_case for consistency
+                    is_seller: profileData.isSeller,
+                    is_rider: profileData.isRider,
+                    is_verified: profileData.is_verified,
+                  };
+                  
+                  setAuthState({
+                    user: enrichedUserData,
+                    accessToken,
+                    isLoading: false,
+                    isAuthenticated: true,
+                    isNewUser: false,
+                  });
+                  console.log('✅ Valid token loaded with roles:', { 
+                    isSeller: enrichedUserData.isSeller,
+                    isRider: enrichedUserData.isRider,
+                    is_seller: enrichedUserData.is_seller, 
+                    is_rider: enrichedUserData.is_rider 
+                  });
+                } else {
+                  // Fallback to stored data if profile fetch fails
+                  setAuthState({
+                    user: userData,
+                    accessToken,
+                    isLoading: false,
+                    isAuthenticated: true,
+                    isNewUser: false,
+                  });
+                  console.log('⚠️ Profile fetch failed, using stored data');
+                }
+              } catch (profileError) {
+                console.log('⚠️ Error fetching profile:', profileError);
+                // Fallback to stored data
+                setAuthState({
+                  user: userData,
+                  accessToken,
+                  isLoading: false,
+                  isAuthenticated: true,
+                  isNewUser: false,
+                });
+              }
             } else {
               console.log('🔓 Token expired, clearing auth data');
               await clearAuthData();
@@ -216,16 +277,32 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       const response = await authAPI.signin({ email, password });
       
-      // Save auth data
-      await saveAuthData(response.user, response.accessToken, response.refreshToken);
+      // ✅ Backend returns snake_case (is_seller, is_rider)
+      // Add camelCase aliases for compatibility with ProfileScreen
+      const enrichedUser = {
+        ...response.user,
+        is_seller: response.user.is_seller,
+        is_rider: response.user.is_rider,
+        isSeller: response.user.is_seller,  // ✅ Add camelCase alias
+        isRider: response.user.is_rider,    // ✅ Add camelCase alias
+      };
       
+      // Save auth data
+      await saveAuthData(enrichedUser, response.accessToken, response.refreshToken);
+
       // Update state
       setAuthState({
-        user: response.user,
+        user: enrichedUser,
         accessToken: response.accessToken,
         isLoading: false,
         isAuthenticated: true,
         isNewUser: false,
+      });
+      console.log('✅ Signed in with roles:', { 
+        is_seller: enrichedUser.is_seller, 
+        is_rider: enrichedUser.is_rider,
+        isSeller: enrichedUser.isSeller,
+        isRider: enrichedUser.isRider 
       });
     } catch (error) {
       setAuthState(prev => ({ ...prev, isLoading: false }));
@@ -233,11 +310,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const signup = async (email: string, password: string, firstName: string, lastName: string) => {
+  const signup = async (
+    email: string,
+    password: string,
+    firstName: string,
+    lastName: string,
+    dateOfBirth?: string,
+    gender?: string
+  ) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
 
-      const response = await authAPI.signup({ email, password, firstName, lastName });
+      const response = await authAPI.signup({
+        email,
+        password,
+        firstName,
+        lastName,
+        dateOfBirth,
+        gender,
+      });
 
       // Save auth data
       await saveAuthData(response.user, response.accessToken, response.refreshToken);

@@ -13,6 +13,7 @@ import {
   Alert,
   PanGestureHandler,
   State,
+  ActivityIndicator,
 } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { Ionicons } from '@expo/vector-icons';
@@ -50,6 +51,8 @@ const StoriesScreen = () => {
   const [comments, setComments] = useState<StoryComment[]>([]);
   const [isLiked, setIsLiked] = useState(false);
   const [showControls, setShowControls] = useState(true);
+  const [isMediaLoaded, setIsMediaLoaded] = useState(false);
+  const [isMediaLoading, setIsMediaLoading] = useState(true);
 
   const progressTimer = useRef<NodeJS.Timeout>();
   const hideControlsTimer = useRef<NodeJS.Timeout>();
@@ -63,17 +66,43 @@ const StoriesScreen = () => {
     }
   });
 
+  // Listen for video load events
+  useEffect(() => {
+    if (currentStory?.media_type === 'video' && player) {
+      const subscription = player.addListener('statusChange', (status) => {
+        if (status.status === 'readyToPlay' || status.status === 'loaded') {
+          console.log('✅ Video loaded successfully');
+          setIsMediaLoaded(true);
+          setIsMediaLoading(false);
+        }
+      });
+
+      return () => {
+        subscription?.remove();
+      };
+    }
+  }, [player, currentStory]);
+
   useEffect(() => {
     if (currentStory) {
       setIsLiked(currentStory.is_liked || false);
       // Reset progress for new story
       setProgress(0);
+      setIsMediaLoaded(false);
+      setIsMediaLoading(true);
 
       // Start video if it's a video story
       if (currentStory.media_type === 'video' && player) {
         player.replace(currentStory.media_url);
         player.play();
         setIsPlaying(true);
+      } else {
+        // For images, simulate load time
+        setIsMediaLoading(true);
+        setTimeout(() => {
+          setIsMediaLoaded(true);
+          setIsMediaLoading(false);
+        }, 500); // Small delay to ensure image is rendered
       }
 
       // Record view (non-blocking for analytics)
@@ -82,9 +111,6 @@ const StoriesScreen = () => {
           console.warn('⚠️ View tracking failed (non-critical):', error.message);
         });
       }
-
-      // Start progress timer
-      startProgressTimer();
 
       // Hide controls after 3 seconds
       resetHideControlsTimer();
@@ -95,6 +121,20 @@ const StoriesScreen = () => {
       if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
     };
   }, [currentIndex]);
+
+  // Start timer only when media is loaded and comments are not shown
+  useEffect(() => {
+    if (isMediaLoaded && !showComments && isPlaying) {
+      startProgressTimer();
+    } else {
+      // Pause timer
+      if (progressTimer.current) clearInterval(progressTimer.current);
+    }
+
+    return () => {
+      if (progressTimer.current) clearInterval(progressTimer.current);
+    };
+  }, [isMediaLoaded, showComments, isPlaying]);
 
   const startProgressTimer = () => {
     if (progressTimer.current) clearInterval(progressTimer.current);
@@ -317,15 +357,39 @@ const StoriesScreen = () => {
   const handleScreenTap = (event: any) => {
     const { locationX } = event.nativeEvent;
 
+    // Pause timer temporarily on touch
+    const wasPaused = !isPlaying;
+    if (!wasPaused) {
+      setIsPlaying(false);
+      if (currentStory?.media_type === 'video' && player) {
+        player.pause();
+      }
+      if (progressTimer.current) clearInterval(progressTimer.current);
+    }
+
+    // Resume after 300ms if not navigating
+    const resumeTimer = setTimeout(() => {
+      if (!wasPaused && !showComments) {
+        setIsPlaying(true);
+        if (currentStory?.media_type === 'video' && player) {
+          player.play();
+        }
+        startProgressTimer();
+      }
+    }, 300);
+
     // Reset hide controls timer
     resetHideControlsTimer();
 
     // Determine if tap is on left or right side
     if (locationX < screenWidth / 3) {
+      clearTimeout(resumeTimer); // Don't resume if navigating
       handlePreviousStory();
     } else if (locationX > (screenWidth * 2) / 3) {
+      clearTimeout(resumeTimer); // Don't resume if navigating
       handleNextStory();
     } else {
+      clearTimeout(resumeTimer); // User wants to pause/play manually
       // Middle tap - toggle play/pause for videos
       if (currentStory?.media_type === 'video') {
         togglePlayPause();
@@ -550,6 +614,14 @@ const StoriesScreen = () => {
         {renderStoryContent()}
       </TouchableOpacity>
 
+      {/* Loading Indicator */}
+      {isMediaLoading && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#FFFFFF" />
+          <Text style={styles.loadingText}>Loading...</Text>
+        </View>
+      )}
+
       {renderProgressBar()}
       {renderHeader()}
       {renderControls()}
@@ -751,6 +823,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginTop: 100,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  loadingText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginTop: 12,
+    fontWeight: '500',
   },
 });
 

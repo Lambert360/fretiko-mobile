@@ -7,6 +7,7 @@ import {
   Dimensions,
   FlatList,
   Image,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -20,8 +21,9 @@ import * as Haptics from 'expo-haptics';
 import { chatAPI, ChatConversation } from '../services/chatAPI';
 import { realtimeAPI } from '../services/realtimeAPI';
 import { storiesAPI, Story } from '../services/storiesAPI';
+import { userAPI } from '../services/userAPI';
 import { useAuth } from '../contexts/AuthContext';
-import { AI_ASSISTANT_UUID } from '../constants/chat';
+import { AI_ASSISTANT_UUID, AI_ASSISTANT_NAME, AI_ASSISTANT_AVATAR } from '../constants/chat';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -55,6 +57,10 @@ const KonnectScreen = () => {
   const [activeFilter, setActiveFilter] = useState<'all' | 'ai' | 'vendor' | 'rider' | 'support'>('all');
   const [storiesGroups, setStoriesGroups] = useState<StoriesGroup[]>([]);
   const [storiesLoading, setStoriesLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMoreConversations, setHasMoreConversations] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [userProfile, setUserProfile] = useState<{ isSeller: boolean; isRider: boolean } | null>(null);
 
   console.log('📊 Component state - Loading:', loading, 'Chats length:', chats.length, 'Filter:', activeFilter);
 
@@ -63,6 +69,22 @@ const KonnectScreen = () => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Load user profile to check if seller/rider
+  const loadUserProfile = async () => {
+    try {
+      const profile = await userAPI.getProfile();
+      setUserProfile({
+        isSeller: profile.isSeller,
+        isRider: profile.isRider || false,
+      });
+      console.log('✅ User profile loaded - isSeller:', profile.isSeller, 'isRider:', profile.isRider);
+    } catch (error) {
+      console.error('❌ Error loading user profile:', error);
+      // Default to regular user if profile load fails
+      setUserProfile({ isSeller: false, isRider: false });
+    }
+  };
 
   // Load stories from API
   const loadStories = async () => {
@@ -106,22 +128,33 @@ const KonnectScreen = () => {
 
       console.log('✅ Discovery stories loaded:', groupedStories.length, 'users with stories');
 
-      // Create "My Story" section with user's own stories
-      const myStorySection: StoriesGroup = {
-        user: {
-          id: user.id,
-          username: 'Your Story',
-          avatar_url: user.avatar_url,
-        },
-        stories: myStories,
-        hasUnviewed: false, // User's own stories don't have "unviewed" state
-      };
+      // Only create "My Story" section if user is a seller or rider
+      const canCreateStories = userProfile?.isSeller || userProfile?.isRider;
+      console.log('🎬 Can create stories:', canCreateStories, '(isSeller:', userProfile?.isSeller, 'isRider:', userProfile?.isRider, ')');
 
-      // Combine with discovery stories
-      const allStoriesGroups: StoriesGroup[] = [
-        myStorySection,
-        ...groupedStories,
-      ];
+      let allStoriesGroups: StoriesGroup[];
+
+      if (canCreateStories) {
+        // Create "My Story" section with user's own stories
+        const myStorySection: StoriesGroup = {
+          user: {
+            id: user.id,
+            username: 'Your Story',
+            avatar_url: user.avatar_url,
+          },
+          stories: myStories,
+          hasUnviewed: false, // User's own stories don't have "unviewed" state
+        };
+
+        // Combine with discovery stories
+        allStoriesGroups = [
+          myStorySection,
+          ...groupedStories,
+        ];
+      } else {
+        // Regular users only see discovery stories (from their plugs)
+        allStoriesGroups = groupedStories;
+      }
 
       setStoriesGroups(allStoriesGroups);
     } catch (error) {
@@ -169,16 +202,27 @@ const KonnectScreen = () => {
 
 
   // Load all conversations from backend API (including AI conversations)
-  const loadAllConversations = async (filter?: string): Promise<ChatConversation[]> => {
+  const loadAllConversations = async (filter?: string, page: number = 1): Promise<ChatConversation[]> => {
     try {
-      console.log('🔍 Loading conversations with filter:', filter);
+      console.log('🔍 Loading conversations with filter:', filter, 'page:', page);
       const result = await chatAPI.getFilteredConversations({
         chatType: filter && filter !== 'all' ? filter as any : undefined,
-        page: 1,
-        limit: 50,
+        page: page,
+        limit: 20, // Load 20 conversations per page
       });
       console.log('📥 Conversations received:', result.conversations.length, 'conversations');
       console.log('📝 First few conversations:', result.conversations.slice(0, 3));
+
+      // Debug: Check if name and otherUserId are present
+      result.conversations.forEach((conv, idx) => {
+        if (idx < 3) {
+          console.log(`🔍 Conv ${idx}: id=${conv.id}, name="${conv.name}", otherUserId="${conv.otherUserId}", chatType=${conv.chatType}`);
+        }
+      });
+
+      // Check if there are more conversations to load
+      setHasMoreConversations(result.conversations.length === 20);
+
       return result.conversations;
     } catch (error) {
       console.error('❌ Error loading conversations from backend:', error);
@@ -196,6 +240,7 @@ const KonnectScreen = () => {
 
       if (refresh) {
         setRefreshing(true);
+        setCurrentPage(1); // Reset to first page
         // Haptic feedback on pull-to-refresh
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
@@ -206,7 +251,7 @@ const KonnectScreen = () => {
       }
 
       // Load all conversations from backend (including AI conversations)
-      const allConversations = await loadAllConversations(activeFilter);
+      const allConversations = await loadAllConversations(activeFilter, 1);
 
       // Sort by timestamp (most recent first)
       allConversations.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -236,6 +281,45 @@ const KonnectScreen = () => {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  // Load more conversations (pagination)
+  const loadMoreConversations = async () => {
+    if (loadingMore || !hasMoreConversations || loading) {
+      console.log('⏸️ Skipping load more - loading:', loadingMore, 'hasMore:', hasMoreConversations, 'initialLoading:', loading);
+      return;
+    }
+
+    try {
+      console.log('📄 Loading more conversations, page:', currentPage + 1);
+      setLoadingMore(true);
+
+      const nextPage = currentPage + 1;
+      const moreConversations = await loadAllConversations(activeFilter, nextPage);
+
+      if (moreConversations.length > 0) {
+        // Sort and append new conversations
+        moreConversations.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        setChats(prev => [...prev, ...moreConversations]);
+        setCurrentPage(nextPage);
+
+        // Join real-time for new conversations
+        if (realtimeAPI.isConnected()) {
+          moreConversations.forEach(chat => {
+            realtimeAPI.joinConversation(chat.id);
+          });
+        }
+
+        console.log('✅ Loaded', moreConversations.length, 'more conversations');
+      } else {
+        console.log('📭 No more conversations to load');
+      }
+    } catch (error) {
+      console.error('❌ Error loading more conversations:', error);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -325,6 +409,10 @@ const KonnectScreen = () => {
       chatAPI.setAuthToken(accessToken);
       console.log('🔑 Auth token set for chatAPI');
 
+      // Load user profile first to check seller/rider status
+      console.log('👤 Loading user profile...');
+      await loadUserProfile();
+
       // Load conversations first (don't wait for real-time)
       console.log('📱 Loading conversations...');
       await loadConversations();
@@ -402,9 +490,30 @@ const KonnectScreen = () => {
   // Reload conversations when filter changes
   useEffect(() => {
     if (!loading) {
+      setCurrentPage(1); // Reset page
+      setHasMoreConversations(true); // Reset pagination state
       loadConversations();
     }
   }, [activeFilter]);
+
+  // Format timestamp to relative time (e.g., "2m ago", "1h ago", "Yesterday")
+  const formatTimestamp = (timestamp: string): string => {
+    const now = new Date();
+    const messageTime = new Date(timestamp);
+    const diffMs = now.getTime() - messageTime.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffMins < 1) return 'Now';
+    if (diffMins < 60) return `${diffMins}m`;
+    if (diffHours < 24) return `${diffHours}h`;
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) return `${diffDays}d`;
+
+    // For older messages, show date
+    return messageTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
 
   const getChatTypeColor = (type: string) => {
     switch (type) {
@@ -475,6 +584,7 @@ const KonnectScreen = () => {
         chatType: chatItem.chatType,
         isOnline: chatItem.isOnline,
         verified: chatItem.verified,
+        otherUserId: chatItem.otherUserId, // Pass the other user's ID
       });
     }
   };
@@ -632,45 +742,47 @@ const KonnectScreen = () => {
         </TouchableOpacity>
         
         <Text style={styles.headerTitle}>Konnect</Text>
-        
+
         <View style={styles.headerActions}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.headerAction}
-            onPress={() => Alert.alert('Camera', 'Opening camera for quick photo/video share')}
-          >
-            <Ionicons name="camera" size={22} color="#FFFFFF" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.headerAction}
-            onPress={() => Alert.alert('Search People', 'Search for new people to connect with')}
+            onPress={() => setIsSearchFocused(!isSearchFocused)}
           >
             <Ionicons name="search" size={22} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Search Bar */}
-      <View style={[
-        styles.searchContainer,
-        isSearchFocused && styles.searchContainerFocused
-      ]}>
-        <Ionicons name="search" size={20} color="rgba(255,255,255,0.6)" />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search conversations..."
-          placeholderTextColor="rgba(255,255,255,0.5)"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onFocus={() => setIsSearchFocused(true)}
-          onBlur={() => setIsSearchFocused(false)}
-        />
-        {searchQuery.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchQuery('')}>
-            <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.6)" />
+      {/* Search Bar - Only show when search icon is tapped */}
+      {isSearchFocused && (
+        <View style={[
+          styles.searchContainer,
+          styles.searchContainerFocused
+        ]}>
+          <Ionicons name="search" size={20} color="rgba(255,255,255,0.6)" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search conversations..."
+            placeholderTextColor="rgba(255,255,255,0.5)"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoFocus
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.6)" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={() => setIsSearchFocused(false)} style={{ marginLeft: 8 }}>
+            <Text style={{ color: '#3498DB', fontWeight: '600' }}>Cancel</Text>
           </TouchableOpacity>
-        )}
-      </View>
+        </View>
+      )}
+    </View>
+  );
 
+  const renderStories = () => (
+    <View style={styles.storiesStickyContainer}>
       {/* Plugs Stories */}
       <View style={styles.storiesContainer}>
         <Text style={styles.storiesTitle}>My Plugs  🔌</Text>
@@ -679,16 +791,48 @@ const KonnectScreen = () => {
             <Text style={styles.storiesLoadingText}>Loading stories...</Text>
           </View>
         ) : (
-          <View style={styles.storiesList}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.storiesList}
+            contentContainerStyle={styles.storiesListContent}
+          >
             {storiesGroups.length === 0 ? (
-              <View style={styles.noStoriesContainer}>
-                <Text style={styles.noStoriesText}>No stories available</Text>
-              </View>
+              // Empty state for regular users (not sellers/riders)
+              !(userProfile?.isSeller || userProfile?.isRider) ? (
+                <View style={styles.regularUserEmptyState}>
+                  <Ionicons name="people-outline" size={40} color="rgba(255,255,255,0.4)" />
+                  <Text style={styles.emptyStateMessage}>Stories from your plugs will appear here</Text>
+                  <TouchableOpacity
+                    style={styles.findPlugsButton}
+                    onPress={() => {
+                      navigation.navigate('Search');
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                  >
+                    <Ionicons name="search" size={18} color="#FFFFFF" />
+                    <Text style={styles.findPlugsButtonText}>Find Plugs</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                // Empty state for sellers/riders (generic message)
+                <View style={styles.noStoriesContainer}>
+                  <Text style={styles.noStoriesText}>No stories available</Text>
+                </View>
+              )
             ) : (
               storiesGroups.map((group, index) => {
                 const isMyStory = group.user.username === 'Your Story';
                 const hasStories = group.stories.length > 0;
                 const hasUnviewed = group.hasUnviewed;
+
+                // Calculate time since last story
+                const latestStoryTime = hasStories && group.stories.length > 0
+                  ? new Date(group.stories[0].created_at).getTime()
+                  : null;
+                const storyAge = latestStoryTime
+                  ? formatTimestamp(new Date(latestStoryTime).toISOString())
+                  : null;
 
                 return (
                   <TouchableOpacity
@@ -722,37 +866,53 @@ const KonnectScreen = () => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }}
                   >
+                    {/* Picture Frame Design */}
                     <View style={[
-                      styles.storyRing,
-                      isMyStory && hasStories ? styles.myStoryRing :
-                      isMyStory && !hasStories ? styles.myStoryEmptyRing :
-                      hasStories && hasUnviewed ? styles.unviewedStoryRing :
-                      hasStories && !hasUnviewed ? styles.viewedStoryRing : styles.noStoryRing
+                      styles.storyFrame,
+                      isMyStory && hasStories ? styles.myStoryFrame :
+                      isMyStory && !hasStories ? styles.myStoryEmptyFrame :
+                      hasStories && hasUnviewed ? styles.unviewedStoryFrame :
+                      hasStories && !hasUnviewed ? styles.viewedStoryFrame : styles.noStoryFrame
                     ]}>
                       <Image
                         source={{
-                          uri: group.user.avatar_url || 'https://via.placeholder.com/60'
+                          uri: group.user.avatar_url || 'https://via.placeholder.com/80x120'
                         }}
-                        style={styles.storyAvatar}
+                        style={styles.storyImage}
                       />
                       {isMyStory && (
-                        <View style={styles.addStoryIcon}>
+                        <View style={styles.addStoryIconFrame}>
                           <Ionicons
-                            name={hasStories ? "add" : "add"}
-                            size={hasStories ? 10 : 12}
+                            name="add"
+                            size={16}
                             color="#FFFFFF"
                           />
                         </View>
                       )}
+                      {/* Overlay gradient for better text visibility */}
+                      <View style={styles.storyOverlay} />
+                      {/* Username at bottom */}
+                      <View style={styles.storyTextContainer}>
+                        <Text style={styles.storyNameFrame} numberOfLines={1}>
+                          {group.user.username}
+                        </Text>
+                        {hasStories && storyAge && !isMyStory && (
+                          <Text style={styles.storyAgeFrame}>
+                            {storyAge}
+                          </Text>
+                        )}
+                        {isMyStory && hasStories && (
+                          <Text style={styles.storyCountFrame}>
+                            {group.stories.length} stories
+                          </Text>
+                        )}
+                      </View>
                     </View>
-                    <Text style={styles.storyName} numberOfLines={1}>
-                      {group.user.username}
-                    </Text>
                   </TouchableOpacity>
                 );
               })
             )}
-          </View>
+          </ScrollView>
         )}
       </View>
 
@@ -973,16 +1133,28 @@ const KonnectScreen = () => {
                 {item.isPinned && (
                   <Ionicons name="pin" size={14} color="#E91E63" style={{ marginLeft: 4 }} />
                 )}
+                {(item as any).isMuted && (
+                  <Ionicons name="notifications-off" size={14} color="#888888" style={{ marginLeft: 4 }} />
+                )}
               </View>
-              {/* Context menu for non-AI chats */}
-              {item && !item.isAI && (
-                <TouchableOpacity 
-                  style={styles.contextMenuButton}
-                  onPress={() => handleLongPress(item)}
-                >
-                  <Ionicons name="ellipsis-vertical" size={16} color="rgba(255,255,255,0.6)" />
-                </TouchableOpacity>
-              )}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {/* Timestamp */}
+                <Text style={styles.timestamp}>
+                  {formatTimestamp(item.timestamp)}
+                </Text>
+                {/* Context menu for non-AI chats */}
+                {item && !item.isAI && (
+                  <TouchableOpacity
+                    style={styles.contextMenuButton}
+                    onPress={() => handleLongPress(item)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <View style={styles.contextMenuIconContainer}>
+                      <Ionicons name="ellipsis-vertical" size={18} color="rgba(255,255,255,0.8)" />
+                    </View>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
 
             <View style={styles.messagePreview}>
@@ -1047,8 +1219,8 @@ const KonnectScreen = () => {
               // Navigate to AI chat with persistent conversation ID
               (navigation as any).navigate('IndividualChatScreen', {
                 chatId: conversation.id,
-                chatName: 'Iko',
-                chatAvatar: 'https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=100&h=100&fit=crop&crop=face',
+                chatName: AI_ASSISTANT_NAME,
+                chatAvatar: AI_ASSISTANT_AVATAR,
                 chatType: 'ai',
                 isAI: true,
                 verified: true,
@@ -1120,7 +1292,8 @@ const KonnectScreen = () => {
   return (
     <View style={styles.container}>
       {renderHeader()}
-      
+      {renderStories()}
+
       <View style={styles.chatsList}>
         {filteredChats.length > 0 ? (
           <FlatList
@@ -1140,11 +1313,16 @@ const KonnectScreen = () => {
                 titleColor="rgba(255,255,255,0.6)"
               />
             }
-            onEndReachedThreshold={0.1}
-            onEndReached={() => {
-              // Load more conversations if needed
-              console.log('Load more conversations...');
-            }}
+            onEndReachedThreshold={0.3}
+            onEndReached={loadMoreConversations}
+            ListFooterComponent={
+              loadingMore ? (
+                <View style={styles.loadingMoreContainer}>
+                  <ActivityIndicator size="small" color="#E91E63" />
+                  <Text style={styles.loadingMoreText}>Loading more...</Text>
+                </View>
+              ) : null
+            }
           />
         ) : loading ? (
           renderSkeletonLoading()
@@ -1168,8 +1346,8 @@ const KonnectScreen = () => {
               // Navigate to AI chat with persistent conversation ID
               (navigation as any).navigate('IndividualChatScreen', {
                 chatId: conversation.id,
-                chatName: 'Iko',
-                chatAvatar: 'https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=100&h=100&fit=crop&crop=face',
+                chatName: AI_ASSISTANT_NAME,
+                chatAvatar: AI_ASSISTANT_AVATAR,
                 chatType: 'ai',
                 isAI: true,
                 verified: true,
@@ -1253,8 +1431,16 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: 12,
   },
+  storiesStickyContainer: {
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+  },
   storiesContainer: {
-    marginBottom: 16,
+    // marginBottom removed since it's now in sticky container
   },
   storiesTitle: {
     color: '#FFFFFF',
@@ -1265,6 +1451,9 @@ const styles = StyleSheet.create({
   storiesList: {
     flexDirection: 'row',
     paddingVertical: 4,
+  },
+  storiesListContent: {
+    paddingRight: 20, // Add padding at the end of scroll
   },
   storiesLoadingContainer: {
     paddingVertical: 20,
@@ -1282,10 +1471,37 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.6)',
     fontSize: 14,
   },
-  storyItem: {
+  regularUserEmptyState: {
     alignItems: 'center',
-    marginRight: 16,
-    width: 64,
+    justifyContent: 'center',
+    paddingVertical: 30,
+    paddingHorizontal: 20,
+    width: screenWidth - 40,
+  },
+  emptyStateMessage: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 14,
+    marginTop: 12,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  findPlugsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3498DB',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    gap: 8,
+  },
+  findPlugsButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  storyItem: {
+    marginRight: 12,
+    width: 90,
   },
   storyRing: {
     width: 60,
@@ -1333,11 +1549,115 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#000000',
   },
+  storyNameContainer: {
+    alignItems: 'center',
+    width: '100%',
+  },
   storyName: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  storyAge: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 10,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  storyCount: {
+    color: '#3498DB',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  // Picture Frame Styles (Facebook-like)
+  storyFrame: {
+    width: 90,
+    height: 140,
+    borderRadius: 12,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  unviewedStoryFrame: {
+    borderWidth: 3,
+    borderColor: '#E91E63',
+  },
+  viewedStoryFrame: {
+    borderWidth: 3,
+    borderColor: '#666666',
+  },
+  noStoryFrame: {
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  myStoryFrame: {
+    borderWidth: 3,
+    borderColor: '#3498DB',
+  },
+  myStoryEmptyFrame: {
+    borderWidth: 3,
+    borderColor: '#3498DB',
+    borderStyle: 'dashed',
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+  },
+  storyImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  addStoryIconFrame: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#3498DB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  storyOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '40%',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  storyTextContainer: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    right: 8,
+  },
+  storyNameFrame: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  storyAgeFrame: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 9,
+    fontWeight: '500',
+    marginTop: 2,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  storyCountFrame: {
+    color: '#3498DB',
+    fontSize: 9,
+    fontWeight: '700',
+    marginTop: 2,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   quickActions: {
     flexDirection: 'row',
@@ -1600,6 +1920,16 @@ const styles = StyleSheet.create({
   contextMenuButton: {
     padding: 4,
   },
+  contextMenuIconContainer: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
   fab: {
     position: 'absolute',
     right: 20,
@@ -1655,6 +1985,18 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  loadingMoreContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 20,
+    gap: 10,
+  },
+  loadingMoreText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    fontWeight: '500',
   },
 });
 

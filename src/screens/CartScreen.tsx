@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { cartAPI } from '../services/cartAPI';
 import { wishlistAPI } from '../services/wishlistAPI';
@@ -27,7 +28,8 @@ interface CartScreenProps {
 
 interface CartItem {
   id: string;
-  productId: string;
+  productId?: string;
+  serviceId?: string;
   productName: string;
   productImage: string;
   price: number;
@@ -38,6 +40,9 @@ interface CartItem {
   sellerName: string;
   category: string;
   discount?: number;
+  serviceDate?: string;
+  serviceTime?: string;
+  serviceNotes?: string;
 }
 
 interface CartSummary {
@@ -66,9 +71,58 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [updatingQuantity, setUpdatingQuantity] = useState<string | null>(null);
   
+  // Selection state for selective checkout
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  // Calculate summary for selected items only
+  const selectedSummary = React.useMemo(() => {
+    const selected = cartItems.filter(item => selectedItems.has(item.id));
+    
+    const subtotal = selected.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const discount = selected.reduce((sum, item) => sum + ((item.discount || 0) * item.quantity), 0);
+    
+    return {
+      itemsCount: selected.length,
+      subtotal,
+      discount,
+      shipping: 0, // Will be calculated in checkout
+      tax: 0,
+      total: subtotal - discount,
+    };
+  }, [cartItems, selectedItems]);
+
+  // Group cart items by vendor
+  const vendorGroups = React.useMemo(() => {
+    const groups: { [key: string]: { vendorId: string; vendorName: string; items: CartItem[]; subtotal: number; selectedCount: number; selectedSubtotal: number } } = {};
+    
+    cartItems.forEach(item => {
+      const vendorId = item.sellerId || 'unknown';
+      if (!groups[vendorId]) {
+        groups[vendorId] = {
+          vendorId: vendorId,
+          vendorName: item.sellerName || 'Unknown Vendor',
+          items: [],
+          subtotal: 0,
+          selectedCount: 0,
+          selectedSubtotal: 0,
+        };
+      }
+      
+      groups[vendorId].items.push(item);
+      groups[vendorId].subtotal += item.price * item.quantity;
+      
+      if (selectedItems.has(item.id)) {
+        groups[vendorId].selectedCount++;
+        groups[vendorId].selectedSubtotal += item.price * item.quantity;
+      }
+    });
+    
+    return Object.values(groups);
+  }, [cartItems, selectedItems]);
 
   useEffect(() => {
     loadCart();
@@ -80,6 +134,14 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
       useNativeDriver: true,
     }).start();
   }, []);
+
+  // Refresh cart whenever screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log('🔄 CartScreen focused - Refreshing cart...');
+      loadCart();
+    }, [])
+  );
 
   const loadCart = async () => {
     try {
@@ -103,6 +165,11 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
       
       setCartItems(items);
       setCartSummary(summary);
+      
+      // Select all items by default on initial load
+      if (items.length > 0 && selectedItems.size === 0) {
+        setSelectedItems(new Set(items.map(item => item.id)));
+      }
     } catch (error) {
       console.error('❌ Error loading cart:', error);
       Alert.alert('Error', 'Failed to load cart items');
@@ -176,6 +243,16 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
 
   const handleAddToWishlist = async (item: CartItem) => {
     try {
+      // Check if it's a service - wishlist currently only supports products
+      if (item.serviceId || !item.productId) {
+        Alert.alert(
+          'Service Not Supported',
+          'Wishlist currently only supports products. Services cannot be added to your wishlist at this time.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
       await wishlistAPI.addToWishlist({
         productId: item.productId,
         productName: item.productName,
@@ -213,9 +290,86 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
     );
   };
 
+  // Selection handlers
+  const toggleItemSelection = (itemId: string) => {
+    // Find the item to log its details
+    const item = cartItems.find(i => i.id === itemId);
+    
+    setSelectedItems(prev => {
+      const newSet = new Set(prev);
+      const isCurrentlySelected = newSet.has(itemId);
+      
+      if (isCurrentlySelected) {
+        console.log(`❌ DESELECTING: ${item?.productName} (cart_item_id: ${itemId}, product/service_id: ${item?.productId || item?.serviceId})`);
+        newSet.delete(itemId);
+      } else {
+        console.log(`✅ SELECTING: ${item?.productName} (cart_item_id: ${itemId}, product/service_id: ${item?.productId || item?.serviceId})`);
+        newSet.add(itemId);
+      }
+      
+      console.log(`📊 New selection state: ${Array.from(newSet).join(', ')}`);
+      return newSet;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedItems(new Set(cartItems.map(item => item.id)));
+  };
+
+  const deselectAll = () => {
+    setSelectedItems(new Set());
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedItems.size === cartItems.length) {
+      deselectAll();
+    } else {
+      selectAll();
+    }
+  };
+
+  const selectVendorItems = (vendorId: string) => {
+    const vendorGroup = vendorGroups.find(g => g.vendorId === vendorId);
+    if (!vendorGroup) return;
+
+    setSelectedItems(prev => {
+      const newSet = new Set(prev);
+      vendorGroup.items.forEach(item => newSet.add(item.id));
+      return newSet;
+    });
+  };
+
+  const deselectVendorItems = (vendorId: string) => {
+    const vendorGroup = vendorGroups.find(g => g.vendorId === vendorId);
+    if (!vendorGroup) return;
+
+    setSelectedItems(prev => {
+      const newSet = new Set(prev);
+      vendorGroup.items.forEach(item => newSet.delete(item.id));
+      return newSet;
+    });
+  };
+
+  const toggleVendorSelection = (vendorId: string) => {
+    const vendorGroup = vendorGroups.find(g => g.vendorId === vendorId);
+    if (!vendorGroup) return;
+
+    const allSelected = vendorGroup.items.every(item => selectedItems.has(item.id));
+    if (allSelected) {
+      deselectVendorItems(vendorId);
+    } else {
+      selectVendorItems(vendorId);
+    }
+  };
+
   const handleProceedToCheckout = () => {
     if (cartItems.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to your cart before proceeding');
+      return;
+    }
+
+    if (selectedItems.size === 0) {
+      Alert.alert('No Items Selected', 'Please select at least one item to checkout');
       return;
     }
 
@@ -225,16 +379,62 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
       Animated.spring(scaleAnim, { toValue: 1, tension: 300, friction: 10, useNativeDriver: true }),
     ]).start();
 
-    navigation.navigate('Checkout');
+    // Debug: Log all cart items
+    console.log('🛒 ALL CART ITEMS:');
+    cartItems.forEach(item => {
+      console.log(`  - ${item.productName}: cart_item_id=${item.id}, product/service_id=${item.productId || item.serviceId}`);
+    });
+
+    // Debug: Log selected items
+    console.log('✅ SELECTED CART ITEM IDs:', Array.from(selectedItems));
+
+    // Get the actual product/service IDs from selected cart items
+    const selectedCartItems = cartItems.filter(item => selectedItems.has(item.id));
+    
+    console.log('🎯 FILTERED CART ITEMS:');
+    selectedCartItems.forEach(item => {
+      console.log(`  - ${item.productName}: cart_item_id=${item.id}, product/service_id=${item.productId || item.serviceId}`);
+    });
+
+    const selectedProductServiceIds = selectedCartItems
+      .map(item => item.productId || item.serviceId)
+      .filter(Boolean) as string[];
+
+    console.log('📦 Final product/service IDs for checkout:', selectedProductServiceIds);
+    console.log('🗑️ Final cart item IDs for removal:', Array.from(selectedItems));
+
+    // Pass both cart item IDs and product/service IDs to checkout
+    navigation.navigate('Checkout', {
+      selectedItemIds: selectedProductServiceIds, // For filtering checkout items
+      selectedCartItemIds: Array.from(selectedItems), // For removing from cart after purchase
+    });
   };
 
-  const handleProductPress = (productId: string) => {
-    navigation.navigate('ProductDetails', { productId });
+  const handleProductPress = (item: CartItem) => {
+    if (item.productId) {
+      navigation.navigate('ProductDetails', { productId: item.productId });
+    } else if (item.serviceId) {
+      navigation.navigate('ServiceDetails', { serviceId: item.serviceId });
+    }
   };
 
-  const renderCartItem = ({ item }: { item: CartItem }) => (
-    <View style={styles.cartItem}>
-      <TouchableOpacity onPress={() => handleProductPress(item.productId)}>
+  const renderCartItem = ({ item }: { item: CartItem }) => {
+    const isSelected = selectedItems.has(item.id);
+    
+    return (
+    <View style={[styles.cartItem, !isSelected && styles.cartItemUnselected]}>
+      {/* Selection Checkbox */}
+      <TouchableOpacity 
+        onPress={() => toggleItemSelection(item.id)} 
+        style={styles.checkbox}
+        activeOpacity={0.7}
+      >
+        <View style={[styles.checkboxInner, isSelected && styles.checkboxSelected]}>
+          {isSelected && <Ionicons name="checkmark" size={16} color="#FFF" />}
+        </View>
+      </TouchableOpacity>
+
+      <TouchableOpacity onPress={() => handleProductPress(item)}>
         <Image source={{ uri: item.productImage }} style={styles.productImage} />
         {item.discount && (
           <View style={styles.discountBadge}>
@@ -244,7 +444,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
       </TouchableOpacity>
       
       <View style={styles.itemInfo}>
-        <TouchableOpacity onPress={() => handleProductPress(item.productId)}>
+        <TouchableOpacity onPress={() => handleProductPress(item)}>
           <Text style={styles.productName} numberOfLines={2}>{item.productName}</Text>
         </TouchableOpacity>
         
@@ -311,7 +511,8 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
         )}
       </View>
     </View>
-  );
+    );
+  };
 
   const renderEmptyCart = () => (
     <Animated.View style={[styles.emptyContainer, { opacity: fadeAnim }]}>
@@ -343,34 +544,31 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
       </View>
       
       <View style={styles.summaryRow}>
-        <Text style={styles.summaryLabel}>Items ({cartSummary.itemsCount})</Text>
-        <Text style={styles.summaryValue}>{walletAPI.formatFreti(cartSummary.subtotal)}</Text>
+        <Text style={styles.summaryLabel}>
+          Selected Items ({selectedSummary.itemsCount})
+        </Text>
+        <Text style={styles.summaryValue}>{walletAPI.formatFreti(selectedSummary.subtotal)}</Text>
       </View>
       
-      {cartSummary.discount > 0 && (
+      {selectedSummary.discount > 0 && (
         <View style={styles.summaryRow}>
           <Text style={styles.summaryLabel}>Discount</Text>
           <Text style={[styles.summaryValue, styles.discountValue]}>
-            -{walletAPI.formatFreti(cartSummary.discount)}
+            -{walletAPI.formatFreti(selectedSummary.discount)}
           </Text>
         </View>
       )}
       
-      <View style={styles.summaryRow}>
-        <Text style={styles.summaryLabel}>Shipping</Text>
-        <Text style={styles.summaryValue}>
-          {cartSummary.shipping > 0 ? walletAPI.formatFreti(cartSummary.shipping) : 'Free'}
+      <View style={styles.summaryNote}>
+        <Ionicons name="information-circle-outline" size={16} color="#666" />
+        <Text style={styles.summaryNoteText}>
+          Shipping calculated at checkout
         </Text>
-      </View>
-      
-      <View style={styles.summaryRow}>
-        <Text style={styles.summaryLabel}>Tax</Text>
-        <Text style={styles.summaryValue}>{walletAPI.formatFreti(cartSummary.tax)}</Text>
       </View>
       
       <View style={[styles.summaryRow, styles.totalRow]}>
         <Text style={styles.totalLabel}>Total</Text>
-        <Text style={styles.totalValue}>{walletAPI.formatFreti(cartSummary.total)}</Text>
+        <Text style={styles.totalValue}>{walletAPI.formatFreti(selectedSummary.total)}</Text>
       </View>
     </View>
   );
@@ -390,50 +588,149 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
         <TouchableOpacity style={styles.headerButton} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={24} color="#FFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          Cart ({cartItems.length})
-        </Text>
-        <TouchableOpacity 
-          style={styles.headerButton} 
-          onPress={() => navigation.navigate('Wishlist')}
-        >
-          <Ionicons name="heart-outline" size={24} color="#FFF" />
-        </TouchableOpacity>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>
+            Cart ({cartItems.length})
+          </Text>
+          {cartItems.length > 0 && (
+            <Text style={styles.selectionCounter}>
+              {selectedItems.size} of {cartItems.length} selected
+            </Text>
+          )}
+        </View>
+        <View style={styles.headerRight}>
+          <TouchableOpacity 
+            style={styles.headerButton} 
+            onPress={() => navigation.navigate('Wishlist')}
+          >
+            <Ionicons name="heart-outline" size={22} color="#FFF" />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.headerButton} 
+            onPress={toggleSelectAll}
+          >
+            <Ionicons 
+              name={selectedItems.size === cartItems.length ? "checkbox" : "square-outline"} 
+              size={24} 
+              color={selectedItems.size === cartItems.length ? "#3498DB" : "#FFF"} 
+            />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {cartItems.length === 0 ? (
         renderEmptyCart()
       ) : (
         <>
-          <FlatList
-            data={cartItems}
-            renderItem={renderCartItem}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.listContainer}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor="#3498DB"
-              />
-            }
-            ItemSeparatorComponent={() => <View style={styles.itemSeparator} />}
-          />
+          {/* Render cart based on vendor count */}
+          {vendorGroups.length === 1 ? (
+            // Single vendor - use traditional flat list
+            <FlatList
+              data={cartItems}
+              renderItem={renderCartItem}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.listContainer}
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  tintColor="#3498DB"
+                />
+              }
+              ItemSeparatorComponent={() => <View style={styles.itemSeparator} />}
+            />
+          ) : (
+            // Multi-vendor - show grouped view
+            <ScrollView
+              contentContainerStyle={styles.listContainer}
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  tintColor="#3498DB"
+                />
+              }
+            >
+              {/* Multi-Vendor Notice */}
+              <View style={styles.multiVendorNotice}>
+                <Ionicons name="information-circle" size={20} color="#FF9500" />
+                <Text style={styles.multiVendorText}>
+                  Your cart contains items from {vendorGroups.length} vendors. Orders will be split and tracked separately for easier delivery.
+                </Text>
+              </View>
+
+              {/* Render Grouped Cart Items */}
+              {vendorGroups.map((group, groupIndex) => {
+                const allVendorItemsSelected = group.items.every(item => selectedItems.has(item.id));
+                
+                return (
+                <View key={group.vendorId} style={styles.vendorGroup}>
+                  {/* Vendor Header */}
+                  <TouchableOpacity 
+                    style={styles.vendorHeader}
+                    onPress={() => toggleVendorSelection(group.vendorId)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons 
+                      name={allVendorItemsSelected ? "checkbox" : "square-outline"} 
+                      size={18} 
+                      color={allVendorItemsSelected ? "#3498DB" : "#007AFF"} 
+                    />
+                    <Ionicons name="storefront" size={16} color="#007AFF" style={{ marginLeft: 8 }} />
+                    <Text style={styles.vendorName}>{group.vendorName}</Text>
+                    <Text style={styles.vendorItemCount}>
+                      {group.selectedCount}/{group.items.length}
+                    </Text>
+                  </TouchableOpacity>
+                  
+                  {/* Vendor Items */}
+                  {group.items.map((item) => (
+                    <View key={item.id}>
+                      {renderCartItem({ item })}
+                    </View>
+                  ))}
+                  
+                  {/* Vendor Subtotal */}
+                  <View style={styles.vendorSubtotal}>
+                    <Text style={styles.vendorSubtotalLabel}>
+                      Vendor Subtotal {group.selectedCount > 0 && `(${group.selectedCount} selected)`}
+                    </Text>
+                    <Text style={styles.vendorSubtotalAmount}>
+                      {walletAPI.formatFreti(group.selectedSubtotal)}
+                    </Text>
+                  </View>
+                  
+                  {/* Divider between vendors */}
+                  {groupIndex < vendorGroups.length - 1 && <View style={styles.vendorDivider} />}
+                </View>
+                );
+              })}
+            </ScrollView>
+          )}
           
           {renderCartSummary()}
           
           {/* Bottom Action Bar */}
           <Animated.View style={[styles.bottomBar, { transform: [{ scale: scaleAnim }] }]}>
             <View style={styles.totalPreview}>
-              <Text style={styles.totalPreviewLabel}>Total</Text>
-              <Text style={styles.totalPreviewValue}>{walletAPI.formatFreti(cartSummary.total)}</Text>
+              <Text style={styles.totalPreviewLabel}>
+                Selected Total {selectedItems.size > 0 && `(${selectedItems.size} items)`}
+              </Text>
+              <Text style={styles.totalPreviewValue}>
+                {walletAPI.formatFreti(selectedSummary.total)}
+              </Text>
             </View>
             <TouchableOpacity
-              style={styles.checkoutButton}
+              style={[
+                styles.checkoutButton,
+                selectedItems.size === 0 && styles.checkoutButtonDisabled
+              ]}
               onPress={handleProceedToCheckout}
+              disabled={selectedItems.size === 0}
             >
-              <Text style={styles.checkoutButtonText}>Proceed to Checkout</Text>
+              <Text style={styles.checkoutButtonText}>Checkout</Text>
               <Ionicons name="arrow-forward" size={18} color="#FFF" />
             </TouchableOpacity>
           </Animated.View>
@@ -466,10 +763,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerRight: {
+    flexDirection: 'row',
+    gap: 8,
+  },
   headerTitle: {
     color: '#FFF',
     fontSize: 18,
     fontWeight: '600',
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  selectionCounter: {
+    color: '#3498DB',
+    fontSize: 12,
+    marginTop: 2,
   },
   loadingContainer: {
     flex: 1,
@@ -490,6 +800,29 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     position: 'relative',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  cartItemUnselected: {
+    opacity: 0.5,
+  },
+  checkbox: {
+    marginRight: 12,
+    justifyContent: 'center',
+  },
+  checkboxInner: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#666',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  checkboxSelected: {
+    backgroundColor: '#3498DB',
+    borderColor: '#3498DB',
   },
   productImage: {
     width: 80,
@@ -713,6 +1046,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#3498DB',
     borderRadius: 24,
   },
+  checkoutButtonDisabled: {
+    backgroundColor: '#666',
+    opacity: 0.5,
+  },
   checkoutButtonText: {
     color: '#FFF',
     fontSize: 16,
@@ -751,6 +1088,88 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  summaryNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    marginVertical: 8,
+    gap: 8,
+  },
+  summaryNoteText: {
+    fontSize: 13,
+    color: '#666',
+    flex: 1,
+  },
+  // Multi-vendor grouping styles
+  vendorGroup: {
+    marginBottom: 20,
+  },
+  vendorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(0, 122, 255, 0.1)',
+    borderRadius: 8,
+    marginBottom: 12,
+    marginHorizontal: 16,
+  },
+  vendorName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#007AFF',
+    marginLeft: 8,
+    flex: 1,
+  },
+  vendorItemCount: {
+    fontSize: 14,
+    color: '#666',
+  },
+  vendorSubtotal: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    borderRadius: 8,
+    marginTop: 8,
+    marginHorizontal: 16,
+  },
+  vendorSubtotalLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+  },
+  vendorSubtotalAmount: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  vendorDivider: {
+    height: 2,
+    backgroundColor: '#E0E0E0',
+    marginVertical: 20,
+    marginHorizontal: 16,
+  },
+  multiVendorNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 149, 0, 0.1)',
+    padding: 16,
+    borderRadius: 8,
+    marginHorizontal: 16,
+    marginBottom: 20,
+  },
+  multiVendorText: {
+    fontSize: 14,
+    color: '#FF9500',
+    marginLeft: 12,
+    flex: 1,
+    lineHeight: 20,
   },
 });
 

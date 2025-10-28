@@ -119,6 +119,8 @@ export const authAPI = {
     password: string;
     firstName: string;
     lastName: string;
+    dateOfBirth?: string;
+    gender?: string;
   }) => {
     try {
       const response = await api.post('/auth/signup', userData);
@@ -145,6 +147,16 @@ export const authAPI = {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Migration failed');
+    }
+  },
+
+  // Reset password
+  resetPassword: async (email: string) => {
+    try {
+      const response = await api.post('/auth/reset-password', { email });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Password reset failed');
     }
   },
 };

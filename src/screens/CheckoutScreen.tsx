@@ -9,6 +9,8 @@ import {
   TextInput,
   Animated,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -42,6 +44,8 @@ interface CheckoutScreenProps {
       }>;
       totalAmount?: number;
       vendorId?: string;
+      selectedItemIds?: string[]; // NEW: Product/Service IDs for filtering checkout items
+      selectedCartItemIds?: string[]; // NEW: Cart item IDs for removing after purchase
     };
   };
 }
@@ -85,7 +89,15 @@ interface OrderSummary {
 const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { productId, quantity, directCheckout, source, invoiceId, items: invoiceItems, totalAmount: invoiceTotal, vendorId, auctionCheckout } = route?.params || {};
+  const { productId, quantity, directCheckout, source, invoiceId, items: invoiceItems, totalAmount: invoiceTotal, vendorId, auctionCheckout, selectedItemIds, selectedCartItemIds } = route?.params || {};
+  
+  // Debug: Log what we received
+  console.log('🛒 Checkout screen params:', {
+    hasSelectedItemIds: !!selectedItemIds,
+    selectedItemIdsCount: selectedItemIds?.length || 0,
+    hasSelectedCartItemIds: !!selectedCartItemIds,
+    selectedCartItemIdsCount: selectedCartItemIds?.length || 0,
+  });
   
   const [orderSummary, setOrderSummary] = useState<OrderSummary | null>(null);
   const [deliveryAddress, setDeliveryAddress] = useState<DeliveryAddress>({
@@ -105,12 +117,31 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
   const [walletBalance, setWalletBalance] = useState(0);
   const [useEscrow, setUseEscrow] = useState(true);
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
-  const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>(null);
+  const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>('pickup'); // Default to self-pickup
+  
+  // Escrow bypass eligibility
+  const [escrowBypass, setEscrowBypass] = useState<{
+    canBypass: boolean;
+    reason: string;
+    vendorTrusted: boolean;
+    buyerEligible: boolean;
+  } | null>(null);
+  const [checkingEscrow, setCheckingEscrow] = useState(false);
+  
+  // Multi-vendor state
+  const [isMultiVendor, setIsMultiVendor] = useState(false);
+  const [vendorGroups, setVendorGroups] = useState<any[]>([]);
+  const [riderAssignments, setRiderAssignments] = useState<any[]>([]);
+  const [totalRiderFee, setTotalRiderFee] = useState(0);
+  const [loadingRiderPreview, setLoadingRiderPreview] = useState(false);
   
   // Rewards state
   const [rewards, setRewards] = useState<CheckoutDisplayRewards | null>(null);
   const [useRewards, setUseRewards] = useState(false);
   const [rewardsAmount, setRewardsAmount] = useState(0);
+  
+  // Info modal state
+  const [showInfoModal, setShowInfoModal] = useState(false);
   
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -126,6 +157,112 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       useNativeDriver: true,
     }).start();
   }, []);
+
+  // Load rider preview when address changes (multi-vendor only)
+  useEffect(() => {
+    if (isMultiVendor && deliveryAddress.address && deliveryAddress.city) {
+      loadRiderPreview();
+    }
+  }, [isMultiVendor, deliveryAddress.address, deliveryAddress.city]);
+
+  // Helper: Group items by vendor
+  const groupItemsByVendor = (items: any[]) => {
+    const groups: { [key: string]: any } = {};
+    
+    items.forEach(item => {
+      const vendorId = item.sellerId || 'unknown';
+      if (!groups[vendorId]) {
+        groups[vendorId] = {
+          vendorId: vendorId,
+          items: [],
+          subtotal: 0,
+        };
+      }
+      
+      groups[vendorId].items.push(item);
+      groups[vendorId].subtotal += item.price * item.quantity;
+    });
+    
+    return Object.values(groups);
+  };
+
+  // Load rider preview for multi-vendor checkout
+  const loadRiderPreview = async () => {
+    if (!isMultiVendor || !deliveryAddress.address || !deliveryAddress.city) {
+      return;
+    }
+
+    try {
+      setLoadingRiderPreview(true);
+      console.log('🚴 Loading rider preview for multi-vendor checkout...');
+
+      const buyerLocation = {
+        address: deliveryAddress.address,
+        city: deliveryAddress.city,
+        state: deliveryAddress.state,
+      };
+
+      const orderDetails = {
+        weight: orderSummary?.items.reduce((sum: number, item: any) => sum + (item.quantity * 0.5), 0) || 1, // Estimate 0.5kg per item
+        itemCount: orderSummary?.items.length || 0,
+      };
+
+      const preview = await checkoutAPI.previewRiderAssignments({
+        buyerLocation,
+        orderDetails,
+      });
+
+      setRiderAssignments(preview.riderAssignments);
+      setTotalRiderFee(preview.totalRiderFee);
+
+      console.log(`✅ Rider preview loaded: ${preview.riderAssignments.length} riders assigned`);
+    } catch (error) {
+      console.error('Error loading rider preview:', error);
+      // Don't block checkout on rider preview failure
+    } finally {
+      setLoadingRiderPreview(false);
+    }
+  };
+
+  // Check if buyer can bypass escrow for this vendor
+  const checkEscrowBypassEligibility = async (vendorId: string, orderTotal: number) => {
+    if (!vendorId || !orderTotal) return;
+    
+    try {
+      setCheckingEscrow(true);
+      console.log('🔒 Checking escrow bypass eligibility for vendor:', vendorId);
+      
+      const riderId = (selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object') 
+        ? (selectedRider as Rider).id 
+        : undefined;
+
+      const bypassCheck = await walletAPI.checkEscrowBypass({
+        vendorId,
+        riderId,
+        orderAmount: orderTotal,
+        category: orderSummary?.items[0]?.name || undefined, // Use first item category if available
+      });
+
+      setEscrowBypass(bypassCheck);
+      
+      console.log('🔒 Escrow bypass result:', bypassCheck);
+      
+      // If buyer can bypass and vendor is trusted, default to no escrow
+      // But buyer can still manually enable escrow if they want
+      if (bypassCheck.canBypass && bypassCheck.vendorTrusted && bypassCheck.buyerEligible) {
+        setUseEscrow(false);
+      } else {
+        setUseEscrow(true); // Force escrow if not eligible
+      }
+    } catch (error) {
+      console.error('Error checking escrow bypass:', error);
+      // Default to escrow for safety
+      setUseEscrow(true);
+      setEscrowBypass(null);
+    } finally {
+      setCheckingEscrow(false);
+    }
+  };
 
   const loadCheckoutData = async () => {
     try {
@@ -156,14 +293,21 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
           subtotal: invoiceTotal,
           shipping: 0, // Will be set when rider is selected
           tax: 0,
-          escrowFee: invoiceTotal * 0.02, // 2% escrow fee
-          total: invoiceTotal + (invoiceTotal * 0.02),
+          escrowFee: 0, // Escrow is FREE
+          total: invoiceTotal,
         };
       } else {
         // Regular checkout (from cart or direct product)
+        // If selective checkout, pass selectedItemIds to backend for filtering
+        if (selectedItemIds && selectedItemIds.length > 0) {
+          console.log('🔍 Frontend: Requesting selective checkout for items:', selectedItemIds);
+        }
+        
         summary = directCheckout
           ? await checkoutAPI.getDirectCheckoutSummary(productId!, quantity!)
-          : await checkoutAPI.getCheckoutSummary();
+          : await checkoutAPI.getCheckoutSummary(selectedItemIds);  // Pass selectedItemIds to backend
+        
+        console.log(`✅ Frontend: Received checkout summary with ${summary.items.length} items, total: ₣${summary.subtotal}`);
       }
 
       const [wallet, methods, rewardsData] = await Promise.all([
@@ -191,6 +335,28 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       if (savedAddress) {
         setDeliveryAddress(savedAddress);
       }
+
+      // Detect multi-vendor scenario (only for cart-based checkout)
+      if (!directCheckout && !source && summary?.items) {
+        const uniqueVendors = new Set(summary.items.map((item: any) => item.sellerId));
+        const isMulti = uniqueVendors.size > 1;
+        setIsMultiVendor(isMulti);
+        
+        if (isMulti) {
+          console.log(`🏪 Multi-vendor checkout detected: ${uniqueVendors.size} vendors`);
+          // Group items by vendor
+          const groups = groupItemsByVendor(summary.items);
+          setVendorGroups(groups);
+        }
+      }
+
+      // Check escrow bypass eligibility (only for single-vendor, not auctions)
+      if (!isMultiVendor && summary?.items?.length > 0 && source !== 'auction') {
+        const firstItem = summary.items[0];
+        if (firstItem.sellerId) {
+          await checkEscrowBypassEligibility(firstItem.sellerId, summary.total);
+        }
+      }
     } catch (error) {
       console.error('Error loading checkout data:', error);
       Alert.alert('Error', 'Failed to load checkout information');
@@ -202,7 +368,13 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
   // Calculate final total (shared function)
   const calculateFinalTotal = () => {
     if (!orderSummary) return 0;
-    const riderPrice = selectedRider === 'pickup' ? 0 : selectedRider?.price || orderSummary.shipping;
+    
+    // Multi-vendor: use totalRiderFee from rider assignments
+    // Single-vendor: use selectedRider price or default shipping
+    const riderPrice = isMultiVendor 
+      ? totalRiderFee 
+      : (selectedRider === 'pickup' ? 0 : selectedRider?.price || orderSummary.shipping);
+    
     const subtotal = orderSummary.subtotal + orderSummary.tax + riderPrice + (useEscrow ? orderSummary.escrowFee : 0);
     const rewardsDiscount = useRewards ? rewardsAmount : 0;
     return Math.max(0, subtotal - rewardsDiscount); // Can't be negative
@@ -212,8 +384,10 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
     if (!orderSummary) return;
     
     // Validate required fields
-    if (!deliveryAddress.fullName || !deliveryAddress.address || !deliveryAddress.phone) {
-      Alert.alert('Missing Information', 'Please provide complete delivery address');
+    if (!deliveryAddress.fullName || !deliveryAddress.address || 
+        !deliveryAddress.phone || !deliveryAddress.city || 
+        !deliveryAddress.state) {
+      Alert.alert('Missing Information', 'Please provide complete delivery address (Full Name, Phone, Address, City, State)');
       return;
     }
     
@@ -270,33 +444,95 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         console.log('✅ Order created from invoice:', orderId);
       } else {
         // Regular checkout flow (cart, direct product, or auction)
-        const orderData = {
+        const baseOrderData = {
           deliveryAddress,
           paymentMethodId: selectedPaymentMethod,
           useEscrow,
           deliveryInstructions: deliveryInstructions.trim() || undefined,
+          useRewards,
+          rewardsAmount,
           directCheckout: directCheckout ? { productId, quantity } : undefined,
           auctionCheckout: auctionCheckout ? { auctionId: auctionCheckout.auctionId } : undefined,
-          selectedRider: selectedRider === 'pickup' ? {
-            riderId: 'pickup',
-            riderName: 'Self Pickup',
-            vehicleType: 'pickup',
-            deliveryPrice: 0,
-            estimatedArrival: 0,
-          } : selectedRider ? {
-            riderId: selectedRider.id,
-            riderName: selectedRider.name,
-            vehicleType: selectedRider.vehicleType,
-            deliveryPrice: selectedRider.price,
-            estimatedArrival: selectedRider.estimatedArrival,
-          } : undefined,
+          selectedItemIds: selectedItemIds || undefined, // NEW: For selective checkout
         };
 
-        order = await checkoutAPI.createOrder(orderData);
+        // Multi-vendor checkout: use grouped order API
+        if (isMultiVendor && riderAssignments.length > 0) {
+          console.log('🏪 Creating grouped order for multi-vendor checkout...');
+          
+          const groupedOrderData = {
+            ...baseOrderData,
+            riderAssignments,
+            totalRiderFee,
+          };
 
-        // Clear cart if not direct checkout or auction
+          const result = await checkoutAPI.createGroupedOrder(groupedOrderData);
+          order = { 
+            id: result.orderGroup.id, 
+            orderNumber: result.orderGroup.group_number,
+            isGrouped: true,
+            orders: result.orders,
+          };
+
+          console.log(`✅ Grouped order created: ${result.orders.length} individual orders`);
+        } else {
+          // Single-vendor checkout: use regular order API
+          console.log('🛒 Creating single order...');
+          
+          const orderData = {
+            ...baseOrderData,
+            selectedRider: selectedRider === 'pickup' ? {
+              riderId: 'pickup',
+              riderName: 'Self Pickup',
+              vehicleType: 'pickup',
+              deliveryPrice: 0,
+              estimatedArrival: 0,
+            } : selectedRider ? {
+              riderId: selectedRider.id,
+              riderName: selectedRider.name,
+              vehicleType: selectedRider.vehicleType,
+              deliveryPrice: selectedRider.price,
+              estimatedArrival: selectedRider.estimatedArrival,
+            } : undefined,
+          };
+
+          console.log('📦 Order data being sent to backend:');
+          console.log('  - Payment method:', orderData.paymentMethodId);
+          console.log('  - Number of items:', orderSummary.items.length);
+          console.log('  - Items:', orderSummary.items.map(i => ({ id: i.id, name: i.name })));
+          console.log('  - Total:', orderSummary.subtotal);
+
+          order = await checkoutAPI.createOrder(orderData);
+          console.log(`✅ Single order created: ${order.orderNumber}`);
+        }
+
+        // Clear cart items
         if (!directCheckout && !auctionCheckout) {
-          await cartAPI.clearCart();
+          // Check if we have specific cart item IDs to remove (selective checkout)
+          if (selectedCartItemIds && selectedCartItemIds.length > 0) {
+            console.log(`🗑️ Removing ${selectedCartItemIds.length} selected items from cart`);
+            console.log('🗑️ Cart item IDs to remove:', selectedCartItemIds);
+            
+            // Remove items sequentially to avoid race conditions
+            for (const itemId of selectedCartItemIds) {
+              try {
+                console.log(`🗑️ Removing cart item: ${itemId}`);
+                await cartAPI.removeItem(itemId);
+                console.log(`✅ Successfully removed cart item: ${itemId}`);
+              } catch (error) {
+                console.error(`❌ Failed to remove cart item ${itemId}:`, error);
+              }
+            }
+            console.log('✅ Finished removing all selected cart items');
+          } else if (selectedItemIds && selectedItemIds.length > 0) {
+            // Legacy: If we only have product/service IDs but no cart item IDs
+            // Don't clear cart - this is safer than accidentally clearing everything
+            console.warn('⚠️ No cart item IDs provided, skipping cart cleanup for safety');
+          } else {
+            // No selection info at all - this is a full cart checkout (old flow)
+            console.log('🗑️ Clearing entire cart (no selection info)');
+            await cartAPI.clearCart();
+          }
         }
       }
       
@@ -307,13 +543,20 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
           {
             text: 'View Order',
             onPress: () => {
-              navigation.reset({
-                index: 0,
-                routes: [
-                  { name: 'Home' },
-                  { name: 'OrderDetails', params: { orderId: order.id } },
-                ],
-              });
+              // Check if this is a grouped order (multi-vendor)
+              if (order.isGrouped && order.id) {
+                // Navigate to GroupedOrderScreen
+                navigation.navigate('GroupedOrder', { groupId: order.id });
+              } else {
+                // Navigate to single OrderTracking screen
+                navigation.navigate('OrderTracking', { orderId: order.id });
+              }
+            },
+          },
+          {
+            text: 'Go to Orders',
+            onPress: () => {
+              navigation.navigate('Orders');
             },
           },
         ]
@@ -332,6 +575,30 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
 
   const handleAddressChange = (field: keyof DeliveryAddress, value: string | boolean) => {
     setDeliveryAddress(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveAddress = async () => {
+    try {
+      // Validate all required fields
+      if (!deliveryAddress.fullName || !deliveryAddress.address || 
+          !deliveryAddress.phone || !deliveryAddress.city || 
+          !deliveryAddress.state) {
+        Alert.alert('Missing Fields', 'Please fill all required fields (Full Name, Phone, Address, City, State)');
+        return;
+      }
+
+      // Save address to backend
+      await checkoutAPI.saveAddress(deliveryAddress);
+      
+      // Close modal
+      setShowAddressModal(false);
+      
+      // Show success message
+      Alert.alert('Success', 'Delivery address saved successfully');
+    } catch (error) {
+      console.error('Error saving address:', error);
+      Alert.alert('Error', 'Failed to save address. Please try again.');
+    }
   };
 
   const handleSelectRider = () => {
@@ -398,7 +665,10 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
 
   const renderAddressModal = () => (
     <Modal visible={showAddressModal} transparent animationType="slide">
-      <View style={styles.modalOverlay}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.modalOverlay}
+      >
         <View style={styles.addressModal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Delivery Address</Text>
@@ -407,7 +677,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
             </TouchableOpacity>
           </View>
           
-          <ScrollView style={styles.addressForm} showsVerticalScrollIndicator={false}>
+          <ScrollView style={styles.addressForm} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Full Name *</Text>
               <TextInput
@@ -491,13 +761,13 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.modalSaveButton}
-              onPress={() => setShowAddressModal(false)}
+              onPress={handleSaveAddress}
             >
               <Text style={styles.modalSaveText}>Save Address</Text>
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 
@@ -528,7 +798,9 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
           <Ionicons name="arrow-back" size={24} color="#FFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Checkout</Text>
-        <View style={styles.headerButton} />
+        <TouchableOpacity style={styles.headerButton} onPress={() => setShowInfoModal(true)}>
+          <Ionicons name="information-circle-outline" size={24} color="#FFF" />
+        </TouchableOpacity>
       </View>
 
       <Animated.ScrollView
@@ -540,13 +812,27 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Delivery Address</Text>
-            <TouchableOpacity
-              style={styles.editButton}
-              onPress={() => setShowAddressModal(true)}
-            >
-              <Ionicons name="pencil" size={16} color="#3498DB" />
-              <Text style={styles.editButtonText}>Edit</Text>
-            </TouchableOpacity>
+            <View style={styles.addressHeaderActions}>
+              <TouchableOpacity
+                style={styles.editButton}
+                onPress={() => navigation.navigate('AddressBook', {
+                  selectMode: true,
+                  onAddressSelected: (address: DeliveryAddress) => {
+                    setDeliveryAddress(address);
+                  }
+                })}
+              >
+                <Ionicons name="list" size={16} color="#3498DB" />
+                <Text style={styles.editButtonText}>Select</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.editButton}
+                onPress={() => setShowAddressModal(true)}
+              >
+                <Ionicons name="pencil" size={16} color="#3498DB" />
+                <Text style={styles.editButtonText}>Edit</Text>
+              </TouchableOpacity>
+            </View>
           </View>
           
           <View style={styles.addressCard}>
@@ -571,7 +857,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Delivery Rider</Text>
-            {selectedRider && (
+            {!isMultiVendor && selectedRider && (
               <TouchableOpacity
                 style={styles.editButton}
                 onPress={handleRemoveRider}
@@ -582,7 +868,64 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
             )}
           </View>
           
-          {selectedRider === 'pickup' ? (
+          {/* Multi-vendor: Show rider assignments */}
+          {isMultiVendor ? (
+            <View>
+              {loadingRiderPreview ? (
+                <View style={styles.riderPreviewLoading}>
+                  <Text style={styles.riderPreviewLoadingText}>
+                    Optimizing delivery routes...
+                  </Text>
+                </View>
+              ) : riderAssignments.length > 0 ? (
+                <View>
+                  <View style={styles.multiVendorNoticeBox}>
+                    <Ionicons name="information-circle" size={18} color="#007AFF" />
+                    <Text style={styles.multiVendorNoticeText}>
+                      {riderAssignments.length} rider{riderAssignments.length > 1 ? 's' : ''} assigned for optimal delivery
+                    </Text>
+                  </View>
+                  
+                  {riderAssignments.map((assignment, index) => (
+                    <View key={index} style={styles.riderAssignmentCard}>
+                      <View style={styles.riderAssignmentHeader}>
+                        <Text style={styles.riderAssignmentTitle}>
+                          Rider {index + 1} - {assignment.rider.name}
+                        </Text>
+                        <Text style={styles.riderAssignmentPrice}>
+                          {walletAPI.formatFreti(assignment.pricing.total)}
+                        </Text>
+                      </View>
+                      <View style={styles.riderAssignmentDetails}>
+                        <Text style={styles.riderAssignmentVendors}>
+                          {assignment.vendorIds.length} vendor{assignment.vendorIds.length > 1 ? 's' : ''} • {assignment.vehicleType}
+                        </Text>
+                        <Text style={styles.riderAssignmentRoute}>
+                          {assignment.route.totalDistance.toFixed(1)}km • {assignment.route.estimatedTime} min
+                        </Text>
+                      </View>
+                      {assignment.vendorIds.length > 1 && (
+                        <View style={styles.multiStopBadge}>
+                          <Ionicons name="flag" size={12} color="#FF9500" />
+                          <Text style={styles.multiStopText}>
+                            Multi-stop delivery
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <View style={styles.riderPreviewEmpty}>
+                  <Ionicons name="bicycle" size={32} color="#999" />
+                  <Text style={styles.riderPreviewEmptyText}>
+                    Add delivery address to see rider assignments
+                  </Text>
+                </View>
+              )}
+            </View>
+          ) : selectedRider === 'pickup' ? (
+            // Single-vendor: Show selected pickup option
             <View style={styles.selectedRiderCard}>
               <View style={styles.selectedRiderInfo}>
                 <View style={styles.selectedRiderAvatar}>
@@ -748,13 +1091,46 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
               <Text style={styles.escrowFee}>
                 Fee: {walletAPI.formatFreti(orderSummary.escrowFee)}
               </Text>
+              {escrowBypass && !escrowBypass.canBypass && (
+                <Text style={styles.escrowLockReason}>
+                  🔒 {escrowBypass.reason}
+                </Text>
+              )}
+              {escrowBypass && escrowBypass.canBypass && (
+                <Text style={styles.escrowOptionalNote}>
+                  ✅ Optional - You can bypass escrow for this vendor
+                </Text>
+              )}
             </View>
             <TouchableOpacity
-              style={styles.toggleButton}
-              onPress={() => setUseEscrow(!useEscrow)}
+              style={[
+                styles.toggleButton,
+                (!escrowBypass?.canBypass) && styles.toggleButtonDisabled
+              ]}
+              onPress={() => {
+                // Only allow toggle if buyer can bypass escrow
+                if (escrowBypass?.canBypass) {
+                  setUseEscrow(!useEscrow);
+                } else {
+                  Alert.alert(
+                    'Escrow Required',
+                    escrowBypass?.reason || 'Escrow protection is required for this purchase.',
+                    [{ text: 'OK' }]
+                  );
+                }
+              }}
+              disabled={checkingEscrow}
             >
-              <View style={[styles.toggleTrack, useEscrow && styles.toggleTrackActive]}>
-                <View style={[styles.toggleThumb, useEscrow && styles.toggleThumbActive]} />
+              <View style={[
+                styles.toggleTrack, 
+                useEscrow && styles.toggleTrackActive,
+                (!escrowBypass?.canBypass) && styles.toggleTrackLocked
+              ]}>
+                <View style={[
+                  styles.toggleThumb, 
+                  useEscrow && styles.toggleThumbActive,
+                  (!escrowBypass?.canBypass) && styles.toggleThumbLocked
+                ]} />
               </View>
             </TouchableOpacity>
           </View>
@@ -786,30 +1162,35 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
               <Text style={styles.summaryValue}>{walletAPI.formatFreti(orderSummary.subtotal)}</Text>
             </View>
             
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>
-                {selectedRider === 'pickup' ? 'Delivery (Self Pickup)' : 
-                 selectedRider ? `Delivery (${selectedRider.name})` : 'Shipping'}
-              </Text>
-              <Text style={styles.summaryValue}>
-                {selectedRider === 'pickup' ? 'Free' :
-                 selectedRider ? walletAPI.formatFreti(selectedRider.price) : 
-                 orderSummary.shipping > 0 ? walletAPI.formatFreti(orderSummary.shipping) : 'Free'
-                }
-              </Text>
-            </View>
-            
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Tax</Text>
-              <Text style={styles.summaryValue}>{walletAPI.formatFreti(orderSummary.tax)}</Text>
-            </View>
-            
-            {useEscrow && orderSummary.escrowFee > 0 && (
+            {/* Only show rider fee if a rider is selected */}
+            {(selectedRider && selectedRider !== 'pickup') && (
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Escrow Fee</Text>
-                <Text style={styles.summaryValue}>{walletAPI.formatFreti(orderSummary.escrowFee)}</Text>
+                <Text style={styles.summaryLabel}>
+                  Rider Fee ({selectedRider.name})
+                </Text>
+                <Text style={styles.summaryValue}>
+                  {walletAPI.formatFreti(selectedRider.price)}
+                </Text>
               </View>
             )}
+            
+            {/* Multi-vendor rider fee */}
+            {isMultiVendor && totalRiderFee > 0 && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>
+                  Rider Fee ({riderAssignments.length} riders)
+                </Text>
+                <Text style={styles.summaryValue}>
+                  {walletAPI.formatFreti(totalRiderFee)}
+                </Text>
+              </View>
+            )}
+            
+            {/* Escrow Fee - Always show as Free */}
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Escrow Fee</Text>
+              <Text style={styles.summaryValue}>Free</Text>
+            </View>
 
             {useRewards && rewardsAmount > 0 && (
               <View style={styles.summaryRow}>
@@ -855,6 +1236,151 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       </Animated.View>
 
       {renderAddressModal()}
+      
+      {/* Info Modal */}
+      <Modal visible={showInfoModal} transparent animationType="slide">
+        <View style={styles.infoModalOverlay}>
+          <View style={styles.infoModal}>
+            {/* Header */}
+            <View style={styles.infoModalHeader}>
+              <Text style={styles.infoModalTitle}>Checkout Information</Text>
+              <TouchableOpacity onPress={() => setShowInfoModal(false)}>
+                <Ionicons name="close" size={24} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.infoModalContent} showsVerticalScrollIndicator={false}>
+              {/* Order Summary Section */}
+              <View style={styles.infoSection}>
+                <View style={styles.infoSectionHeader}>
+                  <Ionicons name="receipt-outline" size={20} color="#3498DB" />
+                  <Text style={styles.infoSectionTitle}>Order Breakdown</Text>
+                </View>
+                <View style={styles.infoCard}>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Items ({orderSummary?.items?.length || 0})</Text>
+                    <Text style={styles.infoValue}>
+                      {orderSummary ? walletAPI.formatFreti(orderSummary.subtotal) : '₣0'}
+                    </Text>
+                  </View>
+                  
+                  {/* Only show rider fee if a rider is selected */}
+                  {(selectedRider && selectedRider !== 'pickup') && (
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Rider Fee</Text>
+                      <Text style={styles.infoValue}>
+                        {walletAPI.formatFreti(selectedRider.price)}
+                      </Text>
+                    </View>
+                  )}
+                  
+                  {/* Multi-vendor rider fee */}
+                  {isMultiVendor && totalRiderFee > 0 && (
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Rider Fee ({riderAssignments.length} riders)</Text>
+                      <Text style={styles.infoValue}>
+                        {walletAPI.formatFreti(totalRiderFee)}
+                      </Text>
+                    </View>
+                  )}
+                  
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Escrow Fee</Text>
+                    <Text style={styles.infoValue}>Free</Text>
+                  </View>
+                  
+                  <View style={[styles.infoRow, styles.infoRowTotal]}>
+                    <Text style={styles.infoTotalLabel}>Total</Text>
+                    <Text style={styles.infoTotalValue}>
+                      {walletAPI.formatFreti(calculateFinalTotal())}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Security Section */}
+              <View style={styles.infoSection}>
+                <View style={styles.infoSectionHeader}>
+                  <Ionicons name="shield-checkmark" size={20} color="#27AE60" />
+                  <Text style={styles.infoSectionTitle}>Secure Checkout</Text>
+                </View>
+                <View style={styles.infoCard}>
+                  <View style={styles.securityFeature}>
+                    <Ionicons name="lock-closed" size={16} color="#27AE60" />
+                    <Text style={styles.securityText}>256-bit SSL encryption protects your payment</Text>
+                  </View>
+                  {useEscrow && (
+                    <View style={styles.securityFeature}>
+                      <Ionicons name="time-outline" size={16} color="#3498DB" />
+                      <Text style={styles.securityText}>
+                        Escrow holds funds until you confirm delivery
+                      </Text>
+                    </View>
+                  )}
+                  <View style={styles.securityFeature}>
+                    <Ionicons name="shield-outline" size={16} color="#3498DB" />
+                    <Text style={styles.securityText}>Buyer protection on all purchases</Text>
+                  </View>
+                  <View style={styles.securityFeature}>
+                    <Ionicons name="checkmark-circle" size={16} color="#27AE60" />
+                    <Text style={styles.securityText}>Verified vendors and riders only</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Help Section */}
+              <View style={styles.infoSection}>
+                <View style={styles.infoSectionHeader}>
+                  <Ionicons name="help-circle-outline" size={20} color="#F39C12" />
+                  <Text style={styles.infoSectionTitle}>Need Help?</Text>
+                </View>
+                <View style={styles.infoCard}>
+                  <Text style={styles.helpText}>
+                    Have questions about your order? Our support team is here to help!
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.supportButton}
+                    onPress={() => {
+                      setShowInfoModal(false);
+                      // TODO: Navigate to support chat
+                      // navigation.navigate('Konnect');
+                      Alert.alert('Contact Support', 'Support chat will be available soon!');
+                    }}
+                  >
+                    <Ionicons name="chatbox-ellipses" size={18} color="#FFF" />
+                    <Text style={styles.supportButtonText}>Contact Support</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* What is Escrow? */}
+              {useEscrow && (
+                <View style={styles.infoSection}>
+                  <View style={styles.infoSectionHeader}>
+                    <Ionicons name="information-circle" size={20} color="#9B59B6" />
+                    <Text style={styles.infoSectionTitle}>What is Escrow?</Text>
+                  </View>
+                  <View style={styles.infoCard}>
+                    <Text style={styles.escrowExplanation}>
+                      Escrow is a secure payment method that protects both buyers and sellers. 
+                      Your payment is held safely until you confirm delivery of your order. 
+                      This ensures you receive what you paid for before the vendor gets paid.
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </ScrollView>
+
+            {/* Close Button */}
+            <TouchableOpacity
+              style={styles.infoModalCloseButton}
+              onPress={() => setShowInfoModal(false)}
+            >
+              <Text style={styles.infoModalCloseButtonText}>Got it</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -904,6 +1430,10 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 18,
     fontWeight: '600',
+  },
+  addressHeaderActions: {
+    flexDirection: 'row',
+    gap: 8,
   },
   editButton: {
     flexDirection: 'row',
@@ -1044,6 +1574,9 @@ const styles = StyleSheet.create({
   toggleButton: {
     padding: 4,
   },
+  toggleButtonDisabled: {
+    opacity: 0.6,
+  },
   toggleTrack: {
     width: 50,
     height: 30,
@@ -1055,6 +1588,9 @@ const styles = StyleSheet.create({
   toggleTrackActive: {
     backgroundColor: '#3498DB',
   },
+  toggleTrackLocked: {
+    backgroundColor: '#666',
+  },
   toggleThumb: {
     width: 26,
     height: 26,
@@ -1064,6 +1600,21 @@ const styles = StyleSheet.create({
   },
   toggleThumbActive: {
     alignSelf: 'flex-end',
+  },
+  toggleThumbLocked: {
+    backgroundColor: '#CCC',
+  },
+  escrowLockReason: {
+    color: '#E74C3C',
+    fontSize: 11,
+    marginTop: 6,
+    lineHeight: 14,
+  },
+  escrowOptionalNote: {
+    color: '#27AE60',
+    fontSize: 11,
+    marginTop: 6,
+    lineHeight: 14,
   },
   instructionsInput: {
     backgroundColor: 'rgba(255,255,255,0.05)',
@@ -1496,6 +2047,222 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: 'rgba(39, 174, 96, 0.2)',
+  },
+  // Multi-vendor rider preview styles
+  riderPreviewLoading: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  riderPreviewLoadingText: {
+    color: '#999',
+    fontSize: 14,
+  },
+  riderPreviewEmpty: {
+    padding: 30,
+    alignItems: 'center',
+  },
+  riderPreviewEmptyText: {
+    color: '#999',
+    fontSize: 14,
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  multiVendorNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 122, 255, 0.1)',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  multiVendorNoticeText: {
+    color: '#007AFF',
+    fontSize: 13,
+    marginLeft: 8,
+    flex: 1,
+  },
+  riderAssignmentCard: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  riderAssignmentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  riderAssignmentTitle: {
+    color: '#FFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  riderAssignmentPrice: {
+    color: '#27AE60',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  riderAssignmentDetails: {
+    marginBottom: 6,
+  },
+  riderAssignmentVendors: {
+    color: '#CCC',
+    fontSize: 13,
+    marginBottom: 4,
+  },
+  riderAssignmentRoute: {
+    color: '#999',
+    fontSize: 12,
+  },
+  multiStopBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 149, 0, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+    marginTop: 6,
+  },
+  multiStopText: {
+    color: '#FF9500',
+    fontSize: 11,
+    marginLeft: 4,
+    fontWeight: '500',
+  },
+  // Info Modal Styles
+  infoModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'flex-end',
+  },
+  infoModal: {
+    backgroundColor: '#1a1a1a',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+  },
+  infoModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+  },
+  infoModalTitle: {
+    color: '#FFF',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  infoModalContent: {
+    padding: 20,
+  },
+  infoSection: {
+    marginBottom: 24,
+  },
+  infoSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+  },
+  infoSectionTitle: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  infoCard: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  infoLabel: {
+    color: '#CCC',
+    fontSize: 14,
+  },
+  infoValue: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  infoRowTotal: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+    marginTop: 8,
+    paddingTop: 12,
+  },
+  infoTotalLabel: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  infoTotalValue: {
+    color: '#27AE60',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  securityFeature: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    gap: 8,
+  },
+  securityText: {
+    color: '#CCC',
+    fontSize: 13,
+    flex: 1,
+    lineHeight: 18,
+  },
+  helpText: {
+    color: '#CCC',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  supportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3498DB',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    gap: 8,
+  },
+  supportButtonText: {
+    color: '#FFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  escrowExplanation: {
+    color: '#CCC',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  infoModalCloseButton: {
+    backgroundColor: '#3498DB',
+    marginHorizontal: 20,
+    marginVertical: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  infoModalCloseButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

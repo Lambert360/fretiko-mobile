@@ -14,6 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/userAPI';
+import AccountDeletionModal from '../components/AccountDeletionModal';
 
 interface UserProfile {
   id: string;
@@ -39,10 +40,11 @@ interface AccountSettingsScreenProps {
 }
 
 export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ navigation, route }) => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(route?.params?.profile || null);
   const [loading, setLoading] = useState(!route?.params?.profile);
   const [refreshing, setRefreshing] = useState(false);
+  const [isDeletionModalVisible, setIsDeletionModalVisible] = useState(false);
 
   useEffect(() => {
     if (!profile) {
@@ -78,6 +80,48 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
       month: 'long',
       day: 'numeric',
     });
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await logout();
+              // Navigation will be handled automatically by AuthContext
+            } catch (error) {
+              console.error('Logout error:', error);
+              Alert.alert('Error', 'Failed to logout. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAccount = () => {
+    setIsDeletionModalVisible(true);
+  };
+
+  const handleAccountDeleted = async () => {
+    try {
+      // Logout the user after account deletion
+      await logout();
+      // Navigation will be handled automatically by AuthContext
+    } catch (error) {
+      console.error('Logout after deletion error:', error);
+      // Force logout even if there's an error
+      await logout();
+    }
   };
 
   if (loading) {
@@ -129,7 +173,7 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
             ) : (
               <View style={styles.defaultAvatar}>
                 <Text style={styles.avatarInitials}>
-                  {user?.firstName?.[0]}{user?.lastName?.[0]}
+                  {profile?.username?.slice(0, 2).toUpperCase() || 'U'}
                 </Text>
               </View>
             )}
@@ -151,10 +195,11 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
         {/* User Info */}
         <View style={styles.userInfoSection}>
           <Text style={styles.displayName}>
-            {user?.firstName} {user?.lastName}
+            @{profile?.username}
           </Text>
-          <Text style={styles.username}>@{profile?.username}</Text>
-          <Text style={styles.email}>{user?.email}</Text>
+          {user?.email && (
+            <Text style={styles.email}>{user?.email}</Text>
+          )}
         </View>
 
         {/* Bio Section */}
@@ -276,7 +321,7 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
               Change Role
             </Text>
           </TouchableOpacity>
-          
+
           <TouchableOpacity
             style={styles.actionButton}
             onPress={() => Alert.alert('Coming Soon', 'Help & Support will be available soon!')}
@@ -292,8 +337,32 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
             <Ionicons name="document-text-outline" size={20} color="#FFFFFF" />
             <Text style={styles.actionButtonText}>Terms & Privacy</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, styles.logoutButton]}
+            onPress={handleLogout}
+          >
+            <Ionicons name="log-out-outline" size={20} color="#FFFFFF" />
+            <Text style={styles.actionButtonText}>Logout</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, styles.deleteButton]}
+            onPress={handleDeleteAccount}
+          >
+            <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
+            <Text style={styles.actionButtonText}>Delete Account</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Account Deletion Modal */}
+      <AccountDeletionModal
+        visible={isDeletionModalVisible}
+        onClose={() => setIsDeletionModalVisible(false)}
+        onAccountDeleted={handleAccountDeleted}
+        username={profile?.username || 'User'}
+      />
     </SafeAreaView>
   );
 };
@@ -527,5 +596,11 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: '#FFFFFF',
+  },
+  logoutButton: {
+    backgroundColor: '#FF9500',
+  },
+  deleteButton: {
+    backgroundColor: '#E74C3C',
   },
 });

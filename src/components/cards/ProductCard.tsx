@@ -45,6 +45,8 @@ interface ProductCardProps {
   onLike?: (product: ProductData) => void;
   onBookmark?: (product: ProductData) => void;
   onVendorPress?: (vendorId: string) => void;
+  onCartPress?: (product: ProductData) => void;
+  onBargainPress?: (product: ProductData) => void;
 }
 
 export const ProductCard: React.FC<ProductCardProps> = ({
@@ -54,6 +56,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onLike,
   onBookmark,
   onVendorPress,
+  onCartPress,
+  onBargainPress,
 }) => {
   const getMediaHeight = () => {
     if (variant === 'grid') return 140;
@@ -232,19 +236,19 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         {/* Engagement */}
         <View style={styles.engagementRow}>
           {onLike && (
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.engagementButton}
               onPress={() => onLike(product)}
             >
-              <Ionicons 
-                name={product.isLiked ? "heart" : "heart-outline"} 
-                size={14} 
-                color={product.isLiked ? "#E91E63" : "rgba(255,255,255,0.6)"} 
+              <Ionicons
+                name={product.isLiked ? "heart" : "heart-outline"}
+                size={14}
+                color={product.isLiked ? "#E91E63" : "rgba(255,255,255,0.6)"}
               />
               {product.likes && <Text style={styles.engagementText}>{product.likes}</Text>}
             </TouchableOpacity>
           )}
-          
+
           {product.views && (
             <View style={styles.engagementButton}>
               <Ionicons name="eye" size={14} color="rgba(255,255,255,0.6)" />
@@ -252,6 +256,37 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             </View>
           )}
         </View>
+
+        {/* Action Buttons */}
+        {(onCartPress || onBargainPress) && (
+          <View style={styles.actionButtonsRow}>
+            {onCartPress && (
+              <TouchableOpacity
+                style={styles.cartButton}
+                onPress={(e) => {
+                  e?.stopPropagation?.();
+                  onCartPress(product);
+                }}
+              >
+                <Ionicons name="cart-outline" size={16} color="#FFFFFF" />
+                <Text style={styles.cartButtonText}>Add to Cart</Text>
+              </TouchableOpacity>
+            )}
+
+            {onBargainPress && (
+              <TouchableOpacity
+                style={styles.bargainButton}
+                onPress={(e) => {
+                  e?.stopPropagation?.();
+                  onBargainPress(product);
+                }}
+              >
+                <Ionicons name="chatbubble-ellipses-outline" size={16} color="#FFFFFF" />
+                <Text style={styles.bargainButtonText}>Bargain</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -475,6 +510,43 @@ const styles = StyleSheet.create({
   engagementText: {
     color: 'rgba(255,255,255,0.6)',
     fontSize: 12,
+  },
+  actionButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  cartButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#4CAF50',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  cartButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  bargainButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FF9800',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  bargainButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
 
   // Grid card styles

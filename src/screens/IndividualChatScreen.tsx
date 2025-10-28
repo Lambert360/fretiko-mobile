@@ -23,13 +23,18 @@ import { chatAPI, ChatMessage } from '../services/chatAPI';
 import { realtimeAPI } from '../services/realtimeAPI';
 import { userAPI, UserProfile } from '../services/userAPI';
 import { geminiAPI } from '../services/geminiAPI';
+import { ikoAPI } from '../services/ikoAPI';
 import { realTimeAudioService } from '../services/realTimeAudioService';
 import { invoiceAPI, Invoice } from '../services/invoiceAPI';
 import { wishlistAPI } from '../services/wishlistAPI';
 import * as ImagePicker from 'expo-image-picker';
 import InvoiceMessageCard from '../components/InvoiceMessageCard';
 import ProductMessageCard from '../components/ProductMessageCard';
+import ServiceMessageCard from '../components/ServiceMessageCard';
+import ScheduleMessageCard from '../components/ScheduleMessageCard';
+import ScheduleModal, { ScheduleActivityData } from '../components/ScheduleModal';
 import { WishlistShareModal } from '../components/WishlistShareModal';
+import WishlistMessageCard from '../components/WishlistMessageCard';
 
 // Global WebSocket manager to persist across component remounts
 class GeminiWebSocketManager {
@@ -79,7 +84,7 @@ import * as MediaLibrary from 'expo-media-library';
 import * as Haptics from 'expo-haptics';
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import * as Speech from 'expo-speech';
-import { AI_ASSISTANT_UUID, AI_ASSISTANT_NAME } from '../constants/chat';
+import { AI_ASSISTANT_UUID, AI_ASSISTANT_NAME, AI_ASSISTANT_AVATAR } from '../constants/chat';
 import { useAuth } from '../contexts/AuthContext';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -109,6 +114,55 @@ interface Message extends Omit<ChatMessage, 'timestamp'> {
     price: number;
     image: string;
     vendor_username?: string;
+  };
+  wishlistData?: {
+    shareId: string;
+    shareType: 'view_only' | 'view_and_add';
+    itemCount: number;
+    ownerName: string;
+    ownerId: string;
+    recipientName: string;
+    recipientId: string;
+    previewItems: Array<{
+      id: string;
+      name: string;
+      price: number;
+      image: string;
+    }>;
+    canAddItems: boolean;
+    sharedAt: Date;
+  };
+  // IKO recommendation data
+  ikoRecommendations?: {
+    products?: Array<{
+      id: string;
+      name: string;
+      price: number;
+      image: string;
+      vendor_username?: string;
+    }>;
+    services?: Array<{
+      id: string;
+      title: string;
+      price: number;
+      image?: string;
+      provider?: {
+        id: string;
+        name: string;
+        rating?: number;
+      };
+      category?: string;
+      duration?: string;
+      priceType?: 'fixed' | 'hourly' | 'starting_at' | 'negotiable';
+    }>;
+  };
+  // IKO schedule card data
+  ikoScheduleCard?: {
+    type: 'meal_plan' | 'reminder' | 'purchase' | 'event' | 'task';
+    title: string;
+    description?: string;
+    suggestedDate?: string;
+    icon?: string;
   };
 }
 
@@ -144,12 +198,14 @@ const IndividualChatScreen = () => {
 
   // Get chat params from navigation
   const chatParams = route.params as ChatParams;
-  const { chatId, chatName, chatAvatar, chatType, isOnline, verified, isAI, otherUserId, bargainMode, productData } = chatParams;
+  const { chatId, chatName, chatAvatar, chatType, isOnline, verified, isAI, otherUserId: paramOtherUserId, bargainMode, productData } = chatParams;
 
   // Debug log to check if chatName is being passed correctly
-  console.log('📋 IndividualChatScreen params:', { chatId, chatName, chatType });
+  console.log('📋 IndividualChatScreen params:', { chatId, chatName, chatType, otherUserId: paramOtherUserId });
 
   const [messages, setMessages] = useState<Message[]>([]);
+  // Use the otherUserId from params (should now be provided by backend)
+  const [otherUserId, setOtherUserId] = useState<string | null>(paramOtherUserId || null);
   const [messageText, setMessageText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -158,6 +214,8 @@ const IndividualChatScreen = () => {
   const [recordingInterval, setRecordingInterval] = useState<NodeJS.Timeout | null>(null);
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
   const [showWishlistShareModal, setShowWishlistShareModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [selectedScheduleData, setSelectedScheduleData] = useState<any>(null);
   const [showCallModal, setShowCallModal] = useState(false);
   const [isInCall, setIsInCall] = useState(false);
   const [callType, setCallType] = useState<'audio' | 'video'>('audio');
@@ -341,6 +399,15 @@ const IndividualChatScreen = () => {
 
           setMessages(backendMessages);
           console.log('✅ AI messages loaded successfully:', backendMessages.length);
+
+          // Extract otherUserId from messages if not provided
+          if (!otherUserId && !isAI && backendMessages.length > 0) {
+            const firstOtherMessage = backendMessages.find(msg => msg.senderId !== user?.id);
+            if (firstOtherMessage) {
+              setOtherUserId(firstOtherMessage.senderId);
+              console.log('✅ Extracted otherUserId from messages:', firstOtherMessage.senderId);
+            }
+          }
         } catch (error) {
           console.log('💡 Conversation may not exist, creating AI conversation...');
 
@@ -375,13 +442,41 @@ const IndividualChatScreen = () => {
       const { messages: apiMessages } = await chatAPI.getMessages(chatId);
 
       // Convert API messages to local Message format
-      const convertedMessages: Message[] = apiMessages.map(msg => ({
-        ...msg,
-        text: msg.content,
-        timestamp: new Date(msg.createdAt),
-      }));
+      const convertedMessages: Message[] = apiMessages.map(msg => {
+        const converted = {
+          ...msg,
+          text: msg.content,
+          timestamp: new Date(msg.createdAt),
+          // 🔥 FIX: Explicitly preserve wishlistData from metadata
+          wishlistData: msg.metadata?.wishlistData || msg.wishlistData,
+          productData: msg.metadata?.productData || msg.productData,
+        };
+        
+        // Debug log for wishlist messages
+        if (msg.messageType === 'wishlist') {
+          console.log('📋 Wishlist message loaded:', {
+            id: msg.id,
+            senderId: msg.senderId,
+            hasWishlistData: !!converted.wishlistData,
+            ownerId: converted.wishlistData?.ownerId,
+            'user?.id': user?.id,
+            willShowOnRight: msg.senderId === user?.id || converted.wishlistData?.ownerId === user?.id
+          });
+        }
+        
+        return converted;
+      });
 
       setMessages(convertedMessages);
+
+      // Extract otherUserId from messages if not provided
+      if (!otherUserId && convertedMessages.length > 0) {
+        const firstOtherMessage = convertedMessages.find(msg => msg.senderId !== user?.id);
+        if (firstOtherMessage) {
+          setOtherUserId(firstOtherMessage.senderId);
+          console.log('✅ Extracted otherUserId from messages:', firstOtherMessage.senderId);
+        }
+      }
 
       // Note: Conversation joining is now handled in useEffect initialization
 
@@ -452,10 +547,19 @@ const IndividualChatScreen = () => {
           return;
         }
 
+        // Transform backend message (snake_case) to frontend format (camelCase)
         const newMessage: Message = {
           ...data.message,
+          senderId: data.message.sender_id || data.message.senderId, // ✅ Fix: Convert snake_case to camelCase
+          conversationId: data.message.conversation_id || data.message.conversationId,
+          messageType: data.message.message_type || data.message.messageType,
+          mediaUrl: data.message.media_url || data.message.mediaUrl,
+          createdAt: data.message.created_at || data.message.createdAt,
+          updatedAt: data.message.updated_at || data.message.updatedAt,
           text: data.message.content,
           timestamp: new Date(data.message.created_at || data.message.createdAt),
+          wishlistData: data.message.metadata?.wishlistData || data.message.wishlistData, // ✅ Extract wishlist data
+          productData: data.message.metadata?.productData || data.message.productData, // ✅ Extract product data
         };
         console.log('✅ Adding new message to UI:', newMessage);
 
@@ -900,6 +1004,13 @@ const IndividualChatScreen = () => {
           content: response.text || 'I understand.',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
+          // Include IKO recommendations if available
+          ikoRecommendations: (response.recommendedProducts || response.recommendedServices) ? {
+            products: response.recommendedProducts,
+            services: response.recommendedServices,
+          } : undefined,
+          // Include IKO schedule card if available
+          ikoScheduleCard: response.scheduleCard,
         };
 
         setMessages(prev => [...prev, aiMessage]);
@@ -1122,7 +1233,11 @@ const IndividualChatScreen = () => {
     setShowWishlistShareModal(true);
   };
 
-  const handleWishlistShareSuccess = async (shareType: 'view_only' | 'view_and_add', itemCount: number) => {
+  const handleWishlistShareSuccess = async (
+    shareType: 'view_only' | 'view_and_add',
+    itemCount: number,
+    chatMessageData?: any
+  ) => {
     // Show success message
     const permission = shareType === 'view_and_add' ? 'view and add items to' : 'view';
     Alert.alert(
@@ -1131,15 +1246,132 @@ const IndividualChatScreen = () => {
       [{ text: 'OK' }]
     );
 
-    // Send a chat message notifying about the wishlist share
-    const shareNotification = `💖 I've shared ${itemCount} item${itemCount > 1 ? 's' : ''} from my wishlist with you!`;
-    setMessageText(shareNotification);
-    // Auto-send the notification message
-    setTimeout(() => {
-      if (shareNotification) {
-        sendMessage();
-      }
-    }, 500);
+    // 🎁 Handle like image messages: Add optimistic message immediately
+    if (chatMessageData && chatMessageData.wishlistData) {
+      console.log('✅ Adding wishlist message optimistically (like image messages)');
+
+      // Create optimistic message (like image sharing does)
+      // 🔥 FIX: Use current user's ID as senderId (you are the sender)
+      const wishlistMessage: Message = {
+        id: chatMessageData.messageId,
+        conversationId: chatMessageData.conversationId,
+        senderId: user?.id || chatMessageData.wishlistData.ownerId, // ✅ Use current user's ID (sender)
+        senderName: userProfile?.username || 'You',
+        content: chatMessageData.wishlistData.ownerName + ' shared wishlist',
+        text: chatMessageData.wishlistData.ownerName + ' shared wishlist',
+        messageType: 'wishlist',
+        status: 'sent',
+        timestamp: new Date(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        wishlistData: chatMessageData.wishlistData,
+        metadata: { wishlistData: chatMessageData.wishlistData },
+      };
+
+      console.log('🎁 Wishlist message created optimistically:', {
+        messageId: wishlistMessage.id,
+        senderId: wishlistMessage.senderId,
+        'user?.id': user?.id,
+        'will show on right?': wishlistMessage.senderId === user?.id
+      });
+
+      // Add to state immediately (optimistic update - like image sharing)
+      setMessages(prev => [...prev, wishlistMessage]);
+
+      // Scroll to bottom to show the new message
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+
+      console.log('✅ Wishlist message added to UI (sender sees it immediately)');
+    }
+  };
+
+  // Handle wishlist card press - navigate to SharedWishlistScreen
+  const handleWishlistCardPress = (
+    shareId: string,
+    ownerId: string,
+    ownerName: string,
+    shareType: 'view_only' | 'view_and_add'
+  ) => {
+    console.log('📱 Wishlist card tapped:', { shareId, ownerId, ownerName, shareType, currentUserId: user?.id });
+
+    // Check if current user is the owner (sender) or recipient
+    const isOwner = user?.id === ownerId;
+
+    if (isOwner) {
+      // You are the owner - you shared this
+      // Navigate to your own wishlist or show message
+      Alert.alert(
+        'Your Wishlist',
+        'This is your wishlist that you shared. You can view it from your profile.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'View My Wishlist',
+            onPress: () => {
+              // Navigate to user's own wishlist screen
+              navigation.navigate('Wishlist');
+            }
+          }
+        ]
+      );
+    } else {
+      // You are the recipient - someone shared with you
+      console.log('📱 Navigating to SharedWishlist as recipient');
+      navigation.navigate('SharedWishlist', {
+        shareId,
+        ownerId,
+        ownerUsername: ownerName,
+        shareType,
+      });
+    }
+  };
+
+  // Handle schedule card press
+  const handleScheduleCardPress = (scheduleData: any) => {
+    console.log('📅 Schedule card tapped:', scheduleData);
+    setSelectedScheduleData(scheduleData);
+    setShowScheduleModal(true);
+  };
+
+  // Handle schedule activity creation
+  const handleScheduleActivity = async (activityData: ScheduleActivityData) => {
+    try {
+      console.log('📅 Creating scheduled activity:', activityData);
+      
+      // Call IKO API to create scheduled activity
+      await ikoAPI.addOngoingPlan({
+        type: activityData.type,
+        title: activityData.title,
+        description: activityData.description,
+        scheduledFor: `${activityData.scheduledDate}T${activityData.scheduledTime || '09:00'}:00Z`,
+      });
+
+      // Show success message
+      Alert.alert(
+        'Activity Scheduled! ✅',
+        `"${activityData.title}" has been added to your schedule. IKO will remind you ${activityData.reminderBefore} minutes before.`,
+        [{ text: 'OK' }]
+      );
+
+      // Send confirmation message to IKO
+      const confirmationMessage = `I've scheduled "${activityData.title}" for ${new Date(activityData.scheduledDate).toLocaleDateString()}. Thanks for helping me plan!`;
+      setMessageText(confirmationMessage);
+      // Auto-send the confirmation
+      setTimeout(() => {
+        if (confirmationMessage) {
+          sendMessage();
+        }
+      }, 100);
+    } catch (error) {
+      console.error('Error scheduling activity:', error);
+      Alert.alert(
+        'Scheduling Failed',
+        'Failed to schedule activity. Please try again.',
+        [{ text: 'OK' }]
+      );
+    }
   };
 
   const startLiveStream = () => {
@@ -3112,7 +3344,25 @@ const IndividualChatScreen = () => {
   );
 
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
-    const isCurrentUser = item.senderId === user?.id;
+    // 🔥 FIX: For wishlist messages, also check if current user is the wishlist owner
+    const isCurrentUser = item.senderId === user?.id || 
+                          (item.messageType === 'wishlist' && item.wishlistData?.ownerId === user?.id);
+    
+    // Debug log for wishlist message rendering
+    if (item.messageType === 'wishlist') {
+      console.log('🎨 Rendering wishlist message:', {
+        id: item.id,
+        senderId: item.senderId,
+        'user?.id': user?.id,
+        'senderId matches?': item.senderId === user?.id,
+        hasWishlistData: !!item.wishlistData,
+        ownerId: item.wishlistData?.ownerId,
+        'ownerId matches?': item.wishlistData?.ownerId === user?.id,
+        isCurrentUser,
+        'will show on': isCurrentUser ? 'RIGHT (blue)' : 'LEFT (gray)'
+      });
+    }
+    
     const isFirstInGroup = index === 0 || messages[index - 1]?.senderId !== item.senderId;
     const isLastInGroup = index === messages.length - 1 || messages[index + 1]?.senderId !== item.senderId;
 
@@ -3200,6 +3450,76 @@ const IndividualChatScreen = () => {
           isCurrentUser={isCurrentUser}
           messageText={item.text}
         />
+      );
+    }
+
+    // 🎁 Render wishlist messages
+    if (item.messageType === 'wishlist' && (item.wishlistData || item.metadata?.wishlistData)) {
+      const wishlistInfo = item.wishlistData || item.metadata?.wishlistData;
+      return (
+        <WishlistMessageCard
+          wishlistData={wishlistInfo}
+          isCurrentUser={isCurrentUser}
+          onPress={handleWishlistCardPress}
+        />
+      );
+    }
+
+    // 📅 Render IKO schedule card
+    if (item.ikoScheduleCard) {
+      return (
+        <ScheduleMessageCard
+          scheduleData={item.ikoScheduleCard}
+          isCurrentUser={isCurrentUser}
+          messageText={item.text}
+          onPress={handleScheduleCardPress}
+        />
+      );
+    }
+
+    // ✨ Render IKO recommendations with product/service cards
+    if (item.ikoRecommendations && (item.ikoRecommendations.products?.length || item.ikoRecommendations.services?.length)) {
+      return (
+        <View style={[
+          styles.messageContainer,
+          isCurrentUser ? styles.currentUserMessage : styles.otherUserMessage,
+        ]}>
+          {!isCurrentUser && (
+            <View style={styles.senderInfo}>
+              <Image
+                source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar}
+                style={styles.messageSenderAvatar}
+              />
+            </View>
+          )}
+          
+          {/* Text message */}
+          <View style={[
+            styles.messageBubble,
+            isCurrentUser ? styles.currentUserBubble : styles.otherUserBubble,
+          ]}>
+            <Text style={styles.messageText}>{item.text}</Text>
+            <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
+          </View>
+
+          {/* Product cards */}
+          {item.ikoRecommendations.products?.map((product) => (
+            <ProductMessageCard
+              key={product.id}
+              product={product}
+              isCurrentUser={isCurrentUser}
+            />
+          ))}
+
+          {/* Service cards */}
+          {item.ikoRecommendations.services?.map((service) => (
+            <ServiceMessageCard
+              key={service.id}
+              service={service}
+              isCurrentUser={isCurrentUser}
+            />
+          ))}
+        </View>
       );
     }
 
@@ -4325,10 +4645,25 @@ const IndividualChatScreen = () => {
       <WishlistShareModal
         visible={showWishlistShareModal}
         recipientId={otherUserId || ''}
-        recipientName={chatName}
+        recipientName={chatName || 'User'}
         onClose={() => setShowWishlistShareModal(false)}
         onShareSuccess={handleWishlistShareSuccess}
       />
+
+      {/* Schedule Modal */}
+      {selectedScheduleData && (
+        <ScheduleModal
+          visible={showScheduleModal}
+          onClose={() => {
+            setShowScheduleModal(false);
+            setSelectedScheduleData(null);
+          }}
+          scheduleType={selectedScheduleData.type}
+          title={selectedScheduleData.title}
+          suggestedDate={selectedScheduleData.suggestedDate}
+          onSchedule={handleScheduleActivity}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 };

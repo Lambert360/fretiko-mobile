@@ -28,6 +28,7 @@ export interface UpdateProfileData {
   location?: string;
   phone?: string;
   dateOfBirth?: string;
+  gender?: string;
   isSeller?: boolean;
   isRider?: boolean;
   preferences?: any;
@@ -325,10 +326,15 @@ export const userAPI = {
   // Send connection request
   sendConnectionRequest: async (addresseeId: string): Promise<Connection> => {
     try {
+      console.log('📤 Sending connection request to:', addresseeId);
       const headers = await getAuthHeaders();
+      console.log('📤 Request headers:', headers);
       const response = await api.post('/connections', { addresseeId }, { headers });
+      console.log('✅ Connection request sent successfully:', response.data);
       return response.data;
     } catch (error: any) {
+      console.error('❌ Failed to send connection request:', error);
+      console.error('Error response:', error.response?.data);
       throw new Error(error.response?.data?.message || 'Failed to send connection request');
     }
   },
@@ -373,6 +379,50 @@ export const userAPI = {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to get client relationships');
+    }
+  },
+
+  // Accept all pending connection requests
+  acceptAllConnectionRequests: async (): Promise<{ accepted: number; failed: number; message: string }> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.post('/connections/requests/accept-all', {}, { headers });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to accept all requests');
+    }
+  },
+
+  // Get relationship details with another user
+  getRelationshipDetails: async (targetUserId: string): Promise<any> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.get(`/connections/relationship/${targetUserId}`, { headers });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to get relationship details');
+    }
+  },
+
+  // Get categorized connections (Plugs or Clients with subcategories)
+  getCategorizedConnections: async (type: 'plugs' | 'clients'): Promise<any> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.get(`/connections/categorized/${type}`, { headers });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to get categorized connections');
+    }
+  },
+
+  // Delete user account permanently
+  deleteAccount: async (): Promise<{ message: string; deletedData: any }> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.delete('/users/account', { headers });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to delete account');
     }
   },
 };

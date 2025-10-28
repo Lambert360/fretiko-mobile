@@ -13,6 +13,10 @@ import {
   View,
   RefreshControl,
   ActivityIndicator,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
@@ -48,6 +52,11 @@ const NotificationsScreen = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
+  
+  // Search state
+  const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<FrontendNotification[]>([]);
   
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -94,7 +103,9 @@ const NotificationsScreen = () => {
   const loadNotifications = useCallback(async (refresh = false) => {
     try {
       if (!accessToken || !isAuthenticated) {
-        console.log('No auth token available, user not authenticated');
+        console.log('⚠️ No auth token available, user not authenticated');
+        setLoading(false);
+        setRefreshing(false);
         return;
       }
 
@@ -107,6 +118,8 @@ const NotificationsScreen = () => {
         setLoadingMore(true);
       }
 
+      console.log(`📲 Loading notifications (tab: ${activeTab}, refresh: ${refresh})`);
+      
       let result: PaginatedNotifications;
 
       // Load notifications based on active tab
@@ -123,6 +136,8 @@ const NotificationsScreen = () => {
         result = await notificationsAPI.getVerifiedNotifications(accessToken);
       }
 
+      console.log(`✅ Loaded ${result.notifications.length} notifications`);
+
       const convertedNotifications = result.notifications.map(convertNotification);
 
       if (refresh || offset === 0) {
@@ -135,14 +150,16 @@ const NotificationsScreen = () => {
 
       setHasMore(result.has_more);
 
-      // Load stats for unread count
+      // ✅ Load stats in parallel (non-blocking)
       if (activeTab === 'All') {
-        const statsResult = await notificationsAPI.getNotificationStats(accessToken);
-        setStats(statsResult);
+        notificationsAPI.getNotificationStats(accessToken)
+          .then(statsResult => setStats(statsResult))
+          .catch(err => console.error('Stats loading failed (non-critical):', err));
       }
 
-    } catch (error) {
-      console.error('Error loading notifications:', error);
+    } catch (error: any) {
+      console.error('❌ Error loading notifications:', error);
+      console.error('Error details:', error.message, error.response?.data);
       Alert.alert('Error', 'Failed to load notifications. Please try again.');
     } finally {
       setLoading(false);
@@ -253,6 +270,23 @@ const NotificationsScreen = () => {
             } as any);
           } else {
             Alert.alert('Order Notification', notification.message);
+          }
+          break;
+
+        case 'connection_request':
+          // Navigate to connection requests screen
+          console.log('Navigating to connection requests');
+          navigation.navigate('ConnectionRequests' as never);
+          break;
+
+        case 'connection_accepted':
+          // Navigate to the user's profile who accepted the connection
+          const acceptedBy = notification.metadata?.acceptedBy || notification.data?.acceptedBy;
+          if (acceptedBy) {
+            console.log('Navigating to profile of user who accepted:', acceptedBy);
+            navigation.navigate('PublicProfile' as never, { userId: acceptedBy } as never);
+          } else {
+            Alert.alert('Connection Accepted!', notification.message);
           }
           break;
 
@@ -387,10 +421,33 @@ const NotificationsScreen = () => {
           }
           break;
 
+        case 'view profile':
+          // Navigate to the profile of the user in the notification
+          const profileNotification = notifications.find(n => n.id === notifId);
+          if (profileNotification) {
+            const userId = profileNotification.data?.requester_id ||
+                          profileNotification.data?.connected_user_id ||
+                          profileNotification.data?.acceptedBy ||
+                          profileNotification.data?.sender_id;
+            if (userId) {
+              console.log('Navigating to profile:', userId);
+              navigation.navigate('PublicProfile' as never, { userId } as never);
+            } else {
+              Alert.alert('Error', 'Unable to find user profile');
+            }
+          }
+          break;
+
         case 'accept':
         case 'confirm':
-          Alert.alert('Action Confirmed', `${action} completed successfully`);
-          // TODO: Add specific accept/confirm logic based on notification type
+        case 'accept request':
+          // For connection requests, navigate to connection requests screen
+          const acceptNotification = notifications.find(n => n.id === notifId);
+          if (acceptNotification?.type === 'connection_request') {
+            navigation.navigate('ConnectionRequests' as never);
+          } else {
+            Alert.alert('Action Confirmed', `${action} completed successfully`);
+          }
           break;
 
         case 'decline':
@@ -440,6 +497,36 @@ const NotificationsScreen = () => {
       Alert.alert('Error', 'Unable to complete action. Please try again.');
     }
   }, [markAsRead, notifications, handleNotificationPress, navigation]);
+
+  /**
+   * Handle search
+   */
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query);
+    
+    if (query.trim().length === 0) {
+      setSearchResults([]);
+      return;
+    }
+    
+    // Filter notifications based on search query
+    const lowerQuery = query.toLowerCase();
+    const filtered = notifications.filter(notif => 
+      notif.title.toLowerCase().includes(lowerQuery) ||
+      notif.message.toLowerCase().includes(lowerQuery) ||
+      notif.type.toLowerCase().includes(lowerQuery)
+    );
+    
+    setSearchResults(filtered);
+  }, [notifications]);
+
+  /**
+   * Clear search
+   */
+  const clearSearch = useCallback(() => {
+    setSearchQuery('');
+    setSearchResults([]);
+  }, []);
 
   /**
    * Handle pull-to-refresh
@@ -574,10 +661,7 @@ const NotificationsScreen = () => {
           onPress={() => navigation.goBack()}
           style={styles.backButton}
         >
-          <Image 
-            source={require('../../assets/horse.png')} 
-            style={styles.profileImage}
-          />
+          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         
         <Text style={styles.headerTitle}>Notifications</Text>
@@ -585,13 +669,13 @@ const NotificationsScreen = () => {
         <View style={styles.headerActions}>
           <TouchableOpacity 
             style={styles.headerAction}
-            onPress={() => Alert.alert('Settings', 'Opening notification settings')}
+            onPress={() => Alert.alert('Coming Soon', 'Notification settings will be available in the next update! 🔔', [{ text: 'OK' }])}
           >
             <Ionicons name="settings-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
           <TouchableOpacity 
             style={styles.headerAction}
-            onPress={() => Alert.alert('Search', 'Search through notifications')}
+            onPress={() => setIsSearchModalVisible(true)}
           >
             <Ionicons name="search" size={22} color="#FFFFFF" />
           </TouchableOpacity>
@@ -668,14 +752,16 @@ const NotificationsScreen = () => {
           <View style={styles.notificationLeft}>
             {/* Avatar with type indicator */}
             <View style={styles.avatarContainer}>
-              <Image 
-                source={
-                  item.avatar 
-                    ? (typeof item.avatar === 'string' ? { uri: item.avatar } : item.avatar)
-                    : require('../../assets/logo.jpeg')
-                } 
-                style={styles.notificationAvatar} 
-              />
+              {item.avatar ? (
+                <Image
+                  source={typeof item.avatar === 'string' ? { uri: item.avatar } : item.avatar}
+                  style={styles.notificationAvatar}
+                />
+              ) : (
+                <View style={[styles.notificationAvatar, styles.defaultAvatar]}>
+                  <Ionicons name="person-outline" size={24} color="#666" />
+                </View>
+              )}
               <View style={[styles.typeIndicator, { backgroundColor: getNotificationColor(item.type) }]}>
                 <Ionicons name={getNotificationIcon(item.type) as any} size={12} color="white" />
               </View>
@@ -800,6 +886,80 @@ const NotificationsScreen = () => {
     );
   }
 
+  const renderSearchModal = () => (
+    <Modal
+      visible={isSearchModalVisible}
+      animationType="slide"
+      transparent={false}
+      onRequestClose={() => {
+        setIsSearchModalVisible(false);
+        clearSearch();
+      }}
+    >
+      <KeyboardAvoidingView 
+        style={styles.searchModalContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <View style={[styles.searchModalHeader, { paddingTop: insets.top + 10 }]}>
+          <TouchableOpacity 
+            onPress={() => {
+              setIsSearchModalVisible(false);
+              clearSearch();
+            }}
+            style={styles.searchModalBackButton}
+          >
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          
+          <View style={styles.searchModalInputContainer}>
+            <Ionicons name="search" size={20} color="rgba(255,255,255,0.6)" style={styles.searchModalIcon} />
+            <TextInput
+              style={styles.searchModalInput}
+              placeholder="Search notifications..."
+              placeholderTextColor="rgba(255,255,255,0.6)"
+              value={searchQuery}
+              onChangeText={handleSearch}
+              autoFocus
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={clearSearch} style={styles.searchModalClearButton}>
+                <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.6)" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.searchModalContent}>
+          {searchQuery.length === 0 ? (
+            <View style={styles.searchModalEmpty}>
+              <Ionicons name="search-outline" size={64} color="rgba(255,255,255,0.3)" />
+              <Text style={styles.searchModalEmptyTitle}>Search Notifications</Text>
+              <Text style={styles.searchModalEmptySubtitle}>
+                Search by title, message, or type
+              </Text>
+            </View>
+          ) : searchResults.length > 0 ? (
+            <FlatList
+              data={searchResults}
+              renderItem={renderNotification}
+              keyExtractor={(item) => item.id}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 20 }}
+            />
+          ) : (
+            <View style={styles.searchModalEmpty}>
+              <Ionicons name="search-outline" size={64} color="rgba(255,255,255,0.3)" />
+              <Text style={styles.searchModalEmptyTitle}>No Results</Text>
+              <Text style={styles.searchModalEmptySubtitle}>
+                No notifications found for "{searchQuery}"
+              </Text>
+            </View>
+          )}
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+
   return (
     <View style={styles.container}>
       {renderHeader()}
@@ -828,6 +988,8 @@ const NotificationsScreen = () => {
           renderEmptyState()
         )}
       </View>
+      
+      {renderSearchModal()}
     </View>
   );
 };
@@ -870,15 +1032,12 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   backButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  profileImage: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   headerTitle: {
     color: '#FFFFFF',
@@ -1009,6 +1168,11 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.1)',
   },
+  defaultAvatar: {
+    backgroundColor: '#1E1E1E',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   typeIndicator: {
     position: 'absolute',
     bottom: -2,
@@ -1119,6 +1283,74 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   emptyStateSubtitle: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  
+  // Search Modal Styles
+  searchModalContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  searchModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+    gap: 12,
+  },
+  searchModalBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchModalInputContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 25,
+    paddingHorizontal: 16,
+    height: 44,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  searchModalIcon: {
+    marginRight: 8,
+  },
+  searchModalInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '400',
+  },
+  searchModalClearButton: {
+    marginLeft: 8,
+  },
+  searchModalContent: {
+    flex: 1,
+  },
+  searchModalEmpty: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  searchModalEmptyTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  searchModalEmptySubtitle: {
     color: 'rgba(255,255,255,0.6)',
     fontSize: 16,
     textAlign: 'center',

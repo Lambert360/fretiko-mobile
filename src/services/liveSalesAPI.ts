@@ -1,5 +1,4 @@
 import { API_CONFIG } from '../config/api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
 // =====================
@@ -139,26 +138,16 @@ class LiveSalesAPI {
 
       if (!accessToken) {
         console.log('❌ No access token found in liveSalesAPI');
-        // Try fallback token
-        const fallbackToken = await AsyncStorage.getItem('accessToken_fallback');
-        if (fallbackToken) {
-          console.log('📦 Using fallback token in liveSalesAPI');
-          return {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${fallbackToken}`,
-          };
-        }
+        throw new Error('Authentication required. Please log in again.');
       }
 
       return {
         'Content-Type': 'application/json',
-        ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
+        'Authorization': `Bearer ${accessToken}`,
       };
     } catch (error) {
       console.error('Error getting auth headers in liveSalesAPI:', error);
-      return {
-        'Content-Type': 'application/json',
-      };
+      throw error;
     }
   }
 
@@ -302,6 +291,23 @@ class LiveSalesAPI {
       });
     } catch (error) {
       console.error('Error ending stream:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate Agora token for broadcasting/viewing
+   */
+  async generateAgoraToken(streamId: string, role: 'host' | 'audience' = 'host'): Promise<{
+    token: string;
+    channel: string;
+    uid: number;
+    appId: string;
+  }> {
+    try {
+      return await this.request(`/live-sales/streams/${streamId}/agora-token?role=${role}`);
+    } catch (error) {
+      console.error('Error generating Agora token:', error);
       throw error;
     }
   }

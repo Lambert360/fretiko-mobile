@@ -165,8 +165,10 @@ const LiveMiniCheckoutScreen = () => {
       try {
         escrowFee = await checkoutAPI.calculateEscrowFee(subtotal);
       } catch (error) {
-        // Fallback calculation
-        escrowFee = Math.max(1, subtotal * 0.025); // 2.5% minimum ₣1.00
+        // Fallback calculation - Currently FREE (0%)
+        const escrowRate = 0; // 0% = FREE (change to 0.025 for 2.5%)
+        const minimumFee = 0; // ₣0 minimum (change to 50 for ₣50 minimum)
+        escrowFee = Math.max(minimumFee, Math.round(subtotal * escrowRate));
       }
     }
 

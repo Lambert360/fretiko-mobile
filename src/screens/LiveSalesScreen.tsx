@@ -28,14 +28,14 @@ const PluggedVendorCard = ({
   onPress, 
   isAudioEnabled,
   onAudioToggle,
+  isScreenFocused,
 }: { 
   stream: LiveStream; 
   onPress: () => void;
   isAudioEnabled: boolean;
   onAudioToggle: () => void;
+  isScreenFocused: boolean;
 }) => {
-  const videoRef = useRef<Video>(null);
-
   const formatViewerCount = (count: number) => {
     if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
     return count.toString();
@@ -49,16 +49,17 @@ const PluggedVendorCard = ({
     >
       {/* Live video preview */}
       <View style={styles.pluggedVideoContainer}>
-        {stream.stream_url ? (
-          <Video
-            ref={videoRef}
-            source={{ uri: stream.stream_url } as AVPlaybackSource}
+        {stream.stream_url && isScreenFocused ? (
+          <VideoView
             style={styles.pluggedVideo}
-            shouldPlay={true}
-            isLooping={true}
-            isMuted={!isAudioEnabled}
-            resizeMode={ResizeMode.COVER}
-            useNativeControls={false}
+            player={{
+              uri: stream.stream_url,
+              autoplay: true,
+              loop: true,
+              muted: !isAudioEnabled,
+            }}
+            nativeControls={false}
+            contentFit="cover"
           />
         ) : (
           <Image
@@ -120,15 +121,15 @@ const LiveStreamCard = ({
   isFocused,
   isAudioEnabled,
   onAudioToggle,
+  isScreenFocused,
 }: { 
   stream: LiveStream; 
   onPress: () => void;
   isFocused: boolean;
   isAudioEnabled: boolean;
   onAudioToggle: () => void;
+  isScreenFocused: boolean;
 }) => {
-  const videoRef = useRef<Video>(null);
-
   const formatViewerCount = (count: number) => {
     if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
     if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
@@ -149,16 +150,17 @@ const LiveStreamCard = ({
     >
       {/* Stream video preview */}
       <View style={styles.thumbnailContainer}>
-        {stream.stream_url ? (
-          <Video
-            ref={videoRef}
-            source={{ uri: stream.stream_url } as AVPlaybackSource}
+        {stream.stream_url && isScreenFocused ? (
+          <VideoView
             style={styles.thumbnail}
-            shouldPlay={isFocused}
-            isLooping={true}
-            isMuted={!isAudioEnabled}
-            resizeMode={ResizeMode.COVER}
-            useNativeControls={false}
+            player={{
+              uri: stream.stream_url,
+              autoplay: isFocused && isScreenFocused,
+              loop: true,
+              muted: !isAudioEnabled,
+            }}
+            nativeControls={false}
+            contentFit="cover"
           />
         ) : (
           <Image
@@ -299,6 +301,9 @@ const LiveSalesScreen = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
+  
+  // Screen focus tracking
+  const [isScreenFocused, setIsScreenFocused] = useState(true);
   
   // Audio management
   const [focusedStreamId, setFocusedStreamId] = useState<string | null>(null);
@@ -495,7 +500,14 @@ const LiveSalesScreen = () => {
   // Load data when screen focuses
   useFocusEffect(
     useCallback(() => {
+      setIsScreenFocused(true);
       loadAllData(true);
+
+      return () => {
+        // Cleanup when screen unfocuses
+        setIsScreenFocused(false);
+        setFocusedStreamId(null); // Stop all videos
+      };
     }, [])
   );
 
@@ -506,6 +518,7 @@ const LiveSalesScreen = () => {
       onPress={() => handleStreamPress(item)}
       isAudioEnabled={isStreamAudioEnabled(item.id)}
       onAudioToggle={() => handleAudioToggle(item.id)}
+      isScreenFocused={isScreenFocused}
     />
   );
 
@@ -517,6 +530,7 @@ const LiveSalesScreen = () => {
       isFocused={focusedStreamId === item.id}
       isAudioEnabled={isStreamAudioEnabled(item.id)}
       onAudioToggle={() => handleAudioToggle(item.id)}
+      isScreenFocused={isScreenFocused}
     />
   );
 

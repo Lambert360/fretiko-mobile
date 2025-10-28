@@ -15,17 +15,20 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { analyticsAPI, AnalyticsData, AnalyticsPeriod, LiveStreamingAnalytics, AuctionAnalytics } from '../services/analyticsAPI';
+import { walletAPI, SalesAnalytics } from '../services/walletAPI';
+import LineChart from '../components/LineChart';
 
 const { width: screenWidth } = Dimensions.get('window');
 
 const AnalyticsScreen: React.FC = () => {
   const navigation = useNavigation();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'livestream' | 'auctions'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'livestream' | 'auctions' | 'sales'>('overview');
   const [activePeriod, setActivePeriod] = useState<AnalyticsPeriod>('daily');
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [liveStreamingData, setLiveStreamingData] = useState<LiveStreamingAnalytics | null>(null);
   const [auctionData, setAuctionData] = useState<AuctionAnalytics | null>(null);
+  const [salesData, setSalesData] = useState<SalesAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -48,6 +51,9 @@ const AnalyticsScreen: React.FC = () => {
       } else if (activeTab === 'auctions') {
         const auctionDataResult = await analyticsAPI.getAuctionAnalytics(activePeriod, currentDate);
         setAuctionData(auctionDataResult);
+      } else if (activeTab === 'sales') {
+        const salesDataResult = await walletAPI.getSalesAnalytics({ period: activePeriod });
+        setSalesData(salesDataResult);
       }
     } catch (error) {
       console.error('Error loading analytics data:', error);
@@ -122,17 +128,16 @@ const AnalyticsScreen: React.FC = () => {
 
       {showChart && analyticsData?.chartData && (
         <View style={styles.miniChart}>
-          <View style={styles.customChart}>
-            {analyticsData.chartData.values.slice(-7).map((value, index) => {
-              const maxValue = Math.max(...analyticsData.chartData.values.slice(-7));
-              const height = (value / maxValue) * 40;
-              return (
-                <View key={index} style={styles.chartBar}>
-                  <View style={[styles.chartBarFill, { height, backgroundColor: color }]} />
-                </View>
-              );
-            })}
-          </View>
+          <LineChart
+            data={analyticsData.chartData.values.slice(-7)}
+            width={140}
+            height={50}
+            color={color}
+            showGradient={true}
+            showDots={false}
+            showGrid={false}
+            strokeWidth={2}
+          />
         </View>
       )}
     </View>
@@ -219,6 +224,20 @@ const AnalyticsScreen: React.FC = () => {
           />
           <Text style={[styles.tabText, activeTab === 'auctions' && styles.activeTabText]}>
             Auctions
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'sales' && styles.activeTab]}
+          onPress={() => setActiveTab('sales')}
+        >
+          <Ionicons
+            name="cash-outline"
+            size={16}
+            color={activeTab === 'sales' ? '#007AFF' : '#666'}
+          />
+          <Text style={[styles.tabText, activeTab === 'sales' && styles.activeTabText]}>
+            Sales
           </Text>
         </TouchableOpacity>
       </View>
@@ -346,7 +365,6 @@ const AnalyticsScreen: React.FC = () => {
               )}
             </View>
           </View>
-        )}
 
         {/* Reports Section */}
         <View style={styles.reportsSection}>
@@ -510,7 +528,7 @@ const AnalyticsScreen: React.FC = () => {
               </View>
             </React.Fragment>
           )
-        ) : (
+        ) : activeTab === 'auctions' ? (
           // Auctions tab content
           auctionData && (
             <React.Fragment>
@@ -675,7 +693,156 @@ const AnalyticsScreen: React.FC = () => {
               </View>
             </React.Fragment>
           )
-        )}
+        ) : activeTab === 'sales' ? (
+          // Sales tab content
+          salesData && (
+            <React.Fragment>
+              {/* Sales Summary Metrics */}
+              <View style={styles.metricsContainer}>
+                <View style={styles.metricsRow}>
+                  {renderMetricCard(
+                    'Total Revenue',
+                    formatCurrency(salesData.summary.totalRevenue),
+                    `${salesData.summary.period}`,
+                    'cash-outline',
+                    '#34C759',
+                    true
+                  )}
+                  {renderMetricCard(
+                    'Transactions',
+                    salesData.summary.totalTransactions,
+                    'completed sales',
+                    'swap-horizontal-outline',
+                    '#007AFF'
+                  )}
+                </View>
+
+                <View style={styles.metricsRow}>
+                  {renderMetricCard(
+                    'Vendor Sales',
+                    formatCurrency(salesData.summary.totalVendorSales),
+                    'from products',
+                    'storefront-outline',
+                    '#FF9500'
+                  )}
+                  {renderMetricCard(
+                    'Rider Earnings',
+                    formatCurrency(salesData.summary.totalRiderEarnings),
+                    'from deliveries',
+                    'bicycle-outline',
+                    '#3498DB'
+                  )}
+                </View>
+
+                <View style={styles.metricsRow}>
+                  {renderMetricCard(
+                    'Avg Transaction',
+                    formatCurrency(salesData.summary.averagePerTransaction),
+                    'per sale',
+                    'calculator-outline',
+                    '#AF52DE'
+                  )}
+                  {renderMetricCard(
+                    'Period',
+                    salesData.summary.period.toUpperCase(),
+                    `${new Date(salesData.summary.startDate).toLocaleDateString()} - ${new Date(salesData.summary.endDate).toLocaleDateString()}`,
+                    'calendar-outline',
+                    '#FF3B30'
+                  )}
+                </View>
+              </View>
+
+              {/* Sales Chart */}
+              {salesData.chartData && salesData.chartData.length > 0 && (
+                <View style={styles.sectionContainer}>
+                  <Text style={styles.sectionTitle}>📊 Sales Trend</Text>
+                  <View style={styles.lineChartWrapper}>
+                    <LineChart
+                      data={salesData.chartData.map(d => d.totalRevenue)}
+                      labels={salesData.chartData.map(d => d.period)}
+                      width={screenWidth - 48}
+                      height={180}
+                      color="#34C759"
+                      showGradient={true}
+                      showDots={true}
+                      showGrid={true}
+                      strokeWidth={3}
+                    />
+                    {/* Value indicators */}
+                    <View style={styles.chartValuesContainer}>
+                      {salesData.chartData.map((data, index) => (
+                        <View key={index} style={styles.chartValueItem}>
+                          <Text style={styles.chartValueText}>₣{data.totalRevenue.toFixed(0)}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {/* Revenue Breakdown */}
+              <View style={styles.sectionContainer}>
+                <Text style={styles.sectionTitle}>💰 Revenue Breakdown</Text>
+                <View style={styles.breakdownCard}>
+                  <View style={styles.breakdownRow}>
+                    <View style={styles.breakdownLabel}>
+                      <View style={[styles.breakdownDot, { backgroundColor: '#FF9500' }]} />
+                      <Text style={styles.breakdownText}>Vendor Sales</Text>
+                    </View>
+                    <Text style={styles.breakdownValue}>
+                      ₣{salesData.summary.totalVendorSales.toFixed(2)}
+                    </Text>
+                  </View>
+                  <View style={styles.breakdownRow}>
+                    <View style={styles.breakdownLabel}>
+                      <View style={[styles.breakdownDot, { backgroundColor: '#3498DB' }]} />
+                      <Text style={styles.breakdownText}>Rider Earnings</Text>
+                    </View>
+                    <Text style={styles.breakdownValue}>
+                      ₣{salesData.summary.totalRiderEarnings.toFixed(2)}
+                    </Text>
+                  </View>
+                  <View style={[styles.breakdownRow, { borderTopWidth: 1, borderTopColor: '#333', paddingTop: 12, marginTop: 8 }]}>
+                    <View style={styles.breakdownLabel}>
+                      <View style={[styles.breakdownDot, { backgroundColor: '#34C759' }]} />
+                      <Text style={[styles.breakdownText, { fontWeight: 'bold' }]}>Total Revenue</Text>
+                    </View>
+                    <Text style={[styles.breakdownValue, { fontWeight: 'bold', color: '#34C759' }]}>
+                      ₣{salesData.summary.totalRevenue.toFixed(2)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Performance Insights */}
+              <View style={styles.sectionContainer}>
+                <Text style={styles.sectionTitle}>💡 Sales Insights</Text>
+                <View style={styles.insightCard}>
+                  <Ionicons name="bulb-outline" size={16} color="#FFD700" />
+                  <Text style={styles.insightText}>
+                    You've completed {salesData.summary.totalTransactions} transactions with an average value of ₣{salesData.summary.averagePerTransaction.toFixed(2)} per sale.
+                  </Text>
+                </View>
+                {salesData.summary.totalVendorSales > salesData.summary.totalRiderEarnings && (
+                  <View style={styles.insightCard}>
+                    <Ionicons name="trending-up-outline" size={16} color="#34C759" />
+                    <Text style={styles.insightText}>
+                      Your vendor sales (₣{salesData.summary.totalVendorSales.toFixed(2)}) are higher than rider earnings, indicating strong product performance.
+                    </Text>
+                  </View>
+                )}
+                {salesData.summary.totalTransactions > 10 && (
+                  <View style={styles.insightCard}>
+                    <Ionicons name="star-outline" size={16} color="#FFD700" />
+                    <Text style={styles.insightText}>
+                      Great job! You've completed {salesData.summary.totalTransactions} transactions this period. Keep up the momentum!
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </React.Fragment>
+          )
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -800,25 +967,9 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   miniChart: {
-    marginTop: 8,
+    marginTop: 12,
     alignItems: 'center',
-  },
-  customChart: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    height: 40,
-    width: 120,
-  },
-  chartBar: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    marginHorizontal: 1,
-  },
-  chartBarFill: {
-    width: 8,
-    borderRadius: 2,
-    minHeight: 2,
+    overflow: 'visible',
   },
   reportsSection: {
     paddingHorizontal: 16,
@@ -1119,6 +1270,59 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: '#8E44AD',
+  },
+  // Sales-specific styles
+  lineChartWrapper: {
+    backgroundColor: '#111',
+    borderRadius: 12,
+    padding: 16,
+    paddingTop: 24,
+    overflow: 'visible',
+  },
+  chartValuesContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginTop: 8,
+  },
+  chartValueItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  chartValueText: {
+    fontSize: 11,
+    color: '#34C759',
+    fontWeight: 'bold',
+  },
+  breakdownCard: {
+    backgroundColor: '#111',
+    borderRadius: 12,
+    padding: 16,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  breakdownLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  breakdownDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  breakdownText: {
+    fontSize: 14,
+    color: '#CCC',
+  },
+  breakdownValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: 'white',
   },
 });
 

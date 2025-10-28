@@ -37,7 +37,7 @@ const AuctionCategoryScreen = () => {
   const loadCategoryAuctions = async () => {
     try {
       const response = await auctionsAPI.getAuctions({
-        category: categorySlug,
+        category_slug: categorySlug,
         status: 'active',
         limit: 50,
       });

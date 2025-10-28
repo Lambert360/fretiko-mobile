@@ -495,41 +495,45 @@ class ServicesAPI {
     }
   }
 
-  // Get service comments
+  // Get service comments (always fresh, no cache)
   async getServiceComments(serviceId: string): Promise<ServiceComment[]> {
     try {
+      console.log('🌐 Fetching fresh comments from API for service:', serviceId);
       const response = await api.get(`/services/${serviceId}/comments`);
+      console.log('✅ Received', response.data?.length || 0, 'comments from API');
       return response.data;
     } catch (error) {
-      console.error('Error fetching service comments:', error);
+      console.error('❌ Error fetching service comments:', error);
       throw error;
     }
   }
 
   // Add comment to service with offline support
-  async addComment(serviceId: string, comment: string): Promise<ServiceComment> {
+  async addComment(serviceId: string, content: string): Promise<ServiceComment> {
     try {
-      const response = await api.post(`/services/${serviceId}/comments`, { comment });
-      
-      // Clear cached comments
+      const response = await api.post(`/services/${serviceId}/comments`, { content });
+
+      // Clear cached comments to force refresh
       this.cache.delete(`service_comments_${serviceId}`);
-      
+      this.cache.delete('video_feed_{}');
+
+      console.log('✅ Comment added successfully:', response.data);
       return response.data;
     } catch (error) {
       console.warn('Comment failed, queuing for offline processing:', error.message);
-      
+
       // Add to offline queue
-      await this.addToQueue('POST', `/services/${serviceId}/comments`, { comment });
-      
+      await this.addToQueue('POST', `/services/${serviceId}/comments`, { content });
+
       // Return optimistic comment
       return {
         id: `temp_${Date.now()}`,
         userId: 'current_user', // Should come from auth context
         userName: 'You',
         userAvatar: undefined,
-        comment,
+        comment: content,
         createdAt: new Date().toISOString(),
-        likes: 0
+        likes: 0,
       };
     }
   }
@@ -566,14 +570,50 @@ class ServicesAPI {
     }
   }
 
-  // Share service
-  async shareService(serviceId: string): Promise<{ shareUrl: string }> {
+  // Toggle bookmark with offline support
+  async toggleBookmark(serviceId: string): Promise<{ bookmarked: boolean; saveCount: number }> {
     try {
-      const response = await api.post(`/services/${serviceId}/share`);
+      const response = await api.post(`/services/${serviceId}/bookmark`);
+
+      // Clear cached data
+      this.cache.delete(`service_${serviceId}`);
+      this.cache.delete('video_feed_{}');
+
       return response.data;
     } catch (error) {
-      console.error('Error sharing service:', error);
-      throw error;
+      console.warn('Bookmark action failed, queuing for offline processing:', error.message);
+
+      // Add to offline queue
+      await this.addToQueue('POST', `/services/${serviceId}/bookmark`);
+
+      // Return optimistic response
+      return {
+        bookmarked: true,
+        saveCount: 0
+      };
+    }
+  }
+
+  // Share service
+  async shareService(serviceId: string): Promise<{ shareCount: number }> {
+    try {
+      const response = await api.post(`/services/${serviceId}/share`);
+
+      // Clear cached data
+      this.cache.delete(`service_${serviceId}`);
+      this.cache.delete('video_feed_{}');
+
+      return response.data;
+    } catch (error) {
+      console.warn('Share action failed, queuing for offline processing:', error.message);
+
+      // Add to offline queue
+      await this.addToQueue('POST', `/services/${serviceId}/share`);
+
+      // Return optimistic response
+      return {
+        shareCount: 0
+      };
     }
   }
 }

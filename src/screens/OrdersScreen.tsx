@@ -15,7 +15,7 @@ import { useNavigation } from '@react-navigation/native';
 import { ordersAPI, Order } from '../services/ordersAPI';
 import { walletAPI } from '../services/walletAPI';
 
-const OrdersScreen: React.FC = () => {
+const OrdersScreen = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -39,7 +39,7 @@ const OrdersScreen: React.FC = () => {
     }
   };
 
-  const getStatusColor = (status: Order['status']) => {
+  const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return '#FFA500';
       case 'confirmed': return '#3498DB';
@@ -54,7 +54,7 @@ const OrdersScreen: React.FC = () => {
     }
   };
 
-  const getStatusText = (status: Order['status']) => {
+  const getStatusText = (status: string) => {
     switch (status) {
       case 'pending': return 'Pending';
       case 'confirmed': return 'Confirmed';
@@ -81,39 +81,93 @@ const OrdersScreen: React.FC = () => {
     return walletAPI.formatFreti(price);
   };
 
-  const renderOrderItem = ({ item }: { item: Order }) => (
-    <TouchableOpacity 
-      style={styles.orderCard}
-      onPress={() => (navigation as any).navigate('OrderTracking', { orderId: item.id })}
-    >
-      <View style={styles.orderHeader}>
-        <View style={styles.orderInfo}>
-          <Text style={styles.orderNumber}>#{item.orderNumber}</Text>
-          <Text style={styles.orderDate}>{formatDate(item.orderDate)}</Text>
+  // Check if order is part of a group
+  const isGroupedOrder = (order: Order) => {
+    return (order as any).order_group_id && (order as any).is_grouped;
+  };
+
+  // Render grouped order card
+  const renderGroupedOrderCard = (item: Order) => {
+    const orderGroupId = (item as any).order_group_id;
+    const groupNumber = (item as any).group_number || 'Grouped Order';
+    
+    return (
+      <TouchableOpacity 
+        style={[styles.orderCard, styles.groupedOrderCard]}
+        onPress={() => (navigation as any).navigate('GroupedOrder', { groupId: orderGroupId })}
+      >
+        <View style={styles.groupedBadge}>
+          <Ionicons name="albums" size={14} color="#007AFF" />
+          <Text style={styles.groupedBadgeText}>GROUPED ORDER</Text>
         </View>
         
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
-          <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
-        </View>
-      </View>
-
-      <View style={styles.orderItems}>
-        {item.items.map((orderItem) => (
-          <View key={orderItem.id} style={styles.orderItem}>
-            <Image source={{ uri: orderItem.image }} style={styles.itemImage} />
-            <View style={styles.itemDetails}>
-              <Text style={styles.itemName} numberOfLines={1}>
-                {orderItem.name}
-              </Text>
-              <Text style={styles.itemQuantity}>Qty: {orderItem.quantity}</Text>
-            </View>
-            <Text style={styles.itemPrice}>{formatPrice(orderItem.price)}</Text>
+        <View style={styles.orderHeader}>
+          <View style={styles.orderInfo}>
+            <Text style={styles.orderNumber}>#{groupNumber}</Text>
+            <Text style={styles.orderDate}>{formatDate(item.orderDate)}</Text>
           </View>
-        ))}
-      </View>
+          
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
+            <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
+          </View>
+        </View>
 
-      {/* Rider Information */}
-      {(item as any).riderInfo && (
+        <View style={styles.groupedInfo}>
+          <Ionicons name="information-circle-outline" size={16} color="#007AFF" />
+          <Text style={styles.groupedInfoText}>
+            This is part of a multi-vendor order. Tap to view all orders in this group.
+          </Text>
+        </View>
+
+        <View style={styles.groupedFooter}>
+          <Text style={styles.groupedFooterLabel}>Total Amount</Text>
+          <Text style={styles.groupedFooterValue}>{formatPrice((item as any).totalAmount || item.total)}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  // Render regular order card
+  const renderOrderItem = ({ item }: { item: Order }) => {
+    // If order is grouped, show grouped card instead
+    if (isGroupedOrder(item)) {
+      return renderGroupedOrderCard(item);
+    }
+
+    // Regular order card
+    return (
+      <TouchableOpacity 
+        style={styles.orderCard}
+        onPress={() => (navigation as any).navigate('OrderTracking', { orderId: item.id })}
+      >
+        <View style={styles.orderHeader}>
+          <View style={styles.orderInfo}>
+            <Text style={styles.orderNumber}>#{item.orderNumber}</Text>
+            <Text style={styles.orderDate}>{formatDate(item.orderDate)}</Text>
+          </View>
+          
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
+            <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.orderItems}>
+          {item.items.map((orderItem) => (
+            <View key={orderItem.id} style={styles.orderItem}>
+              <Image source={{ uri: orderItem.image }} style={styles.itemImage} />
+              <View style={styles.itemDetails}>
+                <Text style={styles.itemName} numberOfLines={1}>
+                  {orderItem.name}
+                </Text>
+                <Text style={styles.itemQuantity}>Qty: {orderItem.quantity}</Text>
+              </View>
+              <Text style={styles.itemPrice}>{formatPrice(orderItem.price)}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Rider Information */}
+        {(item as any).riderInfo && (
         <View style={styles.riderSection}>
           <View style={styles.riderInfo}>
             <Ionicons name="person-circle-outline" size={20} color="#3498DB" />
@@ -127,10 +181,10 @@ const OrdersScreen: React.FC = () => {
             </Text>
           )}
         </View>
-      )}
+        )}
 
-      {/* Escrow Status */}
-      {(item as any).escrowStatus && (
+        {/* Escrow Status */}
+        {(item as any).escrowStatus && (
         <View style={styles.escrowSection}>
           <View style={styles.escrowInfo}>
             <Ionicons 
@@ -158,9 +212,9 @@ const OrdersScreen: React.FC = () => {
             </TouchableOpacity>
           )}
         </View>
-      )}
+        )}
 
-      <View style={styles.orderFooter}>
+        <View style={styles.orderFooter}>
         <View style={styles.orderSummary}>
           <Text style={styles.totalLabel}>Total: </Text>
           <Text style={styles.totalAmount}>{formatPrice(item.total)}</Text>
@@ -200,6 +254,7 @@ const OrdersScreen: React.FC = () => {
       </View>
     </TouchableOpacity>
   );
+};
 
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
@@ -261,7 +316,7 @@ const OrdersScreen: React.FC = () => {
       )}
     </View>
   );
-};
+}; // Close OrdersScreen component
 
 const styles = StyleSheet.create({
   container: {
@@ -522,6 +577,63 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-});
+  // Grouped order styles
+  groupedOrderCard: {
+    borderWidth: 2,
+    borderColor: '#007AFF',
+    backgroundColor: 'rgba(0, 122, 255, 0.05)',
+  },
+  groupedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 122, 255, 0.2)',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginBottom: 12,
+  },
+  groupedBadgeText: {
+    color: '#007AFF',
+    fontSize: 11,
+    fontWeight: '700',
+    marginLeft: 6,
+    letterSpacing: 0.5,
+  },
+  groupedInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 122, 255, 0.1)',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  groupedInfoText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#007AFF',
+    marginLeft: 8,
+    lineHeight: 18,
+  },
+  groupedFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 12,
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
+  groupedFooterLabel: {
+    fontSize: 14,
+    color: '#999',
+    fontWeight: '500',
+  },
+  groupedFooterValue: {
+    fontSize: 16,
+    color: '#FFF',
+    fontWeight: 'bold',
+  },
+}); // Close StyleSheet.create
 
 export default OrdersScreen;

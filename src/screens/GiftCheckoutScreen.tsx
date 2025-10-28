@@ -9,6 +9,8 @@ import {
   TextInput,
   Image,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,9 +22,11 @@ interface GiftCheckoutScreenProps {
   navigation: any;
   route: {
     params: {
-      wishlistItem: WishlistItem;
+      wishlistItem?: WishlistItem; // Single item (legacy support)
+      wishlistItems?: WishlistItem[]; // Multiple items (new)
       recipientId: string;
       recipientName: string;
+      totalPrice?: number; // Pre-calculated total for multiple items
     };
   };
 }
@@ -30,7 +34,10 @@ interface GiftCheckoutScreenProps {
 const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { wishlistItem, recipientId, recipientName } = route.params;
+  const { wishlistItem, wishlistItems, recipientId, recipientName, totalPrice } = route.params;
+
+  // Support both single item and multiple items
+  const items = wishlistItems || (wishlistItem ? [wishlistItem] : []);
 
   const [loading, setLoading] = useState(true);
   const [processingOrder, setProcessingOrder] = useState(false);
@@ -46,11 +53,18 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
     try {
       setLoading(true);
 
-      // Check if user can purchase this item as a gift
-      const purchaseCheck = await wishlistAPI.canPurchaseAsGift(wishlistItem.id);
+      if (items.length === 0) {
+        Alert.alert('No Items', 'No items to purchase', [
+          { text: 'OK', onPress: () => navigation.goBack() }
+        ]);
+        return;
+      }
+
+      // Check if user can purchase items as gifts (check first item for now)
+      const purchaseCheck = await wishlistAPI.canPurchaseAsGift(items[0].id);
 
       if (!purchaseCheck.canPurchase) {
-        Alert.alert('Cannot Purchase', purchaseCheck.reason || 'This item cannot be purchased as a gift', [
+        Alert.alert('Cannot Purchase', purchaseCheck.reason || 'These items cannot be purchased as gifts', [
           { text: 'OK', onPress: () => navigation.goBack() }
         ]);
         return;
@@ -71,9 +85,11 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
   };
 
   const calculateTotal = () => {
+    // Calculate total for all items
+    const subtotal = items.reduce((sum, item) => sum + item.price, 0);
     // Gift purchases: item price + escrow fee (2%)
-    const escrowFee = wishlistItem.price * 0.02;
-    return wishlistItem.price + escrowFee;
+    const escrowFee = subtotal * 0.02;
+    return subtotal + escrowFee;
   };
 
   const handlePlaceGiftOrder = () => {
@@ -94,9 +110,13 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
       return;
     }
 
+    const itemDescription = items.length === 1
+      ? items[0].productName
+      : `${items.length} items`;
+
     Alert.alert(
       'Confirm Gift Purchase',
-      `You're buying ${wishlistItem.productName} as a gift for ${recipientName}.\n\nTotal: ${walletAPI.formatFreti(total)}\n\nThe item will be delivered to ${recipientName}, and they will be notified of your gift.`,
+      `You're buying ${itemDescription} as a gift for ${recipientName}.\n\nTotal: ${walletAPI.formatFreti(total)}\n\nThe items will be delivered to ${recipientName}, and they will be notified of your gift.`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Confirm Purchase', onPress: processGiftOrder },
@@ -108,26 +128,31 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
     try {
       setProcessingOrder(true);
 
-      // First, create a regular order for this product
-      // The backend will handle creating the order and linking it as a gift
-      const result = await wishlistAPI.createGiftOrder({
-        giftRecipientId: recipientId,
-        orderId: '', // Backend will create the order
-        wishlistItemId: wishlistItem.id,
-        giftMessage: giftMessage.trim() || undefined,
-        isSurprise: false, // Based on user requirements
-      });
+      // Process each item as a gift order
+      const results = await Promise.all(
+        items.map(item =>
+          wishlistAPI.createGiftOrder({
+            giftRecipientId: recipientId,
+            orderId: null, // Backend will create the order automatically
+            wishlistItemId: item.id,
+            giftMessage: giftMessage.trim() || undefined,
+            isSurprise: false, // Based on user requirements
+          })
+        )
+      );
+
+      const orderNumbers = results.map(r => r.orderNumber).join(', ');
 
       Alert.alert(
         'Gift Purchase Successful!',
-        `Your gift for ${recipientName} has been ordered! They will be notified and can track the delivery.`,
+        `Your gift${items.length > 1 ? 's' : ''} for ${recipientName} ${items.length > 1 ? 'have' : 'has'} been ordered! They will be notified and can track the delivery.\n\nOrder${items.length > 1 ? 's' : ''}: ${orderNumbers}`,
         [
           {
             text: 'OK',
             onPress: () => {
               navigation.reset({
                 index: 0,
-                routes: [{ name: 'Home' }],
+                routes: [{ name: 'Main' }],
               });
             },
           },
@@ -137,7 +162,7 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
       console.error('Error processing gift order:', error);
       Alert.alert(
         'Purchase Failed',
-        error.message || 'Failed to process gift purchase. Please try again.',
+        error.response?.data?.message || error.message || 'Failed to process gift purchase. Please try again.',
         [{ text: 'OK' }]
       );
     } finally {
@@ -167,10 +192,15 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
   }
 
   const total = calculateTotal();
-  const escrowFee = wishlistItem.price * 0.02;
+  const subtotal = items.reduce((sum, item) => sum + item.price, 0);
+  const escrowFee = subtotal * 0.02;
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
+    >
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top }]}>
         <TouchableOpacity style={styles.headerButton} onPress={() => navigation.goBack()}>
@@ -184,6 +214,7 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
         style={styles.scrollView}
         contentContainerStyle={{ paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {/* Gift Recipient Section */}
         <View style={styles.section}>
@@ -199,19 +230,23 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
           </View>
         </View>
 
-        {/* Gift Item Section */}
+        {/* Gift Items Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Gift Item</Text>
-          <View style={styles.itemCard}>
-            <Image source={{ uri: wishlistItem.productImage }} style={styles.productImage} />
-            <View style={styles.itemInfo}>
-              <Text style={styles.productName}>{wishlistItem.productName}</Text>
-              <Text style={styles.productPrice}>₦{wishlistItem.price.toFixed(2)}</Text>
-              {wishlistItem.sellerName && (
-                <Text style={styles.sellerName}>Sold by {wishlistItem.sellerName}</Text>
-              )}
+          <Text style={styles.sectionTitle}>
+            Gift {items.length > 1 ? `Items (${items.length})` : 'Item'}
+          </Text>
+          {items.map((item, index) => (
+            <View key={item.id} style={[styles.itemCard, index > 0 && { marginTop: 12 }]}>
+              <Image source={{ uri: item.productImage }} style={styles.productImage} />
+              <View style={styles.itemInfo}>
+                <Text style={styles.productName}>{item.productName}</Text>
+                <Text style={styles.productPrice}>{walletAPI.formatFreti(item.price)}</Text>
+                {item.sellerName && (
+                  <Text style={styles.sellerName}>Sold by {item.sellerName}</Text>
+                )}
+              </View>
             </View>
-          </View>
+          ))}
         </View>
 
         {/* Gift Message Section */}
@@ -331,7 +366,7 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
           )}
         </TouchableOpacity>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 };
 

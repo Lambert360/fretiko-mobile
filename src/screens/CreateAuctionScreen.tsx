@@ -205,22 +205,52 @@ const CreateAuctionScreen: React.FC = () => {
 
       console.log('✅ Auction created successfully:', createdAuction);
 
-      Alert.alert(
-        '🎉 Auction Created!',
-        'Your lot is now live and ready for bidders',
-        [
-          {
-            text: 'View Auction',
-            onPress: () => {
-              navigation.navigate('AuctionDetails' as never, { auctionId: createdAuction.id } as never);
+      // Check if live auction
+      if (createdAuction.auction_type === 'live') {
+        Alert.alert(
+          '🎬 Live Auction Created!',
+          'Your live auction is ready. Start streaming now or view details?',
+          [
+            {
+              text: 'Go Live Now',
+              onPress: () => {
+                navigation.replace('LiveStreamHost' as never, {
+                  auctionId: createdAuction.id,
+                  auction: createdAuction
+                } as never);
+              },
             },
-          },
-          {
-            text: 'OK',
-            style: 'cancel',
-          },
-        ]
-      );
+            {
+              text: 'View Details',
+              onPress: () => {
+                navigation.navigate('AuctionDetails' as never, { auctionId: createdAuction.id } as never);
+              },
+            },
+            {
+              text: 'Later',
+              style: 'cancel',
+            },
+          ]
+        );
+      } else {
+        // Timed auction
+        Alert.alert(
+          '🎉 Auction Created!',
+          'Your lot is now live and ready for bidders',
+          [
+            {
+              text: 'View Auction',
+              onPress: () => {
+                navigation.navigate('AuctionDetails' as never, { auctionId: createdAuction.id } as never);
+              },
+            },
+            {
+              text: 'OK',
+              style: 'cancel',
+            },
+          ]
+        );
+      }
     } catch (error: any) {
       console.error('❌ Error creating auction:', error);
       console.error('Error details:', {

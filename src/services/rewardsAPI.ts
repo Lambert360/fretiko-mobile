@@ -67,6 +67,28 @@ export interface RedemptionResult {
   display_redeemed: string;
 }
 
+export interface RewardsTransaction {
+  id: string;
+  transactionType: 'monthly_credit' | 'purchase_redemption' | 'refund_reversal' | 'admin_adjustment' | 'expired_deduction';
+  availableDelta: number;
+  pendingDelta: number;
+  availableBalanceAfter: number;
+  pendingBalanceAfter: number;
+  calculationPeriod?: string;
+  referenceType?: string;
+  referenceId?: string;
+  description: string;
+  metadata?: any;
+  createdAt: string;
+}
+
+export interface RewardsHistoryResponse {
+  transactions: RewardsTransaction[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 // ============================================
 // REWARDS API SERVICE CLASS
 // ============================================
@@ -119,11 +141,12 @@ class RewardsAPIService {
   /**
    * Get user's rewards balance
    */
-  async getRewardsBalance(token: string): Promise<RewardsBalance> {
+  async getRewardsBalance(): Promise<RewardsBalance> {
     try {
+      const headers = await this.getHeaders();
       const response = await fetch(`${this.baseURL}/balance`, {
         method: 'GET',
-        headers: this.getHeaders(token),
+        headers: headers,
         timeout: API_CONFIG.TIMEOUT,
       });
 
@@ -141,11 +164,12 @@ class RewardsAPIService {
   /**
    * Get detailed rewards summary with current month progress
    */
-  async getRewardsSummary(token: string): Promise<RewardsSummary> {
+  async getRewardsSummary(): Promise<RewardsSummary> {
     try {
+      const headers = await this.getHeaders();
       const response = await fetch(`${this.baseURL}/summary`, {
         method: 'GET',
-        headers: this.getHeaders(token),
+        headers: headers,
         timeout: API_CONFIG.TIMEOUT,
       });
 
@@ -163,11 +187,12 @@ class RewardsAPIService {
   /**
    * Get rewards data formatted for wallet display
    */
-  async getWalletDisplayRewards(token: string): Promise<WalletDisplayRewards> {
+  async getWalletDisplayRewards(): Promise<WalletDisplayRewards> {
     try {
+      const headers = await this.getHeaders();
       const response = await fetch(`${this.baseURL}/wallet-display`, {
         method: 'GET',
-        headers: this.getHeaders(token),
+        headers: headers,
         timeout: API_CONFIG.TIMEOUT,
       });
 
@@ -212,14 +237,14 @@ class RewardsAPIService {
    * Redeem rewards for a purchase
    */
   async redeemRewards(
-    token: string, 
-    rewardsAmount: number, 
+    rewardsAmount: number,
     orderId?: string
   ): Promise<RedemptionResult> {
     try {
+      const headers = await this.getHeaders();
       const response = await fetch(`${this.baseURL}/redeem`, {
         method: 'POST',
-        headers: this.getHeaders(token),
+        headers: headers,
         body: JSON.stringify({
           rewards_amount: rewardsAmount,
           order_id: orderId,
@@ -242,14 +267,14 @@ class RewardsAPIService {
    * Reverse rewards redemption (for cancelled orders)
    */
   async reverseRedemption(
-    token: string, 
-    rewardsAmount: number, 
+    rewardsAmount: number,
     orderId?: string
   ): Promise<{ success: boolean; reversed_amount: number; display_reversed: string }> {
     try {
+      const headers = await this.getHeaders();
       const response = await fetch(`${this.baseURL}/reverse`, {
         method: 'POST',
-        headers: this.getHeaders(token),
+        headers: headers,
         body: JSON.stringify({
           rewards_amount: rewardsAmount,
           order_id: orderId,
@@ -266,6 +291,61 @@ class RewardsAPIService {
       console.error('Error reversing redemption:', error);
       throw error;
     }
+  }
+
+  // ============================================
+  // TRANSACTION HISTORY METHODS
+  // ============================================
+
+  /**
+   * Get rewards transaction history
+   */
+  async getRewardsHistory(params?: {
+    limit?: number;
+    offset?: number;
+    type?: string;
+  }): Promise<RewardsHistoryResponse> {
+    try {
+      const headers = await this.getHeaders();
+      const queryParams = new URLSearchParams();
+      
+      if (params?.limit) queryParams.append('limit', params.limit.toString());
+      if (params?.offset) queryParams.append('offset', params.offset.toString());
+      if (params?.type) queryParams.append('type', params.type);
+
+      const response = await fetch(
+        `${this.baseURL}/history?${queryParams.toString()}`,
+        { 
+          method: 'GET',
+          headers: headers,
+          timeout: API_CONFIG.TIMEOUT,
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch rewards history: ${response.status} ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching rewards history:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get display info for rewards transaction type
+   */
+  getRewardsTransactionTypeDisplay(type: string): { label: string; icon: string; color: string } {
+    const types: Record<string, { label: string; icon: string; color: string }> = {
+      'monthly_credit': { label: 'Monthly Rewards', icon: 'calendar', color: '#27AE60' },
+      'purchase_redemption': { label: 'Redeemed', icon: 'bag', color: '#E74C3C' },
+      'refund_reversal': { label: 'Refund', icon: 'return-up-back', color: '#F39C12' },
+      'admin_adjustment': { label: 'Adjustment', icon: 'construct', color: '#9B59B6' },
+      'expired_deduction': { label: 'Expired', icon: 'time', color: '#95A5A6' }
+    };
+    
+    return types[type] || { label: type, icon: 'help-circle', color: '#95A5A6' };
   }
 
   // ============================================
@@ -339,11 +419,12 @@ class RewardsAPIService {
   /**
    * Calculate rewards for specific period (testing/admin)
    */
-  async calculatePeriodRewards(token: string, period: string): Promise<any> {
+  async calculatePeriodRewards(period: string): Promise<any> {
     try {
+      const headers = await this.getHeaders();
       const response = await fetch(`${this.baseURL}/calculate/${period}`, {
         method: 'GET',
-        headers: this.getHeaders(token),
+        headers: headers,
         timeout: API_CONFIG.TIMEOUT,
       });
 
@@ -361,11 +442,12 @@ class RewardsAPIService {
   /**
    * Credit calculated rewards to balance (testing/admin)
    */
-  async creditPeriodRewards(token: string, period: string): Promise<any> {
+  async creditPeriodRewards(period: string): Promise<any> {
     try {
+      const headers = await this.getHeaders();
       const response = await fetch(`${this.baseURL}/credit/${period}`, {
         method: 'POST',
-        headers: this.getHeaders(token),
+        headers: headers,
         timeout: API_CONFIG.TIMEOUT,
       });
 
