@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { workspaceAPI, WorkspaceOrder } from '../services/workspaceAPI';
+import { disputesAPI } from '../services/disputesAPI';
 
 interface VendorOrderDetailsParams {
   orderId: string;
@@ -62,10 +63,27 @@ const VendorOrderDetailsScreen: React.FC = () => {
   const [showPrepTimeModal, setShowPrepTimeModal] = useState(false);
   const [notes, setNotes] = useState('');
   const [prepTime, setPrepTime] = useState('');
+  const [existingDisputeId, setExistingDisputeId] = useState<string | null>(null);
 
   useEffect(() => {
     loadOrderDetails();
+    checkExistingDispute();
   }, [orderId]);
+
+  const checkExistingDispute = async () => {
+    try {
+      const disputes = await disputesAPI.getMyDisputes();
+      const dispute = disputes.find((d) => d.orderId === orderId);
+      if (dispute) {
+        setExistingDisputeId(dispute.id);
+      } else {
+        setExistingDisputeId(null);
+      }
+    } catch (error) {
+      console.error('Error checking existing dispute:', error);
+      setExistingDisputeId(null);
+    }
+  };
 
   const loadOrderDetails = async (showLoadingIndicator = true) => {
     try {
@@ -476,6 +494,23 @@ const VendorOrderDetailsScreen: React.FC = () => {
                 <Ionicons name="time-outline" size={20} color="#007AFF" />
                 <Text style={styles.prepTimeText}>Update Prep Time</Text>
               </TouchableOpacity>
+              {existingDisputeId ? (
+                <TouchableOpacity
+                  style={styles.disputeButton}
+                  onPress={() => (navigation as any).navigate('DisputeDetails', { disputeId: existingDisputeId })}
+                >
+                  <Ionicons name="document-text" size={20} color="#007AFF" />
+                  <Text style={styles.disputeButtonText}>View Dispute</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.disputeButton, { borderColor: 'rgba(231, 76, 60, 0.3)' }]}
+                  onPress={() => (navigation as any).navigate('CreateDispute', { orderId })}
+                >
+                  <Ionicons name="alert-circle" size={20} color="#E74C3C" />
+                  <Text style={[styles.disputeButtonText, { color: '#E74C3C' }]}>File Dispute</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             <View style={styles.mainActions}>
@@ -843,6 +878,22 @@ const styles = StyleSheet.create({
   },
   prepTimeText: {
     color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  disputeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#222',
+    padding: 12,
+    borderRadius: 8,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  disputeButtonText: {
     fontSize: 16,
     fontWeight: '600',
     marginLeft: 8,

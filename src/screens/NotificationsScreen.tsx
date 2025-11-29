@@ -342,6 +342,18 @@ const NotificationsScreen = () => {
           }
           break;
 
+        case 'dispute':
+          // Navigate to dispute details
+          const disputeId = notification.data?.dispute_id;
+          if (disputeId) {
+            console.log('Navigating to dispute:', disputeId);
+            (navigation as any).navigate('DisputeDetails', { disputeId });
+          } else {
+            // If no dispute ID, navigate to disputes list
+            (navigation as any).navigate('Disputes');
+          }
+          break;
+
         case 'payment':
           // Navigate to wallet or transaction details
           const transactionId = notification.data?.transaction_id;

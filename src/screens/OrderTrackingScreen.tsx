@@ -21,6 +21,7 @@ import { walletAPI } from '../services/walletAPI';
 import { riderLocationAPI } from '../services/riderLocationAPI';
 import { realtimeAPI } from '../services/realtimeAPI';
 import { useAuth } from '../contexts/AuthContext';
+import { disputesAPI } from '../services/disputesAPI';
 
 const { width, height } = Dimensions.get('window');
 
@@ -84,6 +85,7 @@ const OrderTrackingScreen: React.FC = () => {
   const [distance, setDistance] = useState<number>(0);
   const [eta, setETA] = useState<number>(0);
   const [riderAddress, setRiderAddress] = useState<string>('');
+  const [existingDisputeId, setExistingDisputeId] = useState<string | null>(null);
 
   // Real-time updates
   useEffect(() => {
@@ -107,9 +109,26 @@ const OrderTrackingScreen: React.FC = () => {
     };
   }, [order]);
 
+  // Check for existing dispute
+  const checkExistingDispute = async () => {
+    try {
+      const disputes = await disputesAPI.getMyDisputes();
+      const dispute = disputes.find((d) => d.orderId === orderId);
+      if (dispute) {
+        setExistingDisputeId(dispute.id);
+      } else {
+        setExistingDisputeId(null);
+      }
+    } catch (error) {
+      console.error('Error checking existing dispute:', error);
+      setExistingDisputeId(null);
+    }
+  };
+
   // ✅ Initialize tracking once on mount
   useEffect(() => {
     initializeTracking();
+    checkExistingDispute();
   }, [orderId]);
 
   // ✅ Separate effect for WebSocket subscriptions (only depends on orderId)
@@ -904,13 +923,23 @@ const OrderTrackingScreen: React.FC = () => {
                   <Text style={styles.releaseFundsButtonText}>Release Funds</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity 
-                  style={styles.reportIssueButton}
-                  onPress={handleReportIssue}
-                >
-                  <Ionicons name="warning" size={20} color="white" />
-                  <Text style={styles.reportIssueButtonText}>Report Issue</Text>
-                </TouchableOpacity>
+                {existingDisputeId ? (
+                  <TouchableOpacity 
+                    style={styles.viewDisputeButton}
+                    onPress={() => (navigation as any).navigate('DisputeDetails', { disputeId: existingDisputeId })}
+                  >
+                    <Ionicons name="document-text" size={20} color="white" />
+                    <Text style={styles.viewDisputeButtonText}>View Dispute</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity 
+                    style={styles.reportIssueButton}
+                    onPress={() => (navigation as any).navigate('CreateDispute', { orderId })}
+                  >
+                    <Ionicons name="alert-circle" size={20} color="white" />
+                    <Text style={styles.reportIssueButtonText}>File Dispute</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
               <Text style={styles.buyerActionsNote}>
@@ -1663,6 +1692,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   reportIssueButtonText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  viewDisputeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#007AFF',
+    padding: 14,
+    borderRadius: 10,
+    gap: 8,
+  },
+  viewDisputeButtonText: {
     color: 'white',
     fontSize: 15,
     fontWeight: '600',
