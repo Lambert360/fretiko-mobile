@@ -404,9 +404,20 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
           <Ionicons name="arrow-back" size={24} color="#FFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Product Details</Text>
-        <TouchableOpacity style={styles.headerButton} onPress={() => navigation.navigate('Cart')}>
-          <Ionicons name="cart-outline" size={24} color="#FFF" />
-        </TouchableOpacity>
+        <View style={styles.headerRightButtons}>
+          <TouchableOpacity 
+            style={styles.headerButton} 
+            onPress={() => navigation.navigate('CreateContentReport', { 
+              productId: productId,
+              reportCategory: 'product'
+            })}
+          >
+            <Ionicons name="flag-outline" size={24} color="#FFF" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headerButton} onPress={() => navigation.navigate('Cart')}>
+            <Ionicons name="cart-outline" size={24} color="#FFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <Animated.ScrollView
@@ -664,6 +675,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerRightButtons: {
+    flexDirection: 'row',
+    gap: 8,
   },
   headerTitle: {
     color: '#FFF',

@@ -1342,9 +1342,8 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                     style={styles.supportButton}
                     onPress={() => {
                       setShowInfoModal(false);
-                      // TODO: Navigate to support chat
-                      // navigation.navigate('Konnect');
-                      Alert.alert('Contact Support', 'Support chat will be available soon!');
+                      // Navigate to Create Dispute screen for support
+                      navigation.navigate('CreateDispute');
                     }}
                   >
                     <Ionicons name="chatbox-ellipses" size={18} color="#FFF" />

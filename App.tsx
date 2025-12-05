@@ -99,6 +99,9 @@ import DisputesScreen from './src/screens/DisputesScreen';
 import CreateDisputeScreen from './src/screens/CreateDisputeScreen';
 import DisputeDetailsScreen from './src/screens/DisputeDetailsScreen';
 
+// Import content report screens
+import CreateContentReportScreen from './src/screens/CreateContentReportScreen';
+
 // Import shared wishlist screen
 import SharedWishlistScreen from './src/screens/SharedWishlistScreen';
 
@@ -269,6 +272,7 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="Disputes" component={DisputesScreen} />
               <Stack.Screen name="CreateDispute" component={CreateDisputeScreen} />
               <Stack.Screen name="DisputeDetails" component={DisputeDetailsScreen} />
+              <Stack.Screen name="CreateContentReport" component={CreateContentReportScreen} />
               <Stack.Screen name="AuctionDiscovery" component={AuctionDiscoveryScreen} />
               <Stack.Screen name="AuctionCategory" component={AuctionCategoryScreen} />
               <Stack.Screen name="AuctionList" component={AuctionListScreen} />

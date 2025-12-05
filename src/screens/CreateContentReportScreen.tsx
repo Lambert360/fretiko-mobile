@@ -18,42 +18,43 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { disputesAPI, CreateDisputeRequest } from '../services/disputesAPI';
-import { ordersAPI } from '../services/ordersAPI';
+import { contentReportsAPI, CreateContentReportRequest, ReportCategory, ReportType } from '../services/contentReportsAPI';
+import { useAuth } from '../contexts/AuthContext';
 import { fileUploadService } from '../services/fileUploadService';
 
-// Dispute types by category
-const ORDER_DISPUTE_TYPES = [
-  { value: 'item_not_received', label: 'Item Not Received' },
-  { value: 'item_not_as_described', label: 'Item Not As Described' },
-  { value: 'damaged_item', label: 'Damaged Item' },
-  { value: 'wrong_item', label: 'Wrong Item' },
-  { value: 'refund_request', label: 'Refund Request' },
-  { value: 'quality_issue', label: 'Quality Issue' },
-  { value: 'delivery_issue', label: 'Delivery Issue' },
+// Report types by category
+const PRODUCT_REPORT_TYPES: Array<{ value: ReportType; label: string }> = [
+  { value: 'inappropriate_content', label: 'Inappropriate Content' },
+  { value: 'spam', label: 'Spam' },
+  { value: 'fraudulent_listing', label: 'Fraudulent Listing' },
+  { value: 'copyright_violation', label: 'Copyright Violation' },
+  { value: 'misleading_information', label: 'Misleading Information' },
   { value: 'other', label: 'Other' },
-] as const;
+];
 
-const BUG_REPORT_TYPES = [
-  { value: 'app_crash', label: 'App Crash' },
-  { value: 'payment_issue', label: 'Payment Issue' },
-  { value: 'login_issue', label: 'Login Issue' },
-  { value: 'feature_not_working', label: 'Feature Not Working' },
-  { value: 'performance_issue', label: 'Performance Issue' },
+const SERVICE_REPORT_TYPES: Array<{ value: ReportType; label: string }> = [
+  { value: 'inappropriate_content', label: 'Inappropriate Content' },
+  { value: 'spam', label: 'Spam' },
+  { value: 'fraudulent_listing', label: 'Fraudulent Listing' },
+  { value: 'copyright_violation', label: 'Copyright Violation' },
+  { value: 'misleading_information', label: 'Misleading Information' },
   { value: 'other', label: 'Other' },
-] as const;
+];
 
+const CHAT_REPORT_TYPES: Array<{ value: ReportType; label: string }> = [
+  { value: 'harassment', label: 'Harassment' },
+  { value: 'spam_messages', label: 'Spam Messages' },
+  { value: 'inappropriate_language', label: 'Inappropriate Language' },
+  { value: 'threats', label: 'Threats' },
+  { value: 'other', label: 'Other' },
+];
 
-const GENERAL_TYPES = [
-  { value: 'other', label: 'General Support Request' },
-] as const;
-
-const PRIORITY_LEVELS = [
-  { value: 'low', label: 'Low', color: '#27AE60' },
-  { value: 'medium', label: 'Medium', color: '#F39C12' },
-  { value: 'high', label: 'High', color: '#E67E22' },
-  { value: 'urgent', label: 'Urgent', color: '#E74C3C' },
-] as const;
+const USER_REPORT_TYPES: Array<{ value: ReportType; label: string }> = [
+  { value: 'suspicious_activity', label: 'Suspicious Activity' },
+  { value: 'fake_account', label: 'Fake Account' },
+  { value: 'scam_attempt', label: 'Scam Attempt' },
+  { value: 'other', label: 'Other' },
+];
 
 interface EvidenceItem {
   uri: string;
@@ -63,87 +64,46 @@ interface EvidenceItem {
   uploading?: boolean;
 }
 
-const CreateDisputeScreen = () => {
+const CreateContentReportScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const params = (route.params as { 
-    orderId?: string;
-    disputeCategory?: 'order_dispute' | 'bug_report' | 'general';
+    productId?: string;
+    serviceId?: string;
+    chatId?: string;
+    reportedUserId?: string;
+    reportCategory?: ReportCategory;
   }) || {};
 
-  // Determine dispute category from params or default to general
-  const disputeCategory = params.disputeCategory || 
-    (params.orderId ? 'order_dispute' : 'general');
+  // Determine report category from params
+  const reportCategory: ReportCategory = params.reportCategory || 
+    (params.productId ? 'product' : 
+     params.serviceId ? 'service' :
+     params.chatId ? 'chat' :
+     params.reportedUserId ? 'user' :
+     'product');
 
-  // Get dispute types based on category
-  const getDisputeTypes = () => {
-    switch (disputeCategory) {
-      case 'order_dispute': return ORDER_DISPUTE_TYPES;
-      case 'bug_report': return BUG_REPORT_TYPES;
-      default: return GENERAL_TYPES;
+  // Get report types based on category
+  const getReportTypes = () => {
+    switch (reportCategory) {
+      case 'product': return PRODUCT_REPORT_TYPES;
+      case 'service': return SERVICE_REPORT_TYPES;
+      case 'chat': return CHAT_REPORT_TYPES;
+      case 'user': return USER_REPORT_TYPES;
+      default: return PRODUCT_REPORT_TYPES;
     }
   };
 
-  const DISPUTE_TYPES = getDisputeTypes();
+  const REPORT_TYPES = getReportTypes();
 
-  const [orderNumber, setOrderNumber] = useState<string>('');
-  const [resolvedOrderId, setResolvedOrderId] = useState<string | null>(params.orderId || null);
-  const [isSearchingOrder, setIsSearchingOrder] = useState(false);
-  const [disputeType, setDisputeType] = useState<string>('');
-  const [priority, setPriority] = useState<'urgent' | 'high' | 'medium' | 'low'>('medium');
+  const [reportType, setReportType] = useState<ReportType | ''>('');
   const [reason, setReason] = useState('');
   const [description, setDescription] = useState('');
   const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showTypePicker, setShowTypePicker] = useState(false);
-  const [showPriorityPicker, setShowPriorityPicker] = useState(false);
-
-  React.useEffect(() => {
-    if (params.orderId) {
-      loadOrderInfo();
-    }
-  }, [params.orderId]);
-
-  const loadOrderInfo = async () => {
-    try {
-      const order = await ordersAPI.getOrderDetails(params.orderId!);
-      setOrderNumber(order.orderNumber);
-      setResolvedOrderId(order.id);
-    } catch (error) {
-      console.error('Error loading order:', error);
-    }
-  };
-
-  const searchOrderByNumber = async () => {
-    if (!orderNumber.trim()) {
-      Alert.alert('Error', 'Please enter an order number');
-      return;
-    }
-
-    try {
-      setIsSearchingOrder(true);
-      const orders = await ordersAPI.searchOrders(orderNumber.trim());
-      
-      if (orders.length === 0) {
-        Alert.alert('Not Found', `No order found with number: ${orderNumber}`);
-        setResolvedOrderId(null);
-        return;
-      }
-
-      // If multiple orders found, use the first one (most recent)
-      const foundOrder = orders[0];
-      setResolvedOrderId(foundOrder.id);
-      setOrderNumber(foundOrder.orderNumber);
-      Alert.alert('Success', `Order found: ${foundOrder.orderNumber}`);
-    } catch (error: any) {
-      console.error('Error searching order:', error);
-      Alert.alert('Error', error.message || 'Failed to search for order');
-      setResolvedOrderId(null);
-    } finally {
-      setIsSearchingOrder(false);
-    }
-  };
 
   const pickImage = async () => {
     try {
@@ -200,22 +160,36 @@ const CreateDisputeScreen = () => {
   };
 
   const handleSubmit = async () => {
-    // Validation based on category
-    if (disputeCategory === 'order_dispute') {
-      const finalOrderId = params.orderId || resolvedOrderId;
-      if (!finalOrderId) {
-        Alert.alert('Error', 'Please select or search for an order');
-        return;
-      }
+    // Validation
+    if (reportCategory === 'product' && !params.productId) {
+      Alert.alert('Error', 'Product reference is missing');
+      return;
+    }
+    if (reportCategory === 'service' && !params.serviceId) {
+      Alert.alert('Error', 'Service reference is missing');
+      return;
+    }
+    if (reportCategory === 'chat' && !params.chatId) {
+      Alert.alert('Error', 'Chat reference is missing');
+      return;
+    }
+    if (reportCategory === 'user' && !params.reportedUserId) {
+      Alert.alert('Error', 'User reference is missing');
+      return;
     }
 
-    if (!disputeType) {
-      Alert.alert('Error', 'Please select a dispute type');
+    if (!reportType) {
+      Alert.alert('Error', 'Please select a report type');
       return;
     }
 
     if (!reason.trim()) {
-      Alert.alert('Error', 'Please provide a reason for the dispute');
+      Alert.alert('Error', 'Please provide a reason for the report');
+      return;
+    }
+
+    if (!user?.token) {
+      Alert.alert('Error', 'You must be logged in to submit a report');
       return;
     }
 
@@ -268,44 +242,51 @@ const CreateDisputeScreen = () => {
         }
       }
 
-      const request: CreateDisputeRequest = {
-        disputeCategory: disputeCategory,
-        disputeType: disputeType as any,
+      const request: CreateContentReportRequest = {
+        reportCategory: reportCategory,
+        reportType: reportType as ReportType,
         reason: reason.trim(),
         description: description.trim() || undefined,
-        priority: priority,
         evidence: uploadedEvidence.length > 0 ? uploadedEvidence : undefined,
-        // Add optional fields based on category
-        ...(disputeCategory === 'order_dispute' && { orderId: params.orderId || resolvedOrderId || undefined }),
+        productId: params.productId,
+        serviceId: params.serviceId,
+        chatId: params.chatId,
+        reportedUserId: params.reportedUserId,
       };
 
-      const dispute = await disputesAPI.createDispute(request);
+      const report = await contentReportsAPI.createContentReport(request, user.token);
 
       Alert.alert(
         'Success',
-        'Dispute created successfully',
+        'Content report submitted successfully. Our moderation team will review it.',
         [
           {
             text: 'OK',
             onPress: () => {
               navigation.goBack();
-              // Navigate to dispute details
-              setTimeout(() => {
-                (navigation as any).navigate('DisputeDetails', { disputeId: dispute.id });
-              }, 100);
             },
           },
         ]
       );
     } catch (error: any) {
-      console.error('Error creating dispute:', error);
-      Alert.alert('Error', error.message || 'Failed to create dispute');
+      console.error('Error creating content report:', error);
+      Alert.alert('Error', error.message || 'Failed to submit report');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const selectedTypeLabel = DISPUTE_TYPES.find((t) => t.value === disputeType)?.label || 'Select Dispute Type';
+  const selectedTypeLabel = REPORT_TYPES.find((t) => t.value === reportType)?.label || 'Select Report Type';
+
+  const getCategoryLabel = () => {
+    switch (reportCategory) {
+      case 'product': return 'Report Product';
+      case 'service': return 'Report Service';
+      case 'chat': return 'Report Chat';
+      case 'user': return 'Report User';
+      default: return 'Report Content';
+    }
+  };
 
   return (
     <SafeAreaView style={[styles.container, { paddingTop: insets.top }]}>
@@ -320,11 +301,7 @@ const CreateDisputeScreen = () => {
           >
             <Ionicons name="arrow-back" size={24} color="#000" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            {disputeCategory === 'bug_report' ? 'Report Bug' :
-             disputeCategory === 'general' ? 'Contact Support' :
-             'File Dispute'}
-          </Text>
+          <Text style={styles.headerTitle}>{getCategoryLabel()}</Text>
           <View style={styles.placeholder} />
         </View>
 
@@ -334,91 +311,27 @@ const CreateDisputeScreen = () => {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.form}>
-            {/* Category-specific fields */}
-            {disputeCategory === 'order_dispute' && (
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Order *</Text>
-                {params.orderId || resolvedOrderId ? (
-                <View style={styles.orderDisplay}>
-                  <Ionicons name="receipt-outline" size={20} color="#666" />
-                  <Text style={styles.orderText}>Order #{orderNumber || 'Loading...'}</Text>
-                  {!params.orderId && (
-                    <TouchableOpacity
-                      onPress={() => {
-                        setResolvedOrderId(null);
-                        setOrderNumber('');
-                      }}
-                      style={styles.clearButton}
-                    >
-                      <Ionicons name="close-circle" size={20} color="#E74C3C" />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              ) : (
-                <View>
-                  <View style={styles.searchContainer}>
-                    <TextInput
-                      style={[styles.input, styles.searchInput]}
-                      value={orderNumber}
-                      onChangeText={setOrderNumber}
-                      placeholder="Enter order number (e.g., ORD-2025-0123)"
-                      placeholderTextColor="#999"
-                      autoCapitalize="none"
-                    />
-                    <TouchableOpacity
-                      style={[styles.searchButton, isSearchingOrder && styles.searchButtonDisabled]}
-                      onPress={searchOrderByNumber}
-                      disabled={isSearchingOrder || !orderNumber.trim()}
-                    >
-                      {isSearchingOrder ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <Ionicons name="search" size={20} color="#FFFFFF" />
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                  {isSearchingOrder && (
-                    <Text style={styles.searchingText}>Searching for order...</Text>
-                  )}
-                </View>
-              )}
-              </View>
-            )}
-
-
-            {disputeCategory === 'bug_report' && (
-              <View style={styles.inputGroup}>
-                <View style={styles.infoCard}>
-                  <Ionicons name="bug" size={20} color="#E74C3C" />
-                  <Text style={styles.infoText}>
-                    Help us improve by reporting bugs and issues
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            {disputeCategory === 'general' && (
-              <View style={styles.inputGroup}>
-                <View style={styles.infoCard}>
-                  <Ionicons name="help-circle" size={20} color="#F39C12" />
-                  <Text style={styles.infoText}>
-                    General support request
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            {/* Dispute Type */}
+            {/* Category info */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                {disputeCategory === 'bug_report' ? 'Issue Type *' :
-                 'Dispute Type *'}
-              </Text>
+              <View style={styles.infoCard}>
+                <Ionicons name="information-circle" size={20} color="#007AFF" />
+                <Text style={styles.infoText}>
+                  {reportCategory === 'product' && 'Reporting a product listing'}
+                  {reportCategory === 'service' && 'Reporting a service listing'}
+                  {reportCategory === 'chat' && 'Reporting inappropriate chat behavior'}
+                  {reportCategory === 'user' && 'Reporting a user account'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Report Type */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Report Type *</Text>
               <TouchableOpacity
                 style={styles.pickerButton}
                 onPress={() => setShowTypePicker(!showTypePicker)}
               >
-                <Text style={[styles.pickerText, !disputeType && styles.pickerPlaceholder]}>
+                <Text style={[styles.pickerText, !reportType && styles.pickerPlaceholder]}>
                   {selectedTypeLabel}
                 </Text>
                 <Ionicons
@@ -430,27 +343,27 @@ const CreateDisputeScreen = () => {
 
               {showTypePicker && (
                 <View style={styles.pickerOptions}>
-                  {DISPUTE_TYPES.map((type) => (
+                  {REPORT_TYPES.map((type) => (
                     <TouchableOpacity
                       key={type.value}
                       style={[
                         styles.pickerOption,
-                        disputeType === type.value && styles.pickerOptionSelected,
+                        reportType === type.value && styles.pickerOptionSelected,
                       ]}
                       onPress={() => {
-                        setDisputeType(type.value);
+                        setReportType(type.value);
                         setShowTypePicker(false);
                       }}
                     >
                       <Text
                         style={[
                           styles.pickerOptionText,
-                          disputeType === type.value && styles.pickerOptionTextSelected,
+                          reportType === type.value && styles.pickerOptionTextSelected,
                         ]}
                       >
                         {type.label}
                       </Text>
-                      {disputeType === type.value && (
+                      {reportType === type.value && (
                         <Ionicons name="checkmark" size={20} color="#007AFF" />
                       )}
                     </TouchableOpacity>
@@ -466,65 +379,11 @@ const CreateDisputeScreen = () => {
                 style={styles.input}
                 value={reason}
                 onChangeText={setReason}
-                placeholder="Briefly describe the issue"
+                placeholder="Briefly describe why you're reporting this content"
                 placeholderTextColor="#999"
                 multiline
                 numberOfLines={3}
               />
-            </View>
-
-            {/* Priority */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Priority *</Text>
-              <TouchableOpacity
-                style={styles.pickerButton}
-                onPress={() => setShowPriorityPicker(!showPriorityPicker)}
-              >
-                <View style={styles.priorityContent}>
-                  <View style={[styles.priorityDot, { backgroundColor: PRIORITY_LEVELS.find(p => p.value === priority)?.color || '#999' }]} />
-                  <Text style={styles.pickerText}>
-                    {PRIORITY_LEVELS.find(p => p.value === priority)?.label || 'Select Priority'}
-                  </Text>
-                </View>
-                <Ionicons
-                  name={showPriorityPicker ? 'chevron-up' : 'chevron-down'}
-                  size={20}
-                  color="#666"
-                />
-              </TouchableOpacity>
-
-              {showPriorityPicker && (
-                <View style={styles.pickerOptions}>
-                  {PRIORITY_LEVELS.map((level) => (
-                    <TouchableOpacity
-                      key={level.value}
-                      style={[
-                        styles.pickerOption,
-                        priority === level.value && styles.pickerOptionSelected,
-                      ]}
-                      onPress={() => {
-                        setPriority(level.value);
-                        setShowPriorityPicker(false);
-                      }}
-                    >
-                      <View style={styles.priorityContent}>
-                        <View style={[styles.priorityDot, { backgroundColor: level.color }]} />
-                        <Text
-                          style={[
-                            styles.pickerOptionText,
-                            priority === level.value && styles.pickerOptionTextSelected,
-                          ]}
-                        >
-                          {level.label}
-                        </Text>
-                      </View>
-                      {priority === level.value && (
-                        <Ionicons name="checkmark" size={20} color="#007AFF" />
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
             </View>
 
             {/* Description */}
@@ -534,7 +393,7 @@ const CreateDisputeScreen = () => {
                 style={[styles.input, styles.textArea]}
                 value={description}
                 onChangeText={setDescription}
-                placeholder="Provide more details about the dispute..."
+                placeholder="Provide more details about the report..."
                 placeholderTextColor="#999"
                 multiline
                 numberOfLines={5}
@@ -545,7 +404,7 @@ const CreateDisputeScreen = () => {
             {/* Evidence Upload */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Evidence (Optional)</Text>
-              <Text style={styles.subLabel}>Add photos or documents to support your dispute</Text>
+              <Text style={styles.subLabel}>Add photos or documents to support your report</Text>
               
               <View style={styles.evidenceButtons}>
                 <TouchableOpacity
@@ -592,8 +451,7 @@ const CreateDisputeScreen = () => {
             </View>
 
             <Text style={styles.hint}>
-              * Required fields. Your {disputeCategory === 'bug_report' ? 'bug report' :
-                                     'request'} will be reviewed by our customer care team.
+              * Required fields. Your report will be reviewed by our moderation team.
             </Text>
           </View>
         </ScrollView>
@@ -607,11 +465,7 @@ const CreateDisputeScreen = () => {
             {isSubmitting ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.submitButtonText}>
-                {disputeCategory === 'bug_report' ? 'Submit Bug Report' :
-                 disputeCategory === 'general' ? 'Submit Request' :
-                 'Submit Dispute'}
-              </Text>
+              <Text style={styles.submitButtonText}>Submit Report</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -682,20 +536,6 @@ const styles = StyleSheet.create({
     height: 120,
     textAlignVertical: 'top',
   },
-  orderDisplay: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9F9F9',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  orderText: {
-    fontSize: 16,
-    color: '#333',
-    marginLeft: 8,
-  },
   pickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -765,44 +605,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  searchInput: {
-    flex: 1,
-  },
-  searchButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-    padding: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    minWidth: 50,
-  },
-  searchButtonDisabled: {
-    opacity: 0.6,
-  },
-  searchingText: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  clearButton: {
-    marginLeft: 8,
-    padding: 4,
-  },
-  priorityContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  priorityDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
   },
   subLabel: {
     fontSize: 12,
@@ -889,5 +691,5 @@ const styles = StyleSheet.create({
   },
 });
 
-export default CreateDisputeScreen;
+export default CreateContentReportScreen;
 

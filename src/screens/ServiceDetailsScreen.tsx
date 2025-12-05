@@ -198,9 +198,20 @@ const ServiceDetailsScreen = () => {
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Service Details</Text>
-        <TouchableOpacity style={styles.headerButton} onPress={handleShare}>
-          <Ionicons name="share-outline" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
+        <View style={styles.headerRightButtons}>
+          <TouchableOpacity 
+            style={styles.headerButton} 
+            onPress={() => navigation.navigate('CreateContentReport', { 
+              serviceId: serviceId,
+              reportCategory: 'service'
+            })}
+          >
+            <Ionicons name="flag-outline" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headerButton} onPress={handleShare}>
+            <Ionicons name="share-outline" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
@@ -353,6 +364,10 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 100,
+  },
+  headerRightButtons: {
+    flexDirection: 'row',
+    gap: 8,
   },
   headerButton: {
     width: 40,

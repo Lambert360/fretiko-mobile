@@ -3312,7 +3312,7 @@ const IndividualChatScreen = () => {
           <TouchableOpacity
             style={styles.headerAction}
             onPress={() => {
-              const options = ['View Chat Info', 'Clear Chat', 'Block User'];
+              const options = ['View Chat Info', 'Clear Chat', 'Block User', 'Report Chat'];
 
               // Add Create Invoice option for sellers/riders
               if ((userProfile?.isSeller || userProfile?.isRider) && !isAI) {
@@ -3325,8 +3325,16 @@ const IndividualChatScreen = () => {
                 ...options.map((option, index) => ({
                   text: option,
                   onPress: () => {
-                    if (option === 'Create Invoice') {
+                    if (option === 'Report Chat') {
+                      navigation.navigate('CreateContentReport', {
+                        chatId: chatId,
+                        reportCategory: 'chat'
+                      });
+                    } else if (option === 'Create Invoice') {
                       handleCreateInvoice();
+                    } else if (option === 'Block User') {
+                      // TODO: Implement block user
+                      Alert.alert('Block User', 'Block user feature coming soon');
                     } else if (option !== 'Cancel') {
                       Alert.alert(option, `${option} feature coming soon`);
                     }

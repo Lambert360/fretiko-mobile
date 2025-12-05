@@ -213,6 +213,16 @@ class RealtimeAPI {
           console.log('🔒 Escrow Balance:', data.escrowBalance);
           this.handleRealtimeMessage({ type: 'wallet_balance_update', ...data });
         });
+        this.chatSocket.on('dispute_message', (data) => {
+          console.log('⚖️ RAW dispute_message EVENT RECEIVED:', data);
+          console.log('🔍 disputeId:', data.disputeId);
+          console.log('🔍 message:', data.message);
+          this.handleRealtimeMessage({ type: 'dispute_message', ...data });
+        });
+        this.chatSocket.on('dispute_update', (data) => {
+          console.log('⚖️ RAW dispute_update EVENT RECEIVED:', data);
+          this.handleRealtimeMessage({ type: 'dispute_update', ...data });
+        });
         this.chatSocket.on('call_signal', (data) => {
           console.log('📞 RAW call_signal RECEIVED:', data);
           // Directly notify call_signal listeners (don't go through handleRealtimeMessage)
@@ -416,6 +426,13 @@ class RealtimeAPI {
       case 'call_event':
         console.log('🔔 PROCESSING call_event in handleRealtimeMessage:', data);
         this.notifyListeners('call_event', data);
+        break;
+      case 'dispute_message':
+        console.log('🔔 PROCESSING dispute_message in handleRealtimeMessage:', data);
+        this.notifyListeners('dispute_message', data);
+        break;
+      case 'dispute_update':
+        this.notifyListeners('dispute_update', data);
         break;
       default:
         console.log('Unknown message type:', type);
@@ -853,6 +870,49 @@ class RealtimeAPI {
   resumeReconnection() {
     console.log('▶️ Resuming real-time WebSocket reconnections');
     this.pauseReconnections = false;
+  }
+
+  // === DISPUTE-SPECIFIC METHODS ===
+
+  // Join a dispute room for real-time updates
+  joinDispute(disputeId: string) {
+    // Check if already joined to prevent duplicates
+    const roomKey = `dispute_${disputeId}`;
+    if (this.joinedRooms.has(roomKey)) {
+      console.log(`⚖️ Already joined dispute ${disputeId}, skipping duplicate join`);
+      return;
+    }
+
+    if (this.chatSocket && this.chatSocket.connected) {
+      console.log(`⚖️ Joining dispute: ${disputeId}`);
+      this.chatSocket.emit('join_dispute', {
+        disputeId
+      }, (response: any) => {
+        if (response?.error) {
+          console.error(`❌ Failed to join dispute ${disputeId}:`, response.error);
+        } else {
+          console.log(`✅ Successfully joined dispute: ${disputeId}`);
+          this.joinedRooms.add(roomKey);
+        }
+      });
+    } else {
+      console.warn(`⚖️ Chat socket not connected - cannot join dispute ${disputeId}`);
+    }
+  }
+
+  // Leave a dispute room
+  leaveDispute(disputeId: string) {
+    const roomKey = `dispute_${disputeId}`;
+    if (this.chatSocket && this.chatSocket.connected) {
+      console.log(`⚖️ Leaving dispute: ${disputeId}`);
+      this.chatSocket.emit('leave_dispute', {
+        disputeId
+      });
+      this.joinedRooms.delete(roomKey);
+    } else {
+      // Still remove from tracker even if disconnected
+      this.joinedRooms.delete(roomKey);
+    }
   }
 
 }

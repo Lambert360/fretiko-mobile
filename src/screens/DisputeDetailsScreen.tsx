@@ -1,4 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -13,11 +15,17 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Modal,
+  Image,
+  Linking,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { disputesAPI, DisputeDetail, DisputeMessage } from '../services/disputesAPI';
 import { useAuth } from '../contexts/AuthContext';
+import { fileUploadService } from '../services/fileUploadService';
+import { realtimeAPI } from '../services/realtimeAPI';
 
 const DisputeDetailsScreen = () => {
   const navigation = useNavigation();
@@ -31,11 +39,80 @@ const DisputeDetailsScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [viewingAttachment, setViewingAttachment] = useState<{ type: string; url: string } | null>(null);
+  const [messageAttachments, setMessageAttachments] = useState<Array<{ uri: string; type: string; name: string; uploadedUrl?: string }>>([]);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
 
   useFocusEffect(
     React.useCallback(() => {
       loadDispute();
+      
+      // Join dispute room for real-time updates
+      if (disputeId) {
+        realtimeAPI.joinDispute(disputeId);
+      }
+
+      // Subscribe to dispute message events
+      const unsubscribe = realtimeAPI.subscribe('dispute_message', (data: any) => {
+        if (data.disputeId === disputeId && data.message) {
+          console.log('⚖️ Real-time dispute message received:', data.message);
+          
+          // Add new message to dispute messages
+          setDispute(prev => {
+            if (!prev) return prev;
+            
+            // Check if message already exists (prevent duplicates)
+            const messageExists = prev.messages.some(msg => msg.id === data.message.id);
+            if (messageExists) {
+              return prev;
+            }
+
+            // Transform backend message to frontend format
+            const newMessage: DisputeMessage = {
+              id: data.message.id,
+              message: data.message.message,
+              senderId: data.message.senderId,
+              isAdminMessage: false, // Will be determined by sender role
+              attachments: data.message.attachments || [],
+              createdAt: data.message.createdAt,
+            };
+
+            return {
+              ...prev,
+              messages: [...prev.messages, newMessage],
+            };
+          });
+
+          // Scroll to bottom after new message
+          setTimeout(() => {
+            scrollViewRef.current?.scrollToEnd({ animated: true });
+          }, 100);
+        }
+      });
+
+      // Subscribe to dispute update events (status changes, etc.)
+      const unsubscribeUpdate = realtimeAPI.subscribe('dispute_update', (data: any) => {
+        if (data.disputeId === disputeId && data.update) {
+          console.log('⚖️ Real-time dispute update received:', data.update);
+          setDispute(prev => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              ...data.update,
+            };
+          });
+        }
+      });
+
+      // Cleanup: Leave dispute room and unsubscribe
+      return () => {
+        if (disputeId) {
+          realtimeAPI.leaveDispute(disputeId);
+        }
+        unsubscribe();
+        unsubscribeUpdate();
+      };
     }, [disputeId])
   );
 
@@ -62,13 +139,110 @@ const DisputeDetailsScreen = () => {
     await loadDispute();
   };
 
+  const pickImageForMessage = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Required', 'We need camera roll permissions to add images.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets) {
+        const newAttachments = result.assets.map(asset => ({
+          uri: asset.uri,
+          type: 'image',
+          name: asset.fileName || `image_${Date.now()}.jpg`,
+        }));
+        setMessageAttachments(prev => [...prev, ...newAttachments].slice(0, 5)); // Max 5 attachments
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert('Error', 'Failed to pick image. Please try again.');
+    }
+  };
+
+  const pickDocumentForMessage = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        copyToCacheDirectory: true,
+        multiple: true,
+      });
+
+      if (!result.canceled && result.assets) {
+        const newAttachments = result.assets.map(asset => ({
+          uri: asset.uri,
+          type: 'document',
+          name: asset.name || `document_${Date.now()}.pdf`,
+        }));
+        setMessageAttachments(prev => [...prev, ...newAttachments].slice(0, 5)); // Max 5 attachments
+      }
+    } catch (error) {
+      console.error('Error picking document:', error);
+      Alert.alert('Error', 'Failed to pick document. Please try again.');
+    }
+  };
+
+  const removeMessageAttachment = (index: number) => {
+    setMessageAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleSendMessage = async () => {
-    if (!messageText.trim() || !dispute) return;
+    if ((!messageText.trim() && messageAttachments.length === 0) || !dispute) {
+      Alert.alert('Error', 'Please enter a message or add an attachment');
+      return;
+    }
 
     try {
       setIsSending(true);
-      await disputesAPI.sendMessage(dispute.id, messageText.trim());
+      setUploadingAttachments(true);
+
+      // Upload attachments if any
+      let uploadedAttachments: Array<{ type: string; url: string }> = [];
+      
+      if (messageAttachments.length > 0) {
+        for (let i = 0; i < messageAttachments.length; i++) {
+          const item = messageAttachments[i];
+          if (item.uploadedUrl) {
+            uploadedAttachments.push({
+              type: item.type,
+              url: item.uploadedUrl,
+            });
+            continue;
+          }
+
+          try {
+            const mimeType = item.type === 'image' ? 'image/jpeg' : 'application/pdf';
+            const uploadResult = await fileUploadService.uploadFile(item.uri, item.name, mimeType);
+
+            if (uploadResult.success) {
+              uploadedAttachments.push({
+                type: item.type,
+                url: uploadResult.publicUrl,
+              });
+            } else {
+              console.warn(`Failed to upload attachment ${item.name}:`, uploadResult.error);
+            }
+          } catch (uploadError) {
+            console.error(`Error uploading attachment ${item.name}:`, uploadError);
+          }
+        }
+      }
+
+      await disputesAPI.sendMessage(
+        dispute.id,
+        messageText.trim() || 'Attachment',
+        uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
+      );
+      
       setMessageText('');
+      setMessageAttachments([]);
       
       // Reload dispute to get updated messages
       await loadDispute();
@@ -82,6 +256,7 @@ const DisputeDetailsScreen = () => {
       Alert.alert('Error', error.message || 'Failed to send message');
     } finally {
       setIsSending(false);
+      setUploadingAttachments(false);
     }
   };
 
@@ -156,8 +331,14 @@ const DisputeDetailsScreen = () => {
                   key={idx}
                   style={styles.attachmentItem}
                   onPress={() => {
-                    // TODO: Open attachment viewer
-                    Alert.alert('Attachment', `Open ${att.type}: ${att.url}`);
+                    if (att.type === 'image') {
+                      setViewingAttachment(att);
+                    } else {
+                      // Open document in browser or external app
+                      Linking.openURL(att.url).catch(err => {
+                        Alert.alert('Error', 'Could not open document. Please try again.');
+                      });
+                    }
                   }}
                 >
                   <Ionicons
@@ -169,7 +350,7 @@ const DisputeDetailsScreen = () => {
                     styles.attachmentText,
                     isStaff || isCurrentUser ? styles.currentUserMessageText : styles.otherUserMessageText,
                   ]}>
-                    {att.type === 'image' ? 'Image' : 'Document'}
+                    {att.type === 'image' ? 'View Image' : 'Open Document'}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -287,6 +468,49 @@ const DisputeDetailsScreen = () => {
         {/* Message Input */}
         {dispute.status !== 'resolved' && dispute.status !== 'cancelled' && (
           <View style={styles.inputContainer}>
+            {/* Attachment Preview */}
+            {messageAttachments.length > 0 && (
+              <ScrollView horizontal style={styles.attachmentPreview} showsHorizontalScrollIndicator={false}>
+                {messageAttachments.map((att, index) => (
+                  <View key={index} style={styles.attachmentPreviewItem}>
+                    {att.type === 'image' ? (
+                      <Image source={{ uri: att.uri }} style={styles.attachmentPreviewImage} />
+                    ) : (
+                      <View style={styles.attachmentPreviewDocument}>
+                        <Ionicons name="document" size={24} color="#666" />
+                        <Text style={styles.attachmentPreviewName} numberOfLines={1}>
+                          {att.name}
+                        </Text>
+                      </View>
+                    )}
+                    <TouchableOpacity
+                      style={styles.removeAttachmentButton}
+                      onPress={() => removeMessageAttachment(index)}
+                    >
+                      <Ionicons name="close-circle" size={18} color="#E74C3C" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+
+            <View style={styles.inputRow}>
+              <View style={styles.attachmentButtons}>
+                <TouchableOpacity
+                  style={styles.attachmentButton}
+                  onPress={pickImageForMessage}
+                  disabled={isSending || uploadingAttachments}
+                >
+                  <Ionicons name="image-outline" size={20} color="#007AFF" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.attachmentButton}
+                  onPress={pickDocumentForMessage}
+                  disabled={isSending || uploadingAttachments}
+                >
+                  <Ionicons name="document-text-outline" size={20} color="#007AFF" />
+                </TouchableOpacity>
+              </View>
             <TextInput
               style={styles.input}
               value={messageText}
@@ -295,21 +519,84 @@ const DisputeDetailsScreen = () => {
               placeholderTextColor="#999"
               multiline
               maxLength={1000}
+                editable={!isSending && !uploadingAttachments}
             />
             <TouchableOpacity
-              style={[styles.sendButton, (!messageText.trim() || isSending) && styles.sendButtonDisabled]}
+                style={[
+                  styles.sendButton,
+                  ((!messageText.trim() && messageAttachments.length === 0) || isSending || uploadingAttachments) && styles.sendButtonDisabled
+                ]}
               onPress={handleSendMessage}
-              disabled={!messageText.trim() || isSending}
+                disabled={(!messageText.trim() && messageAttachments.length === 0) || isSending || uploadingAttachments}
             >
-              {isSending ? (
+                {isSending || uploadingAttachments ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
                 <Ionicons name="send" size={20} color="#FFFFFF" />
               )}
             </TouchableOpacity>
+            </View>
+            {uploadingAttachments && (
+              <Text style={styles.uploadingText}>Uploading attachments...</Text>
+            )}
           </View>
         )}
       </KeyboardAvoidingView>
+
+      {/* Attachment Viewer Modal */}
+      <Modal
+        visible={!!viewingAttachment}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setViewingAttachment(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Attachment</Text>
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => setViewingAttachment(null)}
+              >
+                <Ionicons name="close" size={24} color="#000" />
+              </TouchableOpacity>
+            </View>
+            {viewingAttachment && (
+              <View style={styles.attachmentViewer}>
+                {viewingAttachment.type === 'image' ? (
+                  <ScrollView
+                    maximumZoomScale={3}
+                    minimumZoomScale={1}
+                    contentContainerStyle={styles.imageViewer}
+                  >
+                    <Image
+                      source={{ uri: viewingAttachment.url }}
+                      style={styles.fullImage}
+                      resizeMode="contain"
+                    />
+                  </ScrollView>
+                ) : (
+                  <View style={styles.documentViewer}>
+                    <Ionicons name="document" size={64} color="#666" />
+                    <Text style={styles.documentText}>Document Preview</Text>
+                    <TouchableOpacity
+                      style={styles.openDocumentButton}
+                      onPress={() => {
+                        Linking.openURL(viewingAttachment.url).catch(err => {
+                          Alert.alert('Error', 'Could not open document.');
+                        });
+                        setViewingAttachment(null);
+                      }}
+                    >
+                      <Text style={styles.openDocumentText}>Open in Browser</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -472,12 +759,65 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
     padding: 12,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E0E0E0',
+  },
+  attachmentPreview: {
+    marginBottom: 8,
+    maxHeight: 80,
+  },
+  attachmentPreviewItem: {
+    position: 'relative',
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 8,
+    overflow: 'hidden',
+  },
+  attachmentPreviewImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  attachmentPreviewDocument: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#F9F9F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 8,
+  },
+  attachmentPreviewName: {
+    fontSize: 8,
+    color: '#666',
+    marginTop: 2,
+    textAlign: 'center',
+    paddingHorizontal: 2,
+  },
+  removeAttachmentButton: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  attachmentButtons: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  attachmentButton: {
+    padding: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   input: {
     flex: 1,
@@ -488,7 +828,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#000',
     maxHeight: 100,
-    marginRight: 8,
+  },
+  uploadingText: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   sendButton: {
     width: 40,
@@ -509,6 +854,72 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: '#666',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: Dimensions.get('window').width * 0.95,
+    height: Dimensions.get('window').height * 0.85,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000',
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  attachmentViewer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullImage: {
+    width: Dimensions.get('window').width * 0.95,
+    height: Dimensions.get('window').height * 0.7,
+  },
+  documentViewer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  documentText: {
+    fontSize: 16,
+    color: '#666',
+    marginTop: 16,
+    marginBottom: 24,
+  },
+  openDocumentButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+  },
+  openDocumentText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

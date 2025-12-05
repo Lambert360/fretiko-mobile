@@ -2,11 +2,12 @@ import { api } from './api';
 
 export interface Dispute {
   id: string;
-  orderId: string;
-  escrowId: string;
+  disputeCategory: 'order_dispute' | 'bug_report' | 'general';
+  orderId?: string;
+  escrowId?: string;
   disputantId: string;
-  respondentId: string;
-  disputeType: 'item_not_received' | 'item_not_as_described' | 'damaged_item' | 'wrong_item' | 'refund_request' | 'quality_issue' | 'delivery_issue' | 'other';
+  respondentId?: string;
+  disputeType: string;
   status: 'open' | 'under_review' | 'resolved' | 'cancelled';
   reason: string;
   description?: string;
@@ -42,8 +43,21 @@ export interface DisputeDetail extends Dispute {
 }
 
 export interface CreateDisputeRequest {
-  orderId: string;
-  disputeType: 'item_not_received' | 'item_not_as_described' | 'damaged_item' | 'wrong_item' | 'refund_request' | 'quality_issue' | 'delivery_issue' | 'other';
+  // Dispute category (customer care only)
+  disputeCategory: 'order_dispute' | 'bug_report' | 'general';
+  
+  // Order dispute fields (optional)
+  orderId?: string;
+  
+  // Dispute type (varies by category)
+  disputeType: 
+    // Order dispute types
+    | 'item_not_received' | 'item_not_as_described' | 'damaged_item' | 'wrong_item' | 'refund_request' | 'quality_issue' | 'delivery_issue'
+    // Bug report types
+    | 'app_crash' | 'payment_issue' | 'login_issue' | 'feature_not_working' | 'performance_issue'
+    // General
+    | 'other';
+  
   reason: string;
   description?: string;
   priority?: 'urgent' | 'high' | 'medium' | 'low';
