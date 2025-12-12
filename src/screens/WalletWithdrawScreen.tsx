@@ -10,7 +10,8 @@ import {
   Text, 
   TextInput,
   TouchableOpacity, 
-  View 
+  View,
+  ActivityIndicator
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -39,8 +40,64 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [isValid, setIsValid] = useState(true);
   const [validationError, setValidationError] = useState<string>('');
+  const [exchangeRate, setExchangeRate] = useState<number | null>(null);
+  const [isFetchingRate, setIsFetchingRate] = useState(false);
+  const [rateError, setRateError] = useState<string>('');
+  const [processingTime, setProcessingTime] = useState<string>('1-3 business days');
   
-  const supportedCurrencies = ['NGN', 'USD', 'EUR', 'GBP', 'CAD', 'AUD'];
+  // Currency is now synced with bank account, no manual selection needed
+  
+  // Fetch real-time exchange rate when FRETI amount or currency changes
+  useEffect(() => {
+    const fetchExchangeRate = async () => {
+      const fretiValue = parseFloat(fretiAmount);
+      
+      // Only fetch if we have a valid amount, currency, and selected bank account
+      if (!fretiValue || fretiValue <= 0 || !localCurrency || !selectedBankAccount) {
+        setLocalAmount('');
+        setExchangeRate(null);
+        return;
+      }
+
+      setIsFetchingRate(true);
+      setRateError('');
+      
+      try {
+        console.log(`💱 Fetching withdrawal exchange rate: ${fretiValue} FRETI → ${localCurrency}`);
+        
+        // Use wallet API endpoint for withdrawal rates (uses Flutterwave real-time rates)
+        const rateInfo = await walletAPI.getWithdrawalRate(fretiValue, localCurrency);
+        
+        setLocalAmount(rateInfo.localAmount.toFixed(2));
+        setExchangeRate(rateInfo.exchangeRate);
+        
+        console.log(`✅ Withdrawal exchange rate fetched: 1 FRETI = ${rateInfo.exchangeRate.toFixed(4)} ${localCurrency}`);
+        console.log(`✅ Conversion: ${fretiValue} FRETI → ${rateInfo.localAmount.toFixed(2)} ${localCurrency}`);
+      } catch (error: any) {
+        console.error('❌ Error fetching exchange rate:', error);
+        setRateError('Failed to fetch exchange rate. Using estimated conversion.');
+        
+        // Fallback: Use 1:1 if USD, otherwise show error
+        if (localCurrency === 'USD') {
+          setLocalAmount(fretiValue.toFixed(2));
+          setExchangeRate(1.0);
+        } else {
+          // Still show something - use approximate conversion
+          setLocalAmount(fretiValue.toFixed(2));
+          setExchangeRate(1.0);
+        }
+      } finally {
+        setIsFetchingRate(false);
+      }
+    };
+
+    // Debounce the rate fetch
+    const timeoutId = setTimeout(() => {
+      fetchExchangeRate();
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [fretiAmount, localCurrency, selectedBankAccount]);
 
   useEffect(() => {
     loadWalletData();
@@ -56,19 +113,68 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
   const loadBankAccounts = async () => {
     try {
       setLoadingAccounts(true);
+      console.log('🏦 Loading bank accounts...');
       const accounts = await bankAccountAPI.getBankAccounts();
+      console.log('✅ Bank accounts loaded:', accounts.length, 'accounts');
       setBankAccounts(accounts);
 
       // Set default account
       const defaultAccount = accounts.find(acc => acc.isDefault);
       if (defaultAccount) {
         setSelectedBankAccount(defaultAccount.id);
+        // Sync currency with bank account currency
+        const currency = defaultAccount.currency || 'NGN';
+        setLocalCurrency(currency);
+        
+        // Fetch processing time for default currency
+        try {
+          const timeResponse = await walletAPI.getProcessingTime(currency);
+          setProcessingTime(timeResponse.displayText);
+        } catch (error) {
+          console.warn('Failed to fetch processing time:', error);
+        }
+        
+        console.log('✅ Default bank account selected:', defaultAccount.id, 'Currency:', currency);
       } else if (accounts.length > 0) {
         setSelectedBankAccount(accounts[0].id);
+        // Sync currency with bank account currency
+        const currency = accounts[0].currency || 'NGN';
+        setLocalCurrency(currency);
+        
+        // Fetch processing time for first account currency
+        try {
+          const timeResponse = await walletAPI.getProcessingTime(currency);
+          setProcessingTime(timeResponse.displayText);
+        } catch (error) {
+          console.warn('Failed to fetch processing time:', error);
+        }
+        
+        console.log('✅ First bank account selected:', accounts[0].id, 'Currency:', currency);
+      } else {
+        console.log('⚠️ No bank accounts found');
+        setSelectedBankAccount('');
       }
-    } catch (error) {
-      console.error('Error loading bank accounts:', error);
-      Alert.alert('Error', 'Failed to load bank accounts. Please try again.');
+    } catch (error: any) {
+      console.error('❌ Error loading bank accounts:', error);
+      console.error('Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+      });
+      
+      // Provide more specific error messages
+      let errorMessage = 'Failed to load bank accounts. Please try again.';
+      if (error.message?.includes('network') || error.message?.includes('Network')) {
+        errorMessage = 'Network error. Please check your internet connection and try again.';
+      } else if (error.response?.status === 401) {
+        errorMessage = 'Authentication error. Please log in again.';
+      } else if (error.response?.status === 404) {
+        errorMessage = 'Bank account service not found. Please contact support.';
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      }
+      
+      Alert.alert('Error Loading Bank Accounts', errorMessage);
     } finally {
       setLoadingAccounts(false);
     }
@@ -151,7 +257,7 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
 
       Alert.alert(
         'Confirm Withdrawal',
-        `You are about to withdraw ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} which equals ${currencyAPI.formatCurrency(localValue, localCurrency)}.\n\nWithdraw to:\n${selectedAccount?.bankName} - ${selectedAccount?.accountNumber}\n\nFunds will be processed within 1-3 business days.`,
+        `You are about to withdraw ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} which equals ${currencyAPI.formatCurrency(localValue, localCurrency)}.\n\nWithdraw to:\n${selectedAccount?.bankName} - ${selectedAccount?.accountNumber}\n\nFunds will be processed within ${processingTime}.`,
         [
           { text: 'Cancel', style: 'cancel' },
           { 
@@ -178,10 +284,16 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
   };
 
   const processWithdrawal = async (fretiValue: number, localValue: number) => {
+    if (!selectedBankAccount) {
+      Alert.alert('Error', 'Please select a bank account for withdrawal');
+      return;
+    }
+
     setLoading(true);
     try {
       const result = await walletAPI.createWithdrawal({
         fretiAmount: fretiValue,
+        bankAccountId: selectedBankAccount,
         localCurrency: localCurrency
       });
 
@@ -192,7 +304,7 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
 
       Alert.alert(
         'Withdrawal Request Created', 
-        `Your withdrawal has been requested successfully!\n\nFreti Amount: ${currencyAPI.formatCurrency(fretiValue, 'FRETI')}\nLocal Amount: ${currencyAPI.formatCurrency(localValue, localCurrency)}\nStatus: ${result.status.toUpperCase()}${statusMessage}\n\nProcessing Time: 1-3 business days (once gateway is active)`,
+        `Your withdrawal has been requested successfully!\n\nFreti Amount: ${currencyAPI.formatCurrency(fretiValue, 'FRETI')}\nLocal Amount: ${currencyAPI.formatCurrency(localValue, localCurrency)}\nStatus: ${result.status.toUpperCase()}${statusMessage}\n\nProcessing Time: ${processingTime}`,
         [
           { 
             text: 'OK', 
@@ -266,7 +378,7 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
             <Text style={styles.infoTitle}>Withdrawal Information</Text>
           </View>
           <Text style={styles.infoText}>
-            Withdrawals are processed within 1-3 business days. Funds will be converted to your selected currency and sent to your payment method.
+            Withdrawals are processed within {processingTime}. Funds will be converted to your selected currency and sent to your payment method.
           </Text>
         </View>
 
@@ -301,11 +413,14 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
                   const quickAmount = (wallet.availableBalance * percentage) / 100;
                   if (quickAmount >= 1) {
                     return (
-                      <TouchableOpacity
-                        key={percentage}
-                        style={styles.quickAmountButton}
-                        onPress={() => setFretiAmount(quickAmount?.toFixed(2) || '0')}
-                      >
+                  <TouchableOpacity
+                    key={percentage}
+                    style={styles.quickAmountButton}
+                    onPress={() => {
+                      setFretiAmount(quickAmount?.toFixed(2) || '0');
+                      // Exchange rate will be fetched automatically via useEffect
+                    }}
+                  >
                         <Text style={styles.quickAmountText}>{percentage}%</Text>
                         <Text style={styles.quickAmountValue}>
                           {walletAPI.formatFreti(quickAmount)}
@@ -317,7 +432,10 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
                 })}
                 <TouchableOpacity
                   style={styles.quickAmountButton}
-                  onPress={() => setFretiAmount(wallet?.availableBalance?.toFixed(6) || '0')}
+                  onPress={() => {
+                    setFretiAmount(wallet?.availableBalance?.toFixed(6) || '0');
+                    // Exchange rate will be fetched automatically via useEffect
+                  }}
                 >
                   <Text style={styles.quickAmountText}>All</Text>
                   <Text style={styles.quickAmountValue}>
@@ -355,7 +473,24 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
                     styles.bankAccountCard,
                     selectedBankAccount === account.id && styles.bankAccountCardActive
                   ]}
-                  onPress={() => setSelectedBankAccount(account.id)}
+                  onPress={async () => {
+                    setSelectedBankAccount(account.id);
+                    // Sync currency with selected bank account's currency
+                    const newCurrency = account.currency || 'NGN';
+                    setLocalCurrency(newCurrency);
+                    // Reset local amount - will be recalculated when currency changes
+                    setLocalAmount('');
+                    setExchangeRate(null);
+                    
+                    // Fetch processing time for this currency
+                    try {
+                      const response = await walletAPI.getProcessingTime(newCurrency);
+                      setProcessingTime(response.displayText);
+                    } catch (error) {
+                      console.warn('Failed to fetch processing time:', error);
+                      setProcessingTime('1-3 business days'); // Fallback
+                    }
+                  }}
                 >
                   <View style={[
                     styles.bankAccountIcon,
@@ -391,54 +526,65 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
             </View>
           </View>
 
-          {/* Currency Selector */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Receive Currency</Text>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
-              style={styles.currencyScroll}
-            >
-              {supportedCurrencies.map((currency) => (
-                <TouchableOpacity
-                  key={currency}
-                  style={[
-                    styles.currencyOption,
-                    localCurrency === currency && styles.currencyOptionActive
-                  ]}
-                  onPress={() => setLocalCurrency(currency)}
-                >
-                  <Text style={[
-                    styles.currencyOptionText,
-                    localCurrency === currency && styles.currencyOptionTextActive
-                  ]}>
-                    {currency}
+          {/* Currency Display (read-only, synced with bank account) */}
+          {selectedBankAccount && (
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Receive Currency</Text>
+              <View style={styles.currencyDisplay}>
+                <View style={styles.currencyDisplayBadge}>
+                  <Ionicons name="cash" size={20} color="#007AFF" />
+                  <Text style={styles.currencyDisplayText}>
+                    {localCurrency}
                   </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
+                </View>
+                <Text style={styles.currencyDisplayNote}>
+                  Currency is determined by your selected bank account
+                </Text>
+              </View>
+            </View>
+          )}
 
           {/* Conversion Display */}
-          {fretiAmount && parseFloat(fretiAmount) > 0 && (
+          {fretiAmount && parseFloat(fretiAmount) > 0 && selectedBankAccount && (
             <View style={styles.conversionCard}>
               <Text style={styles.conversionTitle}>Conversion</Text>
-              <View style={styles.conversionRow}>
-                <Text style={styles.conversionLabel}>You withdraw:</Text>
-                <Text style={styles.conversionValueFreti}>
-                  {walletAPI.formatFreti(parseFloat(fretiAmount))}
-                </Text>
-              </View>
-              <View style={styles.conversionRow}>
-                <Text style={styles.conversionLabel}>You receive:</Text>
-                <Text style={styles.conversionValue}>
-                  {walletAPI.formatCurrency(parseFloat(fretiAmount), localCurrency)}
-                </Text>
-              </View>
-              <View style={styles.conversionRow}>
-                <Text style={styles.conversionLabel}>Rate:</Text>
-                <Text style={styles.conversionRate}>1 FRETI = 1 {localCurrency}</Text>
-              </View>
+              {isFetchingRate ? (
+                <View style={styles.loadingRateContainer}>
+                  <ActivityIndicator size="small" color="#007AFF" />
+                  <Text style={styles.loadingRateText}>Fetching exchange rate...</Text>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.conversionRow}>
+                    <Text style={styles.conversionLabel}>You withdraw:</Text>
+                    <Text style={styles.conversionValueFreti}>
+                      {walletAPI.formatFreti(parseFloat(fretiAmount))}
+                    </Text>
+                  </View>
+                  <View style={styles.conversionRow}>
+                    <Text style={styles.conversionLabel}>You receive:</Text>
+                    <Text style={styles.conversionValue}>
+                      {localAmount && parseFloat(localAmount) > 0
+                        ? currencyAPI.formatCurrency(parseFloat(localAmount), localCurrency)
+                        : 'Calculating...'}
+                    </Text>
+                  </View>
+                  {exchangeRate !== null && (
+                    <View style={styles.conversionRow}>
+                      <Text style={styles.conversionLabel}>Exchange Rate:</Text>
+                      <Text style={styles.conversionRate}>
+                        1 FRETI = {exchangeRate >= 1 ? exchangeRate.toFixed(2) : exchangeRate.toFixed(4)} {localCurrency}
+                      </Text>
+                    </View>
+                  )}
+                  {rateError && (
+                    <View style={styles.rateErrorContainer}>
+                      <Ionicons name="warning" size={14} color="#FFA500" />
+                      <Text style={styles.rateErrorText}>{rateError}</Text>
+                    </View>
+                  )}
+                </>
+              )}
             </View>
           )}
 
@@ -458,7 +604,7 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
               </View>
               <View style={styles.limitsRow}>
                 <Text style={styles.limitsLabel}>Processing Time:</Text>
-                <Text style={styles.limitsValue}>1-3 business days</Text>
+                <Text style={styles.limitsValue}>{processingTime}</Text>
               </View>
             </View>
           )}
@@ -866,6 +1012,56 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 8,
     textAlign: 'center',
+  },
+  currencyDisplay: {
+    marginTop: 4,
+  },
+  currencyDisplayBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2A2A2A',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#3A3A3A',
+    marginBottom: 8,
+  },
+  currencyDisplayText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#007AFF',
+    marginLeft: 8,
+  },
+  currencyDisplayNote: {
+    fontSize: 12,
+    color: '#999999',
+    fontStyle: 'italic',
+  },
+  loadingRateContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+  },
+  loadingRateText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#CCCCCC',
+  },
+  rateErrorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: 'rgba(255, 165, 0, 0.1)',
+    borderRadius: 6,
+  },
+  rateErrorText: {
+    marginLeft: 6,
+    fontSize: 12,
+    color: '#FFA500',
+    flex: 1,
   },
 });
 

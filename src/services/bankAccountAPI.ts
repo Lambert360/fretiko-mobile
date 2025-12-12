@@ -75,18 +75,59 @@ class BankAccountAPIService {
   async getBankAccounts(): Promise<BankAccount[]> {
     try {
       const headers = await this.getHeaders();
+      console.log('🏦 Fetching bank accounts from:', this.baseURL);
+      console.log('🔑 Headers:', { ...headers, Authorization: headers.Authorization ? 'Bearer ***' : 'none' });
+      
       const response = await fetch(this.baseURL, {
         method: 'GET',
         headers,
       });
 
+      console.log('📡 Response status:', response.status, response.statusText);
+
       if (!response.ok) {
-        throw new Error(`Failed to fetch bank accounts: ${response.status}`);
+        let errorMessage = `Failed to fetch bank accounts: ${response.status}`;
+        let errorData: any = { message: errorMessage };
+        
+        try {
+          // Try to parse JSON error response
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            errorData = await response.json();
+            errorMessage = errorData.message || errorMessage;
+            console.error('❌ Error response data:', errorData);
+          } else {
+            // Try to read as text
+            const errorText = await response.text();
+            console.error('❌ Error response text:', errorText);
+            errorData.message = errorText || errorMessage;
+          }
+        } catch (parseError) {
+          console.error('❌ Error parsing error response:', parseError);
+        }
+        
+        const error: any = new Error(errorMessage);
+        error.response = {
+          status: response.status,
+          statusText: response.statusText,
+          data: errorData,
+        };
+        throw error;
       }
 
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching bank accounts:', error);
+      const data = await response.json();
+      console.log('✅ Bank accounts fetched successfully:', data.length, 'accounts');
+      return data;
+    } catch (error: any) {
+      console.error('❌ Error fetching bank accounts:', error);
+      console.error('Error stack:', error.stack);
+      // Re-throw with more context
+      if (!error.response) {
+        // Network or other non-HTTP error
+        const networkError: any = new Error(error.message || 'Network error. Please check your connection.');
+        networkError.originalError = error;
+        throw networkError;
+      }
       throw error;
     }
   }

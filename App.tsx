@@ -125,6 +125,12 @@ const linking = {
           storyId: (storyId: string) => storyId,
         },
       },
+      WalletDeposit: {
+        path: 'wallet/deposit/callback',
+        parse: {
+          deposit_id: (deposit_id: string) => deposit_id,
+        },
+      },
       SharedWishlist: {
         path: 'wishlist/:ownerId/:ownerUsername',
         parse: {

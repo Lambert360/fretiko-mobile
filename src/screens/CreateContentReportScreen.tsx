@@ -68,7 +68,7 @@ const CreateContentReportScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, accessToken } = useAuth();
   const params = (route.params as { 
     productId?: string;
     serviceId?: string;
@@ -188,7 +188,7 @@ const CreateContentReportScreen = () => {
       return;
     }
 
-    if (!user?.token) {
+    if (!accessToken || !user) {
       Alert.alert('Error', 'You must be logged in to submit a report');
       return;
     }
@@ -254,7 +254,7 @@ const CreateContentReportScreen = () => {
         reportedUserId: params.reportedUserId,
       };
 
-      const report = await contentReportsAPI.createContentReport(request, user.token);
+      const report = await contentReportsAPI.createContentReport(request, accessToken);
 
       Alert.alert(
         'Success',
@@ -342,32 +342,38 @@ const CreateContentReportScreen = () => {
               </TouchableOpacity>
 
               {showTypePicker && (
-                <View style={styles.pickerOptions}>
-                  {REPORT_TYPES.map((type) => (
-                    <TouchableOpacity
-                      key={type.value}
-                      style={[
-                        styles.pickerOption,
-                        reportType === type.value && styles.pickerOptionSelected,
-                      ]}
-                      onPress={() => {
-                        setReportType(type.value);
-                        setShowTypePicker(false);
-                      }}
-                    >
-                      <Text
+                <View style={styles.pickerOptionsContainer}>
+                  <ScrollView
+                    style={styles.pickerOptions}
+                    nestedScrollEnabled={true}
+                    showsVerticalScrollIndicator={true}
+                  >
+                    {REPORT_TYPES.map((type) => (
+                      <TouchableOpacity
+                        key={type.value}
                         style={[
-                          styles.pickerOptionText,
-                          reportType === type.value && styles.pickerOptionTextSelected,
+                          styles.pickerOption,
+                          reportType === type.value && styles.pickerOptionSelected,
                         ]}
+                        onPress={() => {
+                          setReportType(type.value);
+                          setShowTypePicker(false);
+                        }}
                       >
-                        {type.label}
-                      </Text>
-                      {reportType === type.value && (
-                        <Ionicons name="checkmark" size={20} color="#007AFF" />
-                      )}
-                    </TouchableOpacity>
-                  ))}
+                        <Text
+                          style={[
+                            styles.pickerOptionText,
+                            reportType === type.value && styles.pickerOptionTextSelected,
+                          ]}
+                        >
+                          {type.label}
+                        </Text>
+                        {reportType === type.value && (
+                          <Ionicons name="checkmark" size={20} color="#007AFF" />
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
                 </View>
               )}
             </View>
@@ -553,13 +559,17 @@ const styles = StyleSheet.create({
   pickerPlaceholder: {
     color: '#999',
   },
-  pickerOptions: {
+  pickerOptionsContainer: {
     marginTop: 8,
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E0E0E0',
     maxHeight: 200,
+    overflow: 'hidden',
+  },
+  pickerOptions: {
+    flexGrow: 0,
   },
   pickerOption: {
     flexDirection: 'row',

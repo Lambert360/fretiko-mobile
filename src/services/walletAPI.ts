@@ -80,6 +80,7 @@ export interface DepositResponse {
   exchangeRate?: number;
   status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
   externalPaymentId?: string;
+  paymentLink?: string; // Flutterwave payment link
   initiatedAt: string;
   completedAt?: string;
   failureReason?: string;
@@ -89,6 +90,7 @@ export interface DepositResponse {
 
 export interface WithdrawRequest {
   fretiAmount: number;
+  bankAccountId: string; // Required: bank account to withdraw to
   localCurrency?: string;
   idempotencyKey?: string;
 }
@@ -298,9 +300,83 @@ export const walletAPI = {
     }
   },
 
+  /**
+   * Get real-time exchange rate for deposit
+   * Shows users exactly what they'll receive before depositing
+   */
+  getDepositRate: async (
+    localAmount: number,
+    localCurrency: string
+  ): Promise<{
+    localAmount: number;
+    localCurrency: string;
+    exchangeRate: number;
+    usdAmount: number;
+    fretiAmount: number;
+    message: string;
+    usingFallback?: boolean;
+    warning?: string | null;
+    rateInfo: {
+      source: { currency: string; amount: number };
+      destination: { currency: string; amount: number };
+    };
+  }> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.get('/wallet/deposit/rate', {
+        headers,
+        params: {
+          localAmount: localAmount.toString(),
+          localCurrency: localCurrency,
+        },
+      });
+      console.log('💱 Deposit rate fetched:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Failed to get deposit rate:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to get exchange rate');
+    }
+  },
+
   // ================================
   // WITHDRAWALS
   // ================================
+
+  /**
+   * Get real-time exchange rate for withdrawal
+   * Shows users exactly what they'll receive in local currency when withdrawing FRETI
+   */
+  getWithdrawalRate: async (
+    fretiAmount: number,
+    localCurrency: string
+  ): Promise<{
+    fretiAmount: number;
+    localCurrency: string;
+    exchangeRate: number;
+    localAmount: number;
+    usdAmount: number;
+    message: string;
+    rateInfo: {
+      source: { currency: string; amount: number };
+      destination: { currency: string; amount: number };
+    };
+  }> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.get('/wallet/withdraw/rate', {
+        headers,
+        params: {
+          fretiAmount: fretiAmount.toString(),
+          localCurrency: localCurrency,
+        },
+      });
+      console.log('💱 Withdrawal rate fetched:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Failed to get withdrawal rate:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to get withdrawal exchange rate');
+    }
+  },
 
   createWithdrawal: async (withdrawRequest: WithdrawRequest): Promise<WithdrawResponse> => {
     try {
@@ -313,6 +389,33 @@ export const walletAPI = {
     } catch (error: any) {
       console.error('❌ Failed to create withdrawal:', error.response?.data || error.message);
       throw new Error(error.response?.data?.message || 'Failed to create withdrawal');
+    }
+  },
+
+  getProcessingTime: async (
+    currency: string,
+    bankCountry?: string
+  ): Promise<{
+    currency: string;
+    bankCountry?: string;
+    minDays: number;
+    maxDays: number;
+    displayText: string;
+    message: string;
+  }> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.get('/wallet/withdraw/processing-time', {
+        headers,
+        params: {
+          currency,
+          bankCountry,
+        },
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Failed to get processing time:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to get processing time');
     }
   },
 

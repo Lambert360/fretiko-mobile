@@ -174,18 +174,8 @@ class CurrencyAPI {
    * Format currency amount with proper symbol and decimals
    */
   formatCurrency(amount: number, currency: string): string {
-    const currencySymbols: Record<string, string> = {
-      'USD': '$',
-      'EUR': '€',
-      'GBP': '£',
-      'NGN': '₦',
-      'FRETI': '₣',
-      'CAD': 'C$',
-      'AUD': 'A$'
-    };
-
-    const symbol = currencySymbols[currency] || currency;
-    const decimals = currency === 'FRETI' ? 2 : (currency === 'NGN' ? 0 : 2);
+    const symbol = this.getCurrencySymbol(currency);
+    const decimals = this.getCurrencyDecimals(currency);
     
     return `${symbol}${amount.toLocaleString('en-US', {
       minimumFractionDigits: decimals,
@@ -195,18 +185,76 @@ class CurrencyAPI {
 
   /**
    * Get currency symbol
+   * Comprehensive list of Flutterwave-supported currencies
    */
   getCurrencySymbol(currency: string): string {
     const symbols: Record<string, string> = {
+      // Major International Currencies
       'USD': '$',
       'EUR': '€',
       'GBP': '£',
-      'NGN': '₦',
-      'FRETI': '₣',
       'CAD': 'C$',
-      'AUD': 'A$'
+      'AUD': 'A$',
+      
+      // African Currencies
+      'NGN': '₦', // Nigerian Naira
+      'GHS': '₵', // Ghanaian Cedi
+      'KES': 'KSh', // Kenyan Shilling
+      'ZAR': 'R', // South African Rand
+      'UGX': 'USh', // Ugandan Shilling
+      'TZS': 'TSh', // Tanzanian Shilling
+      'RWF': 'RF', // Rwandan Franc
+      'XAF': 'FCFA', // Central African CFA Franc
+      'XOF': 'CFA', // West African CFA Franc
+      'MWK': 'MK', // Malawian Kwacha
+      'ZMW': 'ZK', // Zambian Kwacha
+      'EGP': 'E£', // Egyptian Pound
+      'MAD': 'د.م.', // Moroccan Dirham
+      'SLL': 'Le', // Sierra Leonean Leone
+      'BWP': 'P', // Botswana Pula
+      'ETB': 'Br', // Ethiopian Birr
+      'MZN': 'MT', // Mozambican Metical
+      'MGA': 'Ar', // Malagasy Ariary
+      'AOA': 'Kz', // Angolan Kwanza
+      'XPF': '₣', // CFP Franc
+      'SCR': '₨', // Seychellois Rupee
+      'MUR': '₨', // Mauritian Rupee
+      'SZL': 'L', // Swazi Lilangeni
+      'LSL': 'L', // Lesotho Loti
+      'NAD': 'N$', // Namibian Dollar
+      'BIF': 'Fr', // Burundian Franc
+      'DJF': 'Fr', // Djiboutian Franc
+      'ERN': 'Nfk', // Eritrean Nakfa
+      'SOS': 'Sh', // Somali Shilling
+      'SDG': 'ج.س.', // Sudanese Pound
+      'SSP': '£', // South Sudanese Pound
+      'STN': 'Db', // São Tomé and Príncipe Dobra
+      'CDF': 'Fr', // Congolese Franc
+      'LRD': '$', // Liberian Dollar
+      'GMD': 'D', // Gambian Dalasi
+      'GNF': 'Fr', // Guinean Franc
+      'SHP': '£', // Saint Helena Pound
+      'TND': 'د.ت', // Tunisian Dinar
+      'DZD': 'د.ج', // Algerian Dinar
+      'LYD': 'ل.د', // Libyan Dinar
+      'MRU': 'UM', // Mauritanian Ouguiya
+      
+      // Freti
+      'FRETI': '₣',
     };
-    return symbols[currency] || currency;
+    return symbols[currency.toUpperCase()] || currency;
+  }
+
+  /**
+   * Get decimal places for currency
+   */
+  getCurrencyDecimals(currency: string): number {
+    // Currencies that typically use 0 decimal places
+    const zeroDecimalCurrencies = ['NGN', 'UGX', 'VND', 'KRW', 'JPY', 'CLP', 'XPF'];
+    
+    if (currency === 'FRETI') return 2;
+    if (zeroDecimalCurrencies.includes(currency.toUpperCase())) return 0;
+    return 2; // Default to 2 decimal places
   }
 
   /**

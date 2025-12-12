@@ -33,18 +33,60 @@ class PinAPIService {
   async getPinStatus(): Promise<PinStatus> {
     try {
       const headers = await this.getHeaders();
+      console.log('🔐 Fetching PIN status from:', `${this.baseURL}/status`);
+      
       const response = await fetch(`${this.baseURL}/status`, {
         method: 'GET',
         headers,
       });
 
+      console.log('📡 PIN status response:', response.status, response.statusText);
+
       if (!response.ok) {
-        throw new Error(`Failed to get PIN status: ${response.status}`);
+        // Handle 404 as "no PIN" rather than an error
+        if (response.status === 404) {
+          console.log('⚠️ PIN not found - user has no PIN set');
+          return {
+            hasPin: false,
+            isLocked: false,
+            failedAttempts: 0,
+            lockedUntil: null,
+          };
+        }
+        
+        let errorMessage = `Failed to get PIN status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch (parseError) {
+          // Ignore JSON parse errors
+        }
+        
+        const error: any = new Error(errorMessage);
+        error.response = {
+          status: response.status,
+          data: await response.json().catch(() => ({ message: errorMessage })),
+        };
+        throw error;
       }
 
-      return await response.json();
-    } catch (error) {
-      console.error('Error getting PIN status:', error);
+      const data = await response.json();
+      console.log('✅ PIN status fetched successfully:', data);
+      return data;
+    } catch (error: any) {
+      console.error('❌ Error getting PIN status:', error);
+      
+      // If it's a network error or 404, return default "no PIN" status
+      if (error.message?.includes('404') || !error.response) {
+        console.log('⚠️ Returning default PIN status (no PIN set)');
+        return {
+          hasPin: false,
+          isLocked: false,
+          failedAttempts: 0,
+          lockedUntil: null,
+        };
+      }
+      
       throw error;
     }
   }

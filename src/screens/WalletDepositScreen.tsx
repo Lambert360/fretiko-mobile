@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Alert, 
   Dimensions, 
@@ -9,21 +9,27 @@ import {
   StyleSheet, 
   Text, 
   TouchableOpacity, 
-  View 
+  View,
+  Linking,
+  AppState
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { walletAPI } from '../services/walletAPI';
+import { useFocusEffect, useRoute } from '@react-navigation/native';
+import { walletAPI, DepositResponse } from '../services/walletAPI';
 import DualCurrencyInput from '../components/DualCurrencyInput';
 import { currencyAPI } from '../services/currencyAPI';
+import { usePaymentStatus } from '../hooks/usePaymentStatus';
 
 interface WalletDepositScreenProps {
   navigation: any;
+  route?: any;
 }
 
 type PaymentMethod = 'bank_transfer' | 'card' | 'mobile_money';
 
 const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
   const insets = useSafeAreaInsets();
+  const route = useRoute();
   const [localAmount, setLocalAmount] = useState('');
   const [fretiAmount, setFretiAmount] = useState('');
   const [localCurrency, setLocalCurrency] = useState('NGN'); // Default to Nigerian Naira
@@ -31,9 +37,131 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
   const [loading, setLoading] = useState(false);
   const [isValid, setIsValid] = useState(true);
   const [validationError, setValidationError] = useState<string>('');
+  const [pendingDepositId, setPendingDepositId] = useState<string | null>(null);
   
-  const supportedCurrencies = ['NGN', 'USD', 'EUR', 'GBP', 'CAD', 'AUD'];
+  // Flutterwave supported currencies - comprehensive list
+  // Source: https://flutterwave.com/support/general/what-are-the-currencies-accepted-on-flutterwave
+  const supportedCurrencies = [
+    // Major International Currencies (most common)
+    'USD', // United States Dollar
+    'EUR', // Euro
+    'GBP', // British Pound Sterling
+    'CAD', // Canadian Dollar
+    'AUD', // Australian Dollar
+    
+    // African Currencies (Flutterwave's primary market)
+    'NGN', // Nigerian Naira
+    'GHS', // Ghanaian Cedi
+    'KES', // Kenyan Shilling
+    'ZAR', // South African Rand
+    'UGX', // Ugandan Shilling
+    'TZS', // Tanzanian Shilling
+    'RWF', // Rwandan Franc
+    'XAF', // Central African CFA Franc
+    'XOF', // West African CFA Franc
+    'MWK', // Malawian Kwacha
+    'ZMW', // Zambian Kwacha
+    'EGP', // Egyptian Pound
+    'MAD', // Moroccan Dirham
+    'SLL', // Sierra Leonean Leone
+    'BWP', // Botswana Pula
+    'ETB', // Ethiopian Birr
+    'MZN', // Mozambican Metical
+    'MGA', // Malagasy Ariary
+    'AOA', // Angolan Kwanza
+    'SCR', // Seychellois Rupee
+    'MUR', // Mauritian Rupee
+    'SZL', // Swazi Lilangeni
+    'LSL', // Lesotho Loti
+    'NAD', // Namibian Dollar
+    'BIF', // Burundian Franc
+    'DJF', // Djiboutian Franc
+    'SOS', // Somali Shilling
+    'SDG', // Sudanese Pound
+    'SSP', // South Sudanese Pound
+    'STN', // São Tomé and Príncipe Dobra
+    'CDF', // Congolese Franc
+    'LRD', // Liberian Dollar
+    'GMD', // Gambian Dalasi
+    'GNF', // Guinean Franc
+    'TND', // Tunisian Dinar
+    'DZD', // Algerian Dinar
+    'MRU', // Mauritanian Ouguiya
+  ];
 
+  // Check if screen was opened via deep link with deposit_id
+  useEffect(() => {
+    const params = route.params as any;
+    if (params?.deposit_id) {
+      // Screen opened from payment callback
+      console.log('📥 Deposit callback received, deposit_id:', params.deposit_id);
+      setPendingDepositId(params.deposit_id);
+      // Polling will start automatically via useFocusEffect
+    }
+  }, [route.params]);
+
+  // Poll for payment status if there's a pending deposit
+  const { deposit: pendingDeposit, isPolling, startPolling, stopPolling } = usePaymentStatus({
+    depositId: pendingDepositId || '',
+    onSuccess: (deposit) => {
+      Alert.alert(
+        'Payment Successful! 🎉',
+        `Your deposit of ${currencyAPI.formatCurrency(deposit.fretiAmount, 'FRETI')} has been completed.\n\n₣${deposit.fretiAmount} FRETI has been credited to your wallet.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              setPendingDepositId(null);
+              navigation.navigate('Wallet');
+            }
+          }
+        ]
+      );
+    },
+    onFailure: (deposit) => {
+      Alert.alert(
+        'Payment Failed',
+        deposit.failureReason || 'Your payment could not be processed. Please try again.',
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              setPendingDepositId(null);
+            }
+          }
+        ]
+      );
+    },
+    pollInterval: 5000, // Poll every 5 seconds
+    maxPollAttempts: 60, // Max 5 minutes
+  });
+
+  // Check for pending deposits when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (pendingDepositId && !isPolling) {
+        startPolling();
+      }
+    }, [pendingDepositId, isPolling, startPolling])
+  );
+
+  // Listen for app state changes to refresh when returning from payment
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active' && pendingDepositId && !isPolling) {
+        // App came to foreground, start polling
+        startPolling();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [pendingDepositId, isPolling, startPolling]);
+
+  // NOTE: Payment method selection is for UX display only.
+  // Flutterwave handles the actual payment method selection on their payment page.
+  // The selected method here is not sent to the backend - it's purely informational for the user.
   const paymentMethods = [
     { 
       id: 'bank_transfer' as PaymentMethod, 
@@ -85,24 +213,67 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
         localCurrency: localCurrency
       });
 
-      // Get selected payment method details
+      // Get selected payment method details (for display only)
+      // NOTE: Payment method selection is informational - Flutterwave handles actual method selection
       const selectedMethod = paymentMethods.find(m => m.id === paymentMethod);
       
-      // Graceful handling for pending payment integration
-      const statusMessage = result.status === 'pending' 
-        ? `\n\n⚠️ Note: Payment integration is currently being configured. This deposit will be processed once our payment gateway is active.\n\nPayment Method: ${selectedMethod?.label}\nProcessing Time: ${selectedMethod?.processingTime}`
-        : `\n\nPayment Method: ${selectedMethod?.label}\nProcessing Time: ${selectedMethod?.processingTime}`;
-
-      Alert.alert(
-        'Deposit Request Created', 
-        `Your deposit of ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} has been initiated.\n\nYou'll pay: ${currencyAPI.formatCurrency(localValue, localCurrency)}\nStatus: ${result.status.toUpperCase()}${statusMessage}`,
-        [
-          { 
-            text: 'OK', 
-            onPress: () => navigation.goBack() 
-          }
-        ]
-      );
+      // If payment link is provided, open it
+      if (result.paymentLink) {
+        // Store deposit ID for status polling
+        setPendingDepositId(result.id);
+        
+        Alert.alert(
+          'Complete Payment', 
+          `Your deposit of ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} has been initiated.\n\nYou'll pay: ${currencyAPI.formatCurrency(localValue, localCurrency)}\n\nYou will be redirected to complete the payment. We'll check the status when you return.`,
+          [
+            { 
+              text: 'Cancel', 
+              style: 'cancel',
+              onPress: () => {
+                setPendingDepositId(null);
+                navigation.goBack();
+              }
+            },
+            { 
+              text: 'Continue to Payment', 
+              onPress: async () => {
+                try {
+                  const canOpen = await Linking.canOpenURL(result.paymentLink!);
+                  if (canOpen) {
+                    // Start polling for status
+                    startPolling();
+                    await Linking.openURL(result.paymentLink!);
+                  } else {
+                    Alert.alert('Error', 'Unable to open payment link');
+                  }
+                } catch (error) {
+                  console.error('Error opening payment link:', error);
+                  Alert.alert('Error', 'Failed to open payment link');
+                }
+              }
+            }
+          ]
+        );
+      } else {
+        // Fallback for when payment link is not available
+        Alert.alert(
+          'Deposit Request Created', 
+          `Your deposit of ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} has been initiated.\n\nYou'll pay: ${currencyAPI.formatCurrency(localValue, localCurrency)}\nStatus: ${result.status.toUpperCase()}\n\nPayment Method: ${selectedMethod?.label}\nProcessing Time: ${selectedMethod?.processingTime}`,
+          [
+            { 
+              text: 'OK', 
+              onPress: () => {
+                // If status is pending, store ID for polling
+                if (result.status === 'pending' || result.status === 'processing') {
+                  setPendingDepositId(result.id);
+                  startPolling();
+                }
+                navigation.goBack();
+              }
+            }
+          ]
+        );
+      }
     } catch (error: any) {
       console.error('❌ Deposit error:', error);
       

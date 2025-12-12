@@ -7,9 +7,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { currencyAPI } from '../services/currencyAPI';
+import { walletAPI } from '../services/walletAPI';
 
 interface DualCurrencyInputProps {
   // Primary currency (user's local currency)
@@ -80,23 +82,50 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
       try {
         const numAmount = parseFloat(amount);
         let convertedAmount: number;
+        let fretiAmount: number; // Always track FRETI amount for validation
 
         if (sourceField === 'local') {
           // Converting from local currency to Freti
-          convertedAmount = await currencyAPI.quickConvert(localCurrency, 'FRETI', numAmount);
-          onFretiAmountChange(convertedAmount.toFixed(2));
+          // Use Flutterwave's real-time exchange rate API for accurate deposit rates
+          try {
+            const rateInfo = await walletAPI.getDepositRate(numAmount, localCurrency);
+            fretiAmount = rateInfo.fretiAmount; // Use the actual FRETI amount from Flutterwave
+            convertedAmount = fretiAmount;
+            onFretiAmountChange(convertedAmount.toFixed(2));
+            
+            if (rateInfo.usingFallback && rateInfo.warning) {
+              // Show warning if fallback rate is used
+              console.warn('⚠️ Using fallback exchange rate:', rateInfo.warning);
+              setConversionError(rateInfo.warning);
+            } else {
+              setConversionError('');
+            }
+            
+            console.log(`💱 ${rateInfo.usingFallback ? 'Fallback' : 'Real-time'} rate: ${numAmount} ${localCurrency} → ${fretiAmount.toFixed(2)} FRETI (Rate: ${rateInfo.exchangeRate.toFixed(4)})`);
+          } catch (rateError: any) {
+            // Final fallback to old method if both APIs fail
+            console.warn('⚠️ All rate APIs failed, using basic conversion:', rateError.message);
+            convertedAmount = await currencyAPI.quickConvert(localCurrency, 'FRETI', numAmount);
+            fretiAmount = convertedAmount;
+            onFretiAmountChange(convertedAmount.toFixed(2));
+            setConversionError('Exchange rate service unavailable. Using estimated rate. Actual rate may differ.');
+          }
         } else {
           // Converting from Freti to local currency
+          fretiAmount = numAmount; // User is editing FRETI directly
+          // For FRETI → local, we can use the inverse of the deposit rate
+          // Or use the old method (FRETI is 1:1 with USD, so this should be fine)
           convertedAmount = await currencyAPI.quickConvert('FRETI', localCurrency, numAmount);
           onLocalAmountChange(convertedAmount.toFixed(2));
         }
 
-        // Validation
-        const isValid = numAmount >= minAmount && (!maxAmount || numAmount <= maxAmount);
+        // Validation: Always validate against FRETI amount (USD equivalent)
+        // maxAmount is in FRETI/USD, so we need to check the FRETI amount
+        const isValid = fretiAmount >= minAmount && (!maxAmount || fretiAmount <= maxAmount);
         const error = !isValid 
-          ? (numAmount < minAmount 
-              ? `Minimum amount is ${currencyAPI.formatCurrency(minAmount, sourceField === 'local' ? localCurrency : 'FRETI')}`
-              : `Maximum amount is ${currencyAPI.formatCurrency(maxAmount!, sourceField === 'local' ? localCurrency : 'FRETI')}`
+          ? (fretiAmount < minAmount 
+              ? `Minimum deposit is ${currencyAPI.formatCurrency(minAmount, 'FRETI')}`
+              : `Maximum deposit is ${currencyAPI.formatCurrency(maxAmount!, 'FRETI')} (approximately ${currencyAPI.formatCurrency(convertedAmount, localCurrency)} in ${localCurrency})`
             )
           : undefined;
 
@@ -189,25 +218,39 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
   const renderCurrencyDropdown = () => {
     if (!showCurrencyDropdown) return null;
 
+    // Sort currencies: Major currencies first, then alphabetically
+    const majorCurrencies = ['USD', 'EUR', 'GBP', 'NGN', 'GHS', 'KES', 'ZAR'];
+    const sortedCurrencies = [
+      ...supportedCurrencies.filter(c => majorCurrencies.includes(c)),
+      ...supportedCurrencies.filter(c => !majorCurrencies.includes(c)).sort()
+    ];
+
     return (
       <View style={styles.currencyDropdown}>
-        {supportedCurrencies.map((currency) => (
-          <TouchableOpacity
-            key={currency}
-            style={[
-              styles.currencyOption,
-              currency === localCurrency && styles.selectedCurrency
-            ]}
-            onPress={() => handleCurrencySelect(currency)}
-          >
-            <Text style={[
-              styles.currencyOptionText,
-              currency === localCurrency && styles.selectedCurrencyText
-            ]}>
-              {currencyAPI.getCurrencySymbol(currency)} {currency}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        <ScrollView 
+          style={styles.currencyDropdownScroll}
+          nestedScrollEnabled={true}
+          showsVerticalScrollIndicator={true}
+          maximumZoomScale={1}
+        >
+          {sortedCurrencies.map((currency) => (
+            <TouchableOpacity
+              key={currency}
+              style={[
+                styles.currencyOption,
+                currency === localCurrency && styles.selectedCurrency
+              ]}
+              onPress={() => handleCurrencySelect(currency)}
+            >
+              <Text style={[
+                styles.currencyOptionText,
+                currency === localCurrency && styles.selectedCurrencyText
+              ]}>
+                {currencyAPI.getCurrencySymbol(currency)} {currency}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
     );
   };
@@ -348,13 +391,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#222',
     borderRadius: 12,
     marginTop: 4,
-    paddingVertical: 8,
     zIndex: 1000,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
+    maxHeight: 300, // Limit height for scrolling
+  },
+  currencyDropdownScroll: {
+    maxHeight: 300,
   },
   currencyOption: {
     paddingHorizontal: 16,
