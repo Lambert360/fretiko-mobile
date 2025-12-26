@@ -47,7 +47,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     try {
       await signin(email.trim().toLowerCase(), password);
       // Navigation will be handled by the auth state change
+      // If suspended/deleted, AuthContext will set isSuspended/isDeleted and App.tsx will navigate
     } catch (error: any) {
+      // Don't show alert for suspension/deletion - handled by AuthContext and App.tsx navigation
+      if (error.message && (error.message.includes('suspended') || error.message.includes('deleted'))) {
+        setIsLoading(false);
+        return; // Let App.tsx handle navigation to SuspensionScreen
+      }
+      
       if (error.message === 'LEGACY_USER_MIGRATION_NEEDED') {
         setNeedsMigration(true);
         setIsLoading(false);

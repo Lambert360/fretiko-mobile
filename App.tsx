@@ -11,6 +11,7 @@ import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
 // Import contexts
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { CartProvider } from './src/contexts/CartContext';
+import { FilterProvider } from './src/contexts/FilterContext';
 
 // Import auth screens
 import { SplashScreen } from './src/screens/SplashScreen';
@@ -102,6 +103,10 @@ import DisputeDetailsScreen from './src/screens/DisputeDetailsScreen';
 // Import content report screens
 import CreateContentReportScreen from './src/screens/CreateContentReportScreen';
 
+// Import account status screen
+import { AccountStatusScreen } from './src/screens/AccountStatusScreen';
+import { SuspensionScreen } from './src/screens/SuspensionScreen';
+
 // Import shared wishlist screen
 import SharedWishlistScreen from './src/screens/SharedWishlistScreen';
 
@@ -185,10 +190,10 @@ class ErrorBoundary extends React.Component<
 
 // Navigation component that handles auth state
 const AppNavigator: React.FC = () => {
-  const { isAuthenticated, isLoading, isNewUser } = useAuth();
+  const { isAuthenticated, isLoading, isNewUser, isSuspended, isDeleted, isCheckingSuspension } = useAuth();
 
-  // Show loading screen while checking auth state
-  if (isLoading) {
+  // Show loading screen while checking auth state or suspension status
+  if (isLoading || isCheckingSuspension) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#3498DB" />
@@ -196,6 +201,24 @@ const AppNavigator: React.FC = () => {
           {/* Optional: Add loading text for better UX */}
         </View>
       </View>
+    );
+  }
+
+  // Show suspension screen if user is suspended or deleted (even if not fully authenticated)
+  // This allows suspended users to see the screen and submit appeals
+  if (isSuspended || isDeleted) {
+    return (
+      <NavigationContainer linking={linking}>
+        <Stack.Navigator
+          screenOptions={{
+            headerShown: false,
+            cardStyle: { backgroundColor: '#000000' },
+          }}
+        >
+          <Stack.Screen name="Suspension" component={SuspensionScreen} />
+          <Stack.Screen name="AccountStatus" component={AccountStatusScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
     );
   }
 
@@ -220,6 +243,8 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="Main" component={BottomTabNavigator} />
               <Stack.Screen name="EditProfile" component={EditProfileScreen} />
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
+              <Stack.Screen name="AccountStatus" component={AccountStatusScreen} />
+              <Stack.Screen name="Suspension" component={SuspensionScreen} />
               <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
               <Stack.Screen name="ConnectionsList" component={ConnectionsListScreen} />
               <Stack.Screen name="ConnectionDetails" component={ConnectionDetailsScreen} />
@@ -304,8 +329,10 @@ export default function App() {
     <ErrorBoundary>
       <AuthProvider>
         <CartProvider>
-          <AppNavigator />
-          <StatusBar style="light" backgroundColor="#000000" />
+          <FilterProvider>
+            <AppNavigator />
+            <StatusBar style="light" backgroundColor="#000000" />
+          </FilterProvider>
         </CartProvider>
       </AuthProvider>
     </ErrorBoundary>

@@ -39,8 +39,119 @@ import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { mapProductToCard } from '../utils/dataMappers';
 import { ProductCard as ModernProductCard } from '../components/cards/ProductCard';
+import { handleError, handleErrorWithRetry, ErrorInfo } from '../utils/errorHandler';
+import { useFilters } from '../contexts/FilterContext';
+import {
+  getTrendingProducts,
+  getHotPicks,
+  getSeasonalRave,
+  getCombodeals,
+  getFlashSales,
+  getForYou,
+  useMemoizedSections,
+} from '../utils/mixedContentHelpers';
+import { auctionsAPI, AuctionWithDetails } from '../services/auctionsAPI';
+import AuctionCard from '../components/AuctionCard';
+import { getActiveAuctions, getUpcomingAuctions } from '../utils/auctionMappers';
+import { liveSalesAPI, LiveStream, LiveStreamProduct, LiveStreamService } from '../services/liveSalesAPI';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+// ========== MOCK DATA FOR TESTING ==========
+const createMockProduct = (overrides: Partial<Product>): Product => ({
+  id: '',
+  user_id: '',
+  category_id: '',
+  name: '',
+  description: '',
+  price: 0,
+  quantity: 0,
+  condition: 'new',
+  images: [],
+  shipping_options: { pickup: true, delivery: true, shipping: true },
+  tags: [],
+  status: 'active',
+  is_featured: false,
+  view_count: 0,
+  like_count: 0,
+  save_count: 0,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  ...overrides,
+});
+
+const MOCK_PRODUCTS: Product[] = [
+  // Trending products (created recently with high engagement)
+  createMockProduct({ id: '1', name: 'Premium Wireless Headphones', description: 'High-quality wireless headphones with noise cancellation', price: 299.99, category_id: 'electronics', user_id: 'user1', vendor_username: 'TechStore', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Headphones', images: ['https://via.placeholder.com/400x400?text=Headphones'], quantity: 50, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.8, view_count: 1200, like_count: 150, media_type: 'image', is_featured: true, tags: ['trending', 'electronics', 'audio'], created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() }), // 24 hours ago
+  createMockProduct({ id: '2', name: 'Designer Leather Jacket', description: 'Premium leather jacket with modern design', price: 450.00, category_id: 'fashion', user_id: 'user2', vendor_username: 'FashionHub', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Jacket', images: ['https://via.placeholder.com/400x400?text=Jacket'], quantity: 25, condition: 'new', location: 'Abuja, Nigeria', average_rating: 4.6, view_count: 850, like_count: 95, media_type: 'image', is_featured: true, tags: ['trending', 'fashion', 'winter'], created_at: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString() }), // 12 hours ago
+  createMockProduct({ id: '3', name: 'Smart Home Security System', description: 'Complete home security with cameras and sensors', price: 599.99, category_id: 'electronics', user_id: 'user3', vendor_username: 'SmartHome', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Security', images: ['https://via.placeholder.com/400x400?text=Security'], quantity: 30, condition: 'new', location: 'Port Harcourt, Nigeria', average_rating: 4.9, view_count: 2100, like_count: 280, media_type: 'image', is_featured: false, tags: ['trending', 'smart', 'security'], created_at: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString() }), // 36 hours ago
+  
+  // Hot Picks (featured products)
+  createMockProduct({ id: '4', name: 'Vintage Watch Collection', description: 'Rare vintage watches from the 1970s', price: 1200.00, category_id: 'fashion', user_id: 'user4', vendor_username: 'TimePiece', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Watch', images: ['https://via.placeholder.com/400x400?text=Watch'], quantity: 10, condition: 'used', location: 'Lagos, Nigeria', average_rating: 4.7, view_count: 1500, like_count: 120, media_type: 'image', is_featured: true, tags: ['vintage', 'luxury'] }),
+  createMockProduct({ id: '7', name: 'Gaming Laptop', description: 'High-performance gaming laptop with RTX graphics', price: 1299.99, category_id: 'electronics', user_id: 'user7', vendor_username: 'GameZone', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Laptop', images: ['https://via.placeholder.com/400x400?text=Laptop'], quantity: 15, condition: 'new', location: 'Abuja, Nigeria', average_rating: 4.9, view_count: 3200, like_count: 400, media_type: 'image', is_featured: true, tags: ['gaming', 'tech'] }),
+  createMockProduct({ id: '9', name: 'iPhone 15 Pro Max Review', description: 'Detailed review of the latest iPhone', price: 1299.99, category_id: 'electronics', user_id: 'user9', vendor_username: 'TechReview', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x600?text=iPhone', primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', images: ['https://via.placeholder.com/400x600?text=iPhone'], videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'], quantity: 20, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.8, view_count: 5000, like_count: 600, media_type: 'video', is_featured: true, tags: ['review', 'tech'] }),
+  createMockProduct({ id: '12', name: 'Cooking Tutorial', description: 'Learn to cook amazing dishes', price: 0, category_id: 'foods', user_id: 'user12', vendor_username: 'ChefMaster', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x600?text=Cooking', primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', images: ['https://via.placeholder.com/400x600?text=Cooking'], videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4'], quantity: 0, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.6, view_count: 1800, like_count: 200, media_type: 'video', is_featured: true, tags: ['tutorial', 'food'] }),
+  
+  // Seasonal Rave products
+  createMockProduct({ id: '5', name: 'Organic Coffee Beans', description: 'Premium organic coffee beans from Ethiopia', price: 35.99, category_id: 'foods', user_id: 'user5', vendor_username: 'CoffeeLovers', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Coffee', images: ['https://via.placeholder.com/400x400?text=Coffee'], quantity: 100, condition: 'new', location: 'Ibadan, Nigeria', average_rating: 4.5, view_count: 600, like_count: 50, media_type: 'image', is_featured: false, tags: ['seasonal', 'winter', 'holiday'] }),
+  createMockProduct({ id: '6', name: 'Yoga Mat Premium', description: 'Non-slip premium yoga mat', price: 45.00, category_id: 'sports', user_id: 'user6', vendor_username: 'FitLife', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=YogaMat', images: ['https://via.placeholder.com/400x400?text=YogaMat'], quantity: 75, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.4, view_count: 400, like_count: 30, media_type: 'image', is_featured: false, tags: ['seasonal', 'summer', 'fitness'] }),
+  createMockProduct({ id: '11', name: 'Home Decor Tour', description: 'Beautiful home decoration ideas', price: 0, category_id: 'home', user_id: 'user11', vendor_username: 'HomeDesign', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x600?text=Home', primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', images: ['https://via.placeholder.com/400x600?text=Home'], videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'], quantity: 0, condition: 'new', location: 'Port Harcourt, Nigeria', average_rating: 4.5, view_count: 1200, like_count: 100, media_type: 'video', is_featured: false, tags: ['seasonal', 'christmas', 'holiday'] }),
+  
+  // Combo Deals
+  createMockProduct({ id: '8', name: 'Skincare Set', description: 'Complete skincare routine set', price: 89.99, category_id: 'beauty', user_id: 'user8', vendor_username: 'BeautyBox', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Skincare', images: ['https://via.placeholder.com/400x400?text=Skincare'], quantity: 60, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.6, view_count: 950, like_count: 80, media_type: 'image', is_featured: false, tags: ['combo', 'bundle', 'set'] }),
+  createMockProduct({ id: '14', name: 'Tech Bundle Package', description: 'Phone, charger, and case combo', price: 399.99, category_id: 'electronics', user_id: 'user14', vendor_username: 'TechBundle', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Bundle', images: ['https://via.placeholder.com/400x400?text=Bundle'], quantity: 40, condition: 'new', location: 'Abuja, Nigeria', average_rating: 4.7, view_count: 1100, like_count: 130, media_type: 'image', is_featured: false, tags: ['combo', 'package', 'bundle'] }),
+  createMockProduct({ id: '15', name: 'Fitness Equipment Set', description: 'Complete home gym package', price: 599.99, category_id: 'sports', user_id: 'user15', vendor_username: 'FitPackage', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=FitnessSet', images: ['https://via.placeholder.com/400x400?text=FitnessSet'], quantity: 20, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.8, view_count: 800, like_count: 90, media_type: 'image', is_featured: false, tags: ['combo', 'set', 'package'] }),
+  
+  // Flash Sales
+  createMockProduct({ id: '16', name: 'Flash Sale: Designer Shoes', description: 'Limited time offer on designer shoes', price: 199.99, category_id: 'fashion', user_id: 'user16', vendor_username: 'ShoeDeal', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Shoes', images: ['https://via.placeholder.com/400x400?text=Shoes'], quantity: 30, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.5, view_count: 700, like_count: 60, media_type: 'image', is_featured: false, tags: ['flash', 'sale', 'deal'] }),
+  createMockProduct({ id: '17', name: 'Flash Sale: Smart Watch', description: 'Limited time discount on smart watch', price: 249.99, category_id: 'electronics', user_id: 'user17', vendor_username: 'WatchDeal', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=SmartWatch', images: ['https://via.placeholder.com/400x400?text=SmartWatch'], quantity: 25, condition: 'new', location: 'Abuja, Nigeria', average_rating: 4.6, view_count: 900, like_count: 75, media_type: 'image', is_featured: false, tags: ['flash', 'sale', 'discount'] }),
+  createMockProduct({ id: '18', name: 'Flash Deal: Beauty Products', description: 'Limited time beauty product sale', price: 49.99, category_id: 'beauty', user_id: 'user18', vendor_username: 'BeautyDeal', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Beauty', images: ['https://via.placeholder.com/400x400?text=Beauty'], quantity: 50, condition: 'new', location: 'Port Harcourt, Nigeria', average_rating: 4.4, view_count: 550, like_count: 45, media_type: 'image', is_featured: false, tags: ['flash', 'deal', 'sale'] }),
+  
+  // Regular products for For You section
+  createMockProduct({ id: '10', name: 'Fashion Haul Video', description: 'Latest fashion trends and styles', price: 0, category_id: 'fashion', user_id: 'user10', vendor_username: 'StyleVlog', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x600?text=Fashion', primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', images: ['https://via.placeholder.com/400x600?text=Fashion'], videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'], quantity: 0, condition: 'new', location: 'Abuja, Nigeria', average_rating: 4.7, view_count: 2800, like_count: 250, media_type: 'video', is_featured: false, tags: ['fashion', 'vlog'] }),
+  createMockProduct({ id: '13', name: 'Fitness Workout', description: 'Intense workout session', price: 0, category_id: 'sports', user_id: 'user13', vendor_username: 'FitCoach', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x600?text=Fitness', primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', images: ['https://via.placeholder.com/400x600?text=Fitness'], videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4'], quantity: 0, condition: 'new', location: 'Ibadan, Nigeria', average_rating: 4.4, view_count: 900, like_count: 70, media_type: 'video', is_featured: false, tags: ['fitness', 'workout'] }),
+];
+
+const MOCK_CATEGORIES: ProductCategory[] = [
+  { id: 'electronics', name: 'Electronics', icon_name: 'tv-outline', sort_order: 1, is_active: true },
+  { id: 'fashion', name: 'Fashion', icon_name: 'shirt-outline', sort_order: 2, is_active: true },
+  { id: 'home', name: 'Home & Garden', icon_name: 'home-outline', sort_order: 3, is_active: true },
+  { id: 'beauty', name: 'Beauty', icon_name: 'flower-outline', sort_order: 4, is_active: true },
+  { id: 'sports', name: 'Sports', icon_name: 'fitness-outline', sort_order: 5, is_active: true },
+  { id: 'foods', name: 'Foods', icon_name: 'restaurant-outline', sort_order: 6, is_active: true },
+];
+
+const MOCK_ACTIVE_AUCTIONS: any[] = [
+  { id: 'auction1', title: 'Vintage Rolex Watch', description: 'Rare 1970s Rolex', starting_price: 5000, current_bid: 7500, end_time: new Date(Date.now() + 86400000).toISOString(), status: 'active', category_id: 'fashion', images: ['https://via.placeholder.com/400x400?text=Rolex'], created_at: new Date().toISOString(), bids_count: 12, highest_bidder: 'bidder1', seller_id: 'seller1', seller_username: 'WatchCollector', seller: { id: 'seller1', username: 'WatchCollector', is_verified: true }, category: { id: 'fashion', name: 'Fashion', icon_name: 'shirt-outline', color: '#3498DB', slug: 'fashion' }, current_winning_bid: { id: 'bid1', bidder_display_id: 'bidder1', amount: 7500, created_at: new Date().toISOString() } },
+  { id: 'auction2', title: 'Antique Painting', description: '19th Century Artwork', starting_price: 2000, current_bid: 3200, end_time: new Date(Date.now() + 172800000).toISOString(), status: 'active', category_id: 'home', images: ['https://via.placeholder.com/400x400?text=Painting'], created_at: new Date().toISOString(), bids_count: 8, highest_bidder: 'bidder2', seller_id: 'seller2', seller_username: 'ArtGallery', seller: { id: 'seller2', username: 'ArtGallery', is_verified: true }, category: { id: 'home', name: 'Home & Garden', icon_name: 'home-outline', color: '#27AE60', slug: 'home' }, current_winning_bid: { id: 'bid2', bidder_display_id: 'bidder2', amount: 3200, created_at: new Date().toISOString() } },
+  { id: 'auction3', title: 'Classic Car', description: '1965 Mustang', starting_price: 15000, current_bid: 22000, end_time: new Date(Date.now() + 259200000).toISOString(), status: 'active', category_id: 'automotive', images: ['https://via.placeholder.com/400x400?text=Car'], created_at: new Date().toISOString(), bids_count: 25, highest_bidder: 'bidder3', seller_id: 'seller3', seller_username: 'CarDealer', seller: { id: 'seller3', username: 'CarDealer', is_verified: true }, category: { id: 'automotive', name: 'Automotive', icon_name: 'car-outline', color: '#E67E22', slug: 'automotive' }, current_winning_bid: { id: 'bid3', bidder_display_id: 'bidder3', amount: 22000, created_at: new Date().toISOString() } },
+];
+
+const MOCK_UPCOMING_AUCTIONS: any[] = [
+  { id: 'auction4', title: 'Diamond Ring', description: '2 Carat Diamond', starting_price: 8000, current_bid: 8000, end_time: new Date(Date.now() + 604800000).toISOString(), status: 'scheduled', category_id: 'fashion', images: ['https://via.placeholder.com/400x400?text=Diamond'], created_at: new Date().toISOString(), bids_count: 0, highest_bidder: null, seller_id: 'seller4', seller_username: 'JewelryStore', seller: { id: 'seller4', username: 'JewelryStore', is_verified: true }, category: { id: 'fashion', name: 'Fashion', icon_name: 'shirt-outline', color: '#3498DB', slug: 'fashion' } },
+  { id: 'auction5', title: 'Rare Book Collection', description: 'First Edition Books', starting_price: 3000, current_bid: 3000, end_time: new Date(Date.now() + 518400000).toISOString(), status: 'scheduled', category_id: 'books', images: ['https://via.placeholder.com/400x400?text=Books'], created_at: new Date().toISOString(), bids_count: 0, highest_bidder: null, seller_id: 'seller5', seller_username: 'BookStore', seller: { id: 'seller5', username: 'BookStore', is_verified: true }, category: { id: 'books', name: 'Books', icon_name: 'library-outline', color: '#9B59B6', slug: 'books' } },
+];
+
+const MOCK_LIVE_PRODUCTS = [
+  { streamId: 'live1', productId: 'prod1', title: 'Live: iPhone 15 Unboxing', price: 1299.99, image: 'https://via.placeholder.com/400x250?text=Live+iPhone' },
+  { streamId: 'live2', productId: 'prod2', title: 'Live: Fashion Show', price: 299.99, image: 'https://via.placeholder.com/400x250?text=Live+Fashion' },
+  { streamId: 'live3', productId: 'prod3', title: 'Live: Tech Review', price: 599.99, image: 'https://via.placeholder.com/400x250?text=Live+Tech' },
+];
+
+const MOCK_LIVE_SERVICES = [
+  { streamId: 'live-svc1', serviceId: 'svc1', title: 'Live: Personal Training Session', price: 50.00, description: 'Join our live fitness training' },
+  { streamId: 'live-svc2', serviceId: 'svc2', title: 'Live: Cooking Class', price: 35.00, description: 'Learn to cook amazing dishes' },
+  { streamId: 'live-svc3', serviceId: 'svc3', title: 'Live: Beauty Consultation', price: 25.00, description: 'Get expert beauty advice' },
+];
+
+const MOCK_VIDEO_FEED: VideoFeedItem[] = [
+  { id: 'video1', title: 'Professional Photography Service', description: 'High-quality photos for your events', videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', thumbnail: 'https://via.placeholder.com/600x900?text=Photography', userId: 'user1', username: 'PhotoPro', userAvatar: 'https://via.placeholder.com/40x40', price: 150.00, rating: 4.9, likes: '1250', comments: '89', shares: '45', location: 'Lagos, Nigeria', serviceProvider: 'PhotoPro', completedJobs: '250', isLiked: false, isBookmarked: false },
+  { id: 'video2', title: 'Graphic Design Services', description: 'Logo design and branding', videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', thumbnail: 'https://via.placeholder.com/600x900?text=Design', userId: 'user2', username: 'DesignStudio', userAvatar: 'https://via.placeholder.com/40x40', price: 200.00, rating: 4.8, likes: '980', comments: '67', shares: '32', location: 'Abuja, Nigeria', serviceProvider: 'DesignStudio', completedJobs: '180', isLiked: false, isBookmarked: false },
+  { id: 'video3', title: 'Music Production', description: 'Professional music mixing and mastering', videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', thumbnail: 'https://via.placeholder.com/600x900?text=Music', userId: 'user3', username: 'MusicLab', userAvatar: 'https://via.placeholder.com/40x40', price: 300.00, rating: 4.7, likes: '750', comments: '54', shares: '28', location: 'Port Harcourt, Nigeria', serviceProvider: 'MusicLab', completedJobs: '120', isLiked: false, isBookmarked: false },
+  { id: 'video4', title: 'Video Editing Service', description: 'Professional video editing for your content', videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', thumbnail: 'https://via.placeholder.com/600x900?text=Editing', userId: 'user4', username: 'EditMaster', userAvatar: 'https://via.placeholder.com/40x40', price: 180.00, rating: 4.6, likes: '620', comments: '43', shares: '21', location: 'Lagos, Nigeria', serviceProvider: 'EditMaster', completedJobs: '95', isLiked: false, isBookmarked: false },
+  { id: 'video5', title: 'Web Development', description: 'Custom websites and web apps', videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', thumbnail: 'https://via.placeholder.com/600x900?text=WebDev', userId: 'user5', username: 'WebDevPro', userAvatar: 'https://via.placeholder.com/40x40', price: 500.00, rating: 4.9, likes: '1100', comments: '78', shares: '38', location: 'Ibadan, Nigeria', serviceProvider: 'WebDevPro', completedJobs: '200', isLiked: false, isBookmarked: false },
+];
+// ========== END MOCK DATA ==========
 
 // Compact header dimensions - Twitter-style (REMOVED TABS FROM MAIN HEADER)
 const HEADER_FULL_HEIGHT = 60; // Increased to ensure content fits
@@ -71,6 +182,7 @@ const choiceDayCategories = [
   { id: 'categories', name: 'Categories', icon: 'grid-outline', color: '#FFEAA7' },
 ];
 
+
 // Memoized ProductCard with better error handling
 const StableProductCard = memo(ProductCard, (prevProps, nextProps) => {
   // Custom comparison to prevent unnecessary re-renders
@@ -94,6 +206,14 @@ const HomeScreen = () => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { itemCount = 0, isVisible: isCartVisible, showCart, hideCart, addToCart, addServiceToCart } = useCart();
+  const { 
+    productFilters, 
+    serviceFilters, 
+    setProductFilters, 
+    setServiceFilters, 
+    resetProductFilters, 
+    resetServiceFilters 
+  } = useFilters();
   const tabBarHeightFromContext = React.useContext(BottomTabBarHeightContext) || TAB_BAR_HEIGHT;
 
   const [activeTab, setActiveTab] = useState<'products' | 'services'>('products');
@@ -104,6 +224,23 @@ const HomeScreen = () => {
 
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
   const [focusedVideoId, setFocusedVideoId] = useState<string | null>(null);
+  const [activeAuctions, setActiveAuctions] = useState<AuctionWithDetails[]>([]);
+  const [upcomingAuctions, setUpcomingAuctions] = useState<AuctionWithDetails[]>([]);
+  const [liveProducts, setLiveProducts] = useState<Array<{
+    streamId: string;
+    productId: string;
+    title: string;
+    price: number;
+    image?: string;
+  }>>([]);
+  const [liveServices, setLiveServices] = useState<Array<{
+    streamId: string;
+    serviceId: string;
+    title: string;
+    price: number;
+    description?: string;
+  }>>([]);
+  const [heroIndex, setHeroIndex] = useState(0);
 
   // Track visible video products in viewport (max 2 at a time)
   const [visibleVideoProducts, setVisibleVideoProducts] = useState<Set<string>>(new Set());
@@ -115,15 +252,9 @@ const HomeScreen = () => {
   const [commentsServiceId, setCommentsServiceId] = useState<string | null>(null);
   const [likedServices, setLikedServices] = useState<Set<string>>(new Set());
   const [isFilterVisible, setFilterVisible] = useState(false);
-  const [filters, setFilters] = useState<FilterOptions>({
-    priceRange: { min: 0, max: 999999999 },
-    condition: [],
-    location: [],
-    rating: 0,
-    category: [],
-    sortBy: 'newest',
-    availability: [],
-  });
+  
+  // Use filters from context (persisted)
+  const filters = activeTab === 'products' ? productFilters : serviceFilters;
   
   // Real data state management
   const [products, setProducts] = useState<Product[]>([]);
@@ -149,63 +280,147 @@ const HomeScreen = () => {
   const sidebarTranslateX = useRef(new Animated.Value(-screenWidth * 0.75)).current;
   const lastScrollY = useRef(0);
 
-  // Data loading functions - USING REAL API DATA
+  // Error state for displaying error messages
+  const [errorState, setErrorState] = useState<ErrorInfo | null>(null);
+
+  // Data loading functions - USING REAL API DATA with enhanced error handling
   const loadData = async (showLoading = true) => {
     if (showLoading) setLoading(true);
+    setErrorState(null);
 
     try {
-      // Load real data from API and user profile for role checking
-      const promises = [
-        productsAPI.getProducts(),
-        productsAPI.getCategories()
-      ];
+      // Load real data from API and user profile for role checking with retry logic
+      await handleErrorWithRetry(
+        async () => {
+          const promises: [Promise<Product[]>, Promise<ProductCategory[]>, Promise<any>?] = [
+            productsAPI.getProducts(),
+            productsAPI.getCategories()
+          ];
 
-      // Only load profile if user is authenticated
-      if (user?.id) {
-        promises.push(userAPI.getProfile());
-      }
+          // Only load profile if user is authenticated
+          let profileData: any = null;
+          if (user?.id) {
+            profileData = await userAPI.getProfile();
+          }
 
-      const results = await Promise.all(promises);
-      const [productsData, categoriesData, profileData] = results;
+          const [productsData, categoriesData] = await Promise.all([
+            promises[0],
+            promises[1]
+          ]);
 
-      // Debug: Check for video products
-      const videoProducts = productsData.filter((p: any) => p.media_type === 'video');
-      console.log('📹 Total products loaded:', productsData.length);
-      console.log('📹 Video products found:', videoProducts.length);
-      if (videoProducts.length > 0) {
-        console.log('📹 First video product:', JSON.stringify(videoProducts[0], null, 2));
-      }
+          // Debug: Check for video products
+          const videoProducts = productsData.filter((p: any) => p.media_type === 'video');
 
-      setProducts(productsData);
-      setCategories(categoriesData);
+          // For testing: Always use mock data (merge with API data if available)
+          // In production, remove MOCK_PRODUCTS and use only productsData
+          const finalProducts = MOCK_PRODUCTS.length > 0 ? MOCK_PRODUCTS : (productsData || []);
+          const finalCategories = MOCK_CATEGORIES.length > 0 ? MOCK_CATEGORIES : (categoriesData || []);
+          
+          setProducts(finalProducts);
+          setCategories(finalCategories);
 
-      // Set profile data if available
-      if (profileData) {
-        setUserProfile(profileData);
-        console.log('✅ User profile loaded:', { isSeller: profileData.isSeller, isRider: profileData.isRider });
-      }
+          // Set profile data if available
+          if (profileData) {
+            setUserProfile(profileData);
+          }
+        },
+        3, // maxRetries
+        1000, // baseDelay
+        (errorInfo, attempt) => {
+          // Log retry attempts
+          if (attempt >= 3) {
+            // Final attempt failed, show error
+            setErrorState(errorInfo);
+            handleError(errorInfo, () => loadData(showLoading), () => setErrorState(null));
+          }
+        }
+      );
       
-      // Load video data from API
+      // Load video data from API (non-blocking, doesn't fail entire load)
       try {
         const videoData = await servicesAPI.getVideoFeed({ limit: 10 });
-        console.log('🎥 Video feed data received:', videoData?.length || 0, 'services');
-        if (videoData && videoData.length > 0) {
-          console.log('🎥 First video item:', JSON.stringify(videoData[0], null, 2));
-          console.log('🎥 Video has URI?', !!videoData[0]?.videoUri);
-          console.log('🎥 Video URI:', videoData[0]?.videoUri);
-        }
 
-        setVideoFeedData(videoData || []);
-        console.log(`✅ Loaded real data: ${productsData.length} products, ${categoriesData.length} categories, ${videoData?.length || 0} services`);
-        console.log('✅ VideoFeedData state updated with', videoData?.length || 0, 'items');
+        // For testing: Always use mock data (merge with API data if available)
+        const finalVideoData = MOCK_VIDEO_FEED.length > 0 ? MOCK_VIDEO_FEED : (videoData || []);
+        setVideoFeedData(finalVideoData);
       } catch (videoError) {
-        console.warn('🔴 Error loading video data:', videoError);
-        console.error('🔴 Full error:', videoError);
-        // Set empty array if API fails - no mock data fallback
-        setVideoFeedData([]);
+        // Video feed errors are non-critical, log but don't block
+        const videoErrorInfo = handleError(videoError, () => {
+          // Retry video feed load
+          servicesAPI.getVideoFeed({ limit: 10 })
+            .then(setVideoFeedData)
+            .catch(() => setVideoFeedData(MOCK_VIDEO_FEED));
+        });
+        console.warn('🔴 Error loading video data, using mock data:', videoErrorInfo);
+        setVideoFeedData(MOCK_VIDEO_FEED);
       }
+
+      // Load auctions (small batches for MVP)
+      try {
+        const [activeResp, upcomingResp] = await Promise.all([
+          auctionsAPI.getAuctions({ status: 'active', limit: 5, time_filter: 'ending_soon' }),
+          auctionsAPI.getAuctions({ status: 'scheduled', limit: 5 }),
+        ]);
+        const active = activeResp.auctions || [];
+        const upcoming = upcomingResp.auctions || [];
+        // For testing: Always use mock data (merge with API data if available)
+        const finalActive = MOCK_ACTIVE_AUCTIONS.length > 0 ? MOCK_ACTIVE_AUCTIONS : active;
+        const finalUpcoming = MOCK_UPCOMING_AUCTIONS.length > 0 ? MOCK_UPCOMING_AUCTIONS : upcoming;
+        setActiveAuctions(finalActive);
+        setUpcomingAuctions(finalUpcoming);
+      } catch (auctionError) {
+        console.warn('🔴 Error loading auctions, using mock data:', auctionError);
+        setActiveAuctions(MOCK_ACTIVE_AUCTIONS);
+        setUpcomingAuctions(MOCK_UPCOMING_AUCTIONS);
+      }
+
+      // Load live sales streams (small batches)
+      try {
+        const liveStreams = await liveSalesAPI.getActiveStreams(10, 0, true);
+
+        const liveProductItems =
+          liveStreams
+            ?.filter(stream => stream.status === 'live' && stream.stream_type === 'products' && stream.products?.length)
+            .slice(0, 5)
+            .flatMap(stream =>
+              (stream.products || []).slice(0, 1).map((p: LiveStreamProduct) => ({
+                streamId: stream.id,
+                productId: p.product_id,
+                title: p.product?.name || stream.title,
+                price: p.live_price,
+                image: stream.thumbnail_url || p.product?.primary_image_url,
+              }))
+            ) || [];
+
+        const liveServiceItems =
+          liveStreams
+            ?.filter(stream => stream.status === 'live' && stream.stream_type === 'services' && stream.services?.length)
+            .slice(0, 5)
+            .flatMap(stream =>
+              (stream.services || []).slice(0, 1).map((s: LiveStreamService) => ({
+                streamId: stream.id,
+                serviceId: s.service_id,
+                title: s.service?.name || stream.title,
+                price: s.live_price,
+                description: s.service?.description,
+              }))
+            ) || [];
+
+        // For testing: Always use mock data (merge with API data if available)
+        const finalLiveProducts = MOCK_LIVE_PRODUCTS.length > 0 ? MOCK_LIVE_PRODUCTS : liveProductItems;
+        const finalLiveServices = MOCK_LIVE_SERVICES.length > 0 ? MOCK_LIVE_SERVICES : liveServiceItems;
+        setLiveProducts(finalLiveProducts);
+        setLiveServices(finalLiveServices);
+      } catch (liveError) {
+        console.warn('🔴 Error loading live sales, using mock data:', liveError);
+        setLiveProducts(MOCK_LIVE_PRODUCTS);
+        setLiveServices(MOCK_LIVE_SERVICES);
+      }
+
     } catch (error) {
-      console.error('🔴 Error loading data:', error);
+      // This catch handles non-retryable errors or final failures
+      const errorInfo = handleError(error, () => loadData(showLoading), () => setErrorState(null));
+      setErrorState(errorInfo);
       setProducts([]);
       setCategories([]);
     } finally {
@@ -239,7 +454,6 @@ const HomeScreen = () => {
     React.useCallback(() => {
       // Only reload data if we don't have any data yet
       if (products.length === 0 && videoFeedData.length === 0) {
-        console.log('🔄 Loading data on first focus');
         loadData(false);
       }
     }, []) // Empty dependency array - only run once
@@ -251,23 +465,18 @@ const HomeScreen = () => {
       const videoProducts = products.filter(p => p.media_type === 'video' && p.primary_video_url);
       const firstTwo = videoProducts.slice(0, 2).map(p => p.id);
       setVisibleVideoProducts(new Set(firstTwo));
-      console.log('🎬 Initialized visible video products:', firstTwo);
     }
   }, [products]);
 
   // Debug: Track isPlaying state changes
   useEffect(() => {
-    console.log(`🎵 isPlaying state changed: ${isPlaying} (activeTab: ${activeTab})`);
   }, [isPlaying, activeTab]);
 
   // Ensure video starts playing when switching to services tab
   useEffect(() => {
-    console.log(`🎬 Active tab changed to: ${activeTab}, isPlaying: ${isPlaying}, videoCount: ${videoFeedData.length}`);
     if (activeTab === 'services' && videoFeedData.length > 0) {
-      console.log('🎬 Setting isPlaying to true for services tab');
       setIsPlaying(true);
     } else if (activeTab === 'products') {
-      console.log('🎬 Setting isPlaying to false for products tab');
       setIsPlaying(false);
     }
   }, [activeTab, videoFeedData.length]);
@@ -275,12 +484,10 @@ const HomeScreen = () => {
   // Auto-play for services tab - ONLY when screen is focused
   useEffect(() => {
     if (!isScreenFocused) {
-      console.log('⏸️ Auto-play paused - screen unfocused');
       return; // Don't auto-play if screen not focused
     }
 
     if (activeTab === 'services' && !isPlaying && videoFeedData.length > 0) {
-      console.log('🎬 Auto-play: Setting isPlaying to true on services tab');
       setIsPlaying(true);
     }
   }, [activeTab, isPlaying, videoFeedData.length, isScreenFocused]);
@@ -289,12 +496,10 @@ const HomeScreen = () => {
   useFocusEffect(
     React.useCallback(() => {
       // Screen is focused
-      console.log('✅ HomeScreen FOCUSED');
       setIsScreenFocused(true);
 
       // Resume playing if on services tab
       if (activeTab === 'services' && videoFeedData.length > 0) {
-        console.log('🎬 Screen focused - resuming video playback');
         setIsPlaying(true);
       }
 
@@ -303,12 +508,10 @@ const HomeScreen = () => {
         const videoProducts = products.filter(p => p.media_type === 'video' && p.primary_video_url);
         const firstTwo = videoProducts.slice(0, 2).map(p => p.id);
         setVisibleVideoProducts(new Set(firstTwo));
-        console.log('🎬 Screen focused - restored visible video products:', firstTwo);
       }
 
       return () => {
         // Screen is unfocused - CRITICAL CLEANUP
-        console.log('❌ HomeScreen UNFOCUSED - Running cleanup');
         setIsScreenFocused(false);
 
         // Stop ALL videos immediately
@@ -322,8 +525,6 @@ const HomeScreen = () => {
           clearTimeout(servicesUITimer.current);
           servicesUITimer.current = null;
         }
-
-        console.log('✅ Cleanup complete - videos stopped, timers cleared');
       };
     }, [activeTab, products]) // Added products to dependencies
   );
@@ -331,11 +532,9 @@ const HomeScreen = () => {
   // Countdown timer effect - ONLY runs when screen is focused
   useEffect(() => {
     if (!isScreenFocused) {
-      console.log('⏸️ Countdown timer paused - screen unfocused');
       return; // Don't start timer if screen not focused
     }
 
-    console.log('▶️ Countdown timer started - screen focused');
     const timer = setInterval(() => {
       setTimeLeft(prevTime => {
         if (prevTime.seconds > 0) {
@@ -350,7 +549,6 @@ const HomeScreen = () => {
     }, 1000);
 
     return () => {
-      console.log('🛑 Countdown timer cleared');
       clearInterval(timer);
     };
   }, [isScreenFocused]);
@@ -388,7 +586,6 @@ const HomeScreen = () => {
 
       // Call API and get actual response
       const response = await servicesAPI.toggleLike(itemId);
-      console.log('✅ Like API response:', response);
 
       // Update with ACTUAL values from backend to ensure persistence
       setVideoFeedData(prev => prev.map(video =>
@@ -401,7 +598,6 @@ const HomeScreen = () => {
           : video
       ));
 
-      console.log('✅ Updated videoFeedData with backend response - liked:', response.liked, 'count:', response.likeCount);
     } catch (error) {
       console.error('Error liking service:', error);
       // Revert optimistic update on error
@@ -444,7 +640,6 @@ const HomeScreen = () => {
           }
         : video
     ));
-    console.log('✅ Comment count incremented for service:', serviceId);
   };
 
   const handleBookmark = async (itemId: string) => {
@@ -461,7 +656,6 @@ const HomeScreen = () => {
 
       // Call bookmark API
       const result = await servicesAPI.toggleBookmark(itemId);
-      console.log('✅ Bookmark toggled:', result.bookmarked ? 'Added' : 'Removed');
 
       // Update with actual state from backend
       setVideoFeedData(prev => prev.map(video =>
@@ -504,8 +698,6 @@ const HomeScreen = () => {
 
       // If user completed share (not dismissed)
       if (shareResult.action === Share.sharedAction) {
-        console.log('✅ User shared the service');
-
         // Optimistic update - increment share count
         setVideoFeedData(prev => prev.map(video =>
           video.id === itemId
@@ -518,7 +710,6 @@ const HomeScreen = () => {
 
         // Call share API to update backend count
         const result = await servicesAPI.shareService(itemId);
-        console.log('✅ Share count updated in backend:', result.shareCount);
 
         // Update with actual count from backend
         setVideoFeedData(prev => prev.map(video =>
@@ -529,8 +720,6 @@ const HomeScreen = () => {
               }
             : video
         ));
-      } else if (shareResult.action === Share.dismissedAction) {
-        console.log('User dismissed share sheet');
       }
     } catch (error: any) {
       console.error('Error sharing service:', error);
@@ -586,7 +775,7 @@ const HomeScreen = () => {
         // Check if product location matches any selected filter locations
         const locationMatch = filters.location.some(filterLoc => {
           // Handle both "City, Country" and "City" formats
-          return product.location?.includes(filterLoc) || filterLoc.includes(product.location);
+          return product.location?.includes(filterLoc) || (product.location && filterLoc.includes(product.location));
         });
         if (!locationMatch) return false;
       }
@@ -640,34 +829,54 @@ const HomeScreen = () => {
     return filtered;
   }, [products, selectedCategory, categories, isScreenFocused, filters]);
 
-  // Memoize filtered and sorted services
+  // Map live services into video-like items for the services tab
+  const liveServiceVideos = useMemo(() => {
+    return (liveServices || []).map((item): VideoFeedItem => {
+      // Ensure all string fields are properly converted and never undefined
+      const safeItem: VideoFeedItem = {
+        id: `live-service-${String(item.serviceId || 'unknown')}`,
+        videoUri: undefined, // no video; will fall back to thumbnail
+        thumbnail: 'https://via.placeholder.com/600x900.png?text=Live+Service',
+        title: String(item.title || 'Live Service'),
+        description: String(item.description || 'Live service session'),
+        username: String((item as any).serviceProvider || 'Live Service'),
+        userId: String((item as any).userId || ''),
+        userAvatar: String((item as any).userAvatar || 'https://via.placeholder.com/40x40'),
+        price: typeof item.price === 'number' ? item.price : 0,
+        rating: typeof (item as any).rating === 'number' ? (item as any).rating : 0,
+        likes: '0',
+        comments: '0',
+        shares: '0',
+        isLiked: false,
+        isBookmarked: false,
+        location: (item as any).location || '',
+        serviceProvider: String((item as any).serviceProvider || 'Live Service'),
+        completedJobs: String((item as any).completedJobs || '0'),
+        // Add liveStreamId for navigation
+        liveStreamId: String(item.streamId || ''),
+      } as VideoFeedItem & { liveStreamId?: string };
+      return safeItem;
+    });
+  }, [liveServices]);
+
+  // Memoize filtered and sorted services including live service videos
   const filteredServices = useMemo(() => {
     if (!isScreenFocused) {
       return [];
     }
     
-    let filtered = videoFeedData.filter(service => {
-      // Price range
-      const priceMatch = service.price >= filters.priceRange.min && service.price <= filters.priceRange.max;
-      if (!priceMatch) return false;
-      
-      // Location (only if filters applied)
-      if (filters.location.length > 0 && service.location) {
-        const locationMatch = filters.location.some(filterLoc => {
-          return service.location?.includes(filterLoc) || filterLoc.includes(service.location);
-        });
-        if (!locationMatch) return false;
+    // Prepend live services to the feed
+    let merged = [...liveServiceVideos, ...videoFeedData];
+    
+    let filtered = merged.filter(service => {
+      // Price range (if price exists)
+      if (filters.priceRange && typeof service.price === 'number') {
+        const priceMatch = service.price >= filters.priceRange.min && service.price <= filters.priceRange.max;
+        if (!priceMatch) return false;
       }
       
-      // Rating (only if rating filter > 0)
-      if (filters.rating > 0) {
-        const ratingMatch = service.rating >= filters.rating;
-        if (!ratingMatch) return false;
-      }
-      
-      // Availability (service-specific: weekdays, weekends, evenings, emergency)
-      // Note: This would need availability data in VideoFeedItem interface
-      // For now, we'll skip this check as the data structure doesn't include it
+      // Location filter not applied (live services may not have location)
+      // Rating filter skipped for live services
       
       return true;
     });
@@ -675,17 +884,17 @@ const HomeScreen = () => {
     // Sorting
     switch (filters.sortBy) {
       case 'price_asc':
-        filtered.sort((a, b) => a.price - b.price);
+        filtered.sort((a: any, b: any) => (a.price || 0) - (b.price || 0));
         break;
       case 'price_desc':
-        filtered.sort((a, b) => b.price - a.price);
+        filtered.sort((a: any, b: any) => (b.price || 0) - (a.price || 0));
         break;
       case 'rating':
-        filtered.sort((a, b) => b.rating - a.rating);
+        filtered.sort((a: any, b: any) => (b.rating || 0) - (a.rating || 0));
         break;
       case 'popular':
-        // Sort by likes count
-        filtered.sort((a, b) => {
+        // Sort by likes count if present
+        filtered.sort((a: any, b: any) => {
           const aLikes = parseInt(a.likes) || 0;
           const bLikes = parseInt(b.likes) || 0;
           return bLikes - aLikes;
@@ -693,12 +902,22 @@ const HomeScreen = () => {
         break;
       case 'newest':
       default:
-        // Services don't have created_at in VideoFeedItem, keep original order
+        // Services don't have created_at in VideoFeedItem consistently; keep order
         break;
     }
     
     return filtered;
-  }, [videoFeedData, isScreenFocused, filters]);
+  }, [videoFeedData, isScreenFocused, filters, liveServiceVideos]);
+  // Filter auctions (MVP: apply category filter only)
+  const filteredActiveAuctions = useMemo(() => {
+    if (selectedCategory === 'all') return activeAuctions;
+    return activeAuctions.filter(a => a.category_id === selectedCategory);
+  }, [activeAuctions, selectedCategory]);
+
+  const filteredUpcomingAuctions = useMemo(() => {
+    if (selectedCategory === 'all') return upcomingAuctions;
+    return upcomingAuctions.filter(a => a.category_id === selectedCategory);
+  }, [upcomingAuctions, selectedCategory]);
 
   const handleTabPress = (tab: 'products' | 'services') => {
     const targetPage = tab === 'products' ? 0 : 1;
@@ -724,7 +943,11 @@ const HomeScreen = () => {
   };
 
   const handleFiltersChange = (newFilters: FilterOptions) => {
-    setFilters(newFilters);
+    if (activeTab === 'products') {
+      setProductFilters(newFilters);
+    } else {
+      setServiceFilters(newFilters);
+    }
   };
 
   const handleApplyFilters = () => {
@@ -734,30 +957,14 @@ const HomeScreen = () => {
     }
     
     // Debug logging
-    console.log('✅ Filters applied:', {
-      priceRange: filters.priceRange,
-      condition: filters.condition,
-      location: filters.location,
-      rating: filters.rating,
-      category: filters.category,
-      sortBy: filters.sortBy,
-      availability: filters.availability,
-      activeCount: activeFilterCount
-    });
-    console.log(`📊 Total products: ${products.length}`);
-    console.log(`📊 Filtered products: ${filteredProducts.length}`);
   };
 
   const handleResetFilters = () => {
-    setFilters({
-      priceRange: { min: 0, max: 999999999 },
-      condition: [],
-      location: [],
-      rating: 0,
-      category: [],
-      sortBy: 'newest',
-      availability: [],
-    });
+    if (activeTab === 'products') {
+      resetProductFilters();
+    } else {
+      resetServiceFilters();
+    }
   };
 
   // Calculate active filter count for badge
@@ -795,6 +1002,80 @@ const HomeScreen = () => {
     lastScrollY.current = currentScrollY;
   };
 
+  // Handler for add to cart button press
+  const handleCartPress = useCallback(async (productId: string) => {
+    try {
+      await addToCart(productId, 1);
+    } catch (error) {
+      console.error('Error adding to cart:', error);
+    }
+  }, [addToCart]);
+
+  // Handler for bargain/negotiation button press
+  const handleBargainPress = useCallback(async (productId: string) => {
+    try {
+
+      // Find the product in our products list
+      const product = products.find(p => p.id === productId);
+
+      if (!product) {
+        Alert.alert('Error', 'Product not found');
+        return;
+      }
+
+      if (!product.user_id) {
+        Alert.alert('Error', 'Vendor information not available');
+        return;
+      }
+
+
+      // Determine chat type based on current user's role
+      // Product owner is a vendor, so default is 'vendor'
+      // Priority: rider > vendor > friend
+      let chatType: 'friend' | 'vendor' | 'rider' = 'vendor';
+
+      // Check if current user is a rider (highest priority)
+      if (user?.is_rider) {
+        chatType = 'rider';
+      }
+      // If current user is seller, keep it as vendor
+      else if (user?.is_seller) {
+        chatType = 'vendor';
+      }
+      // Product owner is vendor, so default stays 'vendor'
+
+      // Find or create conversation with the vendor
+      const conversation = await chatAPI.findOrCreateConversation(
+        [product.user_id],
+        chatType
+      );
+
+      // Navigate to chat with product context
+      navigation.navigate('IndividualChatScreen', {
+        chatId: conversation.id,
+        chatName: product.vendor_username || 'Vendor',
+        chatAvatar: product.vendor_avatar || 'https://via.placeholder.com/50',
+        chatType: chatType,
+        isOnline: true,
+        verified: false,
+        isAI: false,
+        otherUserId: product.user_id,
+        // Bargain context
+        bargainMode: true,
+        productData: {
+          id: product.id,
+          name: product.name,
+          price: product.price,
+          image: product.primary_image_url || product.images?.[0] || '',
+          vendor_username: product.vendor_username,
+        },
+      });
+    } catch (error) {
+      console.error('Error initiating bargain:', error);
+      Alert.alert('Error', 'Unable to start conversation. Please try again.');
+    }
+  }, [products, user, navigation]);
+
   // Enhanced ProductCard with centralized data mapper
   const renderEnhancedProductCard = useCallback((item: any, isHorizontal = false) => {
     // Don't render when screen is unfocused
@@ -820,10 +1101,9 @@ const HomeScreen = () => {
             product={productData}
             variant={isHorizontal ? 'grid' : 'featured'}
             onPress={() => handleProductPress(productData.id)}
-            onLike={() => console.log('Like product:', productData.id)}
-            onBookmark={() => console.log('Bookmark product:', productData.id)}
+            onLike={() => {}}
+            onBookmark={() => {}}
             onVendorPress={(vendorId) => {
-              console.log('Navigate to vendor:', vendorId);
               navigation.navigate('PublicProfile', { userId: vendorId });
             }}
             onCartPress={(product) => handleCartPress(product.id)}
@@ -833,7 +1113,8 @@ const HomeScreen = () => {
       );
     } catch (error) {
       console.error('Error in renderEnhancedProductCard:', error);
-      return <FallbackCard error={`Render error: ${error.message}`} />;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return <FallbackCard error={`Render error: ${errorMessage}`} />;
     }
   }, [isScreenFocused, navigation, handleCartPress, handleBargainPress]);
 
@@ -898,7 +1179,6 @@ const HomeScreen = () => {
   const renderChoiceDayBanner = () => (
     <View style={{ marginHorizontal: 12, marginVertical: 8 }}>
       <View style={{ 
-        backgroundColor: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 
         borderRadius: 12, 
         padding: 16, 
         flexDirection: 'row', 
@@ -977,12 +1257,16 @@ const HomeScreen = () => {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 12 }}
           decelerationRate="fast"
-          snapToInterval={screenWidth * 0.4 + 12}
+          snapToInterval={screenWidth * 0.45 + 12}
           snapToAlignment="start"
         >
           {featuredProducts.map((item) => (
-            <View key={item.id}>
-              {renderEnhancedProductCard(item, true)}
+            <View key={item.id} style={{ width: screenWidth * 0.45, marginRight: 12 }}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+              >
+                {renderEnhancedProductCard(item, false)}
+              </TouchableOpacity>
             </View>
           ))}
         </ScrollView>
@@ -1013,15 +1297,317 @@ const HomeScreen = () => {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 12 }}
           decelerationRate="fast"
-          snapToInterval={screenWidth * 0.4 + 12}
+          snapToInterval={screenWidth * 0.45 + 12}
           snapToAlignment="start"
         >
           {highRatedProducts.map((item) => (
-            <View key={item.id}>
-              {renderEnhancedProductCard(item, true)}
+            <View key={item.id} style={{ width: screenWidth * 0.45, marginRight: 12 }}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+              >
+                {renderEnhancedProductCard(item, false)}
+              </TouchableOpacity>
             </View>
           ))}
         </ScrollView>
+      </View>
+    );
+  };
+
+  // Auction strip (horizontal) for MVP
+  const renderAuctionStrip = (title: string, auctions: AuctionWithDetails[]) => {
+    if (!auctions || auctions.length === 0) return null;
+    // Show only on "All" to reduce noise
+    if (selectedCategory !== 'all') return null;
+
+    return (
+      <View style={{ marginVertical: 12 }}>
+        <View style={{ paddingHorizontal: 12, marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>{title}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="hammer" size={16} color="#888" style={{ marginRight: 4 }} />
+            <Text style={{ color: '#888', fontSize: 12 }}>{auctions.length} shown</Text>
+          </View>
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 12 }}
+        >
+          {auctions.map(auction => (
+            <AuctionCard
+              key={auction.id}
+              auction={auction}
+              variant="horizontal"
+              onPress={(a) => navigation.navigate('AuctionDetails', { auctionId: a.id })}
+            />
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // Live products strip
+  const renderLiveProductsStrip = () => {
+    if (activeTab !== 'products') return null;
+    if (!liveProducts || liveProducts.length === 0) return null;
+    // For MVP, only show in "All"
+    if (selectedCategory !== 'all') return null;
+
+    return (
+      <View style={{ marginVertical: 12 }}>
+        <View style={{ paddingHorizontal: 12, marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Live Sales (Products)</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="radio" size={16} color="#E74C3C" style={{ marginRight: 4 }} />
+            <Text style={{ color: '#888', fontSize: 12 }}>{liveProducts.length} live</Text>
+          </View>
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 12 }}
+        >
+          {liveProducts.map(item => (
+            <TouchableOpacity
+              key={`${item.streamId}-${item.productId}`}
+              activeOpacity={0.9}
+              onPress={() => navigation.navigate('LiveStreamViewer', { streamId: item.streamId })}
+              style={{
+                width: 200,
+                backgroundColor: '#0d0d0d',
+                borderRadius: 12,
+                overflow: 'hidden',
+                marginRight: 12,
+                borderWidth: 1,
+                borderColor: '#1f1f1f',
+              }}
+            >
+              <View style={{ width: '100%', height: 120, backgroundColor: '#111' }}>
+                <Image
+                  source={{ uri: item.image || 'https://via.placeholder.com/200' }}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="cover"
+                />
+                <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: '#E74C3C', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="radio" size={12} color="#FFF" style={{ marginRight: 4 }} />
+                  <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '700' }}>LIVE</Text>
+                </View>
+              </View>
+              <View style={{ padding: 10, gap: 6 }}>
+                <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }} numberOfLines={2}>{String(item.title || '')}</Text>
+                <Text style={{ color: '#8EE186', fontSize: 13, fontWeight: '700' }}>₣{(item.price || 0).toFixed(2)}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ color: '#888', fontSize: 12 }}>Watch live</Text>
+                  <Ionicons name="arrow-forward" size={14} color="#888" />
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // Live services strip
+  const renderLiveServicesStrip = () => {
+    if (activeTab !== 'services') return null;
+    if (!liveServices || liveServices.length === 0) return null;
+
+    return (
+      <View style={{ paddingHorizontal: 12, paddingTop: insets.top + 10, paddingBottom: 8, backgroundColor: '#000' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Live Sales (Services)</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="radio" size={16} color="#E74C3C" style={{ marginRight: 4 }} />
+            <Text style={{ color: '#888', fontSize: 12 }}>{liveServices.length} live</Text>
+          </View>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {liveServices.map((item, idx) => (
+            <TouchableOpacity
+              key={`live-service-${item.streamId || 'unknown'}-${item.serviceId || 'unknown'}-${idx}`}
+              activeOpacity={0.9}
+              onPress={() => navigation.navigate('LiveStreamViewer', { streamId: item.streamId || '' })}
+              style={{
+                width: 220,
+                marginRight: 12,
+                backgroundColor: '#0d0d0d',
+                borderRadius: 12,
+                padding: 12,
+                borderWidth: 1,
+                borderColor: '#1f1f1f',
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <View style={{ backgroundColor: '#E74C3C', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="radio" size={12} color="#FFF" style={{ marginRight: 4 }} />
+                  <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '700' }}>LIVE</Text>
+                </View>
+              </View>
+              <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }} numberOfLines={2}>{String(item.title || '')}</Text>
+              {item.description ? (
+                <Text style={{ color: '#888', fontSize: 12, marginTop: 4 }} numberOfLines={2}>{String(item.description)}</Text>
+              ) : null}
+              <Text style={{ color: '#8EE186', fontSize: 13, fontWeight: '700', marginTop: 6 }}>₣{(item.price || 0).toFixed(2)}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                <Text style={{ color: '#888', fontSize: 12 }}>Watch / Book</Text>
+                <Ionicons name="arrow-forward" size={14} color="#888" />
+              </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // Horizontal product section renderer (for curated sections)
+  const renderHorizontalProductSection = (title: string, subtitle: string, items: Product[]) => {
+    if (!items || items.length === 0) return null;
+    return (
+      <View style={{ marginVertical: 12 }}>
+        <View style={{ paddingHorizontal: 12, marginBottom: 8 }}>
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>{title}</Text>
+          <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>{subtitle}</Text>
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 12 }}
+        >
+          {items.map((item) => (
+            <View key={item.id} style={{ width: screenWidth * 0.45, marginRight: 12 }}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+              >
+                {renderEnhancedProductCard(item, false)}
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // Build For You items (products, video products, live products, auctions)
+  type ForYouItem = { kind: 'product' | 'video' | 'auction' | 'live'; data: any };
+  const forYouItems = useMemo<ForYouItem[]>(() => {
+    const items: ForYouItem[] = [];
+
+    products.forEach(p => {
+      if (p.media_type === 'video' && p.primary_video_url) {
+        items.push({ kind: 'video', data: p });
+      } else {
+        items.push({ kind: 'product', data: p });
+      }
+    });
+
+    // Live products as video-style cards
+    liveProducts.forEach(lp => items.push({ kind: 'live', data: lp }));
+
+    // Auctions (active + upcoming)
+    const auctionsCombined = [...filteredActiveAuctions, ...filteredUpcomingAuctions];
+    auctionsCombined.forEach(a => items.push({ kind: 'auction', data: a }));
+
+    // Simple shuffle for recommendation feel
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+
+    return items;
+  }, [products, liveProducts, filteredActiveAuctions, filteredUpcomingAuctions]);
+
+  // Render For You list (vertical, endless with periodic banners)
+  const renderForYouList = () => {
+    if (!forYouItems || forYouItems.length === 0) return null;
+
+    let bannerCycle = heroIndex;
+
+    const renderForYouCard = (item: ForYouItem, index: number) => {
+      switch (item.kind) {
+        case 'auction':
+          return (
+            <View key={`for-you-auction-${index}`} style={{ width: '100%', marginBottom: 16 }}>
+              <AuctionCard
+                auction={item.data}
+                variant="horizontal"
+                onPress={(a) => navigation.navigate('AuctionDetails', { auctionId: a.id })}
+              />
+            </View>
+          );
+        case 'live':
+          return (
+            <TouchableOpacity
+              key={`for-you-live-${index}`}
+              activeOpacity={0.9}
+              onPress={() => navigation.navigate('LiveStreamViewer', { streamId: item.data.streamId })}
+              style={{
+                width: '100%',
+                backgroundColor: '#0d0d0d',
+                borderRadius: 12,
+                overflow: 'hidden',
+                marginBottom: 16,
+                borderWidth: 1,
+                borderColor: '#1f1f1f',
+              }}
+            >
+              <View style={{ width: '100%', height: 200, backgroundColor: '#111' }}>
+                <Image
+                  source={{ uri: item.data.image || 'https://via.placeholder.com/400x250?text=Live+Product' }}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="cover"
+                />
+                <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: '#E74C3C', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="radio" size={14} color="#FFF" style={{ marginRight: 4 }} />
+                  <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '700' }}>LIVE</Text>
+                </View>
+              </View>
+              <View style={{ padding: 12, gap: 6 }}>
+                <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '700' }} numberOfLines={2}>{item.data.title}</Text>
+                <Text style={{ color: '#8EE186', fontSize: 14, fontWeight: '700' }}>₣{(item.data.price || 0).toFixed(2)}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ color: '#888', fontSize: 12 }}>Watch live</Text>
+                  <Ionicons name="arrow-forward" size={14} color="#888" />
+                </View>
+              </View>
+            </TouchableOpacity>
+          );
+        case 'video':
+          return (
+            <View key={`for-you-video-${index}`} style={{ width: '100%', marginBottom: 16 }}>
+              {renderVideoProductCard(item.data)}
+            </View>
+          );
+        case 'product':
+        default:
+          return (
+            <View key={`for-you-product-${index}`} style={{ width: '100%', marginBottom: 16 }}>
+              {renderEnhancedProductCard(item.data, false)}
+            </View>
+          );
+      }
+    };
+
+    const renderedItems: React.ReactNode[] = [];
+    forYouItems.forEach((item, idx) => {
+      renderedItems.push(renderForYouCard(item, idx));
+      if ((idx + 1) % 10 === 0 && heroImages.length > 0) {
+        renderedItems.push(
+          <View key={`for-you-banner-${idx}`} style={{ marginBottom: 16 }}>
+            {renderPeriodicHero(heroImages[bannerCycle % heroImages.length], bannerCycle)}
+          </View>
+        );
+        bannerCycle += 1;
+      }
+    });
+
+    setHeroIndex(bannerCycle % Math.max(heroImages.length, 1));
+
+    return (
+      <View style={{ marginTop: 12, paddingHorizontal: 12 }}>
+        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 8 }}>For You 🎯</Text>
+        {renderedItems}
       </View>
     );
   };
@@ -1044,12 +1630,16 @@ const HomeScreen = () => {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 12 }}
           decelerationRate="fast"
-          snapToInterval={screenWidth * 0.4 + 12}
+          snapToInterval={screenWidth * 0.45 + 12}
           snapToAlignment="start"
         >
           {randomProducts.map((item) => (
-            <View key={item.id}>
-              {renderEnhancedProductCard(item, true)}
+            <View key={item.id} style={{ width: screenWidth * 0.45, marginRight: 12 }}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+              >
+                {renderEnhancedProductCard(item, false)}
+              </TouchableOpacity>
             </View>
           ))}
         </ScrollView>
@@ -1229,84 +1819,117 @@ const HomeScreen = () => {
     loadHeroImages();
   }, []);
 
-  // Memoize mixed content generation - EXPENSIVE OPERATION
+  // Use memoized sections helper for better performance
+  const memoizedSections = useMemoizedSections(products);
+
+  // Memoize mixed content generation - OPTIMIZED with pre-computed sections
   const mixedContent = useMemo(() => {
     // Don't generate content when screen is unfocused
     if (!isScreenFocused) {
       return [];
     }
 
-    // Algorithm-based sections using existing database fields
-    const getTrendingProducts = () => products
-      .filter(p => {
-        const createdAt = new Date(p.created_at);
-        const hoursSinceCreated = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60);
-        return hoursSinceCreated <= 48 && (p.view_count > 5 || p.like_count > 2);
-      })
-      .sort((a, b) => (b.view_count + b.like_count * 3) - (a.view_count + a.like_count * 3))
-      .slice(0, 8);
-
-    const getHotPicks = () => products.filter(p => p.is_featured).slice(0, 8);
-    const getSeasonalRave = () => products.filter(p =>
-      p.tags?.some(tag =>
-        ['seasonal', 'summer', 'winter', 'spring', 'fall', 'holiday', 'christmas', 'valentine'].includes(tag.toLowerCase())
-      )
-    ).slice(0, 8);
-    const getCombodeals = () => products.filter(p =>
-      p.tags?.some(tag => ['combo', 'bundle', 'set', 'package'].includes(tag.toLowerCase()))
-    ).slice(0, 8);
-    const getFlashSales = () => products.filter(p =>
-      p.tags?.some(tag => ['sale', 'flash', 'deal', 'discount'].includes(tag.toLowerCase()))
-    ).slice(0, 8);
-    const getForYou = () => products.slice(0, 20); // TODO: Base on user history
-
     // Generate mixed content with periodic heroes and banners
     const generateContent = () => {
       const mixedContent: any[] = [];
-      let cardCount = 0;
-      let heroIndex = 0;
-
-      // Initial hero right after category chips
+      
+      // 1. ALWAYS start with a banner
       mixedContent.push({ type: 'hero', data: heroImages[heroIndex % heroImages.length] });
-      heroIndex++;
-
-      // Dynamic sections
-      const sections = [
-        { type: 'section', data: { title: 'Trending 🔥', subtitle: 'High engagement in last 48h', products: getTrendingProducts() } },
-        { type: 'section', data: { title: 'Hot Picks ⭐', subtitle: 'Admin selected favorites', products: getHotPicks() } },
-        { type: 'section', data: { title: 'Seasonal Rave 🌟', subtitle: 'Perfect for this season', products: getSeasonalRave() } },
-        { type: 'section', data: { title: 'Combo Deals 💰', subtitle: 'Better together bundles', products: getCombodeals() } },
-        { type: 'section', data: { title: 'Flash Sales ⚡', subtitle: 'Time-limited offers', products: getFlashSales() } }
-      ];
-
-      sections.forEach((section, sectionIndex) => {
-        if (section.data.products.length > 0) {
-          mixedContent.push(section);
-          cardCount += section.data.products.length;
-
-          // Add banner every 10-15 cards
-          if (cardCount >= 10 + (Math.random() * 5)) {
-            mixedContent.push({ type: 'banner', data: { title: 'Advertise Here', subtitle: 'Get your products seen by more buyers' } });
-            cardCount = 0;
-          }
-
-          // Add hero every 20-30 cards  
-          if (sectionIndex > 0 && sectionIndex % 2 === 0) {
-            mixedContent.push({ type: 'hero', data: heroImages[heroIndex % heroImages.length] });
-            heroIndex++;
-          }
+      
+      // 2. Add all curated sections as horizontal strips (BEFORE For You)
+      if (memoizedSections.trending.length > 0) {
+        mixedContent.push({ 
+          type: 'section', 
+          data: { 
+            title: 'Trending Now 🔥', 
+            subtitle: 'Hot products everyone\'s talking about',
+            products: memoizedSections.trending 
+          } 
+        });
+      }
+      
+      if (memoizedSections.hotPicks.length > 0) {
+        mixedContent.push({ 
+          type: 'section', 
+          data: { 
+            title: 'Hot Picks ⭐', 
+            subtitle: 'Featured products you\'ll love',
+            products: memoizedSections.hotPicks 
+          } 
+        });
+      }
+      
+      if (memoizedSections.seasonalRave.length > 0) {
+        mixedContent.push({ 
+          type: 'section', 
+          data: { 
+            title: 'Seasonal Rave 🎄', 
+            subtitle: 'Perfect for the season',
+            products: memoizedSections.seasonalRave 
+          } 
+        });
+      }
+      
+      if (memoizedSections.combodeals.length > 0) {
+        mixedContent.push({ 
+          type: 'section', 
+          data: { 
+            title: 'Combo Deals 💰', 
+            subtitle: 'Bundle and save',
+            products: memoizedSections.combodeals 
+          } 
+        });
+      }
+      
+      if (memoizedSections.flashSales.length > 0) {
+        mixedContent.push({ 
+          type: 'section', 
+          data: { 
+            title: 'Flash Sales ⚡', 
+            subtitle: 'Limited time offers',
+            products: memoizedSections.flashSales 
+          } 
+        });
+      }
+      
+      // 3. For You section comes LAST (endless list with mixed content)
+      // Build mixed items: products, video products, auctions, live sales
+      const forYouItems: ForYouItem[] = [];
+      
+      // Add regular products from forYou
+      memoizedSections.forYou.forEach(product => {
+        if (product.media_type === 'video' && product.primary_video_url) {
+          forYouItems.push({ kind: 'video', data: product });
+        } else {
+          forYouItems.push({ kind: 'product', data: product });
         }
       });
-
-      // For You section in twos
-      const forYouProducts = getForYou();
-      if (forYouProducts.length > 0) {
+      
+      // Add video products
+      const videoProducts = products.filter(p => p.media_type === 'video' && p.primary_video_url);
+      videoProducts.slice(0, 5).forEach(product => {
+        if (!forYouItems.find(item => item.kind === 'video' && item.data.id === product.id)) {
+          forYouItems.push({ kind: 'video', data: product });
+        }
+      });
+      
+      // Auctions will be shown in separate periodic sections, not mixed in
+      
+      // Add live product sales (rendered like video products)
+      liveProducts.slice(0, 3).forEach(liveProduct => {
+        forYouItems.push({ kind: 'live', data: liveProduct });
+      });
+      
+      // Shuffle for better mix
+      const shuffled = forYouItems.sort(() => 0.5 - Math.random());
+      
+      if (shuffled.length > 0) {
         mixedContent.push({ 
           type: 'for-you', 
           data: { 
             title: 'For You 🎯', 
-            subtitle: 'Personalized recommendations', 
-            products: forYouProducts 
+            subtitle: 'Personalized recommendations',
+            items: shuffled 
           } 
         });
       }
@@ -1315,7 +1938,7 @@ const HomeScreen = () => {
     };
 
     return generateContent();
-  }, [products, heroImages, isScreenFocused]);
+  }, [memoizedSections, heroImages, isScreenFocused, filteredActiveAuctions, filteredUpcomingAuctions, liveProducts, products]);
 
   // Alibaba-style Products View
   const renderProductsTab = () => {
@@ -1330,6 +1953,48 @@ const HomeScreen = () => {
 
     return (
       <View style={{ flex: 1 }}>
+        {/* Error Banner */}
+        {errorState && (
+          <View style={{
+            position: 'absolute',
+            top: insets.top + HEADER_FULL_HEIGHT + SUB_HEADER_HEIGHT + 8,
+            left: 12,
+            right: 12,
+            backgroundColor: '#FF4757',
+            borderRadius: 8,
+            padding: 12,
+            flexDirection: 'row',
+            alignItems: 'center',
+            zIndex: 1000,
+            elevation: 5,
+          }}>
+            <Ionicons name="alert-circle" size={20} color="#FFF" style={{ marginRight: 8 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '600', marginBottom: 4 }}>
+                {errorState.userMessage}
+              </Text>
+              {errorState.retryable && (
+                <TouchableOpacity
+                  onPress={() => loadData(true)}
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.2)',
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 4,
+                    alignSelf: 'flex-start',
+                    marginTop: 4,
+                  }}
+                >
+                  <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>Retry</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <TouchableOpacity onPress={() => setErrorState(null)}>
+              <Ionicons name="close" size={20} color="#FFF" />
+            </TouchableOpacity>
+          </View>
+        )}
+
         <ScrollView
           showsVerticalScrollIndicator={false}
           onScroll={handleScroll}
@@ -1398,11 +2063,13 @@ const HomeScreen = () => {
                 case 'hero':
                   return renderPeriodicHero(item.data, index);
                 case 'section':
-                  return renderDynamicSection(item.data.title, item.data.subtitle, item.data.products, index);
+                  // Render curated sections as horizontal strips
+                  return renderHorizontalProductSection(item.data.title, item.data.subtitle, item.data.products);
                 case 'banner':
                   return renderPeriodicBanner(item.data.title, item.data.subtitle, index);
                 case 'for-you':
-                  return renderForYouSection(item.data.title, item.data.subtitle, item.data.products, index);
+                  // For You section with mixed content (products, videos, auctions, live sales)
+                  return renderForYouSection(item.data.title, item.data.subtitle, item.data.items, index);
                 default:
                   return null;
               }
@@ -1533,11 +2200,11 @@ const HomeScreen = () => {
             contentContainerStyle={{ paddingLeft: 16, paddingRight: 8 }}
           >
             {imageProducts.map((item) => (
-              <View key={item.id} style={{ width: screenWidth * 0.4, marginRight: 8 }}>
+              <View key={item.id} style={{ width: screenWidth * 0.45, marginRight: 12 }}>
                 <TouchableOpacity
                   onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
                 >
-                  {renderEnhancedProductCard(item, true)}
+                  {renderEnhancedProductCard(item, false)}
                 </TouchableOpacity>
               </View>
             ))}
@@ -1564,7 +2231,6 @@ const HomeScreen = () => {
           }}
           onPress={() => {
             // TODO: Navigate to advertise signup
-            console.log('Navigate to advertise signup');
           }}
         >
           <Ionicons name="megaphone-outline" size={32} color="#888" style={{ marginBottom: 8 }} />
@@ -1582,8 +2248,57 @@ const HomeScreen = () => {
     );
   };
 
-  const renderForYouSection = (title: string, subtitle: string, products: Product[], index: number) => {
-    if (products.length === 0) return null;
+  // Render periodic auction section (horizontal scroll)
+  const renderAuctionSection = () => {
+    const allAuctions = [...filteredActiveAuctions, ...filteredUpcomingAuctions];
+    if (allAuctions.length === 0) return null;
+
+    return (
+      <View style={{ marginVertical: 16, width: '100%' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 16 }}>
+          <View>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>Auctions 🔨</Text>
+            <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>Bid on exclusive items</Text>
+          </View>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity onPress={() => navigation.navigate('AuctionDiscovery')}>
+            <Text style={{ color: '#3498DB', fontSize: 12, fontWeight: '600' }}>See All</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 12 }}
+        >
+          {allAuctions.map((auction) => (
+            <AuctionCard
+              key={auction.id}
+              auction={auction}
+              variant="horizontal"
+              onPress={() => navigation.navigate('AuctionDetails', { auctionId: auction.id })}
+            />
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  const renderForYouSection = (title: string, subtitle: string, items: ForYouItem[] | Product[], index: number) => {
+    // Handle both old format (Product[]) and new format (ForYouItem[])
+    const forYouItems: ForYouItem[] = Array.isArray(items) && items.length > 0 && 'kind' in items[0]
+      ? items as ForYouItem[]
+      : (items as Product[]).map(p => ({
+          kind: (p.media_type === 'video' && p.primary_video_url) ? 'video' : 'product',
+          data: p
+        })) as ForYouItem[];
+
+    // Filter out auctions from items (they'll be shown in separate sections)
+    const itemsWithoutAuctions = forYouItems.filter(item => item.kind !== 'auction');
+
+    if (itemsWithoutAuctions.length === 0) return null;
+
+    let bannerCycle = heroIndex;
+    let regularProductsSinceLastFullWidth = 0; // Track regular products since last full-width element
 
     return (
       <View key={`for-you-${index}`} style={{ marginVertical: 16 }}>
@@ -1598,32 +2313,139 @@ const HomeScreen = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Display in twos - 2 columns grid, with video products spanning full width */}
+        {/* Display items with periodic banner and auction section resurfacing */}
         <View style={{ paddingHorizontal: 12 }}>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-            {products.map((item) => {
-              // Check if this is a video product
-              const isVideoProduct = item.media_type === 'video' && item.primary_video_url;
-
-              if (isVideoProduct) {
-                // Render full-width video card
-                return (
-                  <View key={item.id} style={{ width: '100%', marginBottom: 16 }}>
-                    {renderVideoProductCard(item)}
+            {itemsWithoutAuctions.map((item, idx) => {
+              // Count how many items have been rendered so far (for banner/auction intervals)
+              const itemCount = idx;
+              const shouldShowBanner = itemCount > 0 && itemCount % 10 === 0 && heroImages.length > 0;
+              const shouldShowAuctionSection = itemCount > 0 && itemCount % 8 === 0 && (filteredActiveAuctions.length > 0 || filteredUpcomingAuctions.length > 0);
+              const isItemFullWidth = item.kind === 'live' || item.kind === 'video';
+              
+              const elements: React.ReactNode[] = [];
+              
+              // Add banner before this item if needed
+              if (shouldShowBanner) {
+                // If odd number of regular products since last full-width, add spacer
+                if (regularProductsSinceLastFullWidth % 2 === 1) {
+                  elements.push(
+                    <View 
+                      key={`spacer-before-banner-${idx}`} 
+                      style={{ width: '48%', height: 200, marginBottom: 16 }} 
+                    />
+                  );
+                }
+                
+                elements.push(
+                  <View key={`banner-${idx}`} style={{ width: '100%', marginBottom: 16 }}>
+                    {renderPeriodicHero(heroImages[bannerCycle % heroImages.length], bannerCycle)}
                   </View>
                 );
-              } else {
-                // Render normal grid product card
-                return (
-                  <View key={item.id} style={{ width: '48%', marginBottom: 16 }}>
-                    <TouchableOpacity
-                      onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
-                    >
-                      {renderEnhancedProductCard(item, false)}
-                    </TouchableOpacity>
-                  </View>
-                );
+                bannerCycle += 1;
+                regularProductsSinceLastFullWidth = 0; // Reset count after full-width element
               }
+              
+              // Add auction section before this item if needed (and not the same position as banner)
+              if (shouldShowAuctionSection && !shouldShowBanner) {
+                // If odd number of regular products since last full-width, add spacer
+                if (regularProductsSinceLastFullWidth % 2 === 1) {
+                  elements.push(
+                    <View 
+                      key={`spacer-before-auction-${idx}`} 
+                      style={{ width: '48%', height: 200, marginBottom: 16 }} 
+                    />
+                  );
+                }
+                
+                elements.push(
+                  <View key={`auction-section-${idx}`} style={{ width: '100%', marginBottom: 16 }}>
+                    {renderAuctionSection()}
+                  </View>
+                );
+                regularProductsSinceLastFullWidth = 0; // Reset count after full-width element
+              }
+              
+              // If current item is full-width, check if we need spacer before it
+              if (isItemFullWidth) {
+                // If odd number of regular products since last full-width, add spacer
+                if (regularProductsSinceLastFullWidth % 2 === 1) {
+                  elements.push(
+                    <View 
+                      key={`spacer-before-fullwidth-${idx}`} 
+                      style={{ width: '48%', height: 200, marginBottom: 16 }} 
+                    />
+                  );
+                }
+              }
+              
+              // Render the actual item
+              switch (item.kind) {
+                case 'live':
+                  elements.push(
+                    <TouchableOpacity
+                      key={`for-you-live-${idx}`}
+                      activeOpacity={0.9}
+                      onPress={() => navigation.navigate('LiveStreamViewer', { streamId: item.data.streamId })}
+                      style={{
+                        width: '100%',
+                        backgroundColor: '#0d0d0d',
+                        borderRadius: 12,
+                        overflow: 'hidden',
+                        marginBottom: 16,
+                        borderWidth: 1,
+                        borderColor: '#1f1f1f',
+                      }}
+                    >
+                      <View style={{ width: '100%', height: 200, backgroundColor: '#111' }}>
+                        <Image
+                          source={{ uri: item.data.image || 'https://via.placeholder.com/400x250?text=Live+Product' }}
+                          style={{ width: '100%', height: '100%' }}
+                          resizeMode="cover"
+                        />
+                        <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: '#E74C3C', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, flexDirection: 'row', alignItems: 'center' }}>
+                          <Ionicons name="radio" size={14} color="#FFF" style={{ marginRight: 4 }} />
+                          <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '700' }}>LIVE</Text>
+                        </View>
+                      </View>
+                      <View style={{ padding: 12, gap: 6 }}>
+                        <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '700' }} numberOfLines={2}>{String(item.data.title || '')}</Text>
+                        <Text style={{ color: '#8EE186', fontSize: 14, fontWeight: '700' }}>₣{(item.data.price || 0).toFixed(2)}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Text style={{ color: '#888', fontSize: 12 }}>Watch live</Text>
+                          <Ionicons name="arrow-forward" size={14} color="#888" />
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                  regularProductsSinceLastFullWidth = 0; // Reset count after full-width element
+                  break;
+                  
+                case 'video':
+                  elements.push(
+                    <View key={`for-you-video-${idx}`} style={{ width: '100%', marginBottom: 16 }}>
+                      {renderVideoProductCard(item.data)}
+                    </View>
+                  );
+                  regularProductsSinceLastFullWidth = 0; // Reset count after full-width element
+                  break;
+                  
+                case 'product':
+                default:
+                  elements.push(
+                    <View key={`for-you-product-${idx}`} style={{ width: '48%', marginBottom: 16 }}>
+                      <TouchableOpacity
+                        onPress={() => navigation.navigate('ProductDetails', { productId: item.data.id })}
+                      >
+                        {renderEnhancedProductCard(item.data, false)}
+                      </TouchableOpacity>
+                    </View>
+                  );
+                  regularProductsSinceLastFullWidth++; // Increment count for regular products
+                  break;
+              }
+              
+              return elements;
             })}
           </View>
         </View>
@@ -1641,14 +2463,6 @@ const HomeScreen = () => {
     // Check if this video is in viewport (visible)
     const isInViewport = visibleVideoProducts.has(item.id);
     const shouldPlayVideo = activeTab === 'products' && isInViewport && isScreenFocused;
-
-    console.log('📹 Video product card:', {
-      id: item.id,
-      name: item.name,
-      isInViewport,
-      shouldPlayVideo,
-      visibleCount: visibleVideoProducts.size
-    });
 
     return (
       <TouchableOpacity
@@ -1701,7 +2515,7 @@ const HomeScreen = () => {
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={{ color: '#FFD700', fontSize: 18, fontWeight: 'bold', marginRight: 8 }}>
-                  ₣{item.price.toFixed(2)}
+                  ₣{(item.price || 0).toFixed(2)}
                 </Text>
                 {item.vendor_username && (
                   <Text style={{ color: '#888', fontSize: 12 }}>
@@ -1779,15 +2593,12 @@ const HomeScreen = () => {
 
   // Handler for vendor profile navigation
   const handleVendorPress = (userId: string) => {
-    console.log('🔍 handleVendorPress called with userId:', userId);
-    console.log('🔍 userId type:', typeof userId);
     (navigation as any).navigate('PublicProfile', { userId });
   };
 
   // Handler for chat button on services (directly opens chat)
   const handleChatWithServiceProvider = async (serviceItem: VideoFeedItem) => {
     try {
-      console.log('🔍 Starting chat with service provider:', serviceItem.userId);
 
       // Determine chat type based on current user's role
       // Service provider is assumed to be vendor
@@ -1810,14 +2621,12 @@ const HomeScreen = () => {
         chatType
       );
 
-      console.log('✅ Conversation found/created:', conversation.id);
-
       // Navigate to IndividualChatScreen with proper parameters
       navigation.navigate('IndividualChatScreen', {
         chatId: conversation.id,
         chatName: serviceItem.serviceProvider || serviceItem.username || 'Service Provider',
         chatAvatar: serviceItem.userAvatar || 'https://via.placeholder.com/50',
-        chatType: chatType as const,
+        chatType: chatType,
         isOnline: true,
         verified: false,
         isAI: false,
@@ -1832,85 +2641,6 @@ const HomeScreen = () => {
   // Handler for product press (navigation to product details)
   const handleProductPress = (productId: string) => {
     navigation.navigate('ProductDetails', { productId });
-  };
-
-  // Handler for add to cart button press
-  const handleCartPress = async (productId: string) => {
-    try {
-      await addToCart(productId, 1);
-    } catch (error) {
-      console.error('Error adding to cart:', error);
-    }
-  };
-
-  // Handler for bargain/negotiation button press
-  const handleBargainPress = async (productId: string) => {
-    try {
-      console.log('Bargain pressed for product:', productId);
-
-      // Find the product in our products list
-      const product = products.find(p => p.id === productId);
-
-      if (!product) {
-        Alert.alert('Error', 'Product not found');
-        return;
-      }
-
-      if (!product.user_id) {
-        Alert.alert('Error', 'Vendor information not available');
-        return;
-      }
-
-      console.log('🔍 Finding conversation with vendor:', product.user_id);
-      console.log('🔍 Current user:', user?.id);
-
-      // Determine chat type based on current user's role
-      // Product owner is a vendor, so default is 'vendor'
-      // Priority: rider > vendor > friend
-      let chatType: 'friend' | 'vendor' | 'rider' = 'vendor';
-
-      // Check if current user is a rider (highest priority)
-      if (user?.is_rider) {
-        chatType = 'rider';
-      }
-      // If current user is seller, keep it as vendor
-      else if (user?.is_seller) {
-        chatType = 'vendor';
-      }
-      // Product owner is vendor, so default stays 'vendor'
-
-      // Find or create conversation with the vendor
-      const conversation = await chatAPI.findOrCreateConversation(
-        [product.user_id],
-        chatType
-      );
-
-      console.log('✅ Conversation found/created:', conversation.id);
-
-      // Navigate to chat with product context
-      navigation.navigate('IndividualChatScreen', {
-        chatId: conversation.id,
-        chatName: product.vendor_username || 'Vendor',
-        chatAvatar: product.vendor_avatar || 'https://via.placeholder.com/50',
-        chatType: chatType as const,
-        isOnline: true,
-        verified: false,
-        isAI: false,
-        otherUserId: product.user_id,
-        // Bargain context
-        bargainMode: true,
-        productData: {
-          id: product.id,
-          name: product.name,
-          price: product.price,
-          image: product.primary_image_url || product.images?.[0] || '',
-          vendor_username: product.vendor_username,
-        },
-      });
-    } catch (error) {
-      console.error('Error initiating bargain:', error);
-      Alert.alert('Error', 'Unable to start conversation. Please try again.');
-    }
   };
 
   // Video item renderer using VideoCard component
@@ -1990,7 +2720,6 @@ const HomeScreen = () => {
 
   // TODO: Implement progress bar seeking for expo-video
   const handleProgressBarPress = async (e: any, itemId: string) => {
-    console.log('Progress bar press - seeking not yet implemented for expo-video');
     // Progress bar seeking will be implemented when we add player refs to ServiceVideoPlayer
     showServicesUI();
     return;
@@ -2072,7 +2801,6 @@ const HomeScreen = () => {
           scrollEnabled={true}
           onPageSelected={(e) => {
             const newIndex = e.nativeEvent.position;
-            console.log(`🎥 Video switched to index: ${newIndex}, videoId: ${videoFeedData[newIndex]?.id}`);
             setCurrentVideoIndex(newIndex);
             setFocusedVideoId(videoFeedData[newIndex]?.id);
 
@@ -2083,7 +2811,6 @@ const HomeScreen = () => {
 
             // Ensure video is playing when switching
             if (activeTab === 'services') {
-              console.log('🎥 Ensuring video plays after switching');
               setIsPlaying(true);
             }
 
@@ -2104,7 +2831,14 @@ const HomeScreen = () => {
                 position: 'relative'
               }}>
                 {/* Video container */}
-                <TouchableWithoutFeedback onPress={handleVideoTap}>
+                <TouchableWithoutFeedback onPress={() => {
+                  // If it's a live service, navigate to LiveStreamViewer
+                  if (item.id.startsWith('live-service-') && (item as any).liveStreamId) {
+                    navigation.navigate('LiveStreamViewer', { streamId: (item as any).liveStreamId });
+                  } else {
+                    handleVideoTap();
+                  }
+                }}>
                   <View style={{
                     width: screenWidth,
                     height: screenHeight,
@@ -2133,7 +2867,6 @@ const HomeScreen = () => {
 
                             // Update progress more frequently for smoother progress bar (0.005 = 0.5%)
                             if (Math.abs(progress - videoProgress) > 0.005 || progress === 0) {
-                              console.log(`📊 Updating progress: ${(progress * 100).toFixed(1)}% (${currentPos.toFixed(1)}s / ${duration.toFixed(1)}s)`);
                               setVideoProgress(progress);
                               setVideoPosition(currentPos * 1000); // Convert to milliseconds for consistency
                               setVideoDuration(duration * 1000); // Convert to milliseconds for consistency
@@ -2154,6 +2887,25 @@ const HomeScreen = () => {
                         }}
                         resizeMode="contain"
                       />
+                    )}
+                    
+                    {/* LIVE indicator for live services */}
+                    {item.id.startsWith('live-service-') && (
+                      <View style={{
+                        position: 'absolute',
+                        top: insets.top + 60,
+                        left: 16,
+                        backgroundColor: '#E74C3C',
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        borderRadius: 12,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        zIndex: 1000
+                      }}>
+                        <Ionicons name="radio" size={14} color="#FFF" style={{ marginRight: 4 }} />
+                        <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>LIVE</Text>
+                      </View>
                     )}
                   </View>
                 </TouchableWithoutFeedback>
@@ -2271,7 +3023,6 @@ const HomeScreen = () => {
                     {/* Debug play button */}
                     <TouchableOpacity
                       onPress={() => {
-                        console.log('🎮 Manual play button pressed');
                         setIsPlaying(true);
                       }}
                       style={{
@@ -2323,8 +3074,6 @@ const HomeScreen = () => {
                   <TouchableOpacity
                     style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}
                     onPress={() => {
-                      console.log('🎥 Video item data:', JSON.stringify(item, null, 2));
-                      console.log('🎥 item.userId specifically:', item.userId);
                       handleVendorPress(item.userId);
                     }}
                   >
@@ -2341,23 +3090,25 @@ const HomeScreen = () => {
                     />
                     <View>
                       <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>
-                        @{item.username}
+                        @{String(item.username || '')}
                       </Text>
                       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
                         <Ionicons name="star" size={12} color="#FFD700" />
                         <Text style={{ color: 'white', fontSize: 12, marginLeft: 4 }}>
-                          {item.rating.toFixed(1)}
+                          {(item.rating || 0).toFixed(1)}
                         </Text>
                       </View>
                     </View>
                   </TouchableOpacity>
 
-                  <Text style={{ color: 'white', fontSize: 14, marginBottom: 12 }}>
-                    {item.description}
-                  </Text>
+                  {item.description && String(item.description).trim() ? (
+                    <Text style={{ color: 'white', fontSize: 14, marginBottom: 12 }}>
+                      {String(item.description)}
+                    </Text>
+                  ) : null}
 
                   <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold', marginBottom: 16 }}>
-                    ₣{item.price.toFixed(2)}
+                    ₣{(item.price || 0).toFixed(2)}
                   </Text>
 
                   {/* Action buttons */}
@@ -2426,7 +3177,7 @@ const HomeScreen = () => {
                       />
                     </View>
                     <Text style={{ color: 'white', fontSize: 12, fontWeight: '600' }}>
-                      {item.likes}
+                      {String(item.likes || '0')}
                     </Text>
                   </TouchableOpacity>
                   
@@ -2446,7 +3197,7 @@ const HomeScreen = () => {
                       <Ionicons name="chatbubble-outline" size={28} color="white" />
                     </View>
                     <Text style={{ color: 'white', fontSize: 12, fontWeight: '600' }}>
-                      {item.comments}
+                      {String(item.comments || '0')}
                     </Text>
                   </TouchableOpacity>
 
@@ -2487,7 +3238,7 @@ const HomeScreen = () => {
                       <Ionicons name="share-outline" size={28} color="white" />
                     </View>
                     <Text style={{ color: 'white', fontSize: 12, fontWeight: '600' }}>
-                      {item.shares}
+                      {String(item.shares || '0')}
                     </Text>
                   </TouchableOpacity>
               </Animated.View>
@@ -2628,11 +3379,9 @@ const HomeScreen = () => {
         overdrag={true}
         onPageSelected={(e) => {
           const newTab = e.nativeEvent.position === 0 ? 'products' : 'services';
-          console.log(`🎬 Main tab changed to: ${newTab}, position: ${e.nativeEvent.position}`);
           if (newTab !== activeTab) {
             setActiveTab(newTab);
             if (newTab === 'services') {
-              console.log('🎬 Switching to services - clearing product videos and enabling service video');
               // Clear visible product videos when switching to services
               setVisibleVideoProducts(new Set());
               setIsPlaying(true);
@@ -2640,7 +3389,6 @@ const HomeScreen = () => {
               setCurrentVideoIndex(0);
               setFocusedVideoId(videoFeedData[0]?.id);
             } else {
-              console.log('🎬 Switching to products - stopping service videos and re-initializing product videos');
               setIsPlaying(false);
               // Re-initialize visible video products (first 2)
               const videoProducts = products.filter(p => p.media_type === 'video' && p.primary_video_url);

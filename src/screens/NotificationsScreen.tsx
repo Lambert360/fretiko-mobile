@@ -342,6 +342,12 @@ const NotificationsScreen = () => {
           }
           break;
 
+        case 'user_warning':
+          // Navigate to account status screen
+          console.log('Navigating to account status for warning');
+          navigation.navigate('AccountStatus' as never);
+          break;
+
         case 'dispute':
           // Navigate to dispute details
           const disputeId = notification.data?.dispute_id;

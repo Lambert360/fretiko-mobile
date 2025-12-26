@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { View, Dimensions } from 'react-native';
+import { View, Dimensions, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { Ionicons } from '@expo/vector-icons';
+import { ProductVideoLoadingSkeleton } from './VideoLoadingSkeleton';
+import { handleError } from '../utils/errorHandler';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -25,6 +28,9 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
 }) => {
   // Start with a reasonable default height, will be updated when video loads
   const [videoDimensions, setVideoDimensions] = useState({ width: containerWidth, height: containerWidth });
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Create video player
   const player = useVideoPlayer(videoUri, (player) => {
@@ -47,6 +53,9 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
     const statusSubscription = player.addListener('statusChange', (status) => {
       if (status.status === 'loaded') {
         console.log(`🎥 Product video loaded: ${videoUri}`);
+        setIsLoading(false);
+        setHasError(false);
+        setErrorMessage(null);
 
         // Get natural video dimensions if available
         const naturalWidth = status.width || containerWidth;
@@ -81,6 +90,15 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
             aspectRatio: naturalAspectRatio
           });
         }
+      } else if (status.status === 'error') {
+        console.error(`❌ Product video error: ${videoUri}`, status);
+        setIsLoading(false);
+        setHasError(true);
+        const errorInfo = handleError(status.error || new Error('Failed to load video'));
+        setErrorMessage(errorInfo.userMessage);
+      } else if (status.status === 'loading') {
+        setIsLoading(true);
+        setHasError(false);
       }
     });
 

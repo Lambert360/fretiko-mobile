@@ -8,7 +8,7 @@ import { API_CONFIG } from '../config/api';
 // ============================================
 // TYPES - Match backend DTOs
 // ============================================
-export type NotificationType = 'order' | 'social' | 'promotion' | 'system' | 'delivery' | 'live' | 'payment' | 'chat';
+export type NotificationType = 'order' | 'social' | 'promotion' | 'system' | 'delivery' | 'live' | 'payment' | 'chat' | 'user_warning';
 export type NotificationPriority = 'high' | 'medium' | 'low';
 export type ActionButtonType = 'primary' | 'secondary';
 

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { authAPI } from '../services/api';
+import { warningsAPI } from '../services/warningsAPI';
 
 // Types for our auth system
 export interface User {
@@ -23,6 +24,9 @@ export interface AuthState {
   isLoading: boolean;
   isAuthenticated: boolean;
   isNewUser: boolean;
+  isSuspended: boolean;
+  isDeleted: boolean;
+  isCheckingSuspension: boolean;
 }
 
 export interface AuthContextType extends AuthState {
@@ -39,6 +43,7 @@ export interface AuthContextType extends AuthState {
   signout: () => Promise<void>;
   logout: () => Promise<void>;
   clearNewUserFlag: () => void;
+  checkAccountStatus: () => Promise<void>;
 }
 
 // Create the context
@@ -65,6 +70,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isLoading: true,
     isAuthenticated: false,
     isNewUser: false,
+    isSuspended: false,
+    isDeleted: false,
+    isCheckingSuspension: false,
   });
 
   // Load saved auth data on app start
@@ -100,9 +108,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
 
       const userDataString = await AsyncStorage.getItem('userData');
+      const suspensionStatusString = await AsyncStorage.getItem('suspensionStatus');
 
       if (accessToken && userDataString) {
         console.log('🔑 Found stored token and user data');
+        
+        // Load suspension status if available
+        let storedSuspensionStatus = { isSuspended: false, isDeleted: false };
+        if (suspensionStatusString) {
+          try {
+            storedSuspensionStatus = JSON.parse(suspensionStatusString);
+          } catch (e) {
+            console.log('⚠️ Error parsing suspension status:', e);
+          }
+        }
 
         // Validate token by checking if it's properly formatted JWT
         const tokenParts = accessToken.split('.');
@@ -147,7 +166,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                     isLoading: false,
                     isAuthenticated: true,
                     isNewUser: false,
+                    isSuspended: storedSuspensionStatus.isSuspended,
+                    isDeleted: storedSuspensionStatus.isDeleted,
+                    isCheckingSuspension: !storedSuspensionStatus.isSuspended,
                   });
+                  
+                  // Check account status after loading user (if not already suspended)
+                  if (!storedSuspensionStatus.isSuspended) {
+                    checkAccountStatus();
+                  }
+                  
                   console.log('✅ Valid token loaded with roles:', { 
                     isSeller: enrichedUserData.isSeller,
                     isRider: enrichedUserData.isRider,
@@ -162,7 +190,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                     isLoading: false,
                     isAuthenticated: true,
                     isNewUser: false,
+                    isSuspended: storedSuspensionStatus.isSuspended,
+                    isDeleted: storedSuspensionStatus.isDeleted,
+                    isCheckingSuspension: !storedSuspensionStatus.isSuspended,
                   });
+                  // Check account status even with fallback data (if not already suspended)
+                  if (!storedSuspensionStatus.isSuspended) {
+                    checkAccountStatus();
+                  }
                   console.log('⚠️ Profile fetch failed, using stored data');
                 }
               } catch (profileError) {
@@ -174,26 +209,33 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                   isLoading: false,
                   isAuthenticated: true,
                   isNewUser: false,
+                  isSuspended: storedSuspensionStatus.isSuspended,
+                  isDeleted: storedSuspensionStatus.isDeleted,
+                  isCheckingSuspension: !storedSuspensionStatus.isSuspended,
                 });
+                // Check account status even with fallback data (if not already suspended)
+                if (!storedSuspensionStatus.isSuspended) {
+                  checkAccountStatus();
+                }
               }
             } else {
               console.log('🔓 Token expired, clearing auth data');
               await clearAuthData();
-              setAuthState(prev => ({ ...prev, isLoading: false }));
+              setAuthState(prev => ({ ...prev, isLoading: false, isSuspended: false, isCheckingSuspension: false }));
             }
           } catch (decodeError) {
             console.log('🔓 Invalid token format, clearing auth data');
             await clearAuthData();
-            setAuthState(prev => ({ ...prev, isLoading: false }));
+            setAuthState(prev => ({ ...prev, isLoading: false, isSuspended: false, isCheckingSuspension: false }));
           }
         } else {
           console.log('🔓 Malformed token, clearing auth data');
           await clearAuthData();
-          setAuthState(prev => ({ ...prev, isLoading: false }));
+          setAuthState(prev => ({ ...prev, isLoading: false, isSuspended: false, isCheckingSuspension: false }));
         }
       } else {
         console.log('ℹ️ No stored auth data found');
-        setAuthState(prev => ({ ...prev, isLoading: false }));
+        setAuthState(prev => ({ ...prev, isLoading: false, isSuspended: false, isCheckingSuspension: false }));
       }
     } catch (error) {
       console.error('❌ Error loading auth data:', error);
@@ -235,6 +277,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       // Save user data in regular storage (less sensitive)
       await AsyncStorage.setItem('userData', JSON.stringify(user));
+      
+      // Save suspension status separately for quick access on app reload
+      // This ensures suspended users are immediately identified
+      const suspensionStatus = {
+        isSuspended: false,
+        isDeleted: false,
+        savedAt: new Date().toISOString(),
+      };
+      await AsyncStorage.setItem('suspensionStatus', JSON.stringify(suspensionStatus));
 
       console.log('✅ Auth data saved successfully');
     } catch (error) {
@@ -264,10 +315,87 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await AsyncStorage.removeItem('accessToken_fallback');
       await AsyncStorage.removeItem('refreshToken_fallback');
       await AsyncStorage.removeItem('userData');
+      await AsyncStorage.removeItem('suspensionStatus');
 
       console.log('✅ Auth data cleared successfully');
     } catch (error) {
       console.error('❌ Error clearing auth data:', error);
+    }
+  };
+
+  const checkAccountStatus = async () => {
+    // Get access token - try state first, then storage
+    let accessToken: string | null = null;
+    
+    // Try to get from current state
+    setAuthState(prev => {
+      if (prev.accessToken) {
+        accessToken = prev.accessToken;
+      }
+      return prev;
+    });
+
+    // If not in state, get from storage
+    if (!accessToken) {
+      try {
+        const isSecureStoreAvailable = SecureStore.isAvailableAsync ?
+          await SecureStore.isAvailableAsync() : true;
+        if (isSecureStoreAvailable) {
+          accessToken = await SecureStore.getItemAsync('accessToken');
+        }
+        if (!accessToken) {
+          accessToken = await AsyncStorage.getItem('accessToken_fallback');
+        }
+      } catch (e) {
+        accessToken = await AsyncStorage.getItem('accessToken_fallback');
+      }
+      
+      // Update state with token if we got it from storage
+      if (accessToken) {
+        setAuthState(prev => {
+          if (!prev.accessToken) {
+            return { ...prev, accessToken };
+          }
+          return prev;
+        });
+      }
+    }
+
+    if (!accessToken) {
+      setAuthState(prev => ({ ...prev, isCheckingSuspension: false }));
+      return;
+    }
+
+    try {
+      setAuthState(prev => ({ ...prev, isCheckingSuspension: true }));
+      const accountStatus = await warningsAPI.getAccountStatus(accessToken);
+      
+      const isSuspended = accountStatus.accountStatus === 'suspended' || 
+                         accountStatus.suspension.isSuspended;
+      const isDeleted = accountStatus.accountStatus === 'deleted' || 
+                       accountStatus.deletion.isDeleted;
+      
+      setAuthState(prev => ({ 
+        ...prev, 
+        isSuspended,
+        isDeleted,
+        isCheckingSuspension: false 
+      }));
+      
+      console.log('🔍 Account status checked:', { 
+        accountStatus: accountStatus.accountStatus,
+        isSuspended,
+        isDeleted
+      });
+    } catch (error: any) {
+      console.error('❌ Error checking account status:', error);
+      // Don't block user if check fails - assume not suspended/deleted
+      setAuthState(prev => ({ 
+        ...prev, 
+        isSuspended: false,
+        isDeleted: false,
+        isCheckingSuspension: false 
+      }));
     }
   };
 
@@ -287,26 +415,95 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isRider: response.user.is_rider,    // ✅ Add camelCase alias
       };
       
+      // Industry standard: Backend now returns isSuspended flag
+      // Suspended users can authenticate but have limited access
+      const isSuspended = response.isSuspended === true;
+      
       // Save auth data
       await saveAuthData(enrichedUser, response.accessToken, response.refreshToken);
+      
+      // Save suspension status for app reload
+      const suspensionStatus = {
+        isSuspended: isSuspended,
+        isDeleted: false,
+        savedAt: new Date().toISOString(),
+      };
+      await AsyncStorage.setItem('suspensionStatus', JSON.stringify(suspensionStatus));
 
-      // Update state
+      // Update state - if suspended, set isSuspended immediately
       setAuthState({
         user: enrichedUser,
         accessToken: response.accessToken,
         isLoading: false,
         isAuthenticated: true,
         isNewUser: false,
+        isSuspended: isSuspended,
+        isDeleted: false,
+        isCheckingSuspension: !isSuspended, // Only check if not already suspended
       });
+      
+      // Check account status after signin (if not already suspended)
+      if (!isSuspended) {
+        await checkAccountStatus();
+      }
+      
       console.log('✅ Signed in with roles:', { 
         is_seller: enrichedUser.is_seller, 
         is_rider: enrichedUser.is_rider,
         isSeller: enrichedUser.isSeller,
         isRider: enrichedUser.isRider 
       });
-    } catch (error) {
+    } catch (error: any) {
+      // Check if this is a suspension error
+      if (error.message && error.message.includes('suspended')) {
+        console.log('🚫 Account suspended during login');
+        // Extract user ID from error response if available
+        const userId = (error as any).userId || (error.response?.data?.userId) || '';
+        // Set suspended state so App.tsx can navigate to SuspensionScreen
+        setAuthState({
+          user: { 
+            id: userId, // Use user ID from error response if available
+            email: (error as any).email || email,
+            firstName: '',
+            lastName: '',
+          } as User,
+          accessToken: null,
+          isLoading: false,
+          isAuthenticated: false,
+          isNewUser: false,
+          isSuspended: true,
+          isDeleted: false,
+          isCheckingSuspension: false,
+        });
+        // Don't throw - let the app handle navigation based on isSuspended state
+        return;
+      }
+      
+      // Check if this is a deletion error
+      if (error.message && error.message.includes('deleted')) {
+        console.log('🚫 Account deleted during login');
+        // Extract user ID from error response if available
+        const userId = (error as any).userId || (error.response?.data?.userId) || '';
+        setAuthState({
+          user: { 
+            id: userId,
+            email: (error as any).email || email,
+            firstName: '',
+            lastName: '',
+          } as User,
+          accessToken: null,
+          isLoading: false,
+          isAuthenticated: false,
+          isNewUser: false,
+          isSuspended: false,
+          isDeleted: true,
+          isCheckingSuspension: false,
+        });
+        return;
+      }
+      
       setAuthState(prev => ({ ...prev, isLoading: false }));
-      throw error; // Re-throw so the UI can handle it
+      throw error; // Re-throw other errors so the UI can handle them
     }
   };
 
@@ -340,6 +537,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isLoading: false,
         isAuthenticated: true,
         isNewUser: true,
+        isSuspended: false,
+        isDeleted: false,
+        isCheckingSuspension: false,
       });
     } catch (error) {
       setAuthState(prev => ({ ...prev, isLoading: false }));
@@ -363,7 +563,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isLoading: false,
         isAuthenticated: true,
         isNewUser: false,
+        isSuspended: false,
+        isDeleted: false,
+        isCheckingSuspension: true,
       });
+      
+      // Check account status after migration
+      await checkAccountStatus();
     } catch (error) {
       setAuthState(prev => ({ ...prev, isLoading: false }));
       throw error; // Re-throw so the UI can handle it
@@ -379,6 +585,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isLoading: false,
         isAuthenticated: false,
         isNewUser: false,
+        isSuspended: false,
+        isDeleted: false,
+        isCheckingSuspension: false,
       });
     } catch (error) {
       console.error('Error during signout:', error);
@@ -389,6 +598,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isLoading: false,
         isAuthenticated: false,
         isNewUser: false,
+        isSuspended: false,
+        isDeleted: false,
+        isCheckingSuspension: false,
       });
     }
   };
@@ -405,6 +617,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     signout,
     logout: signout, // Alias for signout
     clearNewUserFlag,
+    checkAccountStatus,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

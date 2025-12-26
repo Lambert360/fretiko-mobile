@@ -319,6 +319,17 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
             </View>
             <Ionicons name="chevron-forward" size={20} color="#B0B0B0" />
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => navigation.navigate('AccountStatus' as never)}
+          >
+            <View style={styles.settingInfo}>
+              <Ionicons name="warning-outline" size={20} color="#007AFF" />
+              <Text style={styles.settingLabel}>Account Status</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#B0B0B0" />
+          </TouchableOpacity>
         </View>
 
         {/* Action Buttons */}
