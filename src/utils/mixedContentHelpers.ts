@@ -84,12 +84,27 @@ export const getFlashSales = (products: Product[], limit: number = 8): Product[]
 };
 
 /**
- * Get "For You" products (randomized, TODO: personalize based on user history)
+ * Get "For You" products (chronological - newest first)
  */
 export const getForYou = (products: Product[], limit: number = 20): Product[] => {
-  // Shuffle array for random selection
-  const shuffled = [...products].sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, limit);
+  // Sort by created_at descending (newest first)
+  const sorted = [...products].sort((a, b) => {
+    const dateA = new Date(a.created_at).getTime();
+    const dateB = new Date(b.created_at).getTime();
+    return dateB - dateA; // Newest first
+  });
+  return sorted.slice(0, limit);
+};
+
+/**
+ * Sort products chronologically (newest first)
+ */
+export const sortByNewest = (products: Product[]): Product[] => {
+  return [...products].sort((a, b) => {
+    const dateA = new Date(a.created_at).getTime();
+    const dateB = new Date(b.created_at).getTime();
+    return dateB - dateA;
+  });
 };
 
 /**

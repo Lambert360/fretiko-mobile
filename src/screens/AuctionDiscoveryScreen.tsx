@@ -26,7 +26,7 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
  *
  * Main entry point for the auction platform featuring:
  * - 6 auction categories with elegant cards
- * - Featured auctions carousel
+ * - Active lots section
  * - Ending soon section
  * - Navigation to category pages and individual auctions
  */
@@ -37,13 +37,15 @@ const AuctionDiscoveryScreen = () => {
 
   // State
   const [categories, setCategories] = useState<AuctionCategoryWithStats[]>([]);
-  const [featuredAuctions, setFeaturedAuctions] = useState<AuctionWithDetails[]>([]);
+  const [liveAuctions, setLiveAuctions] = useState<AuctionWithDetails[]>([]);
+  const [activeAuctions, setActiveAuctions] = useState<AuctionWithDetails[]>([]);
   const [endingSoonAuctions, setEndingSoonAuctions] = useState<AuctionWithDetails[]>([]);
   const [upcomingAuctions, setUpcomingAuctions] = useState<AuctionWithDetails[]>([]);
   const [myAuctions, setMyAuctions] = useState<AuctionWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false);
 
   // Load auction data
   const loadAuctionData = async () => {
@@ -55,27 +57,72 @@ const AuctionDiscoveryScreen = () => {
       // Load auction data in parallel
       const promises = [
         auctionsAPI.getCategories(true) as Promise<AuctionCategoryWithStats[]>,
-        auctionsAPI.getFeaturedAuctions(),
         auctionsAPI.getAuctionsEndingSoon(),
+        auctionsAPI.getAuctions({ status: 'active', auction_type: 'live', limit: 20, sort: 'bids_desc' }), // Live lots
+        auctionsAPI.getAuctions({ status: 'active', auction_type: 'timed', limit: 20, sort: 'bids_desc' }), // Active timed lots
         auctionsAPI.getAuctions({ status: 'scheduled', limit: 20, sort: 'time_asc' }), // Upcoming auctions
       ];
-
-      // Add my auctions if seller
-      if (profileData.isSeller) {
-        promises.push(
-          auctionsAPI.getAuctions({ seller_id: user?.id, limit: 10 })
-        );
-      }
 
       const results = await Promise.all(promises);
 
       setCategories(results[0] as AuctionCategoryWithStats[]);
-      setFeaturedAuctions((results[1] as any).auctions);
-      setEndingSoonAuctions((results[2] as any).auctions);
-      setUpcomingAuctions((results[3] as any).auctions || []);
+      setEndingSoonAuctions((results[1] as any).auctions);
+      
+      const now = new Date();
+      
+      // Filter live lots that are actually streaming (have stream_url and haven't ended)
+      const liveAuctionsData = ((results[2] as any).auctions || []).filter(
+        (auction: AuctionWithDetails) => 
+          auction.status === 'active' && 
+          auction.auction_type === 'live' &&
+          auction.stream_url &&
+          new Date(auction.end_time) > now
+      );
+      setLiveAuctions(liveAuctionsData);
+      
+      // Filter active timed lots that haven't ended yet (client-side safeguard)
+      const activeAuctionsData = ((results[3] as any).auctions || []).filter(
+        (auction: AuctionWithDetails) => 
+          auction.status === 'active' && 
+          auction.auction_type === 'timed' &&
+          new Date(auction.end_time) > now
+      );
+      setActiveAuctions(activeAuctionsData);
+      
+      // Filter to ONLY show truly upcoming auctions (start_time in future AND status=scheduled)
+      // This is a client-side safeguard against stale data or status update delays
+      const upcomingAuctionsData = ((results[4] as any).auctions || []).filter(
+        (auction: AuctionWithDetails) => 
+          auction.status === 'scheduled' && new Date(auction.start_time) > now
+      );
+      setUpcomingAuctions(upcomingAuctionsData);
 
-      if (profileData.isSeller && results[4]) {
-        setMyAuctions((results[4] as any).auctions || []);
+      // Fetch my auctions if seller (active + scheduled only, excluding ended)
+      if (profileData.isSeller && user?.id) {
+        try {
+          const [activeAuctions, scheduledAuctions] = await Promise.all([
+            auctionsAPI.getAuctions({ seller_id: user.id, status: 'active', limit: 10 }),
+            auctionsAPI.getAuctions({ seller_id: user.id, status: 'scheduled', limit: 10 })
+          ]);
+          
+          const currentTime = new Date();
+          
+          // Filter and combine: active auctions that haven't ended, scheduled auctions that haven't started
+          const filtered = [
+            ...((activeAuctions as any).auctions || []).filter(
+              (a: AuctionWithDetails) => new Date(a.end_time) > currentTime
+            ),
+            ...((scheduledAuctions as any).auctions || []).filter(
+              (a: AuctionWithDetails) => new Date(a.start_time) > currentTime
+            )
+          ].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+           .slice(0, 10);  // Take first 10
+          
+          setMyAuctions(filtered);
+        } catch (error) {
+          console.error('Error loading my auctions:', error);
+          setMyAuctions([]);
+        }
       }
 
     } catch (error) {
@@ -113,7 +160,33 @@ const AuctionDiscoveryScreen = () => {
       Alert.alert('Login Required', 'Please log in to create auctions');
       return;
     }
+    setShowOptionsMenu(false);
     navigation.navigate('CreateAuction');
+  };
+
+  const handleOptionPress = (option: string) => {
+    setShowOptionsMenu(false);
+    
+    switch (option) {
+      case 'create':
+        navigateToCreateAuction();
+        break;
+      case 'myAuctions':
+        navigation.navigate('AuctionList', { seller_id: user?.id });
+        break;
+      case 'liveLots':
+        navigation.navigate('AuctionList', { status: 'active', auction_type: 'live' });
+        break;
+      case 'activeAuctions':
+        navigation.navigate('AuctionList', { status: 'active', auction_type: 'timed' });
+        break;
+      case 'endingSoon':
+        navigation.navigate('AuctionList', { endingSoon: true });
+        break;
+      case 'watchlist':
+        navigation.navigate('AuctionWatchlist');
+        break;
+    }
   };
 
   const renderCategoryCard = ({ item }: { item: AuctionCategoryWithStats }) => {
@@ -215,17 +288,95 @@ const AuctionDiscoveryScreen = () => {
 
         <Text style={styles.headerTitle}>Auctions</Text>
 
-        {profile?.isSeller ? (
-          <TouchableOpacity
-            style={styles.createButton}
-            onPress={navigateToCreateAuction}
-          >
-            <Ionicons name="add" size={24} color="#8E44AD" />
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.createButton} />
-        )}
+        <TouchableOpacity
+          style={styles.createButton}
+          onPress={() => setShowOptionsMenu(!showOptionsMenu)}
+        >
+          <Ionicons name="ellipsis-vertical" size={24} color="#8E44AD" />
+        </TouchableOpacity>
       </View>
+
+      {/* Header Options Menu Dropdown */}
+      {showOptionsMenu && (
+        <>
+          <TouchableOpacity
+            style={styles.menuBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowOptionsMenu(false)}
+          />
+          <View style={styles.headerOptionsMenu}>
+            {/* Vendor-only options */}
+            {profile?.isSeller && (
+              <>
+                <TouchableOpacity
+                  style={styles.headerOptionItem}
+                  onPress={() => handleOptionPress('create')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="hammer" size={20} color="#8E44AD" />
+                  <Text style={styles.headerOptionText}>Create Auction</Text>
+                </TouchableOpacity>
+
+                <View style={styles.headerOptionDivider} />
+
+                <TouchableOpacity
+                  style={styles.headerOptionItem}
+                  onPress={() => handleOptionPress('myAuctions')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="list" size={20} color="#27AE60" />
+                  <Text style={styles.headerOptionText}>My Auctions</Text>
+                </TouchableOpacity>
+
+                <View style={styles.headerOptionDivider} />
+              </>
+            )}
+
+            {/* Options for everyone */}
+            <TouchableOpacity
+              style={styles.headerOptionItem}
+              onPress={() => handleOptionPress('liveLots')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="videocam" size={20} color="#E74C3C" />
+              <Text style={styles.headerOptionText}>Live Lots</Text>
+            </TouchableOpacity>
+
+            <View style={styles.headerOptionDivider} />
+
+            <TouchableOpacity
+              style={styles.headerOptionItem}
+              onPress={() => handleOptionPress('activeAuctions')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="pulse" size={20} color="#3498DB" />
+              <Text style={styles.headerOptionText}>Active Lots</Text>
+            </TouchableOpacity>
+
+            <View style={styles.headerOptionDivider} />
+
+            <TouchableOpacity
+              style={styles.headerOptionItem}
+              onPress={() => handleOptionPress('endingSoon')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="alarm" size={20} color="#F39C12" />
+              <Text style={styles.headerOptionText}>Ending Soon</Text>
+            </TouchableOpacity>
+
+            <View style={styles.headerOptionDivider} />
+
+            <TouchableOpacity
+              style={styles.headerOptionItem}
+              onPress={() => handleOptionPress('watchlist')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="star" size={20} color="#E91E63" />
+              <Text style={styles.headerOptionText}>Watchlist</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
 
       <ScrollView
         style={styles.scrollView}
@@ -307,27 +458,6 @@ const AuctionDiscoveryScreen = () => {
           </View>
         )}
 
-        {/* Featured Auctions */}
-        {featuredAuctions.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Featured Auctions</Text>
-              <TouchableOpacity onPress={() => navigation.navigate('AuctionList', { featured: true })}>
-                <Text style={styles.seeAllText}>See All</Text>
-              </TouchableOpacity>
-            </View>
-
-            <FlatList
-              data={featuredAuctions}
-              renderItem={renderAuctionCard}
-              keyExtractor={(item) => item.id}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.auctionsList}
-            />
-          </View>
-        )}
-
         {/* Ending Soon */}
         {endingSoonAuctions.length > 0 && (
           <View style={styles.section}>
@@ -343,6 +473,54 @@ const AuctionDiscoveryScreen = () => {
 
             <FlatList
               data={endingSoonAuctions}
+              renderItem={renderAuctionCard}
+              keyExtractor={(item) => item.id}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.auctionsList}
+            />
+          </View>
+        )}
+
+        {/* Live Lots - Streaming Now */}
+        {liveAuctions.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View>
+                <Text style={styles.sectionTitle}>Live Lots</Text>
+                <Text style={styles.urgentText}>🔴 Watch & bid in real-time!</Text>
+              </View>
+              <TouchableOpacity onPress={() => navigation.navigate('AuctionList', { status: 'active', auction_type: 'live' })}>
+                <Text style={styles.seeAllText}>See All</Text>
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={liveAuctions}
+              renderItem={renderAuctionCard}
+              keyExtractor={(item) => item.id}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.auctionsList}
+            />
+          </View>
+        )}
+
+        {/* Active Lots - Timed Auctions */}
+        {activeAuctions.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View>
+                <Text style={styles.sectionTitle}>Active Lots</Text>
+                <Text style={styles.urgentText}>⏱️ Bid now!</Text>
+              </View>
+              <TouchableOpacity onPress={() => navigation.navigate('AuctionList', { status: 'active', auction_type: 'timed' })}>
+                <Text style={styles.seeAllText}>See All</Text>
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={activeAuctions}
               renderItem={renderAuctionCard}
               keyExtractor={(item) => item.id}
               horizontal
@@ -418,6 +596,49 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a1a1a',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  menuBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 998,
+  },
+  headerOptionsMenu: {
+    position: 'absolute',
+    top: 60,
+    right: 20,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    paddingVertical: 8,
+    minWidth: 200,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+    zIndex: 999,
+  },
+  headerOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  headerOptionText: {
+    color: '#FFF',
+    fontSize: 15,
+    fontWeight: '600',
+    flex: 1,
+  },
+  headerOptionDivider: {
+    height: 1,
+    backgroundColor: '#333',
+    marginHorizontal: 12,
   },
   scrollView: {
     flex: 1,
@@ -631,7 +852,7 @@ const styles = StyleSheet.create({
   bottomPadding: {
     height: 100, // Extra space for floating button
   },
-  // Floating Create Lot Button - Energetic & Fun Design
+  // Floating Create Lot Button
   createLotButton: {
     position: 'absolute',
     bottom: 20,
@@ -647,7 +868,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#8E44AD', // Purple - energetic and premium
+    backgroundColor: '#8E44AD',
     paddingHorizontal: 20,
     paddingVertical: 14,
     borderRadius: 30,

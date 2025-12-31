@@ -13,6 +13,8 @@ import {
   Modal,
   FlatList,
   RefreshControl,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -102,6 +104,60 @@ const AuctionDetailsScreen = () => {
     });
   };
 
+  // Format start date and time for upcoming auctions
+  const formatStartDateTime = (startTime: string) => {
+    const date = new Date(startTime);
+    const now = new Date();
+    
+    // Format date (e.g., "Jan 15, 2025")
+    const dateStr = date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    
+    // Format time (e.g., "2:30 PM")
+    const timeStr = date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+    
+    // Calculate days until start
+    const daysUntil = Math.ceil((date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    
+    if (daysUntil === 0) {
+      return `Today at ${timeStr}`;
+    } else if (daysUntil === 1) {
+      return `Tomorrow at ${timeStr}`;
+    } else if (daysUntil <= 7) {
+      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+      return `${dayName} at ${timeStr}`;
+    } else {
+      return `${dateStr} at ${timeStr}`;
+    }
+  };
+
+  // Format end date and time for active auctions
+  const formatEndDateTime = (endTime: string) => {
+    const date = new Date(endTime);
+    
+    // Format date
+    const dateStr = date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
+    
+    // Format time
+    const timeStr = date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+    
+    return `${dateStr} at ${timeStr}`;
+  };
+
   useEffect(() => {
     loadAuctionData();
 
@@ -112,8 +168,13 @@ const AuctionDetailsScreen = () => {
     // Listen for real-time bid updates
     const handleNewBid = (data: any) => {
       if (data.auction_id === auctionId) {
-        // Update current bid
-        setAuction(prev => prev ? { ...prev, current_bid: data.amount, total_bids: (prev.total_bids || 0) + 1 } : null);
+        // Update auction with all statistics from the server
+        setAuction(prev => prev ? {
+          ...prev,
+          current_bid: data.current_bid || data.amount,
+          total_bids: data.total_bids || (prev.total_bids || 0) + 1,
+          unique_bidders: data.unique_bidders || prev.unique_bidders,
+        } : null);
         
         // Refresh bid history
         loadBidHistory();
@@ -256,16 +317,63 @@ const AuctionDetailsScreen = () => {
     try {
       const result = await auctionsAPI.toggleWatchlist(auctionId);
 
-      setAuction(prev => prev ? {
-        ...prev,
-        is_watched_by_user: result.watched
-      } : null);
+      // Reload auction data to ensure is_watched_by_user is correctly set
+      const updatedAuction = await auctionsAPI.getAuction(auctionId);
+      setAuction(updatedAuction);
 
-    } catch (error) {
-      Alert.alert('Error', 'Failed to update watchlist');
+      // Show success feedback
+      if (result.watched) {
+        // Optionally show a brief success message
+        console.log('Added to watchlist');
+      } else {
+        console.log('Removed from watchlist');
+      }
+
+    } catch (error: any) {
+      console.error('Watchlist toggle error:', error);
+      Alert.alert(
+        'Error',
+        error?.response?.data?.message || error?.message || 'Failed to update watchlist. Please try again.'
+      );
     } finally {
       setWatchlistLoading(false);
     }
+  };
+
+  const handleCancelAuction = async () => {
+    if (!user || !auction || auction.seller_id !== user.id) {
+      Alert.alert('Error', 'You can only cancel your own auctions');
+      return;
+    }
+
+    // Confirm cancellation
+    Alert.alert(
+      'Cancel Auction',
+      `Are you sure you want to cancel "${auction.title}"? This action cannot be undone.`,
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            try {
+              await auctionsAPI.cancelAuction(auctionId, 'Cancelled by seller');
+              Alert.alert('Success', 'Auction cancelled successfully', [
+                {
+                  text: 'OK',
+                  onPress: () => navigation.goBack(),
+                },
+              ]);
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to cancel auction');
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const openBidModal = () => {
@@ -346,9 +454,9 @@ const AuctionDetailsScreen = () => {
             <ActivityIndicator size="small" color="white" />
           ) : (
             <Ionicons
-              name={auction.is_watched_by_user ? "heart" : "heart-outline"}
+              name={auction.is_watched_by_user ? "star" : "star-outline"}
               size={24}
-              color={auction.is_watched_by_user ? "#E74C3C" : "white"}
+              color={auction.is_watched_by_user ? "#F39C12" : "white"}
             />
           )}
         </TouchableOpacity>
@@ -433,7 +541,7 @@ const AuctionDetailsScreen = () => {
             {/* Time Remaining */}
             <View style={styles.timeContainer}>
               <Text style={styles.timeLabel}>
-                {auction.time_status === 'upcoming' ? 'Starts In' : 'Time Remaining'}
+                {auction.time_status === 'upcoming' ? 'Starts At' : 'Time Remaining'}
               </Text>
               <Text style={[
                 styles.timeRemaining,
@@ -441,12 +549,18 @@ const AuctionDetailsScreen = () => {
                 auction.time_status === 'upcoming' && styles.timeUpcoming
               ]}>
                 {auction.time_status === 'upcoming'
-                  ? (timeRemaining ? auctionsAPI.formatTimeRemaining(timeRemaining) : 'Starting soon...')
+                  ? formatStartDateTime(auction.start_time)
                   : auction.time_status === 'active'
                     ? (timeRemaining ? auctionsAPI.formatTimeRemaining(timeRemaining) : 'Ending soon...')
                     : 'Ended'
                 }
               </Text>
+              {/* Show actual end time for active auctions */}
+              {auction.time_status === 'active' && auction.end_time && (
+                <Text style={styles.timeSubtext}>
+                  Ends {formatEndDateTime(auction.end_time)}
+                </Text>
+              )}
             </View>
           </View>
 
@@ -491,6 +605,94 @@ const AuctionDetailsScreen = () => {
               </View>
             </View>
           </View>
+
+          {/* Vendor Control Panel - Only visible to seller */}
+          {user && auction.seller_id === user.id && (
+            <View style={styles.vendorControlPanel}>
+              <View style={styles.vendorHeader}>
+                <Ionicons name="settings-outline" size={24} color="#3498DB" />
+                <Text style={styles.vendorHeaderText}>Manage Your Auction</Text>
+              </View>
+
+              {/* Quick Stats */}
+              <View style={styles.vendorStatsRow}>
+                <View style={styles.vendorStatBox}>
+                  <Text style={styles.vendorStatValue}>{auction.view_count}</Text>
+                  <Text style={styles.vendorStatLabel}>Views</Text>
+                </View>
+                <View style={styles.vendorStatBox}>
+                  <Text style={styles.vendorStatValue}>{auction.watch_count}</Text>
+                  <Text style={styles.vendorStatLabel}>Watchers</Text>
+                </View>
+                <View style={styles.vendorStatBox}>
+                  <Text style={styles.vendorStatValue}>{auction.total_bids}</Text>
+                  <Text style={styles.vendorStatLabel}>Bids</Text>
+                </View>
+                <View style={styles.vendorStatBox}>
+                  <Text style={styles.vendorStatValue}>{auction.unique_bidders}</Text>
+                  <Text style={styles.vendorStatLabel}>Bidders</Text>
+                </View>
+              </View>
+
+              {/* Actions */}
+              <View style={styles.vendorActionsRow}>
+                {/* Edit button - only for scheduled auctions with no bids */}
+                {auction.status === 'scheduled' && auction.total_bids === 0 && (
+                  <TouchableOpacity
+                    style={styles.vendorActionButton}
+                    onPress={() => navigation.navigate('CreateAuction', {
+                      mode: 'edit',
+                      auctionId: auction.id,
+                      auctionData: auction,
+                    })}
+                  >
+                    <Ionicons name="create-outline" size={20} color="#3498DB" />
+                    <Text style={styles.vendorActionText}>Edit</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Cancel button - only for scheduled auctions */}
+                {(auction.status === 'scheduled') && (
+                  <TouchableOpacity
+                    style={[styles.vendorActionButton, styles.vendorActionDanger]}
+                    onPress={handleCancelAuction}
+                  >
+                    <Ionicons name="close-circle-outline" size={20} color="#E74C3C" />
+                    <Text style={[styles.vendorActionText, styles.vendorActionDangerText]}>Cancel</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Relist button - only for ended/cancelled auctions */}
+                {(auction.status === 'ended' || auction.status === 'cancelled') && (
+                  <TouchableOpacity
+                    style={styles.vendorActionButton}
+                    onPress={() => navigation.navigate('CreateAuction', {
+                      mode: 'relist',
+                      auctionId: auction.id,
+                      auctionData: auction,
+                    })}
+                  >
+                    <Ionicons name="repeat-outline" size={20} color="#27AE60" />
+                    <Text style={styles.vendorActionText}>Relist</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* View Full Bid History */}
+                {auction.total_bids > 0 && (
+                  <TouchableOpacity
+                    style={styles.vendorActionButton}
+                    onPress={() => navigation.navigate('AuctionBidHistory', {
+                      auctionId: auction.id,
+                      auctionTitle: auction.title,
+                    })}
+                  >
+                    <Ionicons name="list-outline" size={20} color="#3498DB" />
+                    <Text style={styles.vendorActionText}>Full History</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
 
           {/* Bid History */}
           <View style={styles.bidHistorySection}>
@@ -591,7 +793,10 @@ const AuctionDetailsScreen = () => {
         animationType="slide"
         onRequestClose={() => setBidModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Place Your Bid</Text>
@@ -637,7 +842,7 @@ const AuctionDetailsScreen = () => {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Proxy Bid Modal */}
@@ -647,79 +852,88 @@ const AuctionDetailsScreen = () => {
         animationType="slide"
         onRequestClose={() => setProxyBidModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>⚡ Set Auto-Bid</Text>
-              <TouchableOpacity onPress={() => setProxyBidModalVisible(false)}>
-                <Ionicons name="close" size={24} color="white" />
-              </TouchableOpacity>
-            </View>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.modalScrollContent}
+            >
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>⚡ Set Auto-Bid</Text>
+                <TouchableOpacity onPress={() => setProxyBidModalVisible(false)}>
+                  <Ionicons name="close" size={24} color="white" />
+                </TouchableOpacity>
+              </View>
 
-            <Text style={styles.modalDescription}>
-              Set a maximum bid and we'll automatically bid for you up to that amount to keep you winning.
-            </Text>
-
-            <Text style={styles.modalInfo}>
-              Current bid: ₣{auction?.current_bid.toFixed(2)}
-            </Text>
-            <Text style={styles.modalInfo}>
-              Minimum bid: ₣{auction ? (auction.current_bid + auction.bid_increment).toFixed(2) : '0.00'}
-            </Text>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Your Initial Bid</Text>
-              <TextInput
-                style={styles.bidInput}
-                value={bidAmount}
-                onChangeText={setBidAmount}
-                placeholder="Enter initial bid"
-                placeholderTextColor="#888"
-                keyboardType="numeric"
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Maximum Bid (Auto-Bid Limit)</Text>
-              <TextInput
-                style={styles.bidInput}
-                value={maxBidAmount}
-                onChangeText={setMaxBidAmount}
-                placeholder="Enter max bid"
-                placeholderTextColor="#888"
-                keyboardType="numeric"
-              />
-            </View>
-
-            <View style={styles.proxyExplainer}>
-              <Ionicons name="information-circle" size={16} color="#3498DB" />
-              <Text style={styles.proxyExplainerText}>
-                We'll only bid what's needed to keep you winning, up to your maximum.
+              <Text style={styles.modalDescription}>
+                Set a maximum bid and we'll automatically bid for you up to that amount to keep you winning.
               </Text>
-            </View>
 
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => setProxyBidModalVisible(false)}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
+              <Text style={styles.modalInfo}>
+                Current bid: ₣{auction?.current_bid.toFixed(2)}
+              </Text>
+              <Text style={styles.modalInfo}>
+                Minimum bid: ₣{auction ? (auction.current_bid + auction.bid_increment).toFixed(2) : '0.00'}
+              </Text>
 
-              <TouchableOpacity
-                style={[styles.confirmButton, placingBid && styles.disabledButton]}
-                onPress={handlePlaceProxyBid}
-                disabled={placingBid}
-              >
-                {placingBid ? (
-                  <ActivityIndicator size="small" color="white" />
-                ) : (
-                  <Text style={styles.confirmButtonText}>Set Auto-Bid</Text>
-                )}
-              </TouchableOpacity>
-            </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Your Initial Bid</Text>
+                <TextInput
+                  style={styles.bidInput}
+                  value={bidAmount}
+                  onChangeText={setBidAmount}
+                  placeholder="Enter initial bid"
+                  placeholderTextColor="#888"
+                  keyboardType="numeric"
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Maximum Bid (Auto-Bid Limit)</Text>
+                <TextInput
+                  style={styles.bidInput}
+                  value={maxBidAmount}
+                  onChangeText={setMaxBidAmount}
+                  placeholder="Enter max bid"
+                  placeholderTextColor="#888"
+                  keyboardType="numeric"
+                />
+              </View>
+
+              <View style={styles.proxyExplainer}>
+                <Ionicons name="information-circle" size={16} color="#3498DB" />
+                <Text style={styles.proxyExplainerText}>
+                  We'll only bid what's needed to keep you winning, up to your maximum.
+                </Text>
+              </View>
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={() => setProxyBidModalVisible(false)}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.confirmButton, placingBid && styles.disabledButton]}
+                  onPress={handlePlaceProxyBid}
+                  disabled={placingBid}
+                >
+                  {placingBid ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <Text style={styles.confirmButtonText}>Set Auto-Bid</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -918,6 +1132,11 @@ const styles = StyleSheet.create({
   timeUpcoming: {
     color: '#3498DB',
   },
+  timeSubtext: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 4,
+  },
   statsSection: {
     flexDirection: 'row',
     justifyContent: 'space-around',
@@ -978,6 +1197,77 @@ const styles = StyleSheet.create({
   viewProfileText: {
     color: '#8E44AD',
     fontSize: 14,
+  },
+  // Vendor Control Panel Styles
+  vendorControlPanel: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 24,
+    borderWidth: 2,
+    borderColor: '#3498DB',
+  },
+  vendorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  vendorHeaderText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  vendorStatsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  vendorStatBox: {
+    flex: 1,
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#111',
+    borderRadius: 8,
+    marginHorizontal: 4,
+  },
+  vendorStatValue: {
+    color: '#3498DB',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  vendorStatLabel: {
+    color: '#888',
+    fontSize: 12,
+  },
+  vendorActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  vendorActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: '#222',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3498DB',
+  },
+  vendorActionDanger: {
+    borderColor: '#E74C3C',
+  },
+  vendorActionText: {
+    color: '#3498DB',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  vendorActionDangerText: {
+    color: '#E74C3C',
   },
   bidHistorySection: {
     marginBottom: 100, // Space for bid button
@@ -1102,6 +1392,10 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 20,
     width: screenWidth - 40,
+    maxHeight: '90%',
+  },
+  modalScrollContent: {
+    flexGrow: 1,
   },
   modalHeader: {
     flexDirection: 'row',

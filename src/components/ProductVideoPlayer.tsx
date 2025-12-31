@@ -31,24 +31,26 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  // Create video player
+  
+  // Create video player for this specific video
   const player = useVideoPlayer(videoUri, (player) => {
     player.loop = false; // Don't auto-replay
     player.muted = false;
     player.timeUpdateEventInterval = 0.1;
   });
 
-  // Control playback
+  // Control playback based on props - SAME AS SERVICE TAB
   useEffect(() => {
     if (shouldAutoPlay) {
+      console.log(`🎥 Starting product video playback for ${videoUri}`);
       player.play();
     } else {
+      console.log(`🎥 Pausing product video for ${videoUri}`);
       player.pause();
     }
   }, [shouldAutoPlay, player]);
 
-  // Setup status listeners
+  // Setup status listeners - SAME AS SERVICE TAB
   useEffect(() => {
     const statusSubscription = player.addListener('statusChange', (status) => {
       if (status.status === 'loaded') {

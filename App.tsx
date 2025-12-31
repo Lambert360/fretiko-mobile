@@ -75,6 +75,7 @@ import AuctionDiscoveryScreen from './src/screens/AuctionDiscoveryScreen';
 import AuctionCategoryScreen from './src/screens/AuctionCategoryScreen';
 import AuctionListScreen from './src/screens/AuctionListScreen';
 import AuctionDetailsScreen from './src/screens/AuctionDetailsScreen';
+import AuctionWatchlistScreen from './src/screens/AuctionWatchlistScreen';
 import CreateAuctionScreen from './src/screens/CreateAuctionScreen';
 import LiveStreamViewerScreen from './src/screens/LiveStreamViewerScreen';
 import LiveStreamHostScreen from './src/screens/LiveStreamHostScreen';
@@ -308,6 +309,7 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="AuctionCategory" component={AuctionCategoryScreen} />
               <Stack.Screen name="AuctionList" component={AuctionListScreen} />
               <Stack.Screen name="AuctionDetails" component={AuctionDetailsScreen} />
+              <Stack.Screen name="AuctionWatchlist" component={AuctionWatchlistScreen} />
               <Stack.Screen name="AuctionLiveViewer" component={AuctionLiveViewerScreen} />
               <Stack.Screen name="CreateAuction" component={CreateAuctionScreen} />
             </>

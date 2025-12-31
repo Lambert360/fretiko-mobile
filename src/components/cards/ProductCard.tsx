@@ -80,35 +80,20 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     if (isVideo) {
       // Video product: use image thumbnail or placeholder
       imageUri = product.image || `https://picsum.photos/400/400?random=${product.id}`;
-      console.log('📹 Rendering video product card:', {
-        id: product.id,
-        name: product.title,
-        media_type: product.mediaType,
-        primary_image_url: product.image,
-        primary_video_url: product.mediaUrl,
-        has_videos: product.mediaUrl ? 1 : 0,
-      });
     } else {
-      // Image product: use mediaUrl or image
-      imageUri = product.mediaUrl || product.image || `https://picsum.photos/400/400?random=${product.id}`;
+      // Image product: use image, mediaUrl, or placeholder (prioritize image field)
+      imageUri = product.image || product.mediaUrl || `https://picsum.photos/400/400?random=${product.id}`;
     }
 
-    console.log('🖼️ ProductCard renderMedia:', {
-      productId: product.id,
-      productTitle: product.title,
-      mediaType: product.mediaType,
-      resolvedUri: imageUri,
-      isVideo,
-    });
-
     return (
-      <View style={[styles.mediaContainer, { height: getMediaHeight() }]}>
+      <View style={[styles.mediaContainer, { height: getMediaHeight(), backgroundColor: '#1a1a1a' }]}>
         <Image
           source={{ uri: imageUri }}
           style={styles.mediaContent}
           resizeMode="cover"
-          onError={(error) => console.error('❌ Image load error:', imageUri, error.nativeEvent)}
-          onLoad={() => console.log('✅ Image loaded successfully:', imageUri)}
+          onError={(error) => {
+            console.error('❌ Image load error:', imageUri, error.nativeEvent);
+          }}
         />
 
         {isVideo && (
@@ -342,10 +327,13 @@ const styles = StyleSheet.create({
   mediaContainer: {
     position: 'relative',
     width: '100%',
+    backgroundColor: '#1a1a1a',
+    overflow: 'hidden',
   },
   mediaContent: {
     width: '100%',
     height: '100%',
+    backgroundColor: '#1a1a1a',
   },
   videoOverlay: {
     position: 'absolute',

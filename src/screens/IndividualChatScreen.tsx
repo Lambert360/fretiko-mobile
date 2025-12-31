@@ -258,6 +258,9 @@ const IndividualChatScreen = () => {
   const hasSubscribedRef = useRef(false);
   const cleanupFnRef = useRef<(() => void) | null>(null);
 
+  // 🔥 FIX: Track if chat has been initialized to prevent duplicate initialization on remounts
+  const hasInitializedRef = useRef<string | false>(false);
+
   // Media viewer states
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
@@ -796,6 +799,12 @@ const IndividualChatScreen = () => {
       return;
     }
 
+    // 🔥 FIX: Prevent duplicate initialization on remounts
+    if (hasInitializedRef.current === chatId) {
+      console.log('🚫 Already initialized for chatId:', chatId, '- skipping duplicate initialization');
+      return;
+    }
+
     // Don't reinitialize during an active AI call
     if (isAICall && isConnectedToGemini) {
       console.log('🚫 Skipping chat reinitialization - AI call in progress');
@@ -846,6 +855,10 @@ const IndividualChatScreen = () => {
           cleanup = initializeRealtimeMessaging();
         });
 
+      // 🔥 Mark as initialized for this chatId
+      hasInitializedRef.current = chatId;
+      console.log('✅ IndividualChatScreen initialized for chatId:', chatId);
+
       return cleanup;
     };
 
@@ -874,6 +887,13 @@ const IndividualChatScreen = () => {
       // 🔥 Reset subscription state on unmount
       hasSubscribedRef.current = false;
       cleanupFnRef.current = null;
+      
+      // 🔥 Only reset initialization ref if this was the initialized chatId
+      if (hasInitializedRef.current === chatId) {
+        hasInitializedRef.current = false;
+        console.log('🧹 Reset initialization state for chatId:', chatId);
+      }
+      
       // Don't disconnect entirely as other screens might be using it
       // realtimeAPI.disconnect();
     };
@@ -988,50 +1008,65 @@ const IndividualChatScreen = () => {
         );
 
         // 2. Get AI response from Gemini directly (no backend dependency)
-        await geminiAPI.initializeChatSession(user?.id || 'unknown');
+        // sendTextMessage() handles session persistence internally - no need to initialize here
         const response = await geminiAPI.sendTextMessage(messageContent, user?.id || 'unknown');
+
+        // Check for error first, then use text or errorMessage
+        let aiResponseText: string;
+        if (response.error && response.errorMessage) {
+          aiResponseText = response.errorMessage;
+          console.error(`IKO Error [${response.error}]:`, response.errorMessage);
+        } else {
+          aiResponseText = response.text || 'I understand.';
+        }
 
         // 3. Create AI response message (frontend only)
         const aiMessage: Message = {
           id: Date.now().toString(),
-          text: response.text || 'I understand.',
+          text: aiResponseText,
           timestamp: new Date(),
           senderId: AI_ASSISTANT_UUID,
           senderName: AI_ASSISTANT_NAME,
           messageType: 'text',
           status: 'delivered',
           conversationId: chatId,
-          content: response.text || 'I understand.',
+          content: aiResponseText,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          // Include IKO recommendations if available
-          ikoRecommendations: (response.recommendedProducts || response.recommendedServices) ? {
+          // Include IKO recommendations if available (skip if error)
+          ikoRecommendations: (!response.error && (response.recommendedProducts || response.recommendedServices)) ? {
             products: response.recommendedProducts,
             services: response.recommendedServices,
           } : undefined,
-          // Include IKO schedule card if available
-          ikoScheduleCard: response.scheduleCard,
+          // Include IKO schedule card if available (skip if error)
+          ikoScheduleCard: !response.error ? response.scheduleCard : undefined,
         };
 
         setMessages(prev => [...prev, aiMessage]);
 
         // 4. Save both messages to backend for persistence (fire and forget)
+        // Skip saving if there was an error
+        if (!response.error) {
         try {
           console.log('💾 Saving AI messages to backend for chatId:', chatId);
           // Save user message
           const savedUserMsg = await chatAPI.sendAIMessage(chatId, messageContent, false);
           console.log('✅ User message saved:', savedUserMsg.id);
           // Save AI response
-          const savedAIMsg = await chatAPI.sendAIMessage(chatId, response.text || 'I understand.', true);
+            const savedAIMsg = await chatAPI.sendAIMessage(chatId, aiResponseText, true);
           console.log('✅ AI response saved:', savedAIMsg.id);
           console.log('✅ AI conversation saved to backend');
         } catch (saveError) {
           console.error('⚠️ Failed to save AI conversation to backend:', saveError);
           // Don't throw - conversation continues working without backend save
+          }
+        } else {
+          console.log('⚠️ Skipping backend save for error response');
         }
 
         // Handle function calls if any (this is where backend interaction happens)
-        if (response.functionCalls && response.functionCalls.length > 0) {
+        // Skip function calls when there's an error
+        if (!response.error && response.functionCalls && response.functionCalls.length > 0) {
           console.log('Function calls received:', response.functionCalls);
           // Function calls will be handled by the Gemini service and may call backend APIs
         }

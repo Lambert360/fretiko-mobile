@@ -2,8 +2,9 @@ import { api } from './api';
 import * as SecureStore from 'expo-secure-store';
 import { Alert } from 'react-native';
 import io, { Socket } from 'socket.io-client';
+import { API_CONFIG } from '../config/api';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
+const API_URL = API_CONFIG.BASE_URL || process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 
 /**
  * Auction Interfaces
@@ -773,6 +774,53 @@ class AuctionSocketManager {
    */
   getCurrentAuctionId(): string | null {
     return this.currentAuctionId;
+  }
+
+  /**
+   * Update auction (Vendor only, before it starts or with no bids)
+   */
+  async updateAuction(
+    auctionId: string,
+    updateData: Partial<CreateAuctionData>,
+  ): Promise<Auction> {
+    const headers = await this.getAuthHeaders();
+
+    const response = await fetch(`${API_URL}/auctions/${auctionId}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(updateData),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Failed to update auction');
+    }
+
+    const data = await response.json();
+    console.log('Auction updated successfully:', auctionId);
+    return data;
+  }
+
+  /**
+   * Cancel auction (Vendor only)
+   */
+  async cancelAuction(auctionId: string, reason?: string): Promise<{ message: string }> {
+    const headers = await this.getAuthHeaders();
+
+    const response = await fetch(`${API_URL}/auctions/${auctionId}`, {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({ reason }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Failed to cancel auction');
+    }
+
+    const data = await response.json();
+    console.log('Auction cancelled successfully:', auctionId);
+    return data;
   }
 }
 

@@ -24,7 +24,7 @@ const AuctionListScreen = () => {
   const route = useRoute<any>();
   const insets = useSafeAreaInsets();
 
-  const { status, featured, endingSoon, seller_id } = route.params || {};
+  const { status, featured, endingSoon, seller_id, auction_type } = route.params || {};
 
   const [auctions, setAuctions] = useState<AuctionWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,6 +35,8 @@ const AuctionListScreen = () => {
     if (endingSoon) return 'Ending Soon';
     if (status === 'scheduled') return 'Coming Soon';
     if (seller_id) return 'My Auctions';
+    if (status === 'active' && auction_type === 'live') return 'Live Lots';
+    if (status === 'active' && auction_type === 'timed') return 'Active Lots';
     return 'Auctions';
   };
 
@@ -56,6 +58,7 @@ const AuctionListScreen = () => {
         filters.status = 'active';
       }
       if (seller_id) filters.seller_id = seller_id;
+      if (auction_type) filters.auction_type = auction_type;
 
       const response = await auctionsAPI.getAuctions(filters);
       setAuctions(response.auctions);

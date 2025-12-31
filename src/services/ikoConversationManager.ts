@@ -105,7 +105,11 @@ class IkoConversationManager {
         case 'text':
         case 'voice_note':
         case 'image_generation':
-          await geminiAPI.initializeChatSession(options.userId);
+          // Load existing session first, only initialize if needed
+          await geminiAPI.loadSession();
+          if (!geminiAPI.getCurrentSession() || geminiAPI.getCurrentSession()?.userId !== options.userId) {
+            await geminiAPI.initializeChatSession(options.userId);
+          }
           break;
         case 'live_call':
           await this.initializeLiveCall(options);
@@ -153,17 +157,33 @@ class IkoConversationManager {
       // Send to Gemini
       const response = await geminiAPI.sendTextMessage(text, this.currentState.userId);
 
+      // Check for errors and create appropriate response
+      let ikoContent: string;
+      let isError = false;
+
+      if (response.error) {
+        // Use the user-friendly error message from Gemini API
+        ikoContent = response.errorMessage || 'I apologize, but I encountered an issue. Please try again.';
+        isError = true;
+        console.error(`IKO Error [${response.error}]:`, response.errorMessage);
+      } else {
+        // Normal response
+        ikoContent = response.text || 'I understand.';
+      }
+
       // Create Iko response message
       const ikoMessage: ConversationMessage = {
         id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'iko',
-        content: response.text || 'I understand.',
+        content: ikoContent,
         mode: 'text',
         timestamp: new Date().toISOString(),
-        metadata: response.functionCalls ? {
-          functionName: response.functionCalls[0]?.name,
+        metadata: {
+          isError,
+          errorCode: response.error,
+          functionName: response.functionCalls?.[0]?.name,
           functionResult: response.functionCalls,
-        } : undefined,
+        },
       };
 
       this.messages.push(ikoMessage);
@@ -176,11 +196,13 @@ class IkoConversationManager {
       await this.saveToChatSystem(userMessage);
       await this.saveToChatSystem(ikoMessage);
 
-      // Record interaction
-      await ikoAPI.recordConversation({
-        interactionType: 'text',
-        summary: text.substring(0, 100),
-      });
+      // Record interaction (only if not an error)
+      if (!isError) {
+        await ikoAPI.recordConversation({
+          interactionType: 'text',
+          summary: text.substring(0, 100),
+        });
+      }
 
       await this.saveState();
 
@@ -189,6 +211,23 @@ class IkoConversationManager {
       return ikoMessage;
     } catch (error) {
       console.error('Error sending text message:', error);
+      
+      // Create error message for user
+      const errorMessage: ConversationMessage = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'iko',
+        content: "I apologize, but something went wrong. Please try again! 🔧",
+        mode: 'text',
+        timestamp: new Date().toISOString(),
+        metadata: {
+          isError: true,
+          errorCode: 'UNEXPECTED_ERROR',
+        },
+      };
+      
+      this.messages.push(errorMessage);
+      await this.saveToChatSystem(errorMessage);
+      
       throw error;
     }
   }
@@ -436,8 +475,11 @@ class IkoConversationManager {
         // Load messages
         await this.loadChatHistory(chatId);
 
-        // Reinitialize Gemini session
-        await geminiAPI.initializeChatSession(userId);
+        // Restore existing session if available, only create new if needed
+        await geminiAPI.loadSession();
+        if (!geminiAPI.getCurrentSession() || geminiAPI.getCurrentSession()?.userId !== userId) {
+          await geminiAPI.initializeChatSession(userId);
+        }
 
         this.emit('conversationResumed', this.currentState);
 

@@ -245,6 +245,12 @@ const HomeScreen = () => {
   // Track visible video products in viewport (max 2 at a time)
   const [visibleVideoProducts, setVisibleVideoProducts] = useState<Set<string>>(new Set());
   
+  // Track video product card absolute positions in ScrollView content
+  const videoProductPositions = useRef<Map<string, { absoluteY: number; height: number }>>(new Map());
+  const forYouScrollViewRef = useRef<ScrollView>(null);
+  const currentScrollY = useRef(0);
+  const contentStartY = useRef(0); // Track where content starts in ScrollView
+  
   // Modal states
   const [isLocationSelectorVisible, setLocationSelectorVisible] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState('Lagos, Nigeria');
@@ -981,11 +987,11 @@ const HomeScreen = () => {
   }, [filters]);
 
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const currentScrollY = event.nativeEvent.contentOffset.y;
-    const delta = currentScrollY - lastScrollY.current;
+    const scrollY = event.nativeEvent.contentOffset.y;
+    const delta = scrollY - lastScrollY.current;
     const isDown = delta > 0;
     if (Math.abs(delta) > 5) {
-      const targetOpacity = isDown && currentScrollY > 30 ? 0 : 1;
+      const targetOpacity = isDown && scrollY > 30 ? 0 : 1;
       
       Animated.timing(headerOpacity, { 
         toValue: targetOpacity, 
@@ -999,7 +1005,11 @@ const HomeScreen = () => {
         useNativeDriver: false 
       }).start();
     }
-    lastScrollY.current = currentScrollY;
+    lastScrollY.current = scrollY;
+    
+    // Update video visibility tracking
+    currentScrollY.current = scrollY;
+    checkVideoVisibility();
   };
 
   // Handler for add to cart button press
@@ -2297,8 +2307,209 @@ const HomeScreen = () => {
 
     if (itemsWithoutAuctions.length === 0) return null;
 
+    // Separate items by type and sort chronologically (newest first)
+    const sortByDate = (a: ForYouItem, b: ForYouItem) => {
+      const dateA = new Date(a.data.created_at || 0).getTime();
+      const dateB = new Date(b.data.created_at || 0).getTime();
+      return dateB - dateA; // Newest first
+    };
+
+    const regularProducts = itemsWithoutAuctions
+      .filter(item => item.kind === 'product')
+      .sort(sortByDate);
+    
+    const videoProducts = itemsWithoutAuctions
+      .filter(item => item.kind === 'video')
+      .sort(sortByDate);
+    
+    const liveSales = itemsWithoutAuctions
+      .filter(item => item.kind === 'live')
+      .sort(sortByDate);
+
+    // Systematic pattern-based row building
+    type RowType = 
+      | { type: 'grid'; items: ForYouItem[] }
+      | { type: 'full-width'; item: ForYouItem }
+      | { type: 'banner'; bannerIndex: number }
+      | { type: 'auction-section' };
+
+    const buildSystematicRows = (): RowType[] => {
+      const rows: RowType[] = [];
+      let regIdx = 0;
+      let vidIdx = 0;
+      let liveIdx = 0;
     let bannerCycle = heroIndex;
-    let regularProductsSinceLastFullWidth = 0; // Track regular products since last full-width element
+      
+      // Pattern cycle:
+      // 1. 4-6 regular products (2-3 grid rows)
+      // 2. 1 video product
+      // 3. 1 live sale
+      // 4. 4-6 regular products (2-3 grid rows)
+      // 5. 1 banner
+      // 6. 1 auction section
+      // 7. 1 video product
+      // Repeat...
+
+      while (regIdx < regularProducts.length || vidIdx < videoProducts.length || liveIdx < liveSales.length) {
+        // Step 1: Add 4-6 regular products (2-3 grid rows)
+        const firstBatchCount = Math.min(3, Math.ceil((regularProducts.length - regIdx) / 2));
+        for (let i = 0; i < firstBatchCount; i++) {
+          const rowItems = regularProducts.slice(regIdx, regIdx + 2);
+          if (rowItems.length > 0) {
+            rows.push({ type: 'grid', items: rowItems });
+            regIdx += rowItems.length;
+          }
+        }
+
+        // Step 2: Add 1 video product (if available)
+        if (vidIdx < videoProducts.length) {
+          rows.push({ type: 'full-width', item: videoProducts[vidIdx] });
+          vidIdx++;
+        }
+
+        // Step 3: Add 1 live sale (if available)
+        if (liveIdx < liveSales.length) {
+          rows.push({ type: 'full-width', item: liveSales[liveIdx] });
+          liveIdx++;
+        }
+
+        // Step 4: Add 4-6 regular products (2-3 grid rows)
+        const secondBatchCount = Math.min(3, Math.ceil((regularProducts.length - regIdx) / 2));
+        for (let i = 0; i < secondBatchCount; i++) {
+          const rowItems = regularProducts.slice(regIdx, regIdx + 2);
+          if (rowItems.length > 0) {
+            rows.push({ type: 'grid', items: rowItems });
+            regIdx += rowItems.length;
+          }
+        }
+
+        // Step 5: Add banner (if available)
+        if (heroImages.length > 0) {
+          rows.push({ type: 'banner', bannerIndex: bannerCycle });
+          bannerCycle++;
+        }
+
+        // Step 6: Add auction section (if available)
+        if (filteredActiveAuctions.length > 0 || filteredUpcomingAuctions.length > 0) {
+          rows.push({ type: 'auction-section' });
+        }
+
+        // Step 7: Add 1 video product (if available)
+        if (vidIdx < videoProducts.length) {
+          rows.push({ type: 'full-width', item: videoProducts[vidIdx] });
+          vidIdx++;
+        }
+
+        // Safety check: if no items were added in this cycle, break to avoid infinite loop
+        const currentTotal = regIdx + vidIdx + liveIdx;
+        if (currentTotal >= regularProducts.length + videoProducts.length + liveSales.length) {
+          break;
+        }
+      }
+
+      return rows;
+    };
+
+    const rows = buildSystematicRows();
+
+    // Render each row based on its type
+    const renderRow = (row: RowType, rowIndex: number) => {
+      switch (row.type) {
+        case 'grid':
+          // Render a 2-column grid row
+          return (
+            <View key={`grid-${rowIndex}`} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
+              {row.items.map((item, itemIdx) => (
+                <View key={`grid-item-${rowIndex}-${itemIdx}`} style={{ width: '48%' }}>
+                    <TouchableOpacity
+                    onPress={() => navigation.navigate('ProductDetails', { productId: item.data.id })}
+                  >
+                    {renderEnhancedProductCard(item.data, false)}
+                  </TouchableOpacity>
+                </View>
+              ))}
+              {/* Fill empty space if only 1 item in row */}
+              {row.items.length === 1 && <View style={{ width: '48%' }} />}
+            </View>
+          );
+
+        case 'full-width':
+          // Render full-width item (video or live)
+          if (row.item.kind === 'live') {
+            return (
+              <TouchableOpacity
+                key={`live-${rowIndex}`}
+                      activeOpacity={0.9}
+                onPress={() => navigation.navigate('LiveStreamViewer', { streamId: row.item.data.streamId })}
+                      style={{
+                        width: '100%',
+                        backgroundColor: '#0d0d0d',
+                        borderRadius: 12,
+                        overflow: 'hidden',
+                        marginBottom: 16,
+                        borderWidth: 1,
+                        borderColor: '#1f1f1f',
+                      }}
+                    >
+                <View style={{ width: '100%', backgroundColor: '#111' }}>
+                        <Image
+                    source={{ uri: row.item.data.image || 'https://via.placeholder.com/400x250?text=Live+Product' }}
+                    style={{ 
+                      width: '100%', 
+                      height: undefined,
+                      aspectRatio: 16/9, // Default to landscape, will adjust on load
+                      maxHeight: 300,
+                    }}
+                    resizeMode="contain"
+                    onLoad={(event) => {
+                      // Image loaded successfully with proper aspect ratio
+                      console.log(`📸 Live thumbnail loaded for stream: ${row.item.data.streamId}`);
+                    }}
+                        />
+                        <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: '#E74C3C', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, flexDirection: 'row', alignItems: 'center' }}>
+                          <Ionicons name="radio" size={14} color="#FFF" style={{ marginRight: 4 }} />
+                          <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '700' }}>LIVE</Text>
+                        </View>
+                      </View>
+                      <View style={{ padding: 12, gap: 6 }}>
+                  <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '700' }} numberOfLines={2}>{String(row.item.data.title || '')}</Text>
+                  <Text style={{ color: '#8EE186', fontSize: 14, fontWeight: '700' }}>₣{(row.item.data.price || 0).toFixed(2)}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Text style={{ color: '#888', fontSize: 12 }}>Watch live</Text>
+                          <Ionicons name="arrow-forward" size={14} color="#888" />
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+          } else if (row.item.kind === 'video') {
+            return (
+              <View key={`video-${rowIndex}`} style={{ width: '100%', marginBottom: 16 }}>
+                {renderVideoProductCard(row.item.data)}
+              </View>
+            );
+          }
+          return null;
+
+        case 'banner':
+          // Render banner
+          return (
+            <View key={`banner-${rowIndex}`} style={{ marginBottom: 16 }}>
+              {renderPeriodicHero(heroImages[row.bannerIndex % heroImages.length], row.bannerIndex)}
+                    </View>
+                  );
+
+        case 'auction-section':
+          // Render auction section
+          return (
+            <View key={`auction-${rowIndex}`} style={{ marginBottom: 16 }}>
+              {renderAuctionSection()}
+                    </View>
+                  );
+
+        default:
+          return null;
+      }
+    };
 
     return (
       <View key={`for-you-${index}`} style={{ marginVertical: 16 }}>
@@ -2313,158 +2524,120 @@ const HomeScreen = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Display items with periodic banner and auction section resurfacing */}
+        {/* Display items in systematic pattern */}
         <View style={{ paddingHorizontal: 12 }}>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-            {itemsWithoutAuctions.map((item, idx) => {
-              // Count how many items have been rendered so far (for banner/auction intervals)
-              const itemCount = idx;
-              const shouldShowBanner = itemCount > 0 && itemCount % 10 === 0 && heroImages.length > 0;
-              const shouldShowAuctionSection = itemCount > 0 && itemCount % 8 === 0 && (filteredActiveAuctions.length > 0 || filteredUpcomingAuctions.length > 0);
-              const isItemFullWidth = item.kind === 'live' || item.kind === 'video';
-              
-              const elements: React.ReactNode[] = [];
-              
-              // Add banner before this item if needed
-              if (shouldShowBanner) {
-                // If odd number of regular products since last full-width, add spacer
-                if (regularProductsSinceLastFullWidth % 2 === 1) {
-                  elements.push(
-                    <View 
-                      key={`spacer-before-banner-${idx}`} 
-                      style={{ width: '48%', height: 200, marginBottom: 16 }} 
-                    />
-                  );
-                }
-                
-                elements.push(
-                  <View key={`banner-${idx}`} style={{ width: '100%', marginBottom: 16 }}>
-                    {renderPeriodicHero(heroImages[bannerCycle % heroImages.length], bannerCycle)}
-                  </View>
-                );
-                bannerCycle += 1;
-                regularProductsSinceLastFullWidth = 0; // Reset count after full-width element
-              }
-              
-              // Add auction section before this item if needed (and not the same position as banner)
-              if (shouldShowAuctionSection && !shouldShowBanner) {
-                // If odd number of regular products since last full-width, add spacer
-                if (regularProductsSinceLastFullWidth % 2 === 1) {
-                  elements.push(
-                    <View 
-                      key={`spacer-before-auction-${idx}`} 
-                      style={{ width: '48%', height: 200, marginBottom: 16 }} 
-                    />
-                  );
-                }
-                
-                elements.push(
-                  <View key={`auction-section-${idx}`} style={{ width: '100%', marginBottom: 16 }}>
-                    {renderAuctionSection()}
-                  </View>
-                );
-                regularProductsSinceLastFullWidth = 0; // Reset count after full-width element
-              }
-              
-              // If current item is full-width, check if we need spacer before it
-              if (isItemFullWidth) {
-                // If odd number of regular products since last full-width, add spacer
-                if (regularProductsSinceLastFullWidth % 2 === 1) {
-                  elements.push(
-                    <View 
-                      key={`spacer-before-fullwidth-${idx}`} 
-                      style={{ width: '48%', height: 200, marginBottom: 16 }} 
-                    />
-                  );
-                }
-              }
-              
-              // Render the actual item
-              switch (item.kind) {
-                case 'live':
-                  elements.push(
-                    <TouchableOpacity
-                      key={`for-you-live-${idx}`}
-                      activeOpacity={0.9}
-                      onPress={() => navigation.navigate('LiveStreamViewer', { streamId: item.data.streamId })}
-                      style={{
-                        width: '100%',
-                        backgroundColor: '#0d0d0d',
-                        borderRadius: 12,
-                        overflow: 'hidden',
-                        marginBottom: 16,
-                        borderWidth: 1,
-                        borderColor: '#1f1f1f',
-                      }}
-                    >
-                      <View style={{ width: '100%', height: 200, backgroundColor: '#111' }}>
-                        <Image
-                          source={{ uri: item.data.image || 'https://via.placeholder.com/400x250?text=Live+Product' }}
-                          style={{ width: '100%', height: '100%' }}
-                          resizeMode="cover"
-                        />
-                        <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: '#E74C3C', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, flexDirection: 'row', alignItems: 'center' }}>
-                          <Ionicons name="radio" size={14} color="#FFF" style={{ marginRight: 4 }} />
-                          <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '700' }}>LIVE</Text>
-                        </View>
-                      </View>
-                      <View style={{ padding: 12, gap: 6 }}>
-                        <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '700' }} numberOfLines={2}>{String(item.data.title || '')}</Text>
-                        <Text style={{ color: '#8EE186', fontSize: 14, fontWeight: '700' }}>₣{(item.data.price || 0).toFixed(2)}</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <Text style={{ color: '#888', fontSize: 12 }}>Watch live</Text>
-                          <Ionicons name="arrow-forward" size={14} color="#888" />
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                  regularProductsSinceLastFullWidth = 0; // Reset count after full-width element
-                  break;
-                  
-                case 'video':
-                  elements.push(
-                    <View key={`for-you-video-${idx}`} style={{ width: '100%', marginBottom: 16 }}>
-                      {renderVideoProductCard(item.data)}
-                    </View>
-                  );
-                  regularProductsSinceLastFullWidth = 0; // Reset count after full-width element
-                  break;
-                  
-                case 'product':
-                default:
-                  elements.push(
-                    <View key={`for-you-product-${idx}`} style={{ width: '48%', marginBottom: 16 }}>
-                      <TouchableOpacity
-                        onPress={() => navigation.navigate('ProductDetails', { productId: item.data.id })}
-                      >
-                        {renderEnhancedProductCard(item.data, false)}
-                      </TouchableOpacity>
-                    </View>
-                  );
-                  regularProductsSinceLastFullWidth++; // Increment count for regular products
-                  break;
-              }
-              
-              return elements;
-            })}
-          </View>
+          {rows.map((row, idx) => renderRow(row, idx))}
         </View>
       </View>
     );
   };
 
+  // Check which video products are currently in viewport
+  const checkVideoVisibility = useCallback(() => {
+    const scrollY = currentScrollY.current;
+    const screenHeight = Dimensions.get('window').height;
+    const screenCenter = screenHeight / 2;
+    const visibleThreshold = 0.5; // Video must be 50% visible to be considered
+    
+    let mostCenteredVideo: { id: string; distance: number; percentage: number } | null = null;
+    
+    videoProductPositions.current.forEach((position, productId) => {
+      const { absoluteY, height } = position;
+      
+      // Calculate where the video appears on screen
+      const videoTop = absoluteY - scrollY;
+      const videoBottom = videoTop + height;
+      
+      // Check if video intersects with screen viewport
+      const isTopVisible = videoTop >= 0 && videoTop < screenHeight;
+      const isBottomVisible = videoBottom > 0 && videoBottom <= screenHeight;
+      const coversScreen = videoTop < 0 && videoBottom > screenHeight;
+      
+      if (isTopVisible || isBottomVisible || coversScreen) {
+        // Calculate visible height
+        const visibleTop = Math.max(0, videoTop);
+        const visibleBottom = Math.min(screenHeight, videoBottom);
+        const visibleHeight = visibleBottom - visibleTop;
+        const visiblePercentage = visibleHeight / height;
+        
+        // Only consider videos that meet the visibility threshold
+        if (visiblePercentage >= visibleThreshold) {
+          // Calculate distance from screen center
+          const videoCenter = videoTop + (height / 2);
+          const distanceFromCenter = Math.abs(videoCenter - screenCenter);
+          
+          console.log(`🎬 Video ${productId}: visible=${(visiblePercentage * 100).toFixed(0)}%, distanceFromCenter=${distanceFromCenter.toFixed(0)}px`);
+          
+          // Track the most centered video
+          if (!mostCenteredVideo || distanceFromCenter < mostCenteredVideo.distance) {
+            mostCenteredVideo = { 
+              id: productId, 
+              distance: distanceFromCenter,
+              percentage: visiblePercentage 
+            };
+          }
+        }
+      }
+    });
+    
+    // Create a set with only the most centered video (if any)
+    const newVisibleVideos = new Set<string>();
+    if (mostCenteredVideo) {
+      newVisibleVideos.add(mostCenteredVideo.id);
+    }
+    
+    // Only update if there's a change to avoid unnecessary re-renders
+    setVisibleVideoProducts(prev => {
+      const prevArray = Array.from(prev).sort();
+      const newArray = Array.from(newVisibleVideos).sort();
+      
+      if (prevArray.length !== newArray.length || 
+          !prevArray.every((val, idx) => val === newArray[idx])) {
+        console.log('✅ Playing most centered video:', newArray[0] || 'none', 
+                    mostCenteredVideo ? `(${(mostCenteredVideo.percentage * 100).toFixed(0)}% visible, ${mostCenteredVideo.distance.toFixed(0)}px from center)` : '');
+        return newVisibleVideos;
+      }
+      return prev;
+    });
+  }, []);
+
+  // Handle scroll events to update video visibility
+  const handleForYouScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    currentScrollY.current = event.nativeEvent.contentOffset.y;
+    checkVideoVisibility();
+  }, [checkVideoVisibility]);
+
   // Render video product card (full width) with lazy loading
   const renderVideoProductCard = useCallback((item: Product) => {
-    // Don't render video products when screen is unfocused
-    if (!isScreenFocused) {
-      return null;
-    }
-
     // Check if this video is in viewport (visible)
     const isInViewport = visibleVideoProducts.has(item.id);
+    // Only play if: activeTab is products, video is in viewport, AND screen is focused
+    // SAME PATTERN AS SERVICE TAB: activeTab === 'services' && isPlaying && isCurrentVideo
     const shouldPlayVideo = activeTab === 'products' && isInViewport && isScreenFocused;
+    
+    let viewRef: View | null = null;
 
     return (
+      <View
+        ref={(ref) => { viewRef = ref; }}
+        onLayout={(event) => {
+          // Use measureInWindow to get absolute position
+          if (viewRef) {
+            viewRef.measureInWindow((x, pageY, width, height) => {
+              // pageY is distance from top of screen
+              // We need to add scrollY to get position in ScrollView content
+              const absoluteY = pageY + currentScrollY.current;
+              
+              videoProductPositions.current.set(item.id, { absoluteY, height });
+              
+              console.log(`📍 Video ${item.id}: pageY=${pageY.toFixed(0)}, scrollY=${currentScrollY.current.toFixed(0)}, absoluteY=${absoluteY.toFixed(0)}, height=${height}`);
+              
+              // Check visibility immediately
+              checkVideoVisibility();
+            });
+          }
+        }}
+      >
       <TouchableOpacity
         onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
         style={{
@@ -2475,23 +2648,15 @@ const HomeScreen = () => {
           position: 'relative',
         }}
       >
-        {/* Only render video player if in viewport */}
+          {/* Always render video player (don't unmount) - SAME AS SERVICE TAB */}
         {item.primary_video_url ? (
-          isInViewport ? (
             <ProductVideoPlayer
               videoUri={item.primary_video_url}
               shouldAutoPlay={shouldPlayVideo}
               containerWidth={screenWidth}
             />
           ) : (
-            // Show thumbnail when not in viewport
-            <Image
-              source={{ uri: item.primary_image_url || item.images?.[0] || 'https://via.placeholder.com/400x600' }}
-              style={{ width: '100%', height: screenWidth * (9/16) }}
-              resizeMode="cover"
-            />
-          )
-        ) : (
+            // Show thumbnail when no video URL
           <Image
             source={{ uri: item.primary_image_url || item.images?.[0] || 'https://via.placeholder.com/400x600' }}
             style={{ width: '100%', height: screenWidth * (9/16) }}
@@ -2588,6 +2753,7 @@ const HomeScreen = () => {
           </Text>
         </View>
       </TouchableOpacity>
+    </View>
     );
   }, [isScreenFocused, visibleVideoProducts, activeTab, navigation]);
 

@@ -42,6 +42,7 @@ export interface GeminiResponse {
   text?: string;
   functionCalls?: GeminiFunctionCall[];
   error?: string;
+  errorMessage?: string;
   // IKO recommendation data
   recommendedProducts?: Array<{
     id: string;
@@ -84,6 +85,7 @@ class GeminiAPI {
   private genAI: GoogleGenerativeAI;
   private textModel: GenerativeModel;
   private visionModel: GenerativeModel;
+  private imageModel?: GenerativeModel; // Lazy initialization for image generation
   private currentSession: GeminiChatSession | null = null;
   private apiKey: string;
 
@@ -98,9 +100,9 @@ class GeminiAPI {
 
     this.genAI = new GoogleGenerativeAI(this.apiKey);
 
-    // Initialize models with Gemini 2.0 Flash
+    // Initialize models with Gemini 1.5 Flash (stable, better quotas)
     this.textModel = this.genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-1.5-flash',
       generationConfig: {
         temperature: 0.7,
         topK: 40,
@@ -128,7 +130,7 @@ class GeminiAPI {
     });
 
     this.visionModel = this.genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-1.5-flash',
       generationConfig: {
         temperature: 0.4,
         topK: 32,
@@ -136,6 +138,31 @@ class GeminiAPI {
         maxOutputTokens: 2048,
       },
     });
+
+    // Load existing session on initialization to restore state
+    this.loadSession().catch(err => {
+      console.warn('Could not load existing session on initialization:', err);
+    });
+  }
+
+  /**
+   * Get or create image generation model (lazy initialization)
+   * Uses Gemini 2.0 Flash for image generation only
+   */
+  private getImageModel(): GenerativeModel {
+    if (!this.imageModel) {
+      console.log('🎨 Initializing Gemini 2.0 Flash for image generation');
+      this.imageModel = this.genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash-exp',
+        generationConfig: {
+          temperature: 0.9, // Higher creativity for image generation
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 2048,
+        },
+      });
+    }
+    return this.imageModel;
   }
 
   /**
@@ -183,8 +210,14 @@ class GeminiAPI {
    */
   async sendTextMessage(message: string, userId?: string): Promise<GeminiResponse> {
     try {
+      // Try to load existing session first before creating new one
       if (!this.currentSession && userId) {
+        await this.loadSession();
+        
+        // Only initialize new session if no session exists or session is for different user
+        if (!this.currentSession || this.currentSession.userId !== userId) {
         await this.initializeChatSession(userId);
+        }
       }
 
       if (!this.currentSession) {
@@ -250,11 +283,35 @@ class GeminiAPI {
           text: response.text(),
         };
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error sending text message to Gemini:', error);
+      
+      // Return structured error with user-friendly messages
+      if (error?.message?.includes('quota') || error?.toString()?.includes('429')) {
       return {
-        error: 'Sorry, I encountered an error processing your message. Please try again.',
-      };
+          text: '',
+          error: 'QUOTA_EXCEEDED',
+          errorMessage: "I'm currently at my message limit. Please try again in a few minutes! 😊",
+        };
+      } else if (error?.message?.includes('timeout') || error?.message?.includes('network')) {
+        return {
+          text: '',
+          error: 'NETWORK_ERROR',
+          errorMessage: "I'm having trouble connecting. Please check your internet and try again! 🌐",
+        };
+      } else if (error?.message?.includes('API key') || error?.message?.includes('401')) {
+        return {
+          text: '',
+          error: 'API_KEY_ERROR',
+          errorMessage: "I'm experiencing a configuration issue. Please contact support! 🔧",
+        };
+      } else {
+        return {
+          text: '',
+          error: 'UNKNOWN_ERROR',
+          errorMessage: "I apologize, but I'm having technical difficulties. Please try again later! 🛠️",
+        };
+      }
     }
   }
 
@@ -263,8 +320,14 @@ class GeminiAPI {
    */
   async processVoiceNote(voiceNote: VoiceNoteRequest, userId?: string): Promise<GeminiResponse> {
     try {
+      // Try to load existing session first before creating new one
       if (!this.currentSession && userId) {
+        await this.loadSession();
+        
+        // Only initialize new session if no session exists or session is for different user
+        if (!this.currentSession || this.currentSession.userId !== userId) {
         await this.initializeChatSession(userId);
+        }
       }
 
       // Read audio file and convert to base64
@@ -549,27 +612,74 @@ class GeminiAPI {
   }
 
   /**
-   * Generate image based on text prompt
+   * Generate image based on text prompt using Gemini 2.0 Flash
    */
   async generateImage(prompt: string): Promise<{ imageUrl?: string; error?: string }> {
     try {
-      // Note: As of now, Gemini doesn't directly support image generation
-      // This would typically integrate with another service like DALL-E or Midjourney
-      // For now, we'll return a placeholder response
+      console.log('🎨 Generating image with Gemini 2.0 Flash:', prompt);
+      
+      // Get the image generation model (lazy initialization)
+      const imageModel = this.getImageModel();
 
-      const enhancedPrompt = `Generate an image: ${prompt}. Please provide a detailed description of what this image would look like, as I cannot generate images directly yet.`;
+      // Generate image using Gemini 2.0 Flash
+      const result = await imageModel.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.9,
+          topK: 40,
+          topP: 0.95,
+        },
+      });
 
-      const result = await this.textModel.generateContent(enhancedPrompt);
       const response = result.response;
 
+      // Check if image was generated
+      // Note: Gemini 2.0 Flash image generation API may return image data in response
+      // This implementation may need adjustment based on actual API response format
+      if (response && response.candidates && response.candidates[0]) {
+        const candidate = response.candidates[0];
+        
+        // Check for image in response parts
+        if (candidate.content && candidate.content.parts) {
+          for (const part of candidate.content.parts) {
+            if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
+              // Image generated successfully
+              const imageData = part.inlineData.data;
+              const imageUrl = `data:${part.inlineData.mimeType};base64,${imageData}`;
+              
+              console.log('✅ Image generated successfully');
       return {
-        imageUrl: undefined, // Would be actual image URL in production
-        error: `Image generation coming soon! Here's what it would look like: ${response.text()}`,
+                imageUrl: imageUrl,
+              };
+            }
+          }
+        }
+      }
+
+      // If no image in response, return descriptive error
+      const textResponse = response.text();
+      console.warn('⚠️ No image generated, got text response:', textResponse);
+      
+      return {
+        error: `Image generation is currently in preview. ${textResponse || 'Please try again later.'}`,
       };
-    } catch (error) {
-      console.error('Error generating image:', error);
+
+    } catch (error: any) {
+      console.error('❌ Error generating image:', error);
+      
+      // Handle specific error types
+      if (error?.message?.includes('quota') || error?.toString()?.includes('429')) {
+        return {
+          error: "I've reached my image generation limit. Please try again later! 🎨",
+        };
+      } else if (error?.message?.includes('not supported') || error?.message?.includes('not available')) {
+        return {
+          error: 'Image generation is not yet available for this model. Coming soon! 🎨',
+        };
+      }
+      
       return {
-        error: 'Sorry, image generation is not available right now.',
+        error: 'Sorry, I encountered an error generating the image. Please try again.',
       };
     }
   }

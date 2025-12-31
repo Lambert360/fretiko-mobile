@@ -138,7 +138,11 @@ export const useIko = (options: UseIkoOptions = {}): UseIkoReturn => {
 
     // Cleanup on unmount
     return () => {
-      ikoConversationManager.endConversation();
+      // Don't call endConversation() on unmount - it clears the Gemini session
+      // This would defeat our session persistence strategy
+      // The session should persist across remounts so it can be restored
+      // Users can explicitly end conversation when needed via endConversation action
+      console.log('🧹 useIko cleanup - session persisted for reuse');
     };
   }, [user, options.autoStart, options.mode, options.chatId]);
 

@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { auctionsAPI, AuctionCategory, CreateAuctionData } from '../services/auctionsAPI';
@@ -35,8 +35,14 @@ const { width: screenWidth } = Dimensions.get('window');
  */
 const CreateAuctionScreen: React.FC = () => {
   const navigation = useNavigation();
+  const route = useRoute<any>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+
+  // Route params for edit/relist modes
+  const { mode, auctionId, auctionData } = route.params || {};
+  const isEditMode = mode === 'edit';
+  const isRelistMode = mode === 'relist';
 
   // Form State
   const [title, setTitle] = useState('');
@@ -67,6 +73,11 @@ const CreateAuctionScreen: React.FC = () => {
   useEffect(() => {
     loadCategories();
     loadProfile();
+
+    // Pre-fill form if in edit or relist mode
+    if ((isEditMode || isRelistMode) && auctionData) {
+      prefillForm(auctionData);
+    }
   }, []);
 
   const loadProfile = async () => {
@@ -75,6 +86,52 @@ const CreateAuctionScreen: React.FC = () => {
       setProfile(profileData);
     } catch (error) {
       console.error('Error loading profile:', error);
+    }
+  };
+
+  /**
+   * Pre-fill form when in edit or relist mode
+   */
+  const prefillForm = (data: any) => {
+    console.log('📝 Pre-filling form with auction data:', data);
+    
+    setTitle(data.title || '');
+    setDescription(data.description || '');
+    setLotNumber(data.lot_number || '');
+    setAuctionType(data.auction_type || 'timed');
+    setStartingPrice(data.starting_price?.toString() || '');
+    setReservePrice(data.reserve_price?.toString() || '');
+    setBidIncrement(data.bid_increment?.toString() || '');
+    setSoftCloseEnabled(data.soft_close_enabled ?? true);
+    setSoftCloseExtension((data.soft_close_extension ? data.soft_close_extension / 60 : 5).toString());
+    setAuctioneerEnabled(data.auctioneer_enabled ?? false);
+    setCrowdSoundsEnabled(data.crowd_sounds_enabled ?? false);
+
+    // Set images if available
+    if (data.images && data.images.length > 0) {
+      setImages(data.images);
+    }
+
+    // Set category (will be matched after categories load)
+    if (data.category_id || data.category) {
+      const categoryId = data.category_id || data.category?.id;
+      // Wait for categories to load, then set selected category
+      setTimeout(() => {
+        const matchedCategory = categories.find(c => c.id === categoryId);
+        if (matchedCategory) {
+          setSelectedCategory(matchedCategory);
+        }
+      }, 500);
+    }
+
+    // For relist mode, reset times to future
+    if (isRelistMode) {
+      setStartTime(new Date());
+      setEndTime(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    } else if (isEditMode) {
+      // For edit mode, keep original times if they're in the future
+      setStartTime(data.start_time ? new Date(data.start_time) : new Date());
+      setEndTime(data.end_time ? new Date(data.end_time) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
     }
   };
 
@@ -166,49 +223,84 @@ const CreateAuctionScreen: React.FC = () => {
 
       setLoading(true);
 
-      // Create FormData for multipart upload
-      const formData = new FormData();
+      // Determine action based on mode
+      let successAuction: any;
 
-      // Add text fields
-      formData.append('title', title.trim());
-      formData.append('description', description.trim());
-      if (lotNumber.trim()) formData.append('lot_number', lotNumber.trim());
-      formData.append('category_id', selectedCategory!.id);
-      formData.append('starting_price', startingPrice);
-      if (reservePrice) formData.append('reserve_price', reservePrice);
-      if (bidIncrement) formData.append('bid_increment', bidIncrement);
-      formData.append('auction_type', auctionType);
-      formData.append('start_time', startTime.toISOString());
-      formData.append('end_time', endTime.toISOString());
-      formData.append('soft_close_enabled', softCloseEnabled.toString());
-      if (softCloseEnabled) {
-        formData.append('soft_close_extension', (parseInt(softCloseExtension) * 60).toString());
+      if (isEditMode && auctionId) {
+        // UPDATE existing auction
+        console.log('✏️ Updating auction:', auctionId);
+
+        const updateData: Partial<CreateAuctionData> = {
+          title: title.trim(),
+          description: description.trim(),
+          lot_number: lotNumber.trim() || undefined,
+          category_id: selectedCategory!.id,
+          starting_price: parseFloat(startingPrice),
+          reserve_price: reservePrice ? parseFloat(reservePrice) : undefined,
+          bid_increment: bidIncrement ? parseFloat(bidIncrement) : undefined,
+          auction_type: auctionType,
+          start_time: startTime.toISOString(),
+          end_time: endTime.toISOString(),
+          soft_close_enabled: softCloseEnabled,
+          soft_close_extension: softCloseEnabled ? parseInt(softCloseExtension) * 60 : undefined,
+          auctioneer_enabled: auctionType === 'live' ? auctioneerEnabled : false,
+          crowd_sounds_enabled: auctionType === 'live' ? crowdSoundsEnabled : false,
+        };
+
+        successAuction = await auctionsAPI.updateAuction(auctionId, updateData);
+        console.log('✅ Auction updated successfully');
+      } else {
+        // CREATE new auction (or relist)
+        const formData = new FormData();
+
+        // Add text fields
+        formData.append('title', title.trim());
+        formData.append('description', description.trim());
+        if (lotNumber.trim()) formData.append('lot_number', lotNumber.trim());
+        formData.append('category_id', selectedCategory!.id);
+        formData.append('starting_price', startingPrice);
+        if (reservePrice) formData.append('reserve_price', reservePrice);
+        if (bidIncrement) formData.append('bid_increment', bidIncrement);
+        formData.append('auction_type', auctionType);
+        formData.append('start_time', startTime.toISOString());
+        formData.append('end_time', endTime.toISOString());
+        formData.append('soft_close_enabled', softCloseEnabled.toString());
+        if (softCloseEnabled) {
+          formData.append('soft_close_extension', (parseInt(softCloseExtension) * 60).toString());
+        }
+        formData.append('auctioneer_enabled', (auctionType === 'live' ? auctioneerEnabled : false).toString());
+        formData.append('crowd_sounds_enabled', (auctionType === 'live' ? crowdSoundsEnabled : false).toString());
+
+        // Add images as files
+        for (let i = 0; i < images.length; i++) {
+          const uri = images[i];
+          const filename = `image-${i}.jpg`;
+
+          formData.append('images', {
+            uri,
+            type: 'image/jpeg',
+            name: filename,
+          } as any);
+        }
+
+        const action = isRelistMode ? 'Relisting' : 'Creating';
+        console.log(`🔨 ${action} auction with`, images.length, 'images');
+
+        successAuction = await auctionsAPI.createAuctionWithImages(formData);
+
+        console.log(`✅ Auction ${isRelistMode ? 'relisted' : 'created'} successfully:`, successAuction);
       }
-      formData.append('auctioneer_enabled', (auctionType === 'live' ? auctioneerEnabled : false).toString());
-      formData.append('crowd_sounds_enabled', (auctionType === 'live' ? crowdSoundsEnabled : false).toString());
 
-      // Add images as files
-      for (let i = 0; i < images.length; i++) {
-        const uri = images[i];
-        const filename = `image-${i}.jpg`;
+      const createdAuction = successAuction;
 
-        formData.append('images', {
-          uri,
-          type: 'image/jpeg',
-          name: filename,
-        } as any);
-      }
-
-      console.log('🔨 Creating auction with', images.length, 'images');
-
-      const createdAuction = await auctionsAPI.createAuctionWithImages(formData);
-
-      console.log('✅ Auction created successfully:', createdAuction);
+      // Show appropriate success message based on mode
+      const actionVerb = isEditMode ? 'Updated' : isRelistMode ? 'Relisted' : 'Created';
+      const actionEmoji = isEditMode ? '✏️' : isRelistMode ? '🔄' : '🎉';
 
       // Check if live auction
-      if (createdAuction.auction_type === 'live') {
+      if (createdAuction.auction_type === 'live' && !isEditMode) {
         Alert.alert(
-          '🎬 Live Auction Created!',
+          `🎬 Live Auction ${actionVerb}!`,
           'Your live auction is ready. Start streaming now or view details?',
           [
             {
@@ -229,14 +321,21 @@ const CreateAuctionScreen: React.FC = () => {
             {
               text: 'Later',
               style: 'cancel',
+              onPress: () => navigation.goBack(),
             },
           ]
         );
       } else {
-        // Timed auction
+        // Timed auction or edit mode
+        const message = isEditMode 
+          ? 'Your auction has been updated successfully' 
+          : isRelistMode
+          ? 'Your auction has been relisted and is ready for bidders'
+          : 'Your lot is now live and ready for bidders';
+
         Alert.alert(
-          '🎉 Auction Created!',
-          'Your lot is now live and ready for bidders',
+          `${actionEmoji} Auction ${actionVerb}!`,
+          message,
           [
             {
               text: 'View Auction',
@@ -247,6 +346,7 @@ const CreateAuctionScreen: React.FC = () => {
             {
               text: 'OK',
               style: 'cancel',
+              onPress: () => navigation.goBack(),
             },
           ]
         );
@@ -290,8 +390,12 @@ const CreateAuctionScreen: React.FC = () => {
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>🔨 Create Auction Lot</Text>
-          <Text style={styles.headerSubtitle}>List your treasure</Text>
+          <Text style={styles.headerTitle}>
+            {isEditMode ? '✏️ Edit Auction' : isRelistMode ? '🔄 Relist Auction' : '🔨 Create Auction Lot'}
+          </Text>
+          <Text style={styles.headerSubtitle}>
+            {isEditMode ? 'Update auction details' : isRelistMode ? 'List it again' : 'List your treasure'}
+          </Text>
         </View>
         <View style={{ width: 40 }} />
       </View>
