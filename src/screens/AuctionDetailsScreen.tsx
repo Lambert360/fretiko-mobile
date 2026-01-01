@@ -56,9 +56,12 @@ const AuctionDetailsScreen = () => {
   const [watchlistLoading, setWatchlistLoading] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [viewerImageIndex, setViewerImageIndex] = useState(0);
 
   // Refs
   const timeUpdateInterval = useRef<NodeJS.Timeout | null>(null);
+  const imageViewerFlatListRef = useRef<FlatList>(null);
 
   // Load bid history separately for refresh
   const loadBidHistory = async () => {
@@ -123,18 +126,27 @@ const AuctionDetailsScreen = () => {
       hour12: true,
     });
     
-    // Calculate days until start
-    const daysUntil = Math.ceil((date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    // Compare calendar dates (not fractional days) to correctly identify Today vs Tomorrow
+    const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
     
-    if (daysUntil === 0) {
+    if (startDate.getTime() === today.getTime()) {
       return `Today at ${timeStr}`;
-    } else if (daysUntil === 1) {
+    } else if (startDate.getTime() === tomorrow.getTime()) {
       return `Tomorrow at ${timeStr}`;
-    } else if (daysUntil <= 7) {
-      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-      return `${dayName} at ${timeStr}`;
     } else {
-      return `${dateStr} at ${timeStr}`;
+      // Calculate days difference for days of week (up to 7 days)
+      const diffTime = startDate.getTime() - today.getTime();
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays <= 7) {
+        const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+        return `${dayName} at ${timeStr}`;
+      } else {
+        return `${dateStr} at ${timeStr}`;
+      }
     }
   };
 
@@ -173,7 +185,9 @@ const AuctionDetailsScreen = () => {
           ...prev,
           current_bid: data.current_bid || data.amount,
           total_bids: data.total_bids || (prev.total_bids || 0) + 1,
-          unique_bidders: data.unique_bidders || prev.unique_bidders,
+          unique_bidders: data.unique_bidders !== undefined ? data.unique_bidders : prev.unique_bidders,
+          view_count: data.view_count !== undefined ? data.view_count : prev.view_count,
+          watch_count: data.watch_count !== undefined ? data.watch_count : prev.watch_count,
         } : null);
         
         // Refresh bid history
@@ -197,14 +211,36 @@ const AuctionDetailsScreen = () => {
       }
     };
 
+    const handleWatchCountUpdate = (data: any) => {
+      if (data.auction_id === auctionId) {
+        setAuction(prev => prev ? {
+          ...prev,
+          watch_count: data.watch_count,
+        } : null);
+      }
+    };
+
+    const handleViewCountUpdate = (data: any) => {
+      if (data.auction_id === auctionId) {
+        setAuction(prev => prev ? {
+          ...prev,
+          view_count: data.view_count,
+        } : null);
+      }
+    };
+
     auctionSocket.on('new_bid', handleNewBid);
     auctionSocket.on('auction_status_changed', handleAuctionStatusChanged);
     auctionSocket.on('auction_extended', handleAuctionExtended);
+    auctionSocket.on('watch_count_updated', handleWatchCountUpdate);
+    auctionSocket.on('view_count_updated', handleViewCountUpdate);
 
     return () => {
       auctionSocket.off('new_bid', handleNewBid);
       auctionSocket.off('auction_status_changed', handleAuctionStatusChanged);
       auctionSocket.off('auction_extended', handleAuctionExtended);
+      auctionSocket.off('watch_count_updated', handleWatchCountUpdate);
+      auctionSocket.off('view_count_updated', handleViewCountUpdate);
       auctionSocket.leaveAuction(auctionId);
     };
   }, [auctionId]);
@@ -317,24 +353,51 @@ const AuctionDetailsScreen = () => {
     try {
       const result = await auctionsAPI.toggleWatchlist(auctionId);
 
-      // Reload auction data to ensure is_watched_by_user is correctly set
-      const updatedAuction = await auctionsAPI.getAuction(auctionId);
-      setAuction(updatedAuction);
+      // Update local state immediately for instant UI feedback
+      setAuction(prev => prev ? {
+        ...prev,
+        is_watched_by_user: result.watched
+      } : null);
 
-      // Show success feedback
+      // Show visual notification
       if (result.watched) {
-        // Optionally show a brief success message
-        console.log('Added to watchlist');
+        Alert.alert('Added to Watchlist', 'This lot has been added to your watchlist.');
       } else {
-        console.log('Removed from watchlist');
+        Alert.alert('Removed from Watchlist', 'This lot has been removed from your watchlist.');
+      }
+
+      // Reload auction data in the background to ensure all data is fresh
+      try {
+        const updatedAuction = await auctionsAPI.getAuction(auctionId);
+        setAuction(updatedAuction);
+      } catch (reloadError) {
+        console.error('Error reloading auction data:', reloadError);
+        // Don't show error to user - local state already updated
       }
 
     } catch (error: any) {
       console.error('Watchlist toggle error:', error);
-      Alert.alert(
-        'Error',
-        error?.response?.data?.message || error?.message || 'Failed to update watchlist. Please try again.'
-      );
+      console.error('Error response:', error?.response);
+      console.error('Error response data:', error?.response?.data);
+      
+      // State wasn't updated since API call failed, so no need to revert
+      // Extract error message from various possible error formats
+      let errorMessage = 'Failed to update watchlist. Please try again.';
+      
+      if (error?.response?.data) {
+        // NestJS error format
+        if (Array.isArray(error.response.data.message)) {
+          errorMessage = error.response.data.message.join(', ');
+        } else if (error.response.data.message) {
+          errorMessage = error.response.data.message;
+        } else if (typeof error.response.data === 'string') {
+          errorMessage = error.response.data;
+        }
+      } else if (error?.message) {
+        errorMessage = error.message;
+      }
+      
+      Alert.alert('Error', errorMessage);
     } finally {
       setWatchlistLoading(false);
     }
@@ -454,7 +517,7 @@ const AuctionDetailsScreen = () => {
             <ActivityIndicator size="small" color="white" />
           ) : (
             <Ionicons
-              name={auction.is_watched_by_user ? "star" : "star-outline"}
+              name={auction.is_watched_by_user ? "bookmark" : "bookmark-outline"}
               size={24}
               color={auction.is_watched_by_user ? "#F39C12" : "white"}
             />
@@ -471,13 +534,21 @@ const AuctionDetailsScreen = () => {
       >
         {/* Image Gallery */}
         <View style={styles.imageContainer}>
-          <Image
-            source={{
-              uri: auction.images[selectedImageIndex] || auction.thumbnail_url || 'https://via.placeholder.com/400x300'
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={() => {
+              setViewerImageIndex(selectedImageIndex);
+              setImageViewerVisible(true);
             }}
-            style={styles.mainImage}
-            resizeMode="cover"
-          />
+          >
+            <Image
+              source={{
+                uri: auction.images[selectedImageIndex] || auction.thumbnail_url || 'https://via.placeholder.com/400x300'
+              }}
+              style={styles.mainImage}
+              resizeMode="cover"
+            />
+          </TouchableOpacity>
 
           {/* Status Badge */}
           <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(auction.time_status) }]}>
@@ -934,6 +1005,110 @@ const AuctionDetailsScreen = () => {
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Full Screen Image Viewer Modal */}
+      <Modal
+        visible={imageViewerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImageViewerVisible(false)}
+      >
+        <View style={styles.imageViewerContainer}>
+          {/* Close Button */}
+          <TouchableOpacity
+            style={[styles.imageViewerCloseButton, { top: (insets.top || 50) + 10 }]}
+            onPress={() => setImageViewerVisible(false)}
+          >
+            <Ionicons name="close" size={28} color="white" />
+          </TouchableOpacity>
+
+          {/* Image List */}
+          <FlatList
+            ref={imageViewerFlatListRef}
+            data={auction.images.length > 0 ? auction.images : [auction.thumbnail_url || 'https://via.placeholder.com/400x300']}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(item, index) => index.toString()}
+            initialScrollIndex={viewerImageIndex}
+            getItemLayout={(data, index) => ({
+              length: screenWidth,
+              offset: screenWidth * index,
+              index,
+            })}
+            onMomentumScrollEnd={(event) => {
+              const index = Math.round(event.nativeEvent.contentOffset.x / screenWidth);
+              setViewerImageIndex(index);
+            }}
+            renderItem={({ item }) => (
+              <View style={styles.imageViewerItem}>
+                <Image
+                  source={{ uri: item }}
+                  style={styles.imageViewerImage}
+                  resizeMode="contain"
+                />
+              </View>
+            )}
+          />
+
+          {/* Navigation Controls */}
+          {auction.images.length > 1 && (
+            <View style={[styles.imageViewerControls, { paddingBottom: (insets.bottom || 20) + 20 }]}>
+              {/* Previous Button */}
+              <TouchableOpacity
+                style={[
+                  styles.imageViewerNavButton,
+                  viewerImageIndex === 0 && styles.imageViewerNavButtonDisabled
+                ]}
+                onPress={() => {
+                  if (viewerImageIndex > 0) {
+                    const newIndex = viewerImageIndex - 1;
+                    setViewerImageIndex(newIndex);
+                    imageViewerFlatListRef.current?.scrollToIndex({ index: newIndex, animated: true });
+                  }
+                }}
+                disabled={viewerImageIndex === 0}
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={28}
+                  color={viewerImageIndex === 0 ? '#555' : 'white'}
+                />
+              </TouchableOpacity>
+
+              {/* Image Counter */}
+              <View style={styles.imageViewerCounter}>
+                <Text style={styles.imageViewerCounterText}>
+                  {viewerImageIndex + 1} / {auction.images.length}
+                </Text>
+              </View>
+
+              {/* Next Button */}
+              <TouchableOpacity
+                style={[
+                  styles.imageViewerNavButton,
+                  viewerImageIndex === auction.images.length - 1 && styles.imageViewerNavButtonDisabled
+                ]}
+                onPress={() => {
+                  if (viewerImageIndex < auction.images.length - 1) {
+                    const newIndex = viewerImageIndex + 1;
+                    setViewerImageIndex(newIndex);
+                    imageViewerFlatListRef.current?.scrollToIndex({ index: newIndex, animated: true });
+                  }
+                }}
+                disabled={viewerImageIndex === auction.images.length - 1}
+              >
+                <Ionicons
+                  name="chevron-forward"
+                  size={28}
+                  color={viewerImageIndex === auction.images.length - 1 ? '#555' : 'white'}
+                />
+              </TouchableOpacity>
+            </View>
+          )}
+
+        </View>
       </Modal>
     </View>
   );
@@ -1504,6 +1679,69 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 4,
     textAlign: 'center',
+  },
+  // Image Viewer Modal Styles
+  imageViewerContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+  },
+  imageViewerCloseButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerItem: {
+    width: screenWidth,
+    height: screenHeight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerImage: {
+    width: screenWidth,
+    height: screenHeight,
+  },
+  imageViewerControls: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    paddingTop: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  },
+  imageViewerNavButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerNavButtonDisabled: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    opacity: 0.5,
+  },
+  imageViewerCounter: {
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  imageViewerCounterText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

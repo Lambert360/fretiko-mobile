@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   FlatList,
+  ScrollView,
   TouchableOpacity,
   Image,
   StyleSheet,
@@ -14,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
-import { auctionsAPI, AuctionWithDetails } from '../services/auctionsAPI';
+import { auctionsAPI, auctionSocket, AuctionWithDetails } from '../services/auctionsAPI';
 
 /**
  * Auction Watchlist Screen
@@ -27,10 +28,45 @@ const AuctionWatchlistScreen = () => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
 
-  const [watchlist, setWatchlist] = useState<AuctionWithDetails[]>([]);
+  // Organized by sections
+  const [activeAuctions, setActiveAuctions] = useState<AuctionWithDetails[]>([]);
+  const [upcomingAuctions, setUpcomingAuctions] = useState<AuctionWithDetails[]>([]);
+  const [endedAuctions, setEndedAuctions] = useState<AuctionWithDetails[]>([]);
+  
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  
+  // Refs for countdown timers
+  const timeUpdateInterval = useRef<NodeJS.Timeout | null>(null);
+
+  // Organize watchlist into sections
+  const organizeWatchlist = (auctions: AuctionWithDetails[]) => {
+    const active: AuctionWithDetails[] = [];
+    const upcoming: AuctionWithDetails[] = [];
+    const ended: AuctionWithDetails[] = [];
+
+    auctions.forEach(auction => {
+      if (auction.time_status === 'active') {
+        active.push(auction);
+      } else if (auction.time_status === 'upcoming') {
+        upcoming.push(auction);
+      } else {
+        ended.push(auction);
+      }
+    });
+
+    // Sort active by time remaining (ending soon first)
+    active.sort((a, b) => (a.seconds_remaining || 0) - (b.seconds_remaining || 0));
+    // Sort upcoming by start time (starting soon first)
+    upcoming.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+    // Sort ended by end time (most recent first)
+    ended.sort((a, b) => new Date(b.end_time).getTime() - new Date(a.end_time).getTime());
+
+    setActiveAuctions(active);
+    setUpcomingAuctions(upcoming);
+    setEndedAuctions(ended);
+  };
 
   // Load watchlist
   const loadWatchlist = async () => {
@@ -41,7 +77,7 @@ const AuctionWatchlistScreen = () => {
 
     try {
       const data = await auctionsAPI.getUserWatchlist(50);
-      setWatchlist(data);
+      organizeWatchlist(data);
     } catch (error: any) {
       console.error('Error loading watchlist:', error);
       if (error.message !== 'Authentication required') {
@@ -52,6 +88,173 @@ const AuctionWatchlistScreen = () => {
       setRefreshing(false);
     }
   };
+
+  // Update countdown timers for active and upcoming auctions
+  useEffect(() => {
+    const updateTimers = () => {
+      const now = Date.now();
+      
+      setActiveAuctions(prev => prev.map(auction => {
+        if (auction.time_status === 'active' && auction.end_time) {
+          const endTime = new Date(auction.end_time).getTime();
+          const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
+          
+          if (remaining === 0) {
+            // Auction ended, move to ended section
+            setTimeout(() => {
+              setActiveAuctions(prevActive => prevActive.filter(a => a.id !== auction.id));
+              setEndedAuctions(prevEnded => [...prevEnded, { ...auction, time_status: 'ended', seconds_remaining: 0 }]);
+            }, 0);
+            return { ...auction, seconds_remaining: 0 };
+          }
+          
+          return { ...auction, seconds_remaining: remaining };
+        }
+        return auction;
+      }));
+
+      setUpcomingAuctions(prev => prev.map(auction => {
+        if (auction.time_status === 'upcoming' && auction.start_time) {
+          const startTime = new Date(auction.start_time).getTime();
+          const remaining = Math.max(0, Math.floor((startTime - now) / 1000));
+          
+          if (remaining === 0 && auction.status === 'active') {
+            // Auction started, move to active section
+            setTimeout(() => {
+              setUpcomingAuctions(prevUpcoming => prevUpcoming.filter(a => a.id !== auction.id));
+              setActiveAuctions(prevActive => [{ ...auction, time_status: 'active', seconds_remaining: 0 }, ...prevActive]);
+            }, 0);
+            return { ...auction, seconds_remaining: 0 };
+          }
+          
+          return { ...auction, seconds_remaining: remaining };
+        }
+        return auction;
+      }));
+    };
+
+    // Update every second
+    timeUpdateInterval.current = setInterval(updateTimers, 1000);
+    updateTimers(); // Initial update
+
+    return () => {
+      if (timeUpdateInterval.current) {
+        clearInterval(timeUpdateInterval.current);
+      }
+    };
+  }, [activeAuctions.length, upcomingAuctions.length]);
+
+  // WebSocket real-time updates
+  useEffect(() => {
+    if (!user) return;
+
+    // Connect to WebSocket
+    auctionSocket.connect();
+
+    // Handler for auction status changes
+    const handleAuctionStatusChanged = async (data: { auction_id: string; status: string }) => {
+      const auctionId = data.auction_id;
+      
+      // Fetch updated auction data
+      try {
+        const updatedAuction = await auctionsAPI.getAuction(auctionId);
+        
+        // Check if auction is in watchlist by checking all sections
+        setActiveAuctions(prev => {
+          const found = prev.find(a => a.id === auctionId);
+          if (found) {
+            if (data.status === 'active') {
+              return prev.map(a => a.id === auctionId ? updatedAuction : a);
+            } else {
+              // Move to ended
+              setEndedAuctions(prevEnded => {
+                if (!prevEnded.find(a => a.id === auctionId)) {
+                  return [updatedAuction, ...prevEnded];
+                }
+                return prevEnded;
+              });
+              return prev.filter(a => a.id !== auctionId);
+            }
+          }
+          return prev;
+        });
+
+        setUpcomingAuctions(prev => {
+          const found = prev.find(a => a.id === auctionId);
+          if (found) {
+            if (data.status === 'active') {
+              // Move to active
+              setActiveAuctions(prevActive => {
+                if (!prevActive.find(a => a.id === auctionId)) {
+                  return [updatedAuction, ...prevActive];
+                }
+                return prevActive;
+              });
+              return prev.filter(a => a.id !== auctionId);
+            } else if (data.status === 'ended' || data.status === 'sold') {
+              // Move to ended
+              setEndedAuctions(prevEnded => {
+                if (!prevEnded.find(a => a.id === auctionId)) {
+                  return [updatedAuction, ...prevEnded];
+                }
+                return prevEnded;
+              });
+              return prev.filter(a => a.id !== auctionId);
+            }
+          }
+          return prev;
+        });
+
+        setEndedAuctions(prev => {
+          const found = prev.find(a => a.id === auctionId);
+          if (found && data.status === 'active') {
+            // Move back to active (unlikely but possible)
+            setActiveAuctions(prevActive => {
+              if (!prevActive.find(a => a.id === auctionId)) {
+                return [updatedAuction, ...prevActive];
+              }
+              return prevActive;
+            });
+            return prev.filter(a => a.id !== auctionId);
+          }
+          return found ? prev.map(a => a.id === auctionId ? updatedAuction : a) : prev;
+        });
+      } catch (error) {
+        console.error('Error fetching updated auction data:', error);
+      }
+    };
+
+    // Handler for bid updates
+    const handleNewBid = (data: any) => {
+      const auctionId = data.auction_id;
+      
+      // Update auction in whichever section it's in
+      const updateAuction = (auction: AuctionWithDetails) => {
+        if (auction.id === auctionId) {
+          return {
+            ...auction,
+            current_bid: data.current_bid || data.amount || auction.current_bid,
+            total_bids: data.total_bids !== undefined ? data.total_bids : auction.total_bids,
+            unique_bidders: data.unique_bidders !== undefined ? data.unique_bidders : auction.unique_bidders,
+          };
+        }
+        return auction;
+      };
+
+      setActiveAuctions(prev => prev.map(updateAuction));
+      setUpcomingAuctions(prev => prev.map(updateAuction));
+      setEndedAuctions(prev => prev.map(updateAuction));
+    };
+
+    // Listen for events
+    auctionSocket.on('global_auction_status_changed', handleAuctionStatusChanged);
+    auctionSocket.on('new_bid', handleNewBid);
+
+    return () => {
+      auctionSocket.off('global_auction_status_changed', handleAuctionStatusChanged);
+      auctionSocket.off('new_bid', handleNewBid);
+    };
+  }, [user]);
 
   // Refresh watchlist when screen is focused
   useFocusEffect(
@@ -76,8 +279,10 @@ const AuctionWatchlistScreen = () => {
     setRemovingId(auctionId);
     try {
       await auctionsAPI.toggleWatchlist(auctionId);
-      // Remove from local state
-      setWatchlist(prev => prev.filter(a => a.id !== auctionId));
+      // Remove from all sections
+      setActiveAuctions(prev => prev.filter(a => a.id !== auctionId));
+      setUpcomingAuctions(prev => prev.filter(a => a.id !== auctionId));
+      setEndedAuctions(prev => prev.filter(a => a.id !== auctionId));
     } catch (error: any) {
       console.error('Error removing from watchlist:', error);
       Alert.alert('Error', 'Failed to remove from watchlist. Please try again.');
@@ -216,26 +421,77 @@ const AuctionWatchlistScreen = () => {
       </View>
 
       {/* Watchlist Count */}
-      {watchlist.length > 0 && (
+      {activeAuctions.length + upcomingAuctions.length + endedAuctions.length > 0 && (
         <View style={styles.countContainer}>
           <Text style={styles.countText}>
-            {watchlist.length} {watchlist.length === 1 ? 'auction' : 'auctions'} watched
+            {activeAuctions.length + upcomingAuctions.length + endedAuctions.length} {activeAuctions.length + upcomingAuctions.length + endedAuctions.length === 1 ? 'auction' : 'auctions'} watched
           </Text>
         </View>
       )}
 
-      {/* Watchlist */}
-      <FlatList
-        data={watchlist}
-        renderItem={renderAuctionItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
+      {/* Watchlist Sections */}
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#8E44AD" />
         }
-        ListEmptyComponent={
+      >
+        {/* Active Auctions Section */}
+        {activeAuctions.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View>
+                <Text style={styles.sectionTitle}>Active</Text>
+                <Text style={styles.sectionSubtitle}>⏰ {activeAuctions.length} {activeAuctions.length === 1 ? 'auction' : 'auctions'} accepting bids</Text>
+              </View>
+            </View>
+            {activeAuctions.map((item) => (
+              <View key={item.id}>
+                {renderAuctionItem({ item })}
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Upcoming Auctions Section */}
+        {upcomingAuctions.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View>
+                <Text style={styles.sectionTitle}>Upcoming</Text>
+                <Text style={styles.sectionSubtitle}>📅 {upcomingAuctions.length} {upcomingAuctions.length === 1 ? 'auction' : 'auctions'} starting soon</Text>
+              </View>
+            </View>
+            {upcomingAuctions.map((item) => (
+              <View key={item.id}>
+                {renderAuctionItem({ item })}
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Ended Auctions Section */}
+        {endedAuctions.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View>
+                <Text style={styles.sectionTitle}>Ended</Text>
+                <Text style={styles.sectionSubtitle}>✅ {endedAuctions.length} {endedAuctions.length === 1 ? 'auction' : 'auctions'} completed</Text>
+              </View>
+            </View>
+            {endedAuctions.map((item) => (
+              <View key={item.id}>
+                {renderAuctionItem({ item })}
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Empty State */}
+        {activeAuctions.length === 0 && upcomingAuctions.length === 0 && endedAuctions.length === 0 && (
           <View style={styles.emptyContainer}>
-            <Ionicons name="star-outline" size={64} color="#666" />
+            <Ionicons name="bookmark-outline" size={64} color="#666" />
             <Text style={styles.emptyText}>Your watchlist is empty</Text>
             <Text style={styles.emptySubtext}>
               Start adding auctions to your watchlist to keep track of items you're interested in
@@ -247,8 +503,8 @@ const AuctionWatchlistScreen = () => {
               <Text style={styles.browseButtonText}>Browse Auctions</Text>
             </TouchableOpacity>
           </View>
-        }
-      />
+        )}
+      </ScrollView>
     </View>
   );
 };
@@ -300,8 +556,27 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 14,
   },
-  listContent: {
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
     padding: 16,
+  },
+  section: {
+    marginBottom: 32,
+  },
+  sectionHeader: {
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    color: 'white',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  sectionSubtitle: {
+    color: '#888',
+    fontSize: 14,
   },
   auctionCard: {
     backgroundColor: '#1a1a1a',

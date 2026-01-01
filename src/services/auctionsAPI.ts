@@ -586,6 +586,13 @@ class AuctionSocketManager {
     });
 
     // Bidding events
+    // Listen for 'new_bid' event (emitted by backend broadcastBidUpdate)
+    this.socket.on('new_bid', (data: any) => {
+      console.log('New bid received:', data);
+      this.emit('new_bid', data);
+    });
+
+    // Keep bid_placed for backwards compatibility if needed
     this.socket.on('bid_placed', (data: any) => {
       console.log('New bid placed:', data);
       this.emit('bid_placed', data);
@@ -612,11 +619,29 @@ class AuctionSocketManager {
     this.socket.on('auction_status_changed', (data: any) => {
       console.log('Auction status changed:', data);
       this.emit('auction_status_changed', data);
+      
+      // Check if this is an extension event and emit auction_extended
+      if (data.status === 'extended' || data.extension_seconds) {
+        console.log('Auction extended:', data);
+        this.emit('auction_extended', data);
+      }
     });
 
     this.socket.on('auction_ending_soon', (data: any) => {
       console.log('Auction ending soon:', data);
       this.emit('auction_ending_soon', data);
+    });
+
+    // Watch count updates
+    this.socket.on('watch_count_updated', (data: any) => {
+      console.log('Watch count updated:', data);
+      this.emit('watch_count_updated', data);
+    });
+
+    // View count updates
+    this.socket.on('view_count_updated', (data: any) => {
+      console.log('View count updated:', data);
+      this.emit('view_count_updated', data);
     });
 
     // User notifications
