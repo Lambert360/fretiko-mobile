@@ -153,7 +153,7 @@ const OrdersScreen = () => {
         <View style={styles.orderHeader}>
           <View style={styles.orderInfo}>
             <View style={styles.orderInfoRow}>
-              <Text style={styles.orderNumber}>#{item.orderNumber}</Text>
+            <Text style={styles.orderNumber}>#{item.orderNumber}</Text>
               {/* Order Source Badge */}
               {item.source && (() => {
                 const sourceInfo = getOrderSourceInfo(item.source);
