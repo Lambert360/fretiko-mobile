@@ -439,6 +439,33 @@ export const auctionsAPI = {
   },
 
   /**
+   * Get auctions that the user has participated in (placed bids)
+   * Returns unique auctions, not individual bids
+   */
+  async getMyParticipatedAuctions(filters: AuctionFilters = {}): Promise<{ auctions: AuctionWithDetails[]; total: number }> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+
+      const params = new URLSearchParams();
+
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          params.append(key, value.toString());
+        }
+      });
+
+      const response = await api.get(`/auctions/user/my-participated?${params.toString()}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching my participated auctions:', error);
+      throw error;
+    }
+  },
+
+  /**
    * Format time remaining for display
    */
   formatTimeRemaining(secondsRemaining?: number): string {
@@ -504,6 +531,45 @@ export const auctionsAPI = {
     } catch (error) {
       console.error('Error completing auction sale:', error);
       throw error;
+    }
+  },
+
+  /**
+   * Update auction (Vendor only, before it starts or with no bids)
+   */
+  async updateAuction(
+    auctionId: string,
+    updateData: Partial<CreateAuctionData>,
+  ): Promise<Auction> {
+    try {
+      const response = await api.put(`/auctions/${auctionId}`, updateData);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error updating auction:', error);
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to update auction';
+      throw new Error(errorMessage);
+    }
+  },
+
+  /**
+   * Cancel auction (Vendor only)
+   * Note: Backend returns 204 No Content, so we handle that appropriately
+   */
+  async cancelAuction(auctionId: string, reason?: string): Promise<{ message: string }> {
+    try {
+      const response = await api.delete(`/auctions/${auctionId}`);
+
+      // Backend returns 204 No Content (no response body)
+      // Axios handles this - response.data will be empty string for 204
+      if (response.status === 204 || !response.data) {
+        return { message: 'Auction cancelled successfully' };
+      }
+
+      return response.data || { message: 'Auction cancelled successfully' };
+    } catch (error: any) {
+      console.error('Error cancelling auction:', error);
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to cancel auction';
+      throw new Error(errorMessage);
     }
   },
 };
@@ -799,53 +865,6 @@ class AuctionSocketManager {
    */
   getCurrentAuctionId(): string | null {
     return this.currentAuctionId;
-  }
-
-  /**
-   * Update auction (Vendor only, before it starts or with no bids)
-   */
-  async updateAuction(
-    auctionId: string,
-    updateData: Partial<CreateAuctionData>,
-  ): Promise<Auction> {
-    const headers = await this.getAuthHeaders();
-
-    const response = await fetch(`${API_URL}/auctions/${auctionId}`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify(updateData),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.message || 'Failed to update auction');
-    }
-
-    const data = await response.json();
-    console.log('Auction updated successfully:', auctionId);
-    return data;
-  }
-
-  /**
-   * Cancel auction (Vendor only)
-   */
-  async cancelAuction(auctionId: string, reason?: string): Promise<{ message: string }> {
-    const headers = await this.getAuthHeaders();
-
-    const response = await fetch(`${API_URL}/auctions/${auctionId}`, {
-      method: 'DELETE',
-      headers,
-      body: JSON.stringify({ reason }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.message || 'Failed to cancel auction');
-    }
-
-    const data = await response.json();
-    console.log('Auction cancelled successfully:', auctionId);
-    return data;
   }
 }
 

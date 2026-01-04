@@ -24,13 +24,14 @@ const AuctionListScreen = () => {
   const route = useRoute<any>();
   const insets = useSafeAreaInsets();
 
-  const { status, featured, endingSoon, seller_id, auction_type } = route.params || {};
+  const { status, featured, endingSoon, seller_id, auction_type, participated } = route.params || {};
 
   const [auctions, setAuctions] = useState<AuctionWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const getTitle = () => {
+    if (participated) return 'My Bids';
     if (featured) return 'Featured Auctions';
     if (endingSoon) return 'Ending Soon';
     if (status === 'scheduled') return 'Coming Soon';
@@ -60,7 +61,11 @@ const AuctionListScreen = () => {
       if (seller_id) filters.seller_id = seller_id;
       if (auction_type) filters.auction_type = auction_type;
 
-      const response = await auctionsAPI.getAuctions(filters);
+      // Use getMyParticipatedAuctions if participated flag is set
+      const response = participated
+        ? await auctionsAPI.getMyParticipatedAuctions(filters)
+        : await auctionsAPI.getAuctions(filters);
+      
       setAuctions(response.auctions);
     } catch (error) {
       console.error('Error loading auctions:', error);
@@ -96,9 +101,9 @@ const AuctionListScreen = () => {
 
         <View style={styles.priceRow}>
           <Text style={styles.currentBid}>₣{auctionsAPI.formatPrice(item.current_bid)}</Text>
-          <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(item.time_status) }]}>
+          <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(item.status) }]}>
             <Text style={styles.statusText}>
-              {item.time_status === 'active' ? 'LIVE' : item.time_status.toUpperCase()}
+              {item.status === 'active' && item.time_status === 'active' ? 'LIVE' : item.status.toUpperCase()}
             </Text>
           </View>
         </View>

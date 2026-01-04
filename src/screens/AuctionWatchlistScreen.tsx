@@ -326,9 +326,9 @@ const AuctionWatchlistScreen = () => {
 
         <View style={styles.priceRow}>
           <Text style={styles.currentBid}>₣{auctionsAPI.formatPrice(item.current_bid)}</Text>
-          <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(item.time_status) }]}>
+          <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(item.status) }]}>
             <Text style={styles.statusText}>
-              {item.time_status === 'active' ? 'LIVE' : item.time_status.toUpperCase()}
+              {item.status === 'active' && item.time_status === 'active' ? 'LIVE' : item.status.toUpperCase()}
             </Text>
           </View>
         </View>

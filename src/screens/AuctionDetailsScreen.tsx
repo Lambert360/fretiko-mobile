@@ -19,10 +19,65 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { useAuth } from '../contexts/AuthContext';
 import { auctionsAPI, auctionSocket, AuctionWithDetails, PublicBidHistoryItem } from '../services/auctionsAPI';
+import { ordersAPI, Order } from '../services/ordersAPI';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+/**
+ * Video Viewer Component for Auction Media Viewer
+ */
+const AuctionVideoViewer: React.FC<{
+  videoUri: string;
+  isActive: boolean;
+  isPlaying: boolean;
+  onPlayPauseToggle: () => void;
+}> = ({ videoUri, isActive, isPlaying, onPlayPauseToggle }) => {
+  const player = useVideoPlayer(videoUri, (player) => {
+    player.loop = false;
+    player.muted = false;
+  });
+
+  useEffect(() => {
+    if (isActive && isPlaying) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [isActive, isPlaying, player]);
+
+  return (
+    <View style={styles.videoViewerContainer}>
+      <VideoView
+        player={player}
+        style={styles.videoViewer}
+        contentFit="contain"
+        nativeControls={false}
+        allowsFullscreen={false}
+      />
+      {!isPlaying && (
+        <TouchableOpacity
+          style={styles.videoPlayButton}
+          onPress={onPlayPauseToggle}
+          activeOpacity={0.8}
+        >
+          <View style={styles.videoPlayButtonCircle}>
+            <Ionicons name="play" size={48} color="white" />
+          </View>
+        </TouchableOpacity>
+      )}
+      {isPlaying && (
+        <TouchableOpacity
+          style={styles.videoPauseOverlay}
+          onPress={onPlayPauseToggle}
+          activeOpacity={1}
+        />
+      )}
+    </View>
+  );
+};
 
 /**
  * Auction Details Screen
@@ -58,10 +113,15 @@ const AuctionDetailsScreen = () => {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [viewerImageIndex, setViewerImageIndex] = useState(0);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [auctionOrder, setAuctionOrder] = useState<Order | null>(null);
+  const [checkingOrder, setCheckingOrder] = useState(false);
 
   // Refs
   const timeUpdateInterval = useRef<NodeJS.Timeout | null>(null);
   const imageViewerFlatListRef = useRef<FlatList>(null);
+  const lastExtensionAlertRef = useRef<string | null>(null);
 
   // Load bid history separately for refresh
   const loadBidHistory = async () => {
@@ -70,6 +130,32 @@ const AuctionDetailsScreen = () => {
       setBidHistory(history);
     } catch (error) {
       console.error('Error loading bid history:', error);
+    }
+  };
+
+  // Check if an order exists for this auction
+  const checkAuctionOrder = async (id?: string) => {
+    const targetAuctionId = id || auction?.id;
+    if (!targetAuctionId || !user) return;
+    
+    setCheckingOrder(true);
+    try {
+      // Fetch user's orders
+      const orders = await ordersAPI.getMyOrders();
+      
+      // Find order for this auction (source='auction' and metadata.auction_id matches)
+      const order = orders.find(o => 
+        o.source === 'auction' && 
+        o.metadata?.auction_id === targetAuctionId
+      );
+      
+      setAuctionOrder(order || null);
+    } catch (error) {
+      console.error('Error checking auction order:', error);
+      // Don't show error to user - just assume no order exists
+      setAuctionOrder(null);
+    } finally {
+      setCheckingOrder(false);
     }
   };
 
@@ -86,6 +172,11 @@ const AuctionDetailsScreen = () => {
 
       // Load bid history
       await loadBidHistory();
+      
+      // Check if order exists for this auction (if user is winner)
+      if (auctionData.winner_id === user?.id && auctionData.status === 'sold') {
+        await checkAuctionOrder(auctionData.id); // Pass auctionId directly
+      }
 
     } catch (error) {
       console.error('Error loading auction:', error);
@@ -207,7 +298,20 @@ const AuctionDetailsScreen = () => {
         const now = new Date();
         const newSecondsRemaining = Math.floor((newEndTime.getTime() - now.getTime()) / 1000);
         setTimeRemaining(newSecondsRemaining);
-        Alert.alert('Auction Extended', `Auction extended by ${data.extension_seconds / 60} minutes due to late bid!`);
+        
+        // Create a unique key for this extension event to prevent duplicate alerts
+        const extensionKey = `${data.auction_id}-${data.new_end_time}`;
+        
+        // Only show alert if we haven't shown it for this specific extension
+        if (lastExtensionAlertRef.current !== extensionKey) {
+          lastExtensionAlertRef.current = extensionKey;
+          const extensionMinutes = Math.round(data.extension_seconds / 60);
+          Alert.alert(
+            'Auction Extended', 
+            `Auction extended by ${extensionMinutes} minute${extensionMinutes !== 1 ? 's' : ''} due to late bid!`,
+            [{ text: 'OK' }]
+          );
+        }
       }
     };
 
@@ -261,6 +365,17 @@ const AuctionDetailsScreen = () => {
       }
     };
   }, [timeRemaining, auction?.status]);
+
+  // Refresh order status when screen comes into focus (e.g., after checkout)
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      if (auction?.winner_id === user?.id && auction?.status === 'sold') {
+        checkAuctionOrder();
+      }
+    });
+
+    return unsubscribe;
+  }, [navigation, auction, user]);
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -439,6 +554,32 @@ const AuctionDetailsScreen = () => {
     );
   };
 
+  // Helper function to get all media items (images + video)
+  const getAllMediaItems = () => {
+    if (!auction) return [];
+    
+    const items: Array<{ type: 'image' | 'video'; uri: string }> = [];
+    
+    // Add all images
+    if (auction.images && auction.images.length > 0) {
+      auction.images.forEach(imageUri => {
+        items.push({ type: 'image', uri: imageUri });
+      });
+    }
+    
+    // Add video if exists
+    if (auction.video_url) {
+      items.push({ type: 'video', uri: auction.video_url });
+    }
+    
+    // Fallback to thumbnail if no images or video
+    if (items.length === 0 && auction.thumbnail_url) {
+      items.push({ type: 'image', uri: auction.thumbnail_url });
+    }
+    
+    return items;
+  };
+
   const openBidModal = () => {
     if (!user) {
       Alert.alert('Login Required', 'Please log in to place bids');
@@ -453,25 +594,31 @@ const AuctionDetailsScreen = () => {
     setBidModalVisible(true);
   };
 
-  const renderBidHistoryItem = ({ item }: { item: PublicBidHistoryItem }) => (
-    <View style={styles.bidHistoryItem}>
-      <View style={styles.bidHistoryLeft}>
-        <Text style={styles.bidderName}>{item.bidder_display_id}</Text>
-        <Text style={styles.bidTime}>{new Date(item.created_at).toLocaleTimeString()}</Text>
-      </View>
+  const renderBidHistoryItem = ({ item }: { item: PublicBidHistoryItem }) => {
+    // Check if auction is sold (has a winner)
+    const isSold = auction && auction.status === 'sold';
+    const badgeText = isSold ? 'WINNER' : 'WINNING';
+    
+    return (
+      <View style={styles.bidHistoryItem}>
+        <View style={styles.bidHistoryLeft}>
+          <Text style={styles.bidderName}>{item.bidder_display_id}</Text>
+          <Text style={styles.bidTime}>{new Date(item.created_at).toLocaleTimeString()}</Text>
+        </View>
 
-      <View style={styles.bidHistoryRight}>
-        <Text style={[styles.bidAmount, item.is_winning && styles.winningBid]}>
-          {auctionsAPI.formatPrice(item.amount)}
-        </Text>
-        {item.is_winning && (
-          <View style={styles.winningBadge}>
-            <Text style={styles.winningText}>WINNING</Text>
-          </View>
-        )}
+        <View style={styles.bidHistoryRight}>
+          <Text style={[styles.bidAmount, item.is_winning && styles.winningBid]}>
+            {auctionsAPI.formatPrice(item.amount)}
+          </Text>
+          {item.is_winning && (
+            <View style={styles.winningBadge}>
+              <Text style={styles.winningText}>{badgeText}</Text>
+            </View>
+          )}
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   if (loading) {
     return (
@@ -532,22 +679,51 @@ const AuctionDetailsScreen = () => {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Image Gallery */}
+        {/* Image/Video Gallery */}
         <View style={styles.imageContainer}>
           <TouchableOpacity
             activeOpacity={0.9}
             onPress={() => {
-              setViewerImageIndex(selectedImageIndex);
+              const mediaItems = getAllMediaItems();
+              // Find the current item index
+              let currentIndex = 0;
+              if (auction.images.length > 0 && selectedImageIndex < auction.images.length) {
+                currentIndex = selectedImageIndex;
+              } else if (auction.video_url && auction.images.length === 0) {
+                // If only video and no images, video is at index 0
+                currentIndex = 0;
+              } else if (auction.video_url && selectedImageIndex >= auction.images.length) {
+                // If video exists and we're past images, video is last
+                currentIndex = mediaItems.length - 1;
+              }
+              setViewerImageIndex(currentIndex);
               setImageViewerVisible(true);
             }}
           >
-            <Image
-              source={{
-                uri: auction.images[selectedImageIndex] || auction.thumbnail_url || 'https://via.placeholder.com/400x300'
-              }}
-              style={styles.mainImage}
-              resizeMode="cover"
-            />
+            {auction.video_url && auction.images.length === 0 ? (
+              // Show video thumbnail if only video exists (no images)
+              <View style={styles.mainImageContainer}>
+                <Image
+                  source={{
+                    uri: auction.thumbnail_url || 'https://via.placeholder.com/400x300'
+                  }}
+                  style={styles.mainImage}
+                  resizeMode="cover"
+                />
+                <View style={styles.videoPlayButtonOverlay}>
+                  <Ionicons name="play-circle" size={64} color="white" />
+                </View>
+              </View>
+            ) : (
+              // Show image (existing behavior)
+              <Image
+                source={{
+                  uri: auction.images[selectedImageIndex] || auction.thumbnail_url || 'https://via.placeholder.com/400x300'
+                }}
+                style={styles.mainImage}
+                resizeMode="cover"
+              />
+            )}
           </TouchableOpacity>
 
           {/* Status Badge */}
@@ -557,8 +733,8 @@ const AuctionDetailsScreen = () => {
             </Text>
           </View>
 
-          {/* Image Navigation */}
-          {auction.images.length > 1 && (
+          {/* Media Navigation (Images + Video indicator) */}
+          {(auction.images.length > 1 || auction.video_url) && (
             <FlatList
               data={auction.images}
               horizontal
@@ -576,6 +752,31 @@ const AuctionDetailsScreen = () => {
                   <Image source={{ uri: item }} style={styles.imageNavImage} />
                 </TouchableOpacity>
               )}
+              ListFooterComponent={
+                auction.video_url ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      const mediaItems = getAllMediaItems();
+                      setViewerImageIndex(mediaItems.length - 1);
+                      setImageViewerVisible(true);
+                    }}
+                    style={[
+                      styles.imageNavItem,
+                      selectedImageIndex >= auction.images.length && styles.imageNavItemActive
+                    ]}
+                  >
+                    <View style={styles.videoNavItem}>
+                      <Image 
+                        source={{ uri: auction.thumbnail_url || auction.video_url || 'https://via.placeholder.com/60x60' }} 
+                        style={styles.imageNavImage}
+                      />
+                      <View style={styles.videoNavIcon}>
+                        <Ionicons name="play" size={16} color="white" />
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ) : null
+              }
             />
           )}
         </View>
@@ -593,7 +794,29 @@ const AuctionDetailsScreen = () => {
             </View>
           </View>
 
-          <Text style={styles.auctionDescription}>{auction.description}</Text>
+          <View style={styles.descriptionContainer}>
+            <Text 
+              style={styles.auctionDescription}
+              numberOfLines={descriptionExpanded ? undefined : 3}
+            >
+              {auction.description}
+            </Text>
+            {auction.description && auction.description.length > 150 && (
+              <TouchableOpacity
+                onPress={() => setDescriptionExpanded(!descriptionExpanded)}
+                style={styles.seeMoreButton}
+              >
+                <Text style={styles.seeMoreText}>
+                  {descriptionExpanded ? 'See Less' : 'See More'}
+                </Text>
+                <Ionicons 
+                  name={descriptionExpanded ? 'chevron-up' : 'chevron-down'} 
+                  size={16} 
+                  color="#8E44AD" 
+                />
+              </TouchableOpacity>
+            )}
+          </View>
 
           {/* Current Bid Section */}
           <View style={styles.bidSection}>
@@ -748,6 +971,22 @@ const AuctionDetailsScreen = () => {
                   </TouchableOpacity>
                 )}
 
+                {/* Seller message when auction ended but wasn't sold */}
+                {auction.status === 'ended' && auction.time_status === 'ended' && (
+                  <View style={styles.vendorMessageBox}>
+                    <Ionicons name="information-circle-outline" size={20} color="#F39C12" />
+                    <Text style={styles.vendorMessageText}>
+                      {auction.current_bid === 0
+                        ? 'Auction ended with no bids. You can relist this auction.'
+                        : auction.unique_bidders < 2
+                          ? `Auction ended but was not sold. Minimum 2 bidders required (only ${auction.unique_bidders} bidder participated). You can relist this auction.`
+                          : auction.reserve_price && auction.current_bid < auction.reserve_price
+                            ? `Auction ended but was not sold. Reserve price not met (reserve: ₣${auctionsAPI.formatPrice(auction.reserve_price)}, highest bid: ₣${auctionsAPI.formatPrice(auction.current_bid)}). You can relist this auction.`
+                            : 'Auction ended but was not sold. You can relist this auction.'}
+                    </Text>
+                  </View>
+                )}
+
                 {/* View Full Bid History */}
                 {auction.total_bids > 0 && (
                   <TouchableOpacity
@@ -834,21 +1073,94 @@ const AuctionDetailsScreen = () => {
             </>
           )}
 
-          {/* Ended auction - Winner checkout button */}
-          {auction.time_status === 'ended' && auction.winner_id === user.id && (
-            <TouchableOpacity
-              style={[styles.bidButton, styles.checkoutButton]}
-              onPress={() => navigation.navigate('Checkout', {
-                auctionCheckout: { auctionId: auction.id }
-              })}
-            >
-              <Text style={styles.bidButtonText}>🎉 Proceed to Checkout</Text>
-              <Ionicons name="card" size={20} color="white" />
-            </TouchableOpacity>
+          {/* Ended auction - Winner checkout/order status (only for sold auctions) */}
+          {auction.time_status === 'ended' && auction.status === 'sold' && auction.winner_id === user.id && (
+            <>
+              {checkingOrder ? (
+                <View style={[styles.bidButton, styles.checkoutButton]}>
+                  <ActivityIndicator size="small" color="white" />
+                  <Text style={styles.bidButtonText}>Checking order status...</Text>
+                </View>
+              ) : !auctionOrder ? (
+                // No order yet - show checkout button
+                <TouchableOpacity
+                  style={[styles.bidButton, styles.checkoutButton]}
+                  onPress={() => navigation.navigate('Checkout', {
+                    source: 'auction',
+                    auctionCheckout: { auctionId: auction.id }
+                  })}
+                >
+                  <Text style={styles.bidButtonText}>🎉 Proceed to Checkout</Text>
+                  <Ionicons name="card" size={20} color="white" />
+                </TouchableOpacity>
+              ) : ['pending', 'confirmed'].includes(auctionOrder.status) ? (
+                // Order created but payment pending
+                <View style={[styles.bidButton, styles.pendingOrderButton]}>
+                  <Ionicons name="time-outline" size={20} color="white" />
+                  <Text style={styles.pendingOrderText}>
+                    Payment Pending - Order #{auctionOrder.orderNumber}
+                  </Text>
+                </View>
+              ) : ['processing', 'shipped', 'out_for_delivery', 'delivered'].includes(auctionOrder.status) ? (
+                // Order paid and processing - show congratulations
+                <View style={[styles.bidButton, styles.congratulationsButton]}>
+                  <Ionicons name="checkmark-circle" size={24} color="white" />
+                  <Text style={styles.congratulationsText}>
+                    🎉 Congratulations! Your order is being processed
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate('OrderDetails', { orderId: auctionOrder.id })}
+                    style={styles.viewOrderButton}
+                  >
+                    <Text style={styles.viewOrderText}>View Order</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : auctionOrder.status === 'cancelled' ? (
+                // Order cancelled
+                <View style={[styles.bidButton, styles.endedButton]}>
+                  <Ionicons name="close-circle" size={20} color="#888" />
+                  <Text style={styles.endedButtonText}>Order Cancelled</Text>
+                </View>
+              ) : null}
+            </>
           )}
 
-          {/* Ended auction - Lost bidder message */}
-          {auction.time_status === 'ended' && auction.winner_id && auction.winner_id !== user.id && (
+          {/* Auction ended but not sold - Winner message (if they were the only bidder) */}
+          {auction.time_status === 'ended' && auction.status === 'ended' && auction.winner_id === user.id && auction.current_bid > 0 && (
+            <View style={[styles.bidButton, styles.endedButton]}>
+              <Text style={styles.endedButtonText}>
+                {auction.unique_bidders < 2 
+                  ? `Auction ended. Minimum 2 bidders required (only ${auction.unique_bidders} bidder participated).`
+                  : auction.reserve_price && auction.current_bid < auction.reserve_price
+                    ? `Auction ended. Reserve price not met (reserve: ₣${auctionsAPI.formatPrice(auction.reserve_price)}).`
+                    : 'Auction ended but was not sold.'}
+              </Text>
+              <Ionicons name="information-circle" size={20} color="#888" />
+            </View>
+          )}
+
+          {/* Auction ended but not sold - Lost bidder message */}
+          {auction.time_status === 'ended' && auction.status === 'ended' && auction.winner_id && auction.winner_id !== user.id && (
+            <View style={[styles.bidButton, styles.endedButton]}>
+              <Text style={styles.endedButtonText}>
+                {auction.unique_bidders < 2 
+                  ? `Auction ended. Minimum 2 bidders required (only ${auction.unique_bidders} bidder participated).`
+                  : 'Auction ended but was not sold.'}
+              </Text>
+              <Ionicons name="information-circle" size={20} color="#888" />
+            </View>
+          )}
+
+          {/* Auction ended with no bids */}
+          {auction.time_status === 'ended' && auction.status === 'ended' && !auction.winner_id && (
+            <View style={[styles.bidButton, styles.endedButton]}>
+              <Text style={styles.endedButtonText}>Auction ended with no bids.</Text>
+              <Ionicons name="close-circle" size={20} color="#888" />
+            </View>
+          )}
+
+          {/* Auction ended - Sold (non-winner message) */}
+          {auction.time_status === 'ended' && auction.status === 'sold' && auction.winner_id && auction.winner_id !== user.id && (
             <View style={[styles.bidButton, styles.endedButton]}>
               <Text style={styles.endedButtonText}>Auction Ended</Text>
               <Ionicons name="close-circle" size={20} color="#888" />
@@ -1007,30 +1319,36 @@ const AuctionDetailsScreen = () => {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Full Screen Image Viewer Modal */}
+      {/* Full Screen Image/Video Viewer Modal */}
       <Modal
         visible={imageViewerVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setImageViewerVisible(false)}
+        onRequestClose={() => {
+          setIsVideoPlaying(false);
+          setImageViewerVisible(false);
+        }}
       >
         <View style={styles.imageViewerContainer}>
           {/* Close Button */}
           <TouchableOpacity
             style={[styles.imageViewerCloseButton, { top: (insets.top || 50) + 10 }]}
-            onPress={() => setImageViewerVisible(false)}
+            onPress={() => {
+              setIsVideoPlaying(false);
+              setImageViewerVisible(false);
+            }}
           >
             <Ionicons name="close" size={28} color="white" />
           </TouchableOpacity>
 
-          {/* Image List */}
+          {/* Media List (Images + Video) */}
           <FlatList
             ref={imageViewerFlatListRef}
-            data={auction.images.length > 0 ? auction.images : [auction.thumbnail_url || 'https://via.placeholder.com/400x300']}
+            data={getAllMediaItems()}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
-            keyExtractor={(item, index) => index.toString()}
+            keyExtractor={(item, index) => `${item.type}-${index}`}
             initialScrollIndex={viewerImageIndex}
             getItemLayout={(data, index) => ({
               length: screenWidth,
@@ -1040,20 +1358,34 @@ const AuctionDetailsScreen = () => {
             onMomentumScrollEnd={(event) => {
               const index = Math.round(event.nativeEvent.contentOffset.x / screenWidth);
               setViewerImageIndex(index);
+              const mediaItems = getAllMediaItems();
+              // Pause video when scrolling away
+              if (mediaItems[index]?.type !== 'video') {
+                setIsVideoPlaying(false);
+              }
             }}
-            renderItem={({ item }) => (
+            renderItem={({ item, index }) => (
               <View style={styles.imageViewerItem}>
-                <Image
-                  source={{ uri: item }}
-                  style={styles.imageViewerImage}
-                  resizeMode="contain"
-                />
+                {item.type === 'video' ? (
+                  <AuctionVideoViewer
+                    videoUri={item.uri}
+                    isActive={index === viewerImageIndex}
+                    isPlaying={isVideoPlaying && index === viewerImageIndex}
+                    onPlayPauseToggle={() => setIsVideoPlaying(!isVideoPlaying)}
+                  />
+                ) : (
+                  <Image
+                    source={{ uri: item.uri }}
+                    style={styles.imageViewerImage}
+                    resizeMode="contain"
+                  />
+                )}
               </View>
             )}
           />
 
           {/* Navigation Controls */}
-          {auction.images.length > 1 && (
+          {getAllMediaItems().length > 1 && (
             <View style={[styles.imageViewerControls, { paddingBottom: (insets.bottom || 20) + 20 }]}>
               {/* Previous Button */}
               <TouchableOpacity
@@ -1065,6 +1397,7 @@ const AuctionDetailsScreen = () => {
                   if (viewerImageIndex > 0) {
                     const newIndex = viewerImageIndex - 1;
                     setViewerImageIndex(newIndex);
+                    setIsVideoPlaying(false);
                     imageViewerFlatListRef.current?.scrollToIndex({ index: newIndex, animated: true });
                   }
                 }}
@@ -1077,10 +1410,10 @@ const AuctionDetailsScreen = () => {
                 />
               </TouchableOpacity>
 
-              {/* Image Counter */}
+              {/* Media Counter */}
               <View style={styles.imageViewerCounter}>
                 <Text style={styles.imageViewerCounterText}>
-                  {viewerImageIndex + 1} / {auction.images.length}
+                  {viewerImageIndex + 1} / {getAllMediaItems().length}
                 </Text>
               </View>
 
@@ -1088,21 +1421,23 @@ const AuctionDetailsScreen = () => {
               <TouchableOpacity
                 style={[
                   styles.imageViewerNavButton,
-                  viewerImageIndex === auction.images.length - 1 && styles.imageViewerNavButtonDisabled
+                  viewerImageIndex === getAllMediaItems().length - 1 && styles.imageViewerNavButtonDisabled
                 ]}
                 onPress={() => {
-                  if (viewerImageIndex < auction.images.length - 1) {
+                  const mediaItems = getAllMediaItems();
+                  if (viewerImageIndex < mediaItems.length - 1) {
                     const newIndex = viewerImageIndex + 1;
                     setViewerImageIndex(newIndex);
+                    setIsVideoPlaying(false);
                     imageViewerFlatListRef.current?.scrollToIndex({ index: newIndex, animated: true });
                   }
                 }}
-                disabled={viewerImageIndex === auction.images.length - 1}
+                disabled={viewerImageIndex === getAllMediaItems().length - 1}
               >
                 <Ionicons
                   name="chevron-forward"
                   size={28}
-                  color={viewerImageIndex === auction.images.length - 1 ? '#555' : 'white'}
+                  color={viewerImageIndex === getAllMediaItems().length - 1 ? '#555' : 'white'}
                 />
               </TouchableOpacity>
             </View>
@@ -1254,11 +1589,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 4,
   },
+  descriptionContainer: {
+    marginBottom: 24,
+  },
   auctionDescription: {
     color: '#888',
     fontSize: 16,
     lineHeight: 24,
-    marginBottom: 24,
+  },
+  seeMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  seeMoreText: {
+    color: '#8E44AD',
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 4,
   },
   bidSection: {
     flexDirection: 'row',
@@ -1444,6 +1793,23 @@ const styles = StyleSheet.create({
   vendorActionDangerText: {
     color: '#E74C3C',
   },
+  vendorMessageBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#2a2a2a',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#F39C12',
+  },
+  vendorMessageText: {
+    flex: 1,
+    color: '#F39C12',
+    fontSize: 14,
+    marginLeft: 8,
+    lineHeight: 20,
+  },
   bidHistorySection: {
     marginBottom: 100, // Space for bid button
   },
@@ -1544,6 +1910,40 @@ const styles = StyleSheet.create({
   },
   checkoutButton: {
     backgroundColor: '#27AE60', // Green for winner
+  },
+  pendingOrderButton: {
+    backgroundColor: '#FF9500', // Orange for pending
+    opacity: 0.9,
+  },
+  pendingOrderText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  congratulationsButton: {
+    backgroundColor: '#34C759', // Green for success
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  congratulationsText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  viewOrderButton: {
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 8,
+  },
+  viewOrderText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
   endedButton: {
     backgroundColor: '#333',
@@ -1742,6 +2142,74 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
+  },
+  mainImageContainer: {
+    position: 'relative',
+    width: '100%',
+    height: 300,
+  },
+  videoPlayButtonOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  videoNavItem: {
+    position: 'relative',
+    width: 60,
+    height: 60,
+  },
+  videoNavIcon: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 8,
+  },
+  videoViewerContainer: {
+    width: screenWidth,
+    height: screenHeight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000',
+  },
+  videoViewer: {
+    width: screenWidth,
+    height: screenHeight,
+  },
+  videoPlayButton: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoPlayButtonCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: 'white',
+  },
+  videoPauseOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
 });
 

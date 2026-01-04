@@ -15,8 +15,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { useAuth } from '../contexts/AuthContext';
-import { auctionsAPI, AuctionCategoryWithStats, AuctionWithDetails } from '../services/auctionsAPI';
+import { auctionsAPI, auctionSocket, AuctionCategoryWithStats, AuctionWithDetails } from '../services/auctionsAPI';
 import { userAPI, UserProfile } from '../services/userAPI';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -136,7 +137,222 @@ const AuctionDiscoveryScreen = () => {
 
   useEffect(() => {
     loadAuctionData();
+
+    // Connect to WebSocket for real-time updates
+    auctionSocket.connect();
   }, []);
+
+  // Listen for real-time auction status changes
+  useEffect(() => {
+    // NO user check here - WebSocket should work for everyone
+    // User check is done inside handlers only when updating myAuctions
+
+    // Handler for auction status changes (scheduled -> active, or ended)
+    const handleAuctionStatusChanged = async (data: { 
+      auction_id: string; 
+      status: string;
+      seller_id?: string;
+      auction_type?: string;
+    }) => {
+      console.log('📡 Auction status changed event:', data);
+      
+      // Handle new scheduled auction creation
+      if (data.status === 'scheduled') {
+        console.log('📅 New scheduled auction created:', data.auction_id);
+        // Fetch the new auction if it belongs to the current user
+        if (user?.id && data.seller_id === user.id) {
+          try {
+            const newAuction = await auctionsAPI.getAuction(data.auction_id);
+            const now = new Date();
+            
+            // Only add if start_time is in the future (truly upcoming)
+            if (new Date(newAuction.start_time) > now) {
+              console.log('✅ Adding new auction to myAuctions and upcomingAuctions');
+              setMyAuctions(prev => {
+                // Check if not already in list
+                if (!prev.find(a => a.id === data.auction_id)) {
+                  return [...prev, newAuction].sort((a, b) => 
+                    new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+                  ).slice(0, 10);
+                }
+                return prev;
+              });
+              
+              // Also add to upcomingAuctions if it's truly upcoming
+              setUpcomingAuctions(prev => {
+                if (!prev.find(a => a.id === data.auction_id)) {
+                  return [...prev, newAuction].sort((a, b) => 
+                    new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+                  );
+                }
+                return prev;
+              });
+            }
+          } catch (error) {
+            console.error('Error fetching new auction:', error);
+          }
+        }
+        return; // Don't process scheduled status further
+      }
+      
+      // When an auction becomes active, move it from upcoming to active/live
+      if (data.status === 'active') {
+        // Remove from upcoming
+        setUpcomingAuctions(prev => prev.filter(a => a.id !== data.auction_id));
+        
+        // Fetch updated auction data
+        try {
+          const updatedAuction = await auctionsAPI.getAuction(data.auction_id);
+          
+          // Add to appropriate active list based on auction type
+          if (updatedAuction.auction_type === 'live') {
+            setLiveAuctions(prev => {
+              // Check if not already in list
+              if (!prev.find(a => a.id === updatedAuction.id)) {
+                return [updatedAuction, ...prev];
+              }
+              return prev;
+            });
+          } else {
+            setActiveAuctions(prev => {
+              // Check if not already in list
+              if (!prev.find(a => a.id === updatedAuction.id)) {
+                return [updatedAuction, ...prev];
+              }
+              return prev;
+            });
+          }
+
+          // Check if this auction should be in "ending soon" (within 24 hours)
+          const now = new Date();
+          const endTime = new Date(updatedAuction.end_time);
+          const hoursUntilEnd = (endTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+          
+          if (hoursUntilEnd > 0 && hoursUntilEnd <= 24) {
+            setEndingSoonAuctions(prev => {
+              if (!prev.find(a => a.id === updatedAuction.id)) {
+                return [...prev, updatedAuction].sort((a, b) => 
+                  new Date(a.end_time).getTime() - new Date(b.end_time).getTime()
+                );
+              }
+              return prev;
+            });
+          }
+
+          // Update myAuctions if this auction belongs to the current user (only check here)
+          if (user?.id && (data.seller_id === user.id || updatedAuction.seller_id === user.id)) {
+            console.log('🔄 Updating myAuctions for auction:', data.auction_id, 'Status: active');
+            setMyAuctions(prev => {
+              // Check if auction exists in myAuctions
+              const existingIndex = prev.findIndex(a => a.id === data.auction_id);
+              if (existingIndex >= 0) {
+                // Update the auction with new status
+                const updated = [...prev];
+                updated[existingIndex] = updatedAuction;
+                return updated;
+              }
+              // If not in list but belongs to user, add it
+              return [...prev, updatedAuction].sort((a, b) => 
+                new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+              ).slice(0, 10); // Keep max 10 items
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching updated auction data:', error);
+        }
+      } else if (data.status === 'ended' || data.status === 'sold' || data.status === 'cancelled') {
+        console.log('🔄 Removing auction from myAuctions (ended/sold/cancelled):', data.auction_id);
+        // Remove from myAuctions if auction ended/was sold/was cancelled (only if user exists)
+        if (user?.id) {
+          if (data.seller_id === user.id) {
+            setMyAuctions(prev => prev.filter(a => a.id !== data.auction_id));
+          } else {
+            // Fallback: check if it exists in myAuctions (for cases where seller_id might not be in event)
+            setMyAuctions(prev => {
+              const existsInMyAuctions = prev.find(a => a.id === data.auction_id);
+              if (existsInMyAuctions && existsInMyAuctions.seller_id === user.id) {
+                return prev.filter(a => a.id !== data.auction_id);
+              }
+              return prev;
+            });
+          }
+        }
+        
+        // Remove from all public lists (no user check needed)
+        setUpcomingAuctions(prev => prev.filter(a => a.id !== data.auction_id));
+        setActiveAuctions(prev => prev.filter(a => a.id !== data.auction_id));
+        setLiveAuctions(prev => prev.filter(a => a.id !== data.auction_id));
+        setEndingSoonAuctions(prev => prev.filter(a => a.id !== data.auction_id));
+      }
+    };
+
+    // Handler for new bid events - update auction stats in all lists
+    const handleNewBid = (bidData: {
+      auction_id: string;
+      current_bid: number;
+      total_bids: number;
+      unique_bidders: number;
+      view_count?: number;
+      watch_count?: number;
+    }) => {
+      // Helper function to update auction in a list
+      const updateAuctionInList = (list: AuctionWithDetails[], auctionId: string, updates: Partial<AuctionWithDetails>) => {
+        return list.map(auction => 
+          auction.id === auctionId 
+            ? { ...auction, ...updates }
+            : auction
+        );
+      };
+
+      // Update in all public lists (no user check needed)
+      setActiveAuctions(prev => updateAuctionInList(prev, bidData.auction_id, {
+        current_bid: bidData.current_bid,
+        total_bids: bidData.total_bids,
+        unique_bidders: bidData.unique_bidders,
+        ...(bidData.view_count !== undefined && { view_count: bidData.view_count }),
+        ...(bidData.watch_count !== undefined && { watch_count: bidData.watch_count }),
+      }));
+
+      setLiveAuctions(prev => updateAuctionInList(prev, bidData.auction_id, {
+        current_bid: bidData.current_bid,
+        total_bids: bidData.total_bids,
+        unique_bidders: bidData.unique_bidders,
+        ...(bidData.view_count !== undefined && { view_count: bidData.view_count }),
+        ...(bidData.watch_count !== undefined && { watch_count: bidData.watch_count }),
+      }));
+
+      setEndingSoonAuctions(prev => updateAuctionInList(prev, bidData.auction_id, {
+        current_bid: bidData.current_bid,
+        total_bids: bidData.total_bids,
+        unique_bidders: bidData.unique_bidders,
+        ...(bidData.view_count !== undefined && { view_count: bidData.view_count }),
+        ...(bidData.watch_count !== undefined && { watch_count: bidData.watch_count }),
+      }));
+
+      // Only update myAuctions if user exists
+      if (user?.id) {
+        setMyAuctions(prev => updateAuctionInList(prev, bidData.auction_id, {
+          current_bid: bidData.current_bid,
+          total_bids: bidData.total_bids,
+          unique_bidders: bidData.unique_bidders,
+          ...(bidData.view_count !== undefined && { view_count: bidData.view_count }),
+          ...(bidData.watch_count !== undefined && { watch_count: bidData.watch_count }),
+        }));
+      }
+    };
+
+    // Listen for auction status changes (now broadcast globally from backend)
+    auctionSocket.on('auction_status_changed', handleAuctionStatusChanged);
+    
+    // Listen for new bid events
+    auctionSocket.on('new_bid', handleNewBid);
+
+    return () => {
+      // Cleanup: remove listeners
+      auctionSocket.off('auction_status_changed', handleAuctionStatusChanged);
+      auctionSocket.off('new_bid', handleNewBid);
+    };
+  }, [user?.id]); // Keep user?.id in dependencies so handlers can access latest value
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -186,6 +402,9 @@ const AuctionDiscoveryScreen = () => {
       case 'watchlist':
         navigation.navigate('AuctionWatchlist');
         break;
+      case 'myBids':
+        navigation.navigate('AuctionList', { participated: true });
+        break;
     }
   };
 
@@ -208,6 +427,125 @@ const AuctionDiscoveryScreen = () => {
     );
   };
 
+  // Live Auction Video Card Component (separate component to use hooks properly)
+  const LiveAuctionVideoCard = ({ item }: { item: AuctionWithDetails }) => {
+    const player = useVideoPlayer(item.stream_url || '', (player) => {
+      player.loop = true;
+      player.muted = false;
+    });
+
+    useEffect(() => {
+      if (item.stream_url) {
+        player.play();
+      }
+      return () => {
+        player.pause();
+      };
+    }, [item.stream_url, player]);
+
+    return (
+      <TouchableOpacity
+        style={styles.liveAuctionVideoCard}
+        onPress={() => navigateToAuction(item)}
+        activeOpacity={0.9}
+      >
+        {/* Video player */}
+        {item.stream_url ? (
+          <VideoView
+            player={player}
+            style={styles.liveAuctionVideo}
+            contentFit="cover"
+          />
+        ) : (
+          <Image
+            source={{ uri: item.thumbnail_url || item.images[0] || 'https://via.placeholder.com/400x600' }}
+            style={styles.liveAuctionVideo}
+            resizeMode="cover"
+          />
+        )}
+
+        {/* Live badge at top */}
+        <View style={styles.liveVideoBadge}>
+          <View style={styles.liveVideoPulseDot} />
+          <Ionicons name="videocam" size={14} color="white" />
+          <Text style={styles.liveVideoBadgeText}>LIVE STREAMING</Text>
+        </View>
+
+        {/* Auction info overlay at bottom */}
+        <View style={styles.liveAuctionOverlay}>
+          <View style={styles.liveAuctionInfo}>
+            <Text style={styles.liveAuctionTitle} numberOfLines={2}>{item.title}</Text>
+            <View style={styles.liveAuctionBidRow}>
+              <Text style={styles.liveAuctionBid}>
+                Current: {auctionsAPI.formatPrice(item.current_bid)}
+              </Text>
+              <Text style={styles.liveAuctionBids}>{item.total_bids} bids</Text>
+            </View>
+            <View style={styles.liveAuctionFooter}>
+              <Text style={styles.liveAuctionTime}>
+                {item.seconds_remaining ? auctionsAPI.formatTimeRemaining(item.seconds_remaining) : 'Ending soon'}
+              </Text>
+              {item.is_watched_by_user && (
+                <Ionicons name="heart" size={16} color="#E74C3C" />
+              )}
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  // Render regular auction card for grid layout
+  const renderAuctionCardGrid = (item: AuctionWithDetails) => (
+    <TouchableOpacity
+      style={styles.auctionCardGrid}
+      onPress={() => navigateToAuction(item)}
+      activeOpacity={0.8}
+    >
+      <Image
+        source={{ uri: item.thumbnail_url || item.images[0] || 'https://via.placeholder.com/200x150' }}
+        style={styles.auctionImage}
+        resizeMode="cover"
+      />
+
+      <View style={styles.auctionOverlay}>
+        <View style={styles.auctionHeader}>
+          <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(item.time_status) }]}>
+            <Text style={styles.statusText}>
+              {item.time_status === 'active' ? 'LIVE' : item.time_status.toUpperCase()}
+            </Text>
+          </View>
+
+          {item.is_watched_by_user && (
+            <View style={styles.watchedBadge}>
+              <Ionicons name="heart" size={12} color="#E74C3C" />
+            </View>
+          )}
+        </View>
+
+        <View style={styles.auctionDetails}>
+          <Text style={styles.auctionTitle} numberOfLines={1}>{item.title}</Text>
+          <Text style={styles.currentBid}>
+            Current: {auctionsAPI.formatPrice(item.current_bid)}
+          </Text>
+
+          <View style={styles.auctionFooter}>
+            <Text style={styles.timeRemaining}>
+              {item.time_status === 'upcoming'
+                ? `Starts ${item.seconds_remaining ? auctionsAPI.formatTimeRemaining(item.seconds_remaining) : 'soon'}`
+                : item.time_status === 'active'
+                  ? (item.seconds_remaining ? auctionsAPI.formatTimeRemaining(item.seconds_remaining) : 'Ending soon')
+                  : 'Ended'
+              }
+            </Text>
+            <Text style={styles.bidCount}>{item.total_bids} bids</Text>
+          </View>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+
+  // Keep original renderAuctionCard for horizontal scrolling sections
   const renderAuctionCard = ({ item }: { item: AuctionWithDetails }) => (
     <TouchableOpacity
       style={styles.auctionCard}
@@ -265,6 +603,103 @@ const AuctionDiscoveryScreen = () => {
       </View>
     </TouchableOpacity>
   );
+
+  // Build alternating rows between active and live auctions
+  const buildAlternatingAuctionRows = () => {
+    const ITEMS_PER_SECTION = 10; // 10 cards = 5 rows (2 columns each)
+    
+    type AuctionRow = 
+      | { type: 'grid'; items: AuctionWithDetails[] }
+      | { type: 'video'; item: AuctionWithDetails }
+      | { type: 'section-header'; title: string; subtitle: string };
+    
+    const rows: AuctionRow[] = [];
+    let activeIdx = 0;
+    let liveIdx = 0;
+    let currentSection: 'active' | 'live' = 'active'; // Start with active
+    
+    // Add initial section header for active lots
+    if (activeAuctions.length > 0) {
+      rows.push({ 
+        type: 'section-header', 
+        title: 'Active Lots', 
+        subtitle: '⏱️ Bid now!' 
+      });
+    }
+    
+    while (activeIdx < activeAuctions.length || liveIdx < liveAuctions.length) {
+      if (currentSection === 'active') {
+        // Add active auctions in grid format (2 per row)
+        const itemsToAdd = Math.min(ITEMS_PER_SECTION, activeAuctions.length - activeIdx);
+        
+        if (itemsToAdd > 0) {
+          const sectionItems = activeAuctions.slice(activeIdx, activeIdx + itemsToAdd);
+          
+          // Group items into rows of 2
+          for (let i = 0; i < sectionItems.length; i += 2) {
+            const rowItems = sectionItems.slice(i, i + 2);
+            rows.push({ type: 'grid', items: rowItems });
+          }
+          
+          activeIdx += itemsToAdd;
+        }
+        
+        // Switch to live auctions if available
+        if (liveIdx < liveAuctions.length) {
+          currentSection = 'live';
+          rows.push({ 
+            type: 'section-header', 
+            title: 'Live Lots', 
+            subtitle: '🔴 Watch & bid in real-time!' 
+          });
+        } else if (activeIdx < activeAuctions.length) {
+          // More active auctions available, continue with active
+          rows.push({ 
+            type: 'section-header', 
+            title: 'Active Lots', 
+            subtitle: '⏱️ Bid now!' 
+          });
+        } else {
+          break;
+        }
+      } else {
+        // Add live auctions as full-width video cards
+        const itemsToAdd = Math.min(ITEMS_PER_SECTION, liveAuctions.length - liveIdx);
+        
+        if (itemsToAdd > 0) {
+          const sectionItems = liveAuctions.slice(liveIdx, liveIdx + itemsToAdd);
+          
+          // Add each live auction as a full-width video card
+          sectionItems.forEach(item => {
+            rows.push({ type: 'video', item });
+          });
+          
+          liveIdx += itemsToAdd;
+        }
+        
+        // Switch back to active auctions if available
+        if (activeIdx < activeAuctions.length) {
+          currentSection = 'active';
+          rows.push({ 
+            type: 'section-header', 
+            title: 'Active Lots', 
+            subtitle: '⏱️ Bid now!' 
+          });
+        } else if (liveIdx < liveAuctions.length) {
+          // More live auctions available, continue with live
+          rows.push({ 
+            type: 'section-header', 
+            title: 'Live Lots', 
+            subtitle: '🔴 Watch & bid in real-time!' 
+          });
+        } else {
+          break;
+        }
+      }
+    }
+    
+    return rows;
+  };
 
   if (loading) {
     return (
@@ -325,7 +760,7 @@ const AuctionDiscoveryScreen = () => {
                   activeOpacity={0.7}
                 >
                   <Ionicons name="list" size={20} color="#27AE60" />
-                  <Text style={styles.headerOptionText}>My Auctions</Text>
+                  <Text style={styles.headerOptionText}>My Lots</Text>
                 </TouchableOpacity>
 
                 <View style={styles.headerOptionDivider} />
@@ -374,6 +809,17 @@ const AuctionDiscoveryScreen = () => {
               <Ionicons name="star" size={20} color="#E91E63" />
               <Text style={styles.headerOptionText}>Watchlist</Text>
             </TouchableOpacity>
+
+            <View style={styles.headerOptionDivider} />
+
+            <TouchableOpacity
+              style={styles.headerOptionItem}
+              onPress={() => handleOptionPress('myBids')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="pricetag" size={20} color="#9B59B6" />
+              <Text style={styles.headerOptionText}>My Bids</Text>
+            </TouchableOpacity>
           </View>
         </>
       )}
@@ -399,11 +845,11 @@ const AuctionDiscoveryScreen = () => {
           </View>
         </View>
 
-        {/* My Auctions - Only for sellers */}
+        {/* My Lots - Only for sellers */}
         {profile?.isSeller && myAuctions.length > 0 && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>My Auctions</Text>
+              <Text style={styles.sectionTitle}>My Lots</Text>
               <TouchableOpacity onPress={() => navigation.navigate('AuctionList', { seller_id: user?.id })}>
                 <Text style={styles.seeAllText}>See All</Text>
               </TouchableOpacity>
@@ -482,51 +928,62 @@ const AuctionDiscoveryScreen = () => {
           </View>
         )}
 
-        {/* Live Lots - Streaming Now */}
-        {liveAuctions.length > 0 && (
+        {/* Active & Live Lots - Alternating Vertical Layout */}
+        {(activeAuctions.length > 0 || liveAuctions.length > 0) && (
           <View style={styles.section}>
+            {buildAlternatingAuctionRows().map((row, rowIndex) => {
+              if (row.type === 'section-header') {
+                return (
+                  <View key={`header-${rowIndex}`} style={styles.sectionHeader}>
+                    <View>
+                      <Text style={styles.sectionTitle}>{row.title}</Text>
+                      <Text style={styles.urgentText}>{row.subtitle}</Text>
+                    </View>
+                  </View>
+                );
+              } else if (row.type === 'video') {
+                // Full-width video card for live auctions
+                return (
+                  <View key={`video-${rowIndex}-${row.item.id}`} style={styles.liveAuctionVideoCardContainer}>
+                    <LiveAuctionVideoCard item={row.item} />
+                  </View>
+                );
+              } else if (row.type === 'grid') {
+                // 2-column grid for active auctions
+                return (
+                  <View key={`grid-${rowIndex}`} style={styles.auctionGridRow}>
+                    {row.items.map((item) => (
+                      <View key={item.id} style={styles.auctionGridItem}>
+                        {renderAuctionCardGrid(item)}
+                      </View>
+                    ))}
+                    {/* Fill empty space if only 1 item in row */}
+                    {row.items.length === 1 && <View style={styles.auctionGridItem} />}
+                  </View>
+                );
+              }
+              return null;
+            })}
+            
+            {/* See All buttons */}
             <View style={styles.sectionHeader}>
-              <View>
-                <Text style={styles.sectionTitle}>Live Lots</Text>
-                <Text style={styles.urgentText}>🔴 Watch & bid in real-time!</Text>
-              </View>
-              <TouchableOpacity onPress={() => navigation.navigate('AuctionList', { status: 'active', auction_type: 'live' })}>
-                <Text style={styles.seeAllText}>See All</Text>
-              </TouchableOpacity>
+              {activeAuctions.length > 0 && (
+                <TouchableOpacity 
+                  onPress={() => navigation.navigate('AuctionList', { status: 'active', auction_type: 'timed' })}
+                  style={styles.seeAllButton}
+                >
+                  <Text style={styles.seeAllText}>See All Active Lots</Text>
+                </TouchableOpacity>
+              )}
+              {liveAuctions.length > 0 && (
+                <TouchableOpacity 
+                  onPress={() => navigation.navigate('AuctionList', { status: 'active', auction_type: 'live' })}
+                  style={styles.seeAllButton}
+                >
+                  <Text style={styles.seeAllText}>See All Live Lots</Text>
+                </TouchableOpacity>
+              )}
             </View>
-
-            <FlatList
-              data={liveAuctions}
-              renderItem={renderAuctionCard}
-              keyExtractor={(item) => item.id}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.auctionsList}
-            />
-          </View>
-        )}
-
-        {/* Active Lots - Timed Auctions */}
-        {activeAuctions.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View>
-                <Text style={styles.sectionTitle}>Active Lots</Text>
-                <Text style={styles.urgentText}>⏱️ Bid now!</Text>
-              </View>
-              <TouchableOpacity onPress={() => navigation.navigate('AuctionList', { status: 'active', auction_type: 'timed' })}>
-                <Text style={styles.seeAllText}>See All</Text>
-              </TouchableOpacity>
-            </View>
-
-            <FlatList
-              data={activeAuctions}
-              renderItem={renderAuctionCard}
-              keyExtractor={(item) => item.id}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.auctionsList}
-            />
           </View>
         )}
 
@@ -757,6 +1214,106 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginRight: 12,
     overflow: 'hidden',
+  },
+  auctionCardGrid: {
+    width: '100%',
+    height: 220,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  auctionGridRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingHorizontal: 20,
+  },
+  auctionGridItem: {
+    width: '48%',
+  },
+  liveAuctionVideoCardContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
+  liveAuctionVideoCard: {
+    width: '100%',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  liveAuctionVideo: {
+    width: '100%',
+    height: screenWidth * (9/16), // 16:9 aspect ratio
+    backgroundColor: '#000',
+  },
+  liveVideoBadge: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    backgroundColor: '#E74C3C',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  liveVideoPulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'white',
+  },
+  liveVideoBadgeText: {
+    color: 'white',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  liveAuctionOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    padding: 16,
+  },
+  liveAuctionInfo: {
+    flex: 1,
+  },
+  liveAuctionTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  liveAuctionBidRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  liveAuctionBid: {
+    color: '#27AE60',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  liveAuctionBids: {
+    color: '#888',
+    fontSize: 14,
+  },
+  liveAuctionFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  liveAuctionTime: {
+    color: '#F39C12',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  seeAllButton: {
+    marginTop: 8,
   },
   auctionImage: {
     width: '100%',

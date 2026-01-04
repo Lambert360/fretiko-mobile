@@ -56,6 +56,7 @@ const CreateAuctionScreen: React.FC = () => {
   const [startTime, setStartTime] = useState(new Date());
   const [endTime, setEndTime] = useState(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)); // 7 days from now
   const [images, setImages] = useState<string[]>([]);
+  const [video, setVideo] = useState<string | null>(null);
   const [softCloseEnabled, setSoftCloseEnabled] = useState(true);
   const [softCloseExtension, setSoftCloseExtension] = useState('5'); // minutes (will be converted to seconds)
   const [auctioneerEnabled, setAuctioneerEnabled] = useState(false);
@@ -110,6 +111,11 @@ const CreateAuctionScreen: React.FC = () => {
     // Set images if available
     if (data.images && data.images.length > 0) {
       setImages(data.images);
+    }
+
+    // Set video if available
+    if (data.video_url) {
+      setVideo(data.video_url);
     }
 
     // Set category (will be matched after categories load)
@@ -170,56 +176,111 @@ const CreateAuctionScreen: React.FC = () => {
     setImages(images.filter((_, i) => i !== index));
   };
 
-  const validateForm = (): boolean => {
-    if (!title.trim()) {
-      Alert.alert('Missing Title', 'Please enter an auction title');
-      return false;
-    }
+  const pickVideo = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        allowsEditing: true,
+        quality: 0.8,
+      });
 
-    if (!description.trim()) {
-      Alert.alert('Missing Description', 'Please describe your auction lot');
-      return false;
-    }
-
-    if (!selectedCategory) {
-      Alert.alert('Missing Category', 'Please select a category');
-      return false;
-    }
-
-    if (!startingPrice || parseFloat(startingPrice) <= 0) {
-      Alert.alert('Invalid Starting Price', 'Please enter a valid starting price');
-      return false;
-    }
-
-    if (images.length === 0) {
-      Alert.alert('Missing Images', 'Please add at least one image');
-      return false;
-    }
-
-    if (reservePrice && parseFloat(reservePrice) < parseFloat(startingPrice)) {
-      Alert.alert('Invalid Reserve Price', 'Reserve price must be higher than starting price');
-      return false;
-    }
-
-    if (startTime >= endTime) {
-      Alert.alert('Invalid Timing', 'End time must be after start time');
-      return false;
-    }
-
-    if (softCloseEnabled) {
-      const extensionMinutes = parseInt(softCloseExtension);
-      if (isNaN(extensionMinutes) || extensionMinutes < 1) {
-        Alert.alert('Invalid Extension Time', 'Extension time must be at least 1 minute');
-        return false;
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        // Note: We'll let the backend handle size validation (50MB max)
+        setVideo(asset.uri);
       }
+    } catch (error) {
+      console.error('Error picking video:', error);
+      Alert.alert('Error', 'Failed to pick video');
     }
+  };
 
-    return true;
+  const removeVideo = () => {
+    setVideo(null);
+  };
+
+  const validateForm = (): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (!title.trim()) {
+        Alert.alert('Missing Title', 'Please enter an auction title');
+        resolve(false);
+        return;
+      }
+
+      if (!description.trim()) {
+        Alert.alert('Missing Description', 'Please describe your auction lot');
+        resolve(false);
+        return;
+      }
+
+      if (!selectedCategory) {
+        Alert.alert('Missing Category', 'Please select a category');
+        resolve(false);
+        return;
+      }
+
+      if (!startingPrice || parseFloat(startingPrice) <= 0) {
+        Alert.alert('Invalid Starting Price', 'Please enter a valid starting price');
+        resolve(false);
+        return;
+      }
+
+      if (reservePrice && parseFloat(reservePrice) < parseFloat(startingPrice)) {
+        Alert.alert('Invalid Reserve Price', 'Reserve price must be higher than starting price');
+        resolve(false);
+        return;
+      }
+
+      if (startTime >= endTime) {
+        Alert.alert('Invalid Timing', 'End time must be after start time');
+        resolve(false);
+        return;
+      }
+
+      if (softCloseEnabled) {
+        const extensionMinutes = parseInt(softCloseExtension);
+        if (isNaN(extensionMinutes) || extensionMinutes < 1) {
+          Alert.alert('Invalid Extension Time', 'Extension time must be at least 1 minute');
+          resolve(false);
+          return;
+        }
+      }
+
+      // Images are recommended but not mandatory
+      // Show warning if no images but allow continue
+      if (images.length === 0) {
+        const message = video
+          ? 'Adding photos will help attract more bidders and make your auction stand out!\n\nA thumbnail will be generated from your video, but photos provide better visibility in listings.'
+          : 'Adding photos will help attract more bidders and make your auction stand out!\n\nWe recommend adding at least one photo for better visibility.';
+        
+        Alert.alert(
+          'No Photos Added',
+          message,
+          [
+            {
+              text: 'Add Photos',
+              style: 'cancel',
+              onPress: () => resolve(false),
+            },
+            {
+              text: 'Continue Anyway',
+              style: 'default',
+              onPress: () => resolve(true),
+            },
+          ],
+          { cancelable: true }
+        );
+        return;
+      }
+
+      resolve(true);
+    });
   };
 
   const handleCreateAuction = async () => {
     try {
-      if (!validateForm()) return;
+      const isValid = await validateForm();
+      if (!isValid) return;
 
       setLoading(true);
 
@@ -283,8 +344,19 @@ const CreateAuctionScreen: React.FC = () => {
           } as any);
         }
 
+        // Add video file if provided
+        if (video) {
+          const fileExtension = video.split('.').pop() || 'mp4';
+          const filename = `auction-video.${fileExtension}`;
+          formData.append('video', {
+            uri: video,
+            type: 'video/mp4',
+            name: filename,
+          } as any);
+        }
+
         const action = isRelistMode ? 'Relisting' : 'Creating';
-        console.log(`🔨 ${action} auction with`, images.length, 'images');
+        console.log(`🔨 ${action} auction with`, images.length, 'images', video ? 'and 1 video' : '');
 
         successAuction = await auctionsAPI.createAuctionWithImages(formData);
 
@@ -474,30 +546,36 @@ const CreateAuctionScreen: React.FC = () => {
               {categoriesLoading ? (
                 <ActivityIndicator color="#8E44AD" style={{ padding: 20 }} />
               ) : (
-                categories.map((category) => (
-                  <TouchableOpacity
-                    key={category.id}
-                    style={[
-                      styles.categoryOption,
-                      selectedCategory?.id === category.id && styles.categoryOptionSelected,
-                    ]}
-                    onPress={() => {
-                      setSelectedCategory(category);
-                      setShowCategoryPicker(false);
-                    }}
-                  >
-                    <View style={[styles.categoryIconSmall, { backgroundColor: `${category.color}20` }]}>
-                      <Ionicons name={category.icon_name as any} size={18} color={category.color} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.categoryOptionName}>{category.name}</Text>
-                      <Text style={styles.categoryOptionDesc}>{category.description}</Text>
-                    </View>
-                    {selectedCategory?.id === category.id && (
-                      <Ionicons name="checkmark-circle" size={20} color="#8E44AD" />
-                    )}
-                  </TouchableOpacity>
-                ))
+                <ScrollView 
+                  style={styles.categoryPickerScroll}
+                  nestedScrollEnabled={true}
+                  showsVerticalScrollIndicator={true}
+                >
+                  {categories.map((category) => (
+                    <TouchableOpacity
+                      key={category.id}
+                      style={[
+                        styles.categoryOption,
+                        selectedCategory?.id === category.id && styles.categoryOptionSelected,
+                      ]}
+                      onPress={() => {
+                        setSelectedCategory(category);
+                        setShowCategoryPicker(false);
+                      }}
+                    >
+                      <View style={[styles.categoryIconSmall, { backgroundColor: `${category.color}20` }]}>
+                        <Ionicons name={category.icon_name as any} size={18} color={category.color} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.categoryOptionName}>{category.name}</Text>
+                        <Text style={styles.categoryOptionDesc}>{category.description}</Text>
+                      </View>
+                      {selectedCategory?.id === category.id && (
+                        <Ionicons name="checkmark-circle" size={20} color="#8E44AD" />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
               )}
             </View>
           )}
@@ -647,6 +725,7 @@ const CreateAuctionScreen: React.FC = () => {
               value={startTime}
               mode="datetime"
               display="default"
+              themeVariant="dark"
               onChange={(event, selectedDate) => {
                 setShowStartTimePicker(Platform.OS === 'ios');
                 if (selectedDate) setStartTime(selectedDate);
@@ -673,6 +752,7 @@ const CreateAuctionScreen: React.FC = () => {
               value={endTime}
               mode="datetime"
               display="default"
+              themeVariant="dark"
               onChange={(event, selectedDate) => {
                 setShowEndTimePicker(Platform.OS === 'ios');
                 if (selectedDate) setEndTime(selectedDate);
@@ -681,41 +761,72 @@ const CreateAuctionScreen: React.FC = () => {
           )}
         </View>
 
-        {/* Images Section */}
+        {/* Media Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Ionicons name="images" size={20} color="#8E44AD" />
-            <Text style={styles.sectionTitle}>Auction Images</Text>
+            <Text style={styles.sectionTitle}>Auction Media</Text>
           </View>
 
-          <TouchableOpacity style={styles.imagePickerButton} onPress={pickImages}>
-            <Ionicons name="camera" size={32} color="#8E44AD" />
-            <Text style={styles.imagePickerButtonText}>Add Photos (Max 10)</Text>
-            <Text style={styles.imagePickerButtonHint}>
-              High-quality images attract more bidders
+          {/* Video Section */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Video (Optional)</Text>
+            <Text style={styles.inputHint}>
+              Add a video showcase for your auction lot (Max 50MB)
             </Text>
-          </TouchableOpacity>
-
-          {images.length > 0 && (
-            <View style={styles.imageGrid}>
-              {images.map((uri, index) => (
-                <View key={index} style={styles.imagePreviewContainer}>
-                  <Image source={{ uri }} style={styles.imagePreview} />
-                  <TouchableOpacity
-                    style={styles.imageRemoveButton}
-                    onPress={() => removeImage(index)}
-                  >
-                    <Ionicons name="close-circle" size={24} color="#E74C3C" />
-                  </TouchableOpacity>
-                  {index === 0 && (
-                    <View style={styles.primaryImageBadge}>
-                      <Text style={styles.primaryImageBadgeText}>Primary</Text>
-                    </View>
-                  )}
+            {!video ? (
+              <TouchableOpacity style={styles.videoPickerButton} onPress={pickVideo}>
+                <Ionicons name="videocam" size={32} color="#8E44AD" />
+                <Text style={styles.videoPickerButtonText}>Add Video</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.videoPreviewContainer}>
+                <View style={styles.videoPreview}>
+                  <Ionicons name="play-circle" size={48} color="#FFF" />
+                  <Text style={styles.videoPreviewText}>Video Selected</Text>
                 </View>
-              ))}
-            </View>
-          )}
+                <TouchableOpacity
+                  style={styles.videoRemoveButton}
+                  onPress={removeVideo}
+                >
+                  <Ionicons name="close-circle" size={24} color="#E74C3C" />
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
+          {/* Images Section */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Photos *</Text>
+            <Text style={styles.inputHint}>
+              Add high-quality images (Max 10). At least one image is required.
+            </Text>
+            <TouchableOpacity style={styles.imagePickerButton} onPress={pickImages}>
+              <Ionicons name="camera" size={32} color="#8E44AD" />
+              <Text style={styles.imagePickerButtonText}>Add Photos (Max 10)</Text>
+            </TouchableOpacity>
+
+            {images.length > 0 && (
+              <View style={styles.imageGrid}>
+                {images.map((uri, index) => (
+                  <View key={index} style={styles.imagePreviewContainer}>
+                    <Image source={{ uri }} style={styles.imagePreview} />
+                    <TouchableOpacity
+                      style={styles.imageRemoveButton}
+                      onPress={() => removeImage(index)}
+                    >
+                      <Ionicons name="close-circle" size={24} color="#E74C3C" />
+                    </TouchableOpacity>
+                    {index === 0 && (
+                      <View style={styles.primaryImageBadge}>
+                        <Text style={styles.primaryImageBadgeText}>Primary</Text>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
         </View>
 
         {/* Advanced Settings Section */}
@@ -928,6 +1039,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#333',
     maxHeight: 300,
+    overflow: 'hidden',
+  },
+  categoryPickerScroll: {
+    maxHeight: 300,
   },
   categoryOption: {
     flexDirection: 'row',
@@ -1055,7 +1170,7 @@ const styles = StyleSheet.create({
     gap: 12,
     backgroundColor: '#1a1a1a',
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#555',
     borderRadius: 12,
     padding: 16,
   },
@@ -1083,6 +1198,49 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 12,
     marginTop: 4,
+  },
+  videoPickerButton: {
+    backgroundColor: '#1a1a1a',
+    borderWidth: 2,
+    borderColor: '#8E44AD',
+    borderStyle: 'dashed',
+    borderRadius: 12,
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  videoPickerButtonText: {
+    color: '#8E44AD',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginTop: 8,
+  },
+  videoPreviewContainer: {
+    marginTop: 8,
+    position: 'relative',
+  },
+  videoPreview: {
+    width: '100%',
+    height: 200,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoPreviewText: {
+    color: '#FFF',
+    fontSize: 14,
+    marginTop: 8,
+  },
+  videoRemoveButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: '#000',
+    borderRadius: 12,
   },
   imageGrid: {
     flexDirection: 'row',

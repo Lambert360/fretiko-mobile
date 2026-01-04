@@ -54,6 +54,16 @@ const OrdersScreen = () => {
     }
   };
 
+  const getOrderSourceInfo = (source?: string) => {
+    switch (source) {
+      case 'regular': return { label: 'Store', icon: 'storefront-outline', color: '#007AFF' };
+      case 'live_stream': return { label: 'Live', icon: 'videocam-outline', color: '#FF2D92' };
+      case 'auction': return { label: 'Auction', icon: 'hammer-outline', color: '#FF9500' };
+      case 'service_booking': return { label: 'Service', icon: 'construct-outline', color: '#34C759' };
+      default: return { label: 'Store', icon: 'storefront-outline', color: '#007AFF' };
+    }
+  };
+
   const getStatusText = (status: string) => {
     switch (status) {
       case 'pending': return 'Pending';
@@ -142,7 +152,19 @@ const OrdersScreen = () => {
       >
         <View style={styles.orderHeader}>
           <View style={styles.orderInfo}>
-            <Text style={styles.orderNumber}>#{item.orderNumber}</Text>
+            <View style={styles.orderInfoRow}>
+              <Text style={styles.orderNumber}>#{item.orderNumber}</Text>
+              {/* Order Source Badge */}
+              {item.source && (() => {
+                const sourceInfo = getOrderSourceInfo(item.source);
+                return (
+                  <View style={[styles.sourceBadge, { backgroundColor: sourceInfo.color }]}>
+                    <Ionicons name={sourceInfo.icon as any} size={10} color="white" />
+                    <Text style={styles.sourceText}>{sourceInfo.label}</Text>
+                  </View>
+                );
+              })()}
+            </View>
             <Text style={styles.orderDate}>{formatDate(item.orderDate)}</Text>
           </View>
           
@@ -376,11 +398,29 @@ const styles = StyleSheet.create({
   orderInfo: {
     flex: 1,
   },
+  orderInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   orderNumber: {
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
-    marginBottom: 4,
+  },
+  sourceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+    marginLeft: 8,
+  },
+  sourceText: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: 'white',
+    marginLeft: 3,
   },
   orderDate: {
     color: '#888',

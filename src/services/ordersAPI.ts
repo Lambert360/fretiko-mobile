@@ -13,6 +13,14 @@ export interface Order {
   estimatedDelivery?: string;
   deliveryAddress?: DeliveryAddress;
   items: OrderItem[];
+  source?: 'regular' | 'live_stream' | 'auction' | 'service_booking';
+  metadata?: {
+    auction_id?: string;
+    subtotal?: number;
+    tax_amount?: number;
+    escrow_fee?: number;
+    [key: string]: any;
+  };
 }
 
 export interface OrderDetails extends Order {
