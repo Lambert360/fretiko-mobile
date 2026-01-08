@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,18 +13,25 @@ import {
   Alert,
   TextInput,
   Modal,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { workspaceAPI, WorkspaceOrder } from '../services/workspaceAPI';
 import { disputesAPI } from '../services/disputesAPI';
+import { riderLocationAPI } from '../services/riderLocationAPI';
+import { realtimeAPI } from '../services/realtimeAPI';
+import * as Location from 'expo-location';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface VendorOrderDetailsParams {
   orderId: string;
 }
 
 interface OrderDetailsData extends WorkspaceOrder {
+  vendor_id?: string; // ✅ Order-specific vendor ID
+  rider_id?: string; // ✅ Order-specific rider ID
   customer: {
     id: string;
     name: string;
@@ -36,6 +43,20 @@ interface OrderDetailsData extends WorkspaceOrder {
     address: string;
     coordinates?: { latitude: number; longitude: number };
     instructions?: string;
+  };
+  vendorLocation?: {
+    address: string;
+    coordinates?: { latitude: number; longitude: number };
+  };
+  vendorInfo?: {
+    id: string;
+    name: string;
+    phone?: string | null;
+  };
+  riderLocation?: {
+    latitude: number;
+    longitude: number;
+    timestamp: string;
   };
   timeline: Array<{
     status: string;
@@ -52,6 +73,7 @@ const VendorOrderDetailsScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const { orderId } = route.params as VendorOrderDetailsParams;
 
@@ -61,14 +83,207 @@ const VendorOrderDetailsScreen: React.FC = () => {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showNotesModal, setShowNotesModal] = useState(false);
   const [showPrepTimeModal, setShowPrepTimeModal] = useState(false);
+  const [showMapModal, setShowMapModal] = useState(false); // ✅ Map modal state
   const [notes, setNotes] = useState('');
   const [prepTime, setPrepTime] = useState('');
   const [existingDisputeId, setExistingDisputeId] = useState<string | null>(null);
+  const [locationPermission, setLocationPermission] = useState<boolean>(false);
+  const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const locationSubscriptionRef = useRef<Location.LocationSubscription | null>(null);
 
   useEffect(() => {
     loadOrderDetails();
     checkExistingDispute();
+    requestLocationPermission();
+    
+    // Cleanup location subscription on unmount
+    return () => {
+      if (locationSubscriptionRef.current) {
+        locationSubscriptionRef.current.remove();
+        locationSubscriptionRef.current = null;
+      }
+    };
   }, [orderId]);
+
+  // ✅ Screen focus refresh - reload order details when screen regains focus
+  useFocusEffect(
+    useCallback(() => {
+      // Refresh order details when screen comes into focus
+      if (orderId) {
+        loadOrderDetails(false); // Don't show loading indicator on focus refresh
+      }
+    }, [orderId])
+  );
+
+  // ✅ WebSocket subscriptions for real-time updates
+  useEffect(() => {
+    console.log('🔌 Setting up WebSocket listeners for order:', orderId);
+
+    // ✅ Subscribe to real-time rider location updates (only when map modal is open)
+    const riderLocationListener = realtimeAPI.subscribe('rider_location_update', (data: any) => {
+      // Only process if map modal is open
+      if (!showMapModal) return;
+      
+      console.log('🏍️ Rider location update received:', data);
+      
+      // Update rider location in order details
+      if (data.orderId === orderId && data.latitude && data.longitude) {
+        setOrderDetails(prev => {
+          if (!prev) return null;
+          
+          // Skip if order is already delivered
+          if (prev.status === 'delivered') return prev;
+          
+          // Only update if location changed
+          const locationChanged = !prev.riderLocation || 
+            prev.riderLocation.latitude !== data.latitude || 
+            prev.riderLocation.longitude !== data.longitude;
+          
+          if (!locationChanged) return prev;
+          
+          return {
+            ...prev,
+            riderLocation: {
+              latitude: data.latitude,
+              longitude: data.longitude,
+              timestamp: data.timestamp || new Date().toISOString(),
+            },
+          };
+        });
+      }
+    });
+
+    // ✅ Subscribe to order status updates from workspace (vendor/rider updates)
+    const orderStatusListener = realtimeAPI.subscribe('order_status_update', (data: any) => {
+      console.log('📦 Order status update received from workspace:', data);
+      
+      // Update order status and related fields from workspace updates
+      if (data.orderId === orderId) {
+        setOrderDetails(prev => {
+          if (!prev) return null;
+          
+          const updates: any = {};
+          
+          // Update status if provided
+          if (data.status && prev.status !== data.status) {
+            updates.status = data.status;
+          }
+          
+          // Update timeline if provided
+          if (data.timeline) {
+            updates.timeline = data.timeline;
+          }
+          
+          // Update metadata if provided
+          if (data.metadata) {
+            updates.metadata = { ...prev.metadata, ...data.metadata };
+          }
+          
+          // Update rider location if provided
+          if (data.riderLocation) {
+            updates.riderLocation = data.riderLocation;
+          }
+          
+          // Only update if there are actual changes
+          if (Object.keys(updates).length === 0) return prev;
+          
+          return { ...prev, ...updates };
+        });
+        
+        // If status changed significantly, reload full order details
+        if (data.status && orderDetails && data.status !== orderDetails.status) {
+          console.log(`✅ Order status changed from ${orderDetails.status} to ${data.status}, reloading...`);
+          loadOrderDetails(false); // Silent reload
+        }
+        
+        console.log(`✅ Order updated from workspace: ${data.status || 'metadata update'}`);
+      }
+    });
+
+    // Cleanup
+    return () => {
+      console.log('🔌 Cleaning up WebSocket listeners for order:', orderId);
+      riderLocationListener();
+      orderStatusListener();
+    };
+  }, [orderId, showMapModal]); // ✅ Re-subscribe if orderId or map modal status changes
+
+  // ✅ Request location permission for map
+  const requestLocationPermission = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      setLocationPermission(status === 'granted');
+      
+      if (status === 'granted') {
+        // Get current location for riders (only if they're the rider for this order)
+        if (orderDetails?.rider_id === user?.id) {
+          try {
+            const location = await Location.getCurrentPositionAsync();
+            setCurrentLocation({
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+            });
+            
+            // Start watching position for riders to update in real-time
+            const subscription = await Location.watchPositionAsync(
+              {
+                accuracy: Location.Accuracy.Balanced,
+                timeInterval: 5000, // Update every 5 seconds
+                distanceInterval: 10, // Or every 10 meters
+              },
+              (location) => {
+                setCurrentLocation({
+                  latitude: location.coords.latitude,
+                  longitude: location.coords.longitude,
+                });
+              }
+            );
+            locationSubscriptionRef.current = subscription;
+          } catch (error) {
+            console.error('Error getting current location:', error);
+          }
+        }
+      } else {
+        // Stop watching if permission revoked
+        if (locationSubscriptionRef.current) {
+          locationSubscriptionRef.current.remove();
+          locationSubscriptionRef.current = null;
+        }
+      }
+    } catch (error) {
+      console.error('Error requesting location permission:', error);
+    }
+  };
+
+  // ✅ Open directions to buyer location
+  const openDirections = () => {
+    if (!orderDetails?.deliveryDetails?.coordinates) {
+      Alert.alert('Error', 'Delivery location coordinates not available');
+      return;
+    }
+
+    const { latitude, longitude } = orderDetails.deliveryDetails.coordinates;
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+    
+    Linking.openURL(url).catch(() => {
+      Alert.alert('Error', 'Could not open maps app');
+    });
+  };
+
+  // ✅ Open directions to vendor location (for riders)
+  const openDirectionsToVendor = () => {
+    if (!orderDetails?.vendorLocation?.coordinates) {
+      Alert.alert('Error', 'Vendor location coordinates not available');
+      return;
+    }
+
+    const { latitude, longitude } = orderDetails.vendorLocation.coordinates;
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+    
+    Linking.openURL(url).catch(() => {
+      Alert.alert('Error', 'Could not open maps app');
+    });
+  };
 
   const checkExistingDispute = async () => {
     try {
@@ -236,8 +451,11 @@ const VendorOrderDetailsScreen: React.FC = () => {
     if (!orderDetails || !user) return [];
 
     const actions = [];
+    const isVendorForThisOrder = orderDetails.vendor_id === user.id;
+    const isRiderForThisOrder = orderDetails.rider_id === user.id;
 
-    if (user.isSeller) {
+    // ✅ Vendor actions (only if user is the vendor for THIS order)
+    if (isVendorForThisOrder) {
       switch (orderDetails.status) {
         case 'pending':
           actions.push(
@@ -253,7 +471,8 @@ const VendorOrderDetailsScreen: React.FC = () => {
       }
     }
 
-    if (user.isRider) {
+    // ✅ Rider actions (only if user is the rider for THIS order)
+    if (isRiderForThisOrder) {
       switch (orderDetails.status) {
         case 'ready_for_pickup':
           actions.push(
@@ -269,6 +488,221 @@ const VendorOrderDetailsScreen: React.FC = () => {
     }
 
     return actions;
+  };
+
+  // ✅ Render Workspace Map (vendor/rider view)
+  const renderWorkspaceMap = () => {
+    if (!orderDetails) return null;
+
+    const buyerLocation = orderDetails.deliveryDetails?.coordinates;
+    const vendorLocation = orderDetails.vendorLocation?.coordinates;
+    const riderLocation = orderDetails.riderLocation;
+    const currentLoc = currentLocation;
+
+    if (!locationPermission) {
+      return (
+        <View style={styles.mapPlaceholder}>
+          <Ionicons name="location-off" size={48} color="#888" />
+          <Text style={styles.mapPlaceholderText}>Location Permission Required</Text>
+          <TouchableOpacity 
+            style={styles.permissionButton}
+            onPress={requestLocationPermission}
+          >
+            <Text style={styles.permissionButtonText}>Enable Location</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    if (!buyerLocation) {
+      return (
+        <View style={styles.mapPlaceholder}>
+          <Ionicons name="map-outline" size={48} color="#888" />
+          <Text style={styles.mapPlaceholderText}>Delivery location not available</Text>
+        </View>
+      );
+    }
+
+    // Calculate distance and ETA for riders (only if user is the rider for this order)
+    let distance = 0;
+    let eta = 0;
+    const isRiderForThisOrder = orderDetails.rider_id === user?.id;
+    if (isRiderForThisOrder && (riderLocation || currentLoc) && buyerLocation) {
+      distance = riderLocationAPI.calculateDistance(
+        (riderLocation || currentLoc)!.latitude,
+        (riderLocation || currentLoc)!.longitude,
+        buyerLocation.latitude,
+        buyerLocation.longitude
+      );
+      eta = riderLocationAPI.calculateETA(distance, 'bike');
+    }
+
+    return (
+      <View style={styles.workspaceMapContainer}>
+        {/* Map Visualization */}
+        <View style={styles.workspaceMapVisualization}>
+          {/* Vendor Point */}
+          {vendorLocation && (
+            <View style={styles.mapPoint}>
+              <View style={styles.mapMarkerVendor}>
+                <Ionicons name="storefront" size={24} color="white" />
+              </View>
+              <Text style={styles.mapPointLabel}>Vendor</Text>
+            </View>
+          )}
+
+          {/* Route Line (if vendor and buyer) */}
+          {vendorLocation && buyerLocation && (
+            <View style={styles.mapRouteLine}>
+              <View style={styles.mapRouteLineFill} />
+            </View>
+          )}
+
+          {/* Rider/Current Location Point */}
+          {(riderLocation || (isRiderForThisOrder && currentLoc)) && (
+            <>
+              {vendorLocation && buyerLocation && (
+                <View style={styles.mapRouteLine}>
+                  <View style={styles.mapRouteLineFill} />
+                </View>
+              )}
+              <View style={styles.mapPoint}>
+                <View style={styles.mapMarkerRider}>
+                  <Ionicons name="car" size={20} color="white" />
+                </View>
+                <Text style={styles.mapPointLabel}>
+                  {isRiderForThisOrder ? 'You' : 'Rider'}
+                </Text>
+              </View>
+            </>
+          )}
+
+          {/* Buyer Point */}
+          <View style={styles.mapPoint}>
+            <View style={styles.mapMarkerBuyer}>
+              <Ionicons name="home" size={24} color="white" />
+            </View>
+            <Text style={styles.mapPointLabel}>Delivery</Text>
+          </View>
+        </View>
+
+        {/* Distance and ETA Overlay (for riders - only if user is the rider for this order) */}
+        {isRiderForThisOrder && (riderLocation || currentLoc) && buyerLocation && (
+          <View style={styles.mapOverlay}>
+            <View style={styles.mapOverlayRow}>
+              <Ionicons name="location" size={18} color="#007AFF" />
+              <Text style={styles.mapOverlayText}>
+                {riderLocationAPI.formatDistance(distance)} remaining
+              </Text>
+            </View>
+            <View style={styles.mapOverlayRow}>
+              <Ionicons name="time" size={18} color="#27AE60" />
+              <Text style={styles.mapOverlayText}>
+                ETA: {riderLocationAPI.formatETA(eta)}
+              </Text>
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  // ✅ Render Map Modal
+  const renderMapModal = () => {
+    if (!orderDetails) return null;
+
+    const buyerLocation = orderDetails.deliveryDetails?.coordinates;
+    const vendorLocation = orderDetails.vendorLocation?.coordinates;
+    const riderLocation = orderDetails.riderLocation;
+    const currentLoc = currentLocation;
+    const isRiderForThisOrder = orderDetails.rider_id === user?.id; // ✅ Check if user is rider for THIS order
+
+    return (
+      <View style={[styles.mapModalContainer, { paddingTop: insets.top }]}>
+        {/* Modal Header */}
+        <View style={styles.mapModalHeader}>
+          <TouchableOpacity 
+            style={styles.mapModalCloseButton}
+            onPress={() => setShowMapModal(false)}
+          >
+            <Ionicons name="arrow-back" size={24} color="white" />
+          </TouchableOpacity>
+          <Text style={styles.mapModalTitle}>Order Map</Text>
+          {buyerLocation && (
+            <TouchableOpacity 
+              style={styles.mapModalDirectionsButton}
+              onPress={openDirections}
+            >
+              <Ionicons name="navigate" size={24} color="#007AFF" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Map Visualization */}
+        <View style={styles.mapModalMapContainer}>
+          {renderWorkspaceMap()}
+        </View>
+
+        {/* Location Info */}
+        <View style={styles.mapModalInfo}>
+          {buyerLocation && (
+            <View style={styles.mapLocationItem}>
+              <View style={[styles.mapLocationIcon, { backgroundColor: 'rgba(39, 174, 96, 0.2)' }]}>
+                <Ionicons name="home" size={20} color="#27AE60" />
+              </View>
+              <View style={styles.mapLocationDetails}>
+                <Text style={styles.mapLocationLabel}>Delivery Location</Text>
+                <Text style={styles.mapLocationAddress} numberOfLines={2}>
+                  {orderDetails.deliveryDetails.address}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {vendorLocation && (
+            <View style={styles.mapLocationItem}>
+              <View style={[styles.mapLocationIcon, { backgroundColor: 'rgba(0, 122, 255, 0.2)' }]}>
+                <Ionicons name="storefront" size={20} color="#007AFF" />
+              </View>
+              <View style={styles.mapLocationDetails}>
+                <Text style={styles.mapLocationLabel}>Vendor Location</Text>
+                <Text style={styles.mapLocationAddress} numberOfLines={2}>
+                  {orderDetails.vendorLocation.address}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {(riderLocation || (isRiderForThisOrder && currentLoc)) && (
+            <View style={styles.mapLocationItem}>
+              <View style={[styles.mapLocationIcon, { backgroundColor: 'rgba(243, 156, 18, 0.2)' }]}>
+                <Ionicons name="car" size={20} color="#F39C12" />
+              </View>
+              <View style={styles.mapLocationDetails}>
+                <Text style={styles.mapLocationLabel}>
+                  {isRiderForThisOrder ? 'Your Location' : 'Rider Location'}
+                </Text>
+                <Text style={styles.mapLocationAddress}>
+                  {isRiderForThisOrder ? 'Current Position' : 'In Transit'}
+                </Text>
+                {buyerLocation && (riderLocation || currentLoc) && (
+                  <Text style={styles.mapDistanceText}>
+                    {riderLocationAPI.formatDistance(
+                      riderLocationAPI.calculateDistance(
+                        (riderLocation || currentLoc)!.latitude,
+                        (riderLocation || currentLoc)!.longitude,
+                        buyerLocation.latitude,
+                        buyerLocation.longitude
+                      )
+                    )} away
+                  </Text>
+                )}
+              </View>
+            </View>
+          )}
+        </View>
+      </View>
+    );
   };
 
   if (loading) {
@@ -416,10 +850,89 @@ const VendorOrderDetailsScreen: React.FC = () => {
           </View>
         )}
 
+        {/* Pickup Location (Vendor Address) - Show to Riders (only if user is the rider for this order) */}
+        {orderDetails.vendorLocation && orderDetails.rider_id === user?.id && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>📍 Pickup Location</Text>
+              {orderDetails.vendorLocation.coordinates && (
+                <TouchableOpacity 
+                  style={styles.mapButton}
+                  onPress={() => setShowMapModal(true)}
+                >
+                  <Ionicons name="map-outline" size={20} color="#007AFF" />
+                  <Text style={styles.mapButtonText}>Map</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={styles.pickupCard}>
+              {orderDetails.vendorInfo && (
+                <View style={styles.vendorInfoRow}>
+                  <Ionicons name="storefront-outline" size={20} color="#007AFF" />
+                  <View style={styles.vendorInfoText}>
+                    <Text style={styles.vendorName}>{orderDetails.vendorInfo.name}</Text>
+                    {orderDetails.vendorInfo.phone && (
+                      <Text style={styles.vendorPhone}>{orderDetails.vendorInfo.phone}</Text>
+                    )}
+                  </View>
+                </View>
+              )}
+              <View style={styles.addressRow}>
+                <Ionicons name="location-outline" size={20} color="#666" />
+                <Text style={styles.deliveryAddress}>{orderDetails.vendorLocation.address}</Text>
+              </View>
+              {orderDetails.vendorLocation.coordinates && (
+                <TouchableOpacity 
+                  style={styles.directionsButton}
+                  onPress={openDirectionsToVendor}
+                >
+                  <Ionicons name="navigate" size={20} color="#007AFF" />
+                  <Text style={styles.directionsButtonText}>Get Directions to Vendor</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* Vendor Location (For Vendors to see their own location - only if user is the vendor for this order) */}
+        {orderDetails.vendorLocation && orderDetails.vendor_id === user?.id && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>📍 Your Location</Text>
+              {orderDetails.vendorLocation.coordinates && (
+                <TouchableOpacity 
+                  style={styles.mapButton}
+                  onPress={() => setShowMapModal(true)}
+                >
+                  <Ionicons name="map-outline" size={20} color="#007AFF" />
+                  <Text style={styles.mapButtonText}>Map</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={styles.pickupCard}>
+              <View style={styles.addressRow}>
+                <Ionicons name="location-outline" size={20} color="#666" />
+                <Text style={styles.deliveryAddress}>{orderDetails.vendorLocation.address}</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* Delivery Information */}
         {orderDetails.deliveryAddress && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Delivery Information</Text>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Delivery Information</Text>
+              {orderDetails.deliveryDetails.coordinates && (
+                <TouchableOpacity 
+                  style={styles.mapButton}
+                  onPress={() => setShowMapModal(true)}
+                >
+                  <Ionicons name="map-outline" size={20} color="#007AFF" />
+                  <Text style={styles.mapButtonText}>Map</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             <View style={styles.deliveryCard}>
             <View style={styles.addressRow}>
               <Ionicons name="location-outline" size={20} color="#666" />
@@ -430,6 +943,15 @@ const VendorOrderDetailsScreen: React.FC = () => {
                 <Ionicons name="information-circle-outline" size={20} color="#666" />
                 <Text style={styles.deliveryInstructions}>{orderDetails.deliveryDetails.instructions}</Text>
               </View>
+            )}
+            {orderDetails.deliveryDetails.coordinates && (
+              <TouchableOpacity 
+                style={styles.directionsButton}
+                onPress={openDirections}
+              >
+                <Ionicons name="navigate" size={20} color="#007AFF" />
+                <Text style={styles.directionsButtonText}>Get Directions</Text>
+              </TouchableOpacity>
             )}
             <View style={styles.deliveryFeeRow}>
               <Text style={styles.deliveryFeeLabel}>Delivery Fee:</Text>
@@ -598,10 +1120,19 @@ const VendorOrderDetailsScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* ✅ Map Modal */}
+      <Modal
+        visible={showMapModal}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setShowMapModal(false)}
+      >
+        {renderMapModal()}
+      </Modal>
     </SafeAreaView>
   );
 };
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -732,6 +1263,35 @@ const styles = StyleSheet.create({
     backgroundColor: '#111',
     padding: 16,
     borderRadius: 12,
+  },
+  pickupCard: {
+    backgroundColor: '#111',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  vendorInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  vendorInfoText: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  vendorName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: 'white',
+    marginBottom: 4,
+  },
+  vendorPhone: {
+    fontSize: 14,
+    color: '#888',
   },
   addressRow: {
     flexDirection: 'row',
@@ -1054,6 +1614,235 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  // ✅ Map Modal Styles
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  mapButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 122, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 122, 255, 0.3)',
+  },
+  mapButtonText: {
+    color: '#007AFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  directionsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 122, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 122, 255, 0.3)',
+    marginTop: 12,
+  },
+  directionsButtonText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  mapModalContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  mapModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  mapModalCloseButton: {
+    padding: 8,
+  },
+  mapModalTitle: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+    flex: 1,
+    textAlign: 'center',
+  },
+  mapModalDirectionsButton: {
+    padding: 8,
+  },
+  mapModalMapContainer: {
+    flex: 1,
+    margin: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#1a1a1a',
+  },
+  mapModalInfo: {
+    backgroundColor: '#1a1a1a',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  mapLocationItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  mapLocationIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  mapLocationDetails: {
+    flex: 1,
+  },
+  mapLocationLabel: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  mapLocationAddress: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  mapDistanceText: {
+    color: '#007AFF',
+    fontSize: 12,
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  mapPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+  },
+  mapPlaceholderText: {
+    color: '#888',
+    fontSize: 14,
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  permissionButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginTop: 16,
+  },
+  permissionButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // ✅ Workspace Map Visualization Styles
+  workspaceMapContainer: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+    position: 'relative',
+  },
+  workspaceMapVisualization: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  mapPoint: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  mapMarkerVendor: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#007AFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    borderWidth: 3,
+    borderColor: 'white',
+  },
+  mapMarkerRider: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F39C12',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    borderWidth: 3,
+    borderColor: 'white',
+  },
+  mapMarkerBuyer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#27AE60',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    borderWidth: 3,
+    borderColor: 'white',
+  },
+  mapPointLabel: {
+    color: '#888',
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  mapRouteLine: {
+    width: 4,
+    height: 60,
+    backgroundColor: '#333',
+    marginHorizontal: 8,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  mapRouteLineFill: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#007AFF',
+  },
+  mapOverlay: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  mapOverlayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  mapOverlayText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
   },
 });
 

@@ -1,5 +1,6 @@
 import { api } from './api';
 import { io, Socket } from 'socket.io-client';
+import { API_CONFIG } from '../config/api';
 
 export interface RealtimeInteraction {
   id: string;
@@ -38,7 +39,9 @@ class RealtimeAPI {
   private eventListeners: Map<string, ((data: any) => void)[]> = new Map();
   private socket: Socket | null = null; // General/notifications connection
   private chatSocket: Socket | null = null; // Chat-specific connection
-  private reconnectAttempts = 0;
+  // ✅ FIX: Separate reconnect counters for general and chat sockets
+  private reconnectAttempts = 0; // General socket reconnect attempts
+  private chatReconnectAttempts = 0; // Chat socket reconnect attempts
   private maxReconnectAttempts = 10; // Increased for better resilience
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private chatHeartbeatInterval: NodeJS.Timeout | null = null;
@@ -67,7 +70,9 @@ class RealtimeAPI {
         const resolveOnce = () => {
           if (!resolved) {
             resolved = true;
+            // ✅ FIX: Reset both reconnect counters on successful connection
             this.reconnectAttempts = 0;
+            this.chatReconnectAttempts = 0;
             resolve();
           }
         };
@@ -81,7 +86,9 @@ class RealtimeAPI {
 
         // 1. General connection (notifications, user status)
         console.log('🔗 Connecting to general Socket.IO server...');
-        this.socket = io('http://192.168.43.135:3000', {
+        // ✅ FIX: Use API_CONFIG instead of hardcoded IP
+        const socketUrl = API_CONFIG.BASE_URL || 'http://localhost:3000';
+        this.socket = io(socketUrl, {
           auth: token ? { token } : undefined,
           transports: ['polling', 'websocket'],
           timeout: 15000,
@@ -98,6 +105,8 @@ class RealtimeAPI {
 
         this.socket.on('disconnect', (reason) => {
           console.log('📡 General real-time connection closed:', reason);
+          // ✅ FIX: Clear joinedRooms on disconnect to prevent memory leak
+          this.joinedRooms.clear();
           this.stopHeartbeat();
           generalConnected = false;
 
@@ -120,7 +129,9 @@ class RealtimeAPI {
 
         // 2. Chat-specific connection (/chat namespace)
         console.log('💬 Connecting to chat Socket.IO server...');
-        this.chatSocket = io('http://192.168.43.135:3000/chat', {
+        // ✅ FIX: Use API_CONFIG instead of hardcoded IP
+        const chatSocketUrl = `${socketUrl}/chat`;
+        this.chatSocket = io(chatSocketUrl, {
           auth: token ? { token } : undefined,
           transports: ['polling', 'websocket'],
           timeout: 15000,
@@ -141,6 +152,8 @@ class RealtimeAPI {
           console.log('💬 Chat real-time connection closed:', reason);
           this.stopChatHeartbeat();
           chatConnected = false;
+          // ✅ FIX: Clear joinedRooms on disconnect to prevent memory leak
+          this.joinedRooms.clear();
 
           if (reason === 'io server disconnect' || reason === 'io client disconnect') {
             console.log('✅ Chat connection closed normally');
@@ -265,6 +278,7 @@ class RealtimeAPI {
       return;
     }
 
+    // ✅ FIX: Use separate counter for general socket
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
       console.log(`🔄 Attempting to reconnect general connection... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
@@ -299,10 +313,12 @@ class RealtimeAPI {
       return;
     }
 
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      console.log(`🔄 Attempting to reconnect chat connection... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+    // ✅ FIX: Use separate counter for chat socket
+    if (this.chatReconnectAttempts < this.maxReconnectAttempts) {
+      this.chatReconnectAttempts++;
+      console.log(`🔄 Attempting to reconnect chat connection... (${this.chatReconnectAttempts}/${this.maxReconnectAttempts})`);
 
-      const baseDelay = 1000 * Math.pow(2, this.reconnectAttempts - 1);
+      const baseDelay = 1000 * Math.pow(2, this.chatReconnectAttempts - 1);
       const jitter = Math.random() * 1000;
       const delay = Math.min(baseDelay + jitter, 30000);
 
@@ -342,6 +358,8 @@ class RealtimeAPI {
     this.chatSocket.on('disconnect', (reason) => {
       console.log('💬 Chat reconnection closed:', reason);
       this.stopChatHeartbeat();
+      // ✅ FIX: Clear joinedRooms on disconnect to prevent memory leak
+      this.joinedRooms.clear();
       if (reason !== 'io server disconnect' && reason !== 'io client disconnect') {
         this.attemptChatReconnect(userId, token);
       }
@@ -710,7 +728,11 @@ class RealtimeAPI {
     }
 
     this.eventListeners.clear();
+    // ✅ FIX: Reset both reconnect counters on disconnect
     this.reconnectAttempts = 0;
+    this.chatReconnectAttempts = 0;
+    // ✅ FIX: Clear joinedRooms on disconnect to prevent memory leak
+    this.joinedRooms.clear();
   }
 
   // Check if real-time connections are active

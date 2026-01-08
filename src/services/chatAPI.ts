@@ -23,7 +23,7 @@ export interface ChatMessage {
   senderId: string;
   senderName: string;
   content: string;
-  messageType: 'text' | 'image' | 'audio' | 'video' | 'file' | 'livestream' | 'auction' | 'system' | 'invoice';
+  messageType: 'text' | 'image' | 'audio' | 'video' | 'file' | 'livestream' | 'auction' | 'system' | 'invoice' | 'wishlist';
   status: 'sending' | 'sent' | 'delivered' | 'read';
   mediaUrl?: string;
   fileData?: {
@@ -33,6 +33,11 @@ export interface ChatMessage {
     url: string;
   };
   invoiceData?: any; // Will be populated with Invoice object for invoice messages
+  metadata?: {
+    [key: string]: any;
+    wishlistData?: any;
+    productData?: any;
+  };
   timestamp: string;
   createdAt: string;
   updatedAt: string;

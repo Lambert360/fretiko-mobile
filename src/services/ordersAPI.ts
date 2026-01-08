@@ -29,6 +29,20 @@ export interface OrderDetails extends Order {
   paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
   trackingNumber?: string;
   notes?: string;
+  deliveryType?: 'delivery' | 'pickup';
+  deliveryInstructions?: string;
+  deliveryPin?: string;
+  vendorInfo?: {
+    name: string;
+    phone?: string;
+    avatar?: string;
+  };
+  vendorLocation?: {
+    latitude: number;
+    longitude: number;
+    address: string;
+  };
+  escrowReleaseAt?: string;
 }
 
 export interface OrderItem {

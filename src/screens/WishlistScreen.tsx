@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { productsAPI } from '../services/productsAPI';
 import { wishlistAPI, WishlistItem, ShareableFriend } from '../services/wishlistAPI';
@@ -57,6 +58,14 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
       useNativeDriver: true,
     }).start();
   }, []);
+
+  // ✅ Refresh wishlist when screen regains focus (e.g., after checkout)
+  useFocusEffect(
+    React.useCallback(() => {
+      // Refresh wishlist when returning to screen (e.g., after checkout)
+      loadWishlist();
+    }, [])
+  );
 
   const loadWishlist = async () => {
     try {
@@ -146,6 +155,40 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
       console.error('Error adding to cart:', error);
       Alert.alert('Error', 'Failed to add item to cart');
     }
+  };
+
+  const handleBuyNow = (item: WishlistItem) => {
+    // Navigate to checkout with wishlist source
+    navigation.navigate('Checkout', {
+      source: 'wishlist',
+      wishlistItemIds: [item.id],
+      wishlistItems: [item],
+    });
+  };
+
+  const handleCheckoutSelected = () => {
+    if (selectedItems.length === 0) return;
+
+    // Get selected wishlist items (need to match by productId to get wishlist item IDs)
+    const selectedWishlistItems = wishlistItems.filter(item => 
+      selectedItems.includes(item.productId)
+    );
+
+    if (selectedWishlistItems.length === 0) {
+      Alert.alert('Error', 'No valid items selected');
+      return;
+    }
+
+    // Navigate to checkout with wishlist source
+    navigation.navigate('Checkout', {
+      source: 'wishlist',
+      wishlistItemIds: selectedWishlistItems.map(item => item.id),
+      wishlistItems: selectedWishlistItems,
+    });
+
+    // Clear selection after navigation
+    setSelectedItems([]);
+    setIsSelectionMode(false);
   };
 
   const handleProductPress = (productId: string) => {
@@ -329,6 +372,14 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
         
         <View style={styles.itemActions}>
           <TouchableOpacity
+            style={styles.buyNowButton}
+            onPress={() => handleBuyNow(item)}
+          >
+            <Ionicons name="flash" size={16} color="#FFF" />
+            <Text style={styles.buyNowText}>Buy Now</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
             style={styles.addToCartButton}
             onPress={() => handleAddToCart(item)}
           >
@@ -389,6 +440,15 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
 
   const renderActionBar = () => (
     <View style={styles.actionBar}>
+      <TouchableOpacity
+        style={[styles.actionButton, styles.checkoutButton]}
+        onPress={handleCheckoutSelected}
+        disabled={selectedItems.length === 0}
+      >
+        <Ionicons name="flash" size={18} color="#FFF" />
+        <Text style={styles.actionButtonText}>Checkout Selected</Text>
+      </TouchableOpacity>
+      
       <TouchableOpacity
         style={styles.actionButton}
         onPress={handleAddSelectedToCart}
@@ -715,6 +775,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
+  },
+  buyNowButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#27AE60',
+    borderRadius: 20,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  buyNowText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   addToCartButton: {
     flexDirection: 'row',
@@ -726,7 +803,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     flex: 1,
     justifyContent: 'center',
-    marginRight: 12,
   },
   addToCartText: {
     color: '#FFF',
@@ -763,6 +839,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     backgroundColor: '#3498DB',
     borderRadius: 24,
+  },
+  checkoutButton: {
+    backgroundColor: '#27AE60',
   },
   deleteButton: {
     backgroundColor: '#E74C3C',

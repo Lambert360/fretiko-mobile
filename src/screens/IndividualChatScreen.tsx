@@ -25,7 +25,7 @@ import { userAPI, UserProfile } from '../services/userAPI';
 import { geminiAPI } from '../services/geminiAPI';
 import { ikoAPI } from '../services/ikoAPI';
 import { realTimeAudioService } from '../services/realTimeAudioService';
-import { invoiceAPI, Invoice } from '../services/invoiceAPI';
+import { invoiceAPI, Invoice, InvoiceStatus } from '../services/invoiceAPI';
 import { wishlistAPI } from '../services/wishlistAPI';
 import * as ImagePicker from 'expo-image-picker';
 import InvoiceMessageCard from '../components/InvoiceMessageCard';
@@ -164,6 +164,7 @@ interface Message extends Omit<ChatMessage, 'timestamp'> {
     suggestedDate?: string;
     icon?: string;
   };
+  // Metadata is already included from ChatMessage interface
 }
 
 interface ChatParams {
@@ -257,6 +258,8 @@ const IndividualChatScreen = () => {
   // 🔥 FIX: Track if we've already subscribed to prevent duplicates
   const hasSubscribedRef = useRef(false);
   const cleanupFnRef = useRef<(() => void) | null>(null);
+  // 🔥 ADD: Ref to track which chatId has active subscriptions
+  const activeChatIdRef = useRef<string | null>(null);
 
   // 🔥 FIX: Track if chat has been initialized to prevent duplicate initialization on remounts
   const hasInitializedRef = useRef<string | false>(false);
@@ -290,8 +293,8 @@ const IndividualChatScreen = () => {
     const configureAudio = async () => {
       try {
         await setAudioModeAsync({
-          allowsRecordingIOS: true,
-          playsInSilentModeIOS: true,
+          allowsRecording: true,
+          playsInSilentMode: true,
           shouldPlayInBackground: false,
         });
         console.log('✅ Audio mode configured on mount');
@@ -446,13 +449,13 @@ const IndividualChatScreen = () => {
 
       // Convert API messages to local Message format
       const convertedMessages: Message[] = apiMessages.map(msg => {
-        const converted = {
+        const converted: Message = {
           ...msg,
           text: msg.content,
           timestamp: new Date(msg.createdAt),
           // 🔥 FIX: Explicitly preserve wishlistData from metadata
-          wishlistData: msg.metadata?.wishlistData || msg.wishlistData,
-          productData: msg.metadata?.productData || msg.productData,
+          wishlistData: (msg as any).metadata?.wishlistData || (msg as any).wishlistData,
+          productData: (msg as any).metadata?.productData || (msg as any).productData,
         };
         
         // Debug log for wishlist messages
@@ -484,7 +487,7 @@ const IndividualChatScreen = () => {
       // Note: Conversation joining is now handled in useEffect initialization
 
       // Mark messages as read (skip for AI conversations)
-      if (!isAI && chatType !== 'ai') {
+      if (!isAI) {
         await chatAPI.markConversationAsRead(chatId);
       }
 
@@ -506,7 +509,7 @@ const IndividualChatScreen = () => {
       console.log('🔌 Attempting real-time connection for user:', userId);
 
       // Add timeout to prevent hanging (Socket.IO has 15s timeout, so use 20s)
-      const connectPromise = realtimeAPI.connect(userId, accessToken);
+      const connectPromise = realtimeAPI.connect(userId, accessToken || undefined);
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Connection timeout')), 20000)
       );
@@ -524,10 +527,19 @@ const IndividualChatScreen = () => {
 
   // Initialize real-time message subscription
   const initializeRealtimeMessaging = () => {
-    // 🔥 FIX: Prevent duplicate subscriptions
-    if (hasSubscribedRef.current) {
-      console.warn('⚠️ Already subscribed to real-time messaging, skipping duplicate setup');
+    // 🔥 CRITICAL FIX: Prevent duplicate subscriptions for the same chatId
+    if (hasSubscribedRef.current && activeChatIdRef.current === chatId) {
+      console.log('🚫 Subscriptions already active for chatId:', chatId, '- skipping duplicate setup');
       return cleanupFnRef.current || (() => {});
+    }
+
+    // 🔥 FIX: Clean up existing subscriptions for a different chatId before creating new ones
+    if (cleanupFnRef.current && activeChatIdRef.current !== chatId) {
+      console.log('🧹 Cleaning up existing subscriptions for different chatId before creating new ones');
+      cleanupFnRef.current();
+      cleanupFnRef.current = null;
+      hasSubscribedRef.current = false;
+      activeChatIdRef.current = null;
     }
 
     // 🔥 FIX: Add connection state validation before subscribing
@@ -538,6 +550,7 @@ const IndividualChatScreen = () => {
 
     console.log('🔥 Setting up real-time message subscriptions for conversation:', chatId);
     hasSubscribedRef.current = true;
+    activeChatIdRef.current = chatId;
 
     const unsubscribeMessage = realtimeAPI.subscribe('chat_message', (data) => {
       console.log('📨 New message received in IndividualChatScreen:', data);
@@ -683,7 +696,7 @@ const IndividualChatScreen = () => {
           setIncomingCall(callInfo);
           incomingCallRef.current = callInfo; // 🔥 Persist in ref
           // Play ringtone
-          playCallSound('incoming');
+          playCallSound('ringing');
           break;
 
         case 'call_ended':
@@ -742,9 +755,27 @@ const IndividualChatScreen = () => {
       }
     });
 
-    const unsubscribeInvoicePaid = realtimeAPI.subscribe('invoice_paid', (data) => {
+    const unsubscribeInvoicePaid = realtimeAPI.subscribe('invoice_paid', async (data) => {
       if (data.conversationId === chatId) {
         console.log('📄 Invoice paid:', data.invoiceId);
+        
+        // Update invoice status in messages immediately for better UX
+        setMessages(prev => prev.map(msg => {
+          if (msg.messageType === 'invoice' && msg.invoiceData?.id === data.invoiceId) {
+            // Update invoice status to paid
+            return {
+              ...msg,
+              invoiceData: {
+                ...msg.invoiceData,
+                status: InvoiceStatus.PAID,
+                paidAt: new Date().toISOString(),
+              },
+            };
+          }
+          return msg;
+        }));
+        
+        // Also reload messages to ensure everything is in sync
         loadMessages();
       }
     });
@@ -778,6 +809,7 @@ const IndividualChatScreen = () => {
       unsubscribeInvoiceExpired();
       unsubscribeInvoiceCancelled();
       hasSubscribedRef.current = false; // 🔥 Reset subscription state
+      activeChatIdRef.current = null; // 🔥 Reset active chatId
     };
 
     cleanupFnRef.current = cleanup;
@@ -824,6 +856,16 @@ const IndividualChatScreen = () => {
     // Initialize chat (following Konnect Screen pattern)
     const init = async () => {
       console.log('🚀 Initializing IndividualChatScreen...');
+
+      // 🔥 CRITICAL FIX: Clean up existing subscriptions BEFORE creating new ones
+      if (cleanupFnRef.current) {
+        console.log('🧹 Cleaning up existing subscriptions before re-initializing');
+        cleanupFnRef.current();
+        cleanupFnRef.current = null;
+      }
+      // Reset subscription state
+      hasSubscribedRef.current = false;
+      activeChatIdRef.current = null;
 
       // Set auth token for chat API (like Konnect Screen)
       chatAPI.setAuthToken(accessToken);
@@ -880,13 +922,14 @@ const IndividualChatScreen = () => {
 
     // Cleanup on unmount
     return () => {
-      cleanup.then(cleanupFn => {
+      cleanup.then((cleanupFn: (() => void) | undefined) => {
         if (cleanupFn) cleanupFn();
       });
       realtimeAPI.leaveConversation(chatId);
       // 🔥 Reset subscription state on unmount
       hasSubscribedRef.current = false;
       cleanupFnRef.current = null;
+      activeChatIdRef.current = null;
       
       // 🔥 Only reset initialization ref if this was the initialized chatId
       if (hasInitializedRef.current === chatId) {
@@ -968,11 +1011,23 @@ const IndividualChatScreen = () => {
   };
 
 
+  // ✅ FIX: Generate unique temp message ID to prevent collisions (industry standard)
+  const generateTempMessageId = (): string => {
+    // Use crypto.randomUUID() if available (React Native 0.70+ or modern browsers)
+    // This is the industry standard for generating unique IDs
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return `temp-${crypto.randomUUID()}`;
+    }
+    // Fallback to timestamp + random string for older environments
+    // This ensures uniqueness even if multiple messages sent in same millisecond
+    return `temp-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+  };
+
   const sendMessage = async () => {
     if (!messageText.trim() || isSending) return;
 
     setIsSending(true);
-    const tempMessageId = Date.now().toString();
+    const tempMessageId = generateTempMessageId();
     const messageContent = messageText.trim();
     
     // Create optimistic message
@@ -1091,7 +1146,7 @@ const IndividualChatScreen = () => {
 
         // Clear bargain mode after sending message with product data
         if (hasProductData) {
-          navigation.setParams({ bargainMode: false, productData: undefined });
+          (navigation as any).setParams({ bargainMode: false, productData: undefined });
           console.log('✅ Bargain mode cleared after sending product message');
         }
 
@@ -1247,7 +1302,7 @@ const IndividualChatScreen = () => {
     // Navigate to CreateInvoiceScreen
     // Backend will automatically determine the buyer from conversation participants
     setTimeout(() => {
-      navigation.navigate('CreateInvoice', {
+      (navigation as any).navigate('CreateInvoice', {
         conversationId: chatId,
         buyerName: chatName || 'Customer',
       });
@@ -1346,7 +1401,7 @@ const IndividualChatScreen = () => {
             text: 'View My Wishlist',
             onPress: () => {
               // Navigate to user's own wishlist screen
-              navigation.navigate('Wishlist');
+              (navigation as any).navigate('Wishlist');
             }
           }
         ]
@@ -1354,7 +1409,7 @@ const IndividualChatScreen = () => {
     } else {
       // You are the recipient - someone shared with you
       console.log('📱 Navigating to SharedWishlist as recipient');
-      navigation.navigate('SharedWishlist', {
+      (navigation as any).navigate('SharedWishlist', {
         shareId,
         ownerId,
         ownerUsername: ownerName,
@@ -1412,12 +1467,16 @@ const IndividualChatScreen = () => {
   const startLiveStream = () => {
     const livestreamMessage: Message = {
       id: Date.now().toString(),
+      conversationId: chatId,
       text: '',
+      content: '',
       timestamp: new Date(),
-      senderId: 'current-user',
+      senderId: user?.id || 'current-user',
       senderName: 'You',
       messageType: 'livestream',
       status: 'sent',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       livestreamData: {
         title: 'Live from my location 🔴',
         isLive: true,
@@ -1434,12 +1493,16 @@ const IndividualChatScreen = () => {
   const startAuction = () => {
     const auctionMessage: Message = {
       id: Date.now().toString(),
+      conversationId: chatId,
       text: '',
+      content: '',
       timestamp: new Date(),
-      senderId: 'current-user',
+      senderId: user?.id || 'current-user',
       senderName: 'You',
       messageType: 'auction',
       status: 'sent',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       auctionData: {
         itemName: 'Vintage Designer Watch',
         startingPrice: 250,
@@ -1844,7 +1907,7 @@ const IndividualChatScreen = () => {
       }
       
       // Start call via API with participants
-      const participantIds = otherUserId ? [user?.id, otherUserId].filter(Boolean) : [user?.id].filter(Boolean);
+      const participantIds = (otherUserId ? [user?.id, otherUserId] : [user?.id]).filter((id): id is string => Boolean(id));
       const callData = await chatAPI.startCall(chatId, type, participantIds);
       setCurrentCallSessionId(callData.callSessionId);
       
@@ -2199,7 +2262,7 @@ const IndividualChatScreen = () => {
 
           // Handle server content with audio
           if (data.serverContent?.modelTurn?.parts) {
-            data.serverContent.modelTurn.parts.forEach(part => {
+            data.serverContent.modelTurn.parts.forEach((part: any) => {
               if (part.inlineData?.mimeType === 'audio/pcm') {
                 console.log('🔊 Received audio data from Gemini:', part.inlineData.data.length, 'chars');
                 playGeminiAudio(part.inlineData.data);
@@ -2553,8 +2616,10 @@ const IndividualChatScreen = () => {
   const startLiveAudioStreaming = async () => {
     try {
       // Clean up any existing streaming first
+      // @ts-expect-error - streamInterval state is defined above, false positive hoisting error
       if (streamInterval) {
         console.log('🔇 Cleaning up existing audio streaming...');
+        // @ts-expect-error - streamInterval state is defined above, false positive hoisting error
         clearInterval(streamInterval);
         setStreamInterval(null);
       }
@@ -3055,8 +3120,9 @@ const IndividualChatScreen = () => {
       setPlayingAudioId(messageId);
 
       // Listen for when audio finishes
-      audioPlayer.addListener('playingStatusDidSet', (status) => {
-        if (!status.isPlaying && playingAudioId === messageId) {
+      // @ts-expect-error - expo-audio event types vary by version
+      audioPlayer.addListener('statusChange', (status: any) => {
+        if (status.isLoaded && !status.isPlaying && playingAudioId === messageId) {
           setPlayingAudioId(null);
         }
       });
@@ -3126,7 +3192,7 @@ const IndividualChatScreen = () => {
       // Optimistically update UI
       setMessages(prev => prev.map(msg => {
         if (msg.id === messageId) {
-          const reactions = { ...msg.reactions } || {};
+          const reactions = msg.reactions || {};
           const users = reactions[emoji] || [];
 
           // Toggle reaction - add if not present, remove if present
@@ -3231,17 +3297,17 @@ const IndividualChatScreen = () => {
           msg.id === tempId
             ? {
                 id: updatedMessage.id,
-                conversationId: updatedMessage.conversation_id || updatedMessage.conversationId || chatId,
-                senderId: updatedMessage.sender_id || updatedMessage.senderId || user?.id,
+                conversationId: (updatedMessage as any).conversation_id || updatedMessage.conversationId || chatId,
+                senderId: (updatedMessage as any).sender_id || updatedMessage.senderId || user?.id || '',
                 senderName: 'You',
                 content: updatedMessage.content || '',
                 text: updatedMessage.content || tempMessage.text,
-                messageType: updatedMessage.message_type || updatedMessage.messageType || messageType,
-                status: 'sent',
-                mediaUrl: updatedMessage.media_url || updatedMessage.mediaUrl,
-                timestamp: new Date(updatedMessage.created_at || updatedMessage.createdAt),
-                createdAt: updatedMessage.created_at || updatedMessage.createdAt,
-                updatedAt: updatedMessage.updated_at || updatedMessage.updatedAt,
+                messageType: ((updatedMessage as any).message_type || updatedMessage.messageType || messageType) as Message['messageType'],
+                status: 'sent' as const,
+                mediaUrl: (updatedMessage as any).media_url || updatedMessage.mediaUrl,
+                timestamp: new Date((updatedMessage as any).created_at || updatedMessage.createdAt),
+                createdAt: (updatedMessage as any).created_at || updatedMessage.createdAt,
+                updatedAt: (updatedMessage as any).updated_at || updatedMessage.updatedAt,
                 fileData: messageType === 'file' ? uploadResult.fileData : undefined
               }
             : msg
@@ -3356,27 +3422,28 @@ const IndividualChatScreen = () => {
 
               options.push('Cancel');
 
-              Alert.alert('Chat Options', 'Choose an option', [
-                ...options.map((option, index) => ({
+              const alertButtons = options.map((option) => {
+                const buttonStyle = option === 'Cancel' ? 'cancel' : option === 'Block User' ? 'destructive' : 'default';
+                return {
                   text: option,
+                  style: buttonStyle as 'cancel' | 'default' | 'destructive',
                   onPress: () => {
                     if (option === 'Report Chat') {
-                      navigation.navigate('CreateContentReport', {
+                      (navigation as any).navigate('CreateContentReport', {
                         chatId: chatId,
                         reportCategory: 'chat'
                       });
                     } else if (option === 'Create Invoice') {
                       handleCreateInvoice();
                     } else if (option === 'Block User') {
-                      // TODO: Implement block user
                       Alert.alert('Block User', 'Block user feature coming soon');
                     } else if (option !== 'Cancel') {
                       Alert.alert(option, `${option} feature coming soon`);
                     }
-                  },
-                  style: option === 'Cancel' ? 'cancel' : option === 'Block User' ? 'destructive' : 'default',
-                })),
-              ]);
+                  }
+                };
+              });
+              Alert.alert('Chat Options', 'Choose an option', alertButtons);
             }}
           >
             <Ionicons name="ellipsis-vertical" size={20} color="#FFFFFF" />
@@ -3780,7 +3847,7 @@ const IndividualChatScreen = () => {
             <Text style={styles.productPreviewTitle}>Product for Negotiation</Text>
             <TouchableOpacity onPress={() => {
               // Clear bargain mode after first message
-              navigation.setParams({ bargainMode: false, productData: undefined });
+              (navigation as any).setParams({ bargainMode: false, productData: undefined });
             }}>
               <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.6)" />
             </TouchableOpacity>
@@ -4112,7 +4179,7 @@ const IndividualChatScreen = () => {
       visible={showCallModal}
       transparent={true}
       animationType="fade"
-      onRequestClose={endCall}
+      onRequestClose={() => endCall()}
     >
       <View style={styles.callModalOverlay}>
         {/* Camera Preview Background for Video Calls */}
@@ -4289,7 +4356,7 @@ const IndividualChatScreen = () => {
       visible={isInCall}
       transparent={true}
       animationType="none"
-      onRequestClose={endCall}
+      onRequestClose={() => endCall()}
     >
       <View style={styles.inCallOverlay}>
         {/* Remote Participant Video (Full Screen Background) */}

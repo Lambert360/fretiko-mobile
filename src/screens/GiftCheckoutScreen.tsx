@@ -85,11 +85,9 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
   };
 
   const calculateTotal = () => {
-    // Calculate total for all items
-    const subtotal = items.reduce((sum, item) => sum + item.price, 0);
-    // Gift purchases: item price + escrow fee (2%)
-    const escrowFee = subtotal * 0.02;
-    return subtotal + escrowFee;
+    // 🔥 FIX: Gift purchases - buyer pays ONLY item price (no tax, no escrow fee, no platform fee)
+    // Platform fee is deducted from vendor during escrow release, not from buyer
+    return items.reduce((sum, item) => sum + item.price, 0);
   };
 
   const handlePlaceGiftOrder = () => {
@@ -192,8 +190,6 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
   }
 
   const total = calculateTotal();
-  const subtotal = items.reduce((sum, item) => sum + item.price, 0);
-  const escrowFee = subtotal * 0.02;
 
   return (
     <KeyboardAvoidingView
@@ -315,21 +311,14 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Item Price</Text>
               <Text style={styles.summaryValue}>
-                {walletAPI.formatFreti(wishlistItem.price)}
-              </Text>
-            </View>
-
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Escrow Fee (2%)</Text>
-              <Text style={styles.summaryValue}>
-                {walletAPI.formatFreti(escrowFee)}
+                {walletAPI.formatFreti(items.reduce((sum, item) => sum + item.price, 0))}
               </Text>
             </View>
 
             <View style={styles.summaryNote}>
-              <Ionicons name="shield-checkmark" size={16} color="#3498DB" />
+              <Ionicons name="gift" size={16} color="#E91E63" />
               <Text style={styles.noteText}>
-                Payment held securely until {recipientName} confirms delivery
+                You pay only the item price. Payment held securely in escrow until {recipientName} confirms delivery.
               </Text>
             </View>
 

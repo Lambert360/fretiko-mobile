@@ -120,6 +120,19 @@ class CheckoutAPI {
     }
   }
 
+  // Get checkout summary for wishlist items
+  async getWishlistCheckoutSummary(wishlistItemIds: string[]): Promise<OrderSummary> {
+    try {
+      const response = await api.get(`/checkout/wishlist-summary`, {
+        params: { itemIds: wishlistItemIds.join(',') }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching wishlist checkout summary:', error);
+      throw error;
+    }
+  }
+
   // Get available payment methods
   async getPaymentMethods(): Promise<PaymentMethod[]> {
     try {

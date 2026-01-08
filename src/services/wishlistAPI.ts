@@ -286,6 +286,8 @@ class WishlistAPI {
   async createGiftOrder(giftData: CreateGiftOrderRequest): Promise<{
     message: string;
     giftOrderId: string;
+    orderId?: string;
+    orderNumber?: string;
     recipientName?: string;
     productName?: string;
     totalAmount?: number;

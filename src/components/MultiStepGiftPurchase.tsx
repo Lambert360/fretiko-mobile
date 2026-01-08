@@ -102,25 +102,43 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
       setProcessing(true);
       setCurrentStep('processing');
 
-      // Process gift orders for valid items only
+      // 🔥 FIX: Use wishlistItemId from validation result, not product.id
       const validItems = validationResult.availableItems;
       const results = await Promise.all(
-        validItems.map((item: any) =>
-          wishlistAPI.createGiftOrder({
+        validItems.map((item: any) => {
+          if (!item.wishlistItemId) {
+            // Fallback: find original item by product ID if wishlistItemId missing
+            const originalItem = items.find(orig => orig.productId === item.id);
+            if (!originalItem) {
+              throw new Error(`Cannot find wishlist item for product ${item.id}`);
+            }
+            return wishlistAPI.createGiftOrder({
+              giftRecipientId: recipientId,
+              orderId: null,
+              wishlistItemId: originalItem.id, // Use original wishlist item ID
+              giftMessage: giftMessage.trim() || undefined,
+              isSurprise: false,
+            });
+          }
+          return wishlistAPI.createGiftOrder({
             giftRecipientId: recipientId,
             orderId: null,
-            wishlistItemId: item.id,
+            wishlistItemId: item.wishlistItemId, // 🔥 FIX: Use wishlistItemId from validation result
             giftMessage: giftMessage.trim() || undefined,
             isSurprise: false,
-          })
-        )
+          });
+        })
       );
 
       setCurrentStep('complete');
       
+      // Extract order numbers for display
+      const orderNumbers = results.map((r: any) => r.orderNumber).filter(Boolean).join(', ');
+      const orderNumbersText = orderNumbers ? `\n\nOrder${results.length > 1 ? 's' : ''}: ${orderNumbers}` : '';
+      
       Alert.alert(
         'Gift Purchase Successful! 🎉',
-        `Your gift${validItems.length > 1 ? 's' : ''} for ${recipientName} ${validItems.length > 1 ? 'have' : 'has'} been ordered! They will be notified and can track the delivery.`,
+        `Your gift${validItems.length > 1 ? 's' : ''} for ${recipientName} ${validItems.length > 1 ? 'have' : 'has'} been ordered! They will be notified and can track the delivery.${orderNumbersText}`,
         [
           {
             text: 'OK',

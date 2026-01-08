@@ -29,7 +29,7 @@ interface CheckoutScreenProps {
       productId?: string;
       quantity?: number;
       directCheckout?: boolean;
-      source?: 'cart' | 'product' | 'invoice' | 'auction';
+      source?: 'cart' | 'product' | 'invoice' | 'auction' | 'wishlist';
       invoiceId?: string;
       auctionCheckout?: {
         auctionId: string;
@@ -46,6 +46,14 @@ interface CheckoutScreenProps {
       vendorId?: string;
       selectedItemIds?: string[]; // NEW: Product/Service IDs for filtering checkout items
       selectedCartItemIds?: string[]; // NEW: Cart item IDs for removing after purchase
+      wishlistItemIds?: string[]; // NEW: Wishlist item IDs for checkout
+      wishlistItems?: Array<{
+        id: string;
+        productId: string;
+        productName: string;
+        productImage: string;
+        price: number;
+      }>; // NEW: Wishlist items data (optional, for direct data)
     };
   };
 }
@@ -89,7 +97,7 @@ interface OrderSummary {
 const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { productId, quantity, directCheckout, source, invoiceId, items: invoiceItems, totalAmount: invoiceTotal, vendorId, auctionCheckout, selectedItemIds, selectedCartItemIds } = route?.params || {};
+  const { productId, quantity, directCheckout, source, invoiceId, items: invoiceItems, totalAmount: invoiceTotal, vendorId, auctionCheckout, selectedItemIds, selectedCartItemIds, wishlistItemIds, wishlistItems } = route?.params || {};
   
   // Debug: Log what we received
   console.log('🛒 Checkout screen params:', {
@@ -296,6 +304,26 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
           escrowFee: 0, // Escrow is FREE
           total: invoiceTotal,
         };
+      }
+      // Handle wishlist-based checkout
+      else if (source === 'wishlist' && wishlistItemIds && wishlistItemIds.length > 0) {
+        console.log('💖 Loading wishlist checkout data for items:', wishlistItemIds);
+        summary = await checkoutAPI.getWishlistCheckoutSummary(wishlistItemIds);
+        setUseEscrow(true); // Wishlist purchases always use escrow
+        
+        // ✅ Multi-vendor detection for wishlist (same as cart)
+        if (summary?.items) {
+          const uniqueVendors = new Set(summary.items.map((item: any) => item.sellerId));
+          const isMulti = uniqueVendors.size > 1;
+          setIsMultiVendor(isMulti);
+          
+          if (isMulti) {
+            console.log(`🏪 Multi-vendor wishlist checkout detected: ${uniqueVendors.size} vendors`);
+            // Group items by vendor
+            const groups = groupItemsByVendor(summary.items);
+            setVendorGroups(groups);
+          }
+        }
       } else {
         // Regular checkout (from cart or direct product)
         // If selective checkout, pass selectedItemIds to backend for filtering
@@ -336,8 +364,8 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         setDeliveryAddress(savedAddress);
       }
 
-      // Detect multi-vendor scenario (only for cart-based checkout)
-      if (!directCheckout && !source && summary?.items) {
+      // Detect multi-vendor scenario (for cart-based checkout - wishlist handled above)
+      if (!directCheckout && !source && source !== 'wishlist' && summary?.items) {
         const uniqueVendors = new Set(summary.items.map((item: any) => item.sellerId));
         const isMulti = uniqueVendors.size > 1;
         setIsMultiVendor(isMulti);
@@ -443,7 +471,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
 
         console.log('✅ Order created from invoice:', orderId);
       } else {
-        // Regular checkout flow (cart, direct product, or auction)
+        // Regular checkout flow (cart, direct product, auction, or wishlist)
         const baseOrderData = {
           deliveryAddress,
           paymentMethodId: selectedPaymentMethod,
@@ -454,6 +482,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
           directCheckout: directCheckout ? { productId, quantity } : undefined,
           auctionCheckout: auctionCheckout ? { auctionId: auctionCheckout.auctionId } : undefined,
           selectedItemIds: selectedItemIds || undefined, // NEW: For selective checkout
+          wishlistItemIds: source === 'wishlist' ? wishlistItemIds : undefined, // NEW: For wishlist checkout
         };
 
         // Multi-vendor checkout: use grouped order API
@@ -797,7 +826,15 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         <TouchableOpacity style={styles.headerButton} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={24} color="#FFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Checkout</Text>
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitle}>Checkout</Text>
+          {source === 'wishlist' && (
+            <View style={styles.wishlistBadge}>
+              <Ionicons name="heart" size={12} color="#FFF" />
+              <Text style={styles.wishlistBadgeText}>Wishlist</Text>
+            </View>
+          )}
+        </View>
         <TouchableOpacity style={styles.headerButton} onPress={() => setShowInfoModal(true)}>
           <Ionicons name="information-circle-outline" size={24} color="#FFF" />
         </TouchableOpacity>
@@ -1407,10 +1444,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   headerTitle: {
     color: '#FFF',
     fontSize: 18,
     fontWeight: '600',
+  },
+  wishlistBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E91E63',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  wishlistBadgeText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
   },
   scrollView: {
     flex: 1,

@@ -11,9 +11,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { invoiceAPI, Invoice, InvoiceStatus, InvoiceItemType } from '../services/invoiceAPI';
 import { useAuth } from '../contexts/AuthContext';
+import { realtimeAPI } from '../services/realtimeAPI';
 
 interface RouteParams {
   invoiceId: string;
@@ -33,6 +34,30 @@ const InvoiceDetailsScreen: React.FC = () => {
   useEffect(() => {
     loadInvoice();
   }, [invoiceId]);
+
+  // Refresh invoice when screen regains focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadInvoice();
+    }, [invoiceId])
+  );
+
+  // Listen for invoice_paid WebSocket events
+  useEffect(() => {
+    if (!invoice) return;
+
+    // Subscribe to invoice_paid events
+    const unsubscribeInvoicePaid = realtimeAPI.subscribe('invoice_paid', (data: any) => {
+      if (data.invoiceId === invoiceId) {
+        console.log('✅ Invoice paid event received, refreshing invoice');
+        loadInvoice();
+      }
+    });
+
+    return () => {
+      unsubscribeInvoicePaid();
+    };
+  }, [invoice, invoiceId]);
 
   const loadInvoice = async () => {
     try {
@@ -140,8 +165,10 @@ const InvoiceDetailsScreen: React.FC = () => {
   const statusDisplay = invoiceAPI.getStatusDisplay(invoice.status);
   const isExpired = invoiceAPI.isInvoiceExpired(invoice);
   const canEdit = isVendor && invoice.status === InvoiceStatus.PENDING && !isExpired;
-  const canCancel = isVendor && invoice.status === InvoiceStatus.PENDING;
-  const canBuy = isBuyer && invoice.status === InvoiceStatus.PENDING && !isExpired;
+  // Don't show "Cancel" if order already exists (invoice is paid or order created)
+  const canCancel = isVendor && invoice.status === InvoiceStatus.PENDING && !invoice.orderId;
+  // Don't show "Buy Now" if order already exists (invoice is paid or order created)
+  const canBuy = isBuyer && invoice.status === InvoiceStatus.PENDING && !isExpired && !invoice.orderId;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>

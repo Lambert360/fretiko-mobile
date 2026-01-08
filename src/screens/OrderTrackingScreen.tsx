@@ -10,6 +10,7 @@ import {
   RefreshControl,
   Alert,
   Dimensions,
+  Modal,
 } from 'react-native';
 // import MapView, { Marker, Polyline } from 'expo-maps'; // Temporarily disabled
 import * as Location from 'expo-location';
@@ -20,7 +21,6 @@ import { ordersAPI, OrderDetails } from '../services/ordersAPI';
 import { walletAPI } from '../services/walletAPI';
 import { riderLocationAPI } from '../services/riderLocationAPI';
 import { realtimeAPI } from '../services/realtimeAPI';
-import { useAuth } from '../contexts/AuthContext';
 import { disputesAPI } from '../services/disputesAPI';
 
 const { width, height } = Dimensions.get('window');
@@ -72,20 +72,20 @@ const OrderTrackingScreen: React.FC = () => {
   const route = useRoute();
   const insets = useSafeAreaInsets();
   const { orderId } = route.params as { orderId: string };
-  const { user } = useAuth();
   // const mapRef = useRef<MapView>(null); // Temporarily disabled
 
   const [order, setOrder] = useState<OrderWithTracking | null>(null);
   const [loading, setLoading] = useState(true);
-  const [mapLoading, setMapLoading] = useState(true); // ✨ NEW: Separate loading for map/tracking
+  const [mapLoading, setMapLoading] = useState(false); // ✨ Only load when tracking is enabled
   const [refreshing, setRefreshing] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
-  const [userRole, setUserRole] = useState<'vendor' | 'rider' | 'buyer'>('buyer');
   const [locationPermission, setLocationPermission] = useState<boolean>(false);
   const [distance, setDistance] = useState<number>(0);
   const [eta, setETA] = useState<number>(0);
   const [riderAddress, setRiderAddress] = useState<string>('');
   const [existingDisputeId, setExistingDisputeId] = useState<string | null>(null);
+  const [showTracking, setShowTracking] = useState(false); // ✨ Track if user requested live tracking
+  const [showTrackingModal, setShowTrackingModal] = useState(false); // ✨ Full-screen tracking modal
 
   // Real-time updates
   useEffect(() => {
@@ -136,7 +136,11 @@ const OrderTrackingScreen: React.FC = () => {
     console.log('🔌 Setting up WebSocket listeners for order:', orderId);
 
     // ✅ Subscribe to real-time rider location updates (MAP ONLY)
+    // Only process updates if tracking is enabled
     const riderLocationListener = realtimeAPI.subscribe('rider_location_update', (data: any) => {
+      // Only process if tracking is enabled
+      if (!showTracking) return;
+      
       console.log('🏍️ Rider location update received:', data);
       
       // ✅ ONLY update location fields, don't trigger full re-render
@@ -183,28 +187,47 @@ const OrderTrackingScreen: React.FC = () => {
       }
     });
 
-    // ✅ Subscribe to order status updates (BUTTON STATE ONLY)
+    // ✅ Subscribe to order status updates from workspace (vendor/rider updates)
     const orderStatusListener = realtimeAPI.subscribe('order_status_update', (data: any) => {
-      console.log('📦 Order status update received:', data);
+      console.log('📦 Order status update received from workspace:', data);
       
-      // ✅ ONLY update status field, don't reload entire order
-      if (data.orderId === orderId && data.status) {
+      // ✅ Update order status and related fields from workspace updates
+      if (data.orderId === orderId) {
         setOrder(prev => {
           if (!prev) return null;
           
-          // Only update if status actually changed
-          if (prev.status === data.status) return prev;
+          const updates: any = {};
           
-          return {
-            ...prev,
-            status: data.status,
-            // Update metadata if provided
-            ...(data.metadata && { metadata: { ...prev.metadata, ...data.metadata } })
-          };
+          // Update status if provided
+          if (data.status && prev.status !== data.status) {
+            updates.status = data.status;
+          }
+          
+          // Update current phase if provided
+          if (data.currentPhase) {
+            updates.currentPhase = data.currentPhase;
+          }
+          
+          // Update timer info if provided
+          if (data.timerInfo) {
+            updates.timerInfo = data.timerInfo;
+            if (data.timerInfo.timeRemaining) {
+              setTimerSeconds(data.timerInfo.timeRemaining);
+            }
+          }
+          
+          // Update metadata if provided
+          if (data.metadata) {
+            updates.metadata = { ...prev.metadata, ...data.metadata };
+          }
+          
+          // Only update if there are actual changes
+          if (Object.keys(updates).length === 0) return prev;
+          
+          return { ...prev, ...updates };
         });
         
-        // Don't call loadOrderDetails() - it causes full reload!
-        console.log(`✅ Order status updated to: ${data.status}`);
+        console.log(`✅ Order updated from workspace: ${data.status || 'metadata update'}`);
       }
     });
 
@@ -214,16 +237,18 @@ const OrderTrackingScreen: React.FC = () => {
       riderLocationListener();
       orderStatusListener();
     };
-  }, [orderId]); // ✅ Only re-subscribe if orderId changes
+  }, [orderId, showTracking]); // ✅ Re-subscribe if orderId or tracking status changes
 
-  // ✅ Separate effect for location polling fallback
+  // ✅ Separate effect for location polling fallback (buyer viewing rider location)
+  // Only poll if tracking is enabled
   useEffect(() => {
-    // Don't poll if order is already delivered
-    if (order?.status === 'delivered') return;
+    // Don't poll if order is already delivered or tracking not enabled
+    if (order?.status === 'delivered' || !showTracking) return;
     
     // Fallback: Set up polling for location updates (in case WebSocket fails)
+    // Only for buyer viewing rider location when tracking is enabled
     const locationInterval = setInterval(() => {
-      if (order?.currentPhase.phase === 'rider' && userRole !== 'rider') {
+      if (order?.currentPhase.phase === 'rider') {
         updateRiderLocation();
       }
     }, 30000); // Poll every 30 seconds as fallback only (WebSocket is primary)
@@ -231,85 +256,7 @@ const OrderTrackingScreen: React.FC = () => {
     return () => {
       clearInterval(locationInterval);
     };
-  }, [order?.status, order?.currentPhase?.phase, userRole]);
-
-  // Background location updates for riders (send location to backend)
-  useEffect(() => {
-    let locationSubscription: Location.LocationSubscription | null = null;
-
-    const startRiderLocationUpdates = async () => {
-      // Only start if user is a rider and has location permission
-      if (userRole !== 'rider' || !locationPermission) return;
-
-      try {
-        // Check if user has an active order (is currently on a delivery)
-        const hasActiveOrder = order?.currentPhase.phase === 'rider';
-
-        // Request background location permission
-        const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
-
-        if (backgroundStatus !== 'granted') {
-          console.log('⚠️ Background location permission not granted');
-          // Fall back to foreground updates
-        }
-
-        // Start watching position
-        locationSubscription = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.High,
-            timeInterval: 5000, // Update every 5 seconds
-            distanceInterval: 10, // Or when moved 10 meters
-          },
-          async (location) => {
-            try {
-              // Get battery level (with fallback for Expo Go)
-              let batteryLevel: number | undefined = undefined;
-              try {
-                // Uncomment if expo-battery is installed:
-                // const batteryState = await Battery.getBatteryLevelAsync();
-                // batteryLevel = Math.round(batteryState * 100);
-              } catch (batteryError) {
-                // Battery API not available (Expo Go or not installed)
-                console.log('⚠️ Battery API not available');
-              }
-
-              // Send location to backend
-              await riderLocationAPI.updateRiderLocation({
-                latitude: location.coords.latitude,
-                longitude: location.coords.longitude,
-                accuracy: location.coords.accuracy || undefined,
-                isOnline: true,
-                isAvailable: !hasActiveOrder, // Not available if on active delivery
-                batteryLevel,
-              });
-
-              console.log('📍 Rider location updated:', {
-                lat: location.coords.latitude,
-                lon: location.coords.longitude,
-                battery: batteryLevel ? `${batteryLevel}%` : 'N/A',
-              });
-            } catch (error) {
-              console.error('Error sending rider location:', error);
-            }
-          }
-        );
-      } catch (error) {
-        console.error('Error starting rider location updates:', error);
-      }
-    };
-
-    // Start location updates if user is a rider
-    if (userRole === 'rider' && locationPermission) {
-      startRiderLocationUpdates();
-    }
-
-    // Cleanup
-    return () => {
-      if (locationSubscription) {
-        locationSubscription.remove();
-      }
-    };
-  }, [userRole, locationPermission, order?.currentPhase.phase]);
+  }, [order?.status, order?.currentPhase?.phase, showTracking]);
 
   const initializeTracking = async () => {
     await requestLocationPermission();
@@ -360,9 +307,8 @@ const OrderTrackingScreen: React.FC = () => {
       
       setLoading(false); // ← Screen renders immediately!
 
-      // ✅ STEP 3: Load tracking data ONLY if needed (for map section)
-      // This is completely decoupled from order data
-      loadTrackingDataIndependently();
+      // ✅ STEP 3: Don't load tracking data automatically - wait for user request
+      // Tracking data will be loaded when user clicks "Show Live Tracking"
 
     } catch (error) {
       console.error('Error loading order details:', error);
@@ -373,7 +319,7 @@ const OrderTrackingScreen: React.FC = () => {
     }
   };
 
-  // ✅ NEW: Load tracking data independently without affecting order state
+  // ✅ Load tracking data on demand (when user requests live tracking)
   const loadTrackingDataIndependently = async () => {
     try {
       setMapLoading(true);
@@ -416,10 +362,78 @@ const OrderTrackingScreen: React.FC = () => {
 
     } catch (error) {
       console.error('Error loading tracking data (non-critical):', error);
-      // Don't show alert - tracking is optional, order details already loaded
+      Alert.alert('Tracking Unavailable', 'Unable to load live tracking. Order status will still update in real-time.');
     } finally {
       setMapLoading(false);
     }
+  };
+
+  // ✅ Enable live tracking on user request (opens modal)
+  const enableLiveTracking = async () => {
+    // Request location permission if not already granted
+    if (!locationPermission) {
+      await requestLocationPermission();
+    }
+    
+    setShowTracking(true);
+    await loadTrackingDataIndependently();
+    setShowTrackingModal(true); // Open full-screen modal
+  };
+
+  // ✅ Calculate ETA from rider's current position to buyer (Bolt-style)
+  const calculateETAFromRider = (): { distance: number; eta: number } => {
+    if (!order?.riderLocation || !order?.buyerLocation) {
+      return { distance: 0, eta: 0 };
+    }
+
+    const dist = riderLocationAPI.calculateDistance(
+      order.riderLocation.latitude,
+      order.riderLocation.longitude,
+      order.buyerLocation.latitude,
+      order.buyerLocation.longitude
+    );
+
+    const vehicleType = order.riderInfo?.vehicleType || 'bike';
+    const etaMinutes = riderLocationAPI.calculateETA(dist, vehicleType);
+
+    return { distance: dist, eta: etaMinutes };
+  };
+
+  // ✅ Calculate total route distance (vendor to buyer)
+  const calculateTotalRouteDistance = (): number => {
+    if (!order?.vendorLocation || !order?.buyerLocation) {
+      return 0;
+    }
+
+    return riderLocationAPI.calculateDistance(
+      order.vendorLocation.latitude,
+      order.vendorLocation.longitude,
+      order.buyerLocation.latitude,
+      order.buyerLocation.longitude
+    );
+  };
+
+  // ✅ Calculate progress percentage (rider position along route)
+  const calculateRouteProgress = (): number => {
+    if (!order?.vendorLocation || !order?.riderLocation || !order?.buyerLocation) {
+      return 0;
+    }
+
+    // Distance from vendor to rider
+    const vendorToRider = riderLocationAPI.calculateDistance(
+      order.vendorLocation.latitude,
+      order.vendorLocation.longitude,
+      order.riderLocation.latitude,
+      order.riderLocation.longitude
+    );
+
+    // Total distance from vendor to buyer
+    const totalDistance = calculateTotalRouteDistance();
+
+    if (totalDistance === 0) return 0;
+
+    // Progress as percentage (0-100)
+    return Math.min(100, Math.max(0, (vendorToRider / totalDistance) * 100));
   };
 
   const updateRiderLocation = async () => {
@@ -502,51 +516,29 @@ const OrderTrackingScreen: React.FC = () => {
   const handleTimerExpired = () => {
     if (!order) return;
     
-    switch (order.currentPhase.phase) {
-      case 'vendor':
-        Alert.alert('Order Overdue', 'This order is past the promised delivery time. The vendor\'s trust score will be affected.');
-        break;
-      case 'rider':
-        Alert.alert('Delivery Delayed', 'The delivery is running late. Looking for alternative riders...');
-        // Auto-reassign rider logic would go here
-        break;
-      case 'buyer':
-        // Auto-release escrow
-        handleAutoReleaseEscrow();
-        break;
+    // Only handle buyer phase timer expiration (auto-release escrow)
+    if (order.currentPhase.phase === 'buyer') {
+      handleAutoReleaseEscrow();
     }
   };
 
-  const handleMilestoneAction = async (action: string) => {
+  // ✅ Buyer-only action handler
+  const handleBuyerAction = async (action: string) => {
     try {
       switch (action) {
-        case 'preparing_order':
-          // Vendor acknowledges order
-          await ordersAPI.updateOrderStatus(orderId, 'processing');
-          break;
-        case 'ready_for_pickup':
-          // Vendor marks ready, activates rider
-          await ordersAPI.updateOrderStatus(orderId, 'ready_for_pickup');
-          break;
-        case 'picked_up':
-          // Rider confirms pickup
-          await ordersAPI.updateOrderStatus(orderId, 'picked_up');
-          break;
-        case 'delivered':
-          // Rider marks as delivered
-          await ordersAPI.updateOrderStatus(orderId, 'delivered');
-          break;
         case 'order_received':
           // Buyer confirms receipt
           await handleOrderReceived();
           break;
+        default:
+          console.warn('Unknown buyer action:', action);
       }
       
       // Reload order data
       await loadOrderDetails();
       
     } catch (error) {
-      Alert.alert('Error', 'Failed to update order status. Please try again.');
+      Alert.alert('Error', 'Failed to complete action. Please try again.');
     }
   };
 
@@ -674,6 +666,280 @@ const OrderTrackingScreen: React.FC = () => {
     if (diffMs <= 0) return 'Overdue';
     if (diffHours > 0) return `${diffHours}h ${diffMinutes}m`;
     return `${diffMinutes}m`;
+  };
+
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const getStatusColor = (status: string): string => {
+    switch (status) {
+      case 'pending': return '#FFA500';
+      case 'confirmed': return '#3498DB';
+      case 'processing': return '#3498DB';
+      case 'shipped': return '#9B59B6';
+      case 'out_for_delivery': return '#9B59B6';
+      case 'delivered': return '#27AE60';
+      case 'completed': return '#27AE60';
+      case 'cancelled': return '#E74C3C';
+      default: return '#888';
+    }
+  };
+
+  const getStatusText = (status: string): string => {
+    switch (status) {
+      case 'pending': return 'Pending';
+      case 'confirmed': return 'Confirmed';
+      case 'processing': return 'Processing';
+      case 'shipped': return 'Shipped';
+      case 'out_for_delivery': return 'Out for Delivery';
+      case 'delivered': return 'Delivered';
+      case 'completed': return 'Completed';
+      case 'cancelled': return 'Cancelled';
+      default: return status.charAt(0).toUpperCase() + status.slice(1);
+    }
+  };
+
+  const handleReorder = async () => {
+    try {
+      const result = await ordersAPI.reorderItems(orderId);
+      Alert.alert('Success', `Added ${result.addedItems} item(s) to cart`);
+      // Navigate to cart or home
+      (navigation as any).navigate('Home');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to reorder items');
+    }
+  };
+
+  const handleViewInvoice = async () => {
+    try {
+      const invoice = await ordersAPI.getOrderInvoice(orderId);
+      // In a real app, you'd open the invoice URL
+      Alert.alert('Invoice', `Invoice Number: ${invoice.invoiceNumber}\n\nInvoice URL: ${invoice.invoiceUrl}`);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to load invoice');
+    }
+  };
+
+  const handleContactSupport = () => {
+    Alert.alert(
+      'Contact Support',
+      'How would you like to contact support?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Call', onPress: () => Alert.alert('Call', 'Support: +234-XXX-XXXX') },
+        { text: 'Email', onPress: () => Alert.alert('Email', 'support@fretiko.com') },
+        { text: 'Chat', onPress: () => (navigation as any).navigate('Konnect') },
+      ]
+    );
+  };
+
+  // ✅ Render Full-Screen Tracking Modal (Bolt-style)
+  const renderTrackingModal = () => {
+    if (!order) return null;
+
+    const { distance: remainingDistance, eta: remainingETA } = calculateETAFromRider();
+    const progress = calculateRouteProgress();
+
+    return (
+      <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
+        {/* Modal Header */}
+        <View style={styles.modalHeader}>
+          <TouchableOpacity 
+            style={styles.modalCloseButton}
+            onPress={() => setShowTrackingModal(false)}
+          >
+            <Ionicons name="arrow-back" size={24} color="white" />
+          </TouchableOpacity>
+          <Text style={styles.modalTitle}>Live Tracking</Text>
+          <View style={{ width: 40 }} />
+        </View>
+
+        {/* ETA and Distance Card */}
+        <View style={styles.modalETACard}>
+          <View style={styles.modalETARow}>
+            <View style={styles.modalETAColumn}>
+              <Text style={styles.modalETALabel}>Estimated Arrival</Text>
+              <Text style={styles.modalETAValue}>
+                {order.riderLocation && order.buyerLocation 
+                  ? riderLocationAPI.formatETA(remainingETA)
+                  : 'Calculating...'}
+              </Text>
+            </View>
+            <View style={styles.modalETADivider} />
+            <View style={styles.modalETAColumn}>
+              <Text style={styles.modalETALabel}>Distance</Text>
+              <Text style={styles.modalETAValue}>
+                {order.riderLocation && order.buyerLocation
+                  ? riderLocationAPI.formatDistance(remainingDistance)
+                  : '--'}
+              </Text>
+            </View>
+          </View>
+          
+          {/* Progress Bar */}
+          {order.riderLocation && (
+            <View style={styles.modalProgressContainer}>
+              <View style={styles.modalProgressBar}>
+                <View style={[styles.modalProgressFill, { width: `${progress}%` }]} />
+              </View>
+              <Text style={styles.modalProgressText}>
+                {Math.round(progress)}% of route completed
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Map Section */}
+        <View style={styles.modalMapContainer}>
+          {renderBoltStyleMap()}
+        </View>
+
+        {/* Route Information */}
+        <View style={styles.modalRouteInfo}>
+          <View style={styles.modalRoutePoint}>
+            <View style={styles.modalRouteIconContainer}>
+              <Ionicons name="storefront" size={20} color="#3498DB" />
+            </View>
+            <View style={styles.modalRouteDetails}>
+              <Text style={styles.modalRouteLabel}>Pickup Location</Text>
+              <Text style={styles.modalRouteAddress} numberOfLines={2}>
+                {order.vendorLocation?.address || 'Vendor Location'}
+              </Text>
+            </View>
+          </View>
+
+          {order.riderLocation && (
+            <View style={styles.modalRoutePoint}>
+              <View style={[styles.modalRouteIconContainer, styles.modalRouteIconMoving]}>
+                <Ionicons name="car" size={20} color="#F39C12" />
+              </View>
+              <View style={styles.modalRouteDetails}>
+                <Text style={styles.modalRouteLabel}>Rider Location</Text>
+                <Text style={styles.modalRouteAddress} numberOfLines={2}>
+                  {riderAddress || 'In Transit...'}
+                </Text>
+                {order.riderInfo && (
+                  <Text style={styles.modalRiderName}>
+                    {order.riderInfo.riderName} • {order.riderInfo.vehicleType}
+                  </Text>
+                )}
+              </View>
+            </View>
+          )}
+
+          <View style={styles.modalRoutePoint}>
+            <View style={[styles.modalRouteIconContainer, styles.modalRouteIconDestination]}>
+              <Ionicons name="home" size={20} color="#27AE60" />
+            </View>
+            <View style={styles.modalRouteDetails}>
+              <Text style={styles.modalRouteLabel}>Delivery Location</Text>
+              <Text style={styles.modalRouteAddress} numberOfLines={2}>
+                {order.buyerLocation?.address || 'Your Address'}
+              </Text>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  // ✅ Render Bolt-Style Map (vendor → rider → buyer)
+  const renderBoltStyleMap = () => {
+    if (!locationPermission) {
+      return (
+        <View style={styles.modalMapPlaceholder}>
+          <Ionicons name="location-off" size={48} color="#888" />
+          <Text style={styles.modalMapPlaceholderText}>Location Permission Required</Text>
+          <TouchableOpacity 
+            style={styles.permissionButton}
+            onPress={requestLocationPermission}
+          >
+            <Text style={styles.permissionButtonText}>Enable Location</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    if (mapLoading || !order.riderLocation || !order.vendorLocation || !order.buyerLocation) {
+      return (
+        <View style={styles.modalMapPlaceholder}>
+          <View style={styles.spinnerContainer}>
+            <View style={styles.spinner} />
+            <Ionicons name="location-outline" size={48} color="#3498DB" style={{ marginTop: 16 }} />
+            <Text style={styles.modalMapPlaceholderText}>Loading live tracking...</Text>
+          </View>
+        </View>
+      );
+    }
+    
+    return (
+      <View style={styles.modalMap}>
+        {/* Enhanced Map Visualization (Bolt-style) */}
+        <View style={styles.boltMapContainer}>
+          {/* Route Visualization */}
+          <View style={styles.boltRouteVisualization}>
+            {/* Vendor Point */}
+            <View style={styles.boltMapPoint}>
+              <View style={styles.boltMapMarkerVendor}>
+                <Ionicons name="storefront" size={24} color="white" />
+              </View>
+              <Text style={styles.boltMapPointLabel}>Pickup</Text>
+            </View>
+
+            {/* Route Line */}
+            <View style={styles.boltRouteLine}>
+              <View style={[styles.boltRouteLineProgress, { height: `${calculateRouteProgress()}%` }]} />
+            </View>
+
+            {/* Rider Point (Moving) */}
+            <View style={styles.boltMapPoint}>
+              <View style={styles.boltMapMarkerRider}>
+                <Ionicons name="car" size={20} color="white" />
+                <View style={styles.boltMapMarkerPulse} />
+              </View>
+              <Text style={styles.boltMapPointLabel}>Rider</Text>
+            </View>
+
+            {/* Remaining Route Line */}
+            <View style={styles.boltRouteLine}>
+              <View style={[styles.boltRouteLineRemaining, { height: `${100 - calculateRouteProgress()}%` }]} />
+            </View>
+
+            {/* Buyer Point */}
+            <View style={styles.boltMapPoint}>
+              <View style={styles.boltMapMarkerBuyer}>
+                <Ionicons name="home" size={24} color="white" />
+              </View>
+              <Text style={styles.boltMapPointLabel}>Delivery</Text>
+            </View>
+          </View>
+
+          {/* Distance and ETA Overlay */}
+          <View style={styles.boltMapOverlay}>
+            <View style={styles.boltMapOverlayRow}>
+              <Ionicons name="location" size={18} color="#3498DB" />
+              <Text style={styles.boltMapOverlayText}>
+                {riderLocationAPI.formatDistance(calculateETAFromRider().distance)} remaining
+              </Text>
+            </View>
+            <View style={styles.boltMapOverlayRow}>
+              <Ionicons name="time" size={18} color="#27AE60" />
+              <Text style={styles.boltMapOverlayText}>
+                ETA: {riderLocationAPI.formatETA(calculateETAFromRider().eta)}
+              </Text>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
   };
 
   const renderMap = () => {
@@ -823,130 +1089,320 @@ const OrderTrackingScreen: React.FC = () => {
     );
   };
 
-  const renderMilestoneButtons = () => {
+  // ✅ Render buyer actions only
+  const renderBuyerActions = () => {
     if (!order) return null;
 
-    const { currentPhase } = order;
-    
-    // Show buttons based on user role and current phase
-    const shouldShowButton = (phase: string) => {
-      switch (phase) {
-        case 'preparing_order':
-        case 'ready_for_pickup':
-          return userRole === 'vendor' && currentPhase.phase === 'vendor';
-        case 'picked_up':
-        case 'delivered':
-          return userRole === 'rider' && currentPhase.phase === 'rider';
-        case 'order_received':
-          return userRole === 'buyer' && currentPhase.phase === 'buyer';
-        default:
-          return false;
-      }
-    };
+    return (
+      <View style={styles.buyerActionsSection}>
+        {/* Confirm Receipt Button - Show when delivered */}
+        {order.status === 'delivered' && order.currentPhase.phase === 'buyer' && (
+          <TouchableOpacity 
+            style={styles.confirmReceiptButton}
+            onPress={() => handleBuyerAction('order_received')}
+          >
+            <Ionicons name="checkmark-done" size={24} color="white" />
+            <Text style={styles.confirmReceiptButtonText}>Confirm Order Received</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Buyer Action Buttons - Show when order is delivered */}
+        {order.status === 'delivered' && (
+          <View style={styles.buyerActionsContainer}>
+            <Text style={styles.buyerActionsTitle}>Order Delivered - What would you like to do?</Text>
+            
+            {/* 24-hour countdown timer */}
+            {order.escrowInfo?.autoReleaseTime && (
+              <View style={styles.timerContainer}>
+                <Ionicons name="time-outline" size={16} color="#FF9500" />
+                <Text style={styles.timerText}>
+                  Funds will be released in {getAutoReleaseTime()}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.buyerButtonsRow}>
+              <TouchableOpacity 
+                style={styles.releaseFundsButton}
+                onPress={handleReleaseFunds}
+              >
+                <Ionicons name="checkmark-circle" size={20} color="white" />
+                <Text style={styles.releaseFundsButtonText}>Release Funds</Text>
+              </TouchableOpacity>
+
+              {existingDisputeId ? (
+                <TouchableOpacity 
+                  style={styles.viewDisputeButton}
+                  onPress={() => (navigation as any).navigate('DisputeDetails', { disputeId: existingDisputeId })}
+                >
+                  <Ionicons name="document-text" size={20} color="white" />
+                  <Text style={styles.viewDisputeButtonText}>View Dispute</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity 
+                  style={styles.reportIssueButton}
+                  onPress={() => (navigation as any).navigate('CreateDispute', { orderId })}
+                >
+                  <Ionicons name="alert-circle" size={20} color="white" />
+                  <Text style={styles.reportIssueButtonText}>File Dispute</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <Text style={styles.buyerActionsNote}>
+              If you're satisfied, release funds now. If there's an issue, report it within 24 hours to get a refund.
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  // ✅ Render Order Summary Header
+  const renderOrderSummary = () => {
+    if (!order) return null;
 
     return (
-      <View style={styles.milestoneSection}>
-        <Text style={styles.sectionTitle}>Order Progress</Text>
-        
-        <View style={styles.milestoneButtons}>
-          {shouldShowButton('preparing_order') && (
-            <TouchableOpacity 
-              style={styles.milestoneButton}
-              onPress={() => handleMilestoneAction('preparing_order')}
-            >
-              <Ionicons name="checkmark-circle-outline" size={24} color="#3498DB" />
-              <Text style={styles.milestoneButtonText}>Mark as Preparing</Text>
-            </TouchableOpacity>
-          )}
+      <View style={styles.orderSummarySection}>
+        <View style={styles.orderSummaryHeader}>
+          <View style={styles.orderSummaryLeft}>
+            <Text style={styles.orderNumberText}>#{order.orderNumber}</Text>
+            <Text style={styles.orderDateText}>{formatDate(order.orderDate)}</Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) }]}>
+            <Text style={styles.statusBadgeText}>{getStatusText(order.status)}</Text>
+          </View>
+        </View>
+        <View style={styles.orderTotalRow}>
+          <Text style={styles.orderTotalLabel}>Total Amount</Text>
+          <Text style={styles.orderTotalAmount}>{walletAPI.formatFreti(order.total)}</Text>
+        </View>
+      </View>
+    );
+  };
 
-          {shouldShowButton('ready_for_pickup') && (
-            <TouchableOpacity 
-              style={styles.milestoneButton}
-              onPress={() => handleMilestoneAction('ready_for_pickup')}
-            >
-              <Ionicons name="cube-outline" size={24} color="#27AE60" />
-              <Text style={styles.milestoneButtonText}>Ready for Pickup</Text>
-            </TouchableOpacity>
-          )}
+  // ✅ Render Delivery Information Section
+  const renderDeliveryInfo = () => {
+    if (!order) return null;
 
-          {shouldShowButton('picked_up') && (
-            <TouchableOpacity 
-              style={styles.milestoneButton}
-              onPress={() => handleMilestoneAction('picked_up')}
-            >
-              <Ionicons name="car-outline" size={24} color="#F39C12" />
-              <Text style={styles.milestoneButtonText}>Picked Up Order</Text>
-            </TouchableOpacity>
-          )}
+    const deliveryAddress = order.deliveryAddress;
+    if (!deliveryAddress) return null;
 
-          {shouldShowButton('delivered') && (
-            <TouchableOpacity 
-              style={styles.milestoneButton}
-              onPress={() => handleMilestoneAction('delivered')}
-            >
-              <Ionicons name="home-outline" size={24} color="#9B59B6" />
-              <Text style={styles.milestoneButtonText}>Mark as Delivered</Text>
-            </TouchableOpacity>
-          )}
-
-          {shouldShowButton('order_received') && (
-            <TouchableOpacity 
-              style={styles.confirmButton}
-              onPress={() => handleMilestoneAction('order_received')}
-            >
-              <Ionicons name="checkmark-done" size={24} color="white" />
-              <Text style={styles.confirmButtonText}>Confirm Order Received</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* ✅ NEW BUYER ACTION BUTTONS - Show when order is delivered */}
-          {order?.status === 'delivered' && (
-            <View style={styles.buyerActionsContainer}>
-              <Text style={styles.buyerActionsTitle}>Order Delivered - What would you like to do?</Text>
-              
-              {/* 24-hour countdown timer */}
-              {order?.escrowReleaseAt && (
-                <View style={styles.timerContainer}>
-                  <Ionicons name="time-outline" size={16} color="#FF9500" />
-                  <Text style={styles.timerText}>
-                    Funds will be released in {formatTime(Math.max(0, Math.floor((new Date(order.escrowReleaseAt).getTime() - Date.now()) / 1000)))}
+    return (
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>📍 Delivery Information</Text>
+        <View style={styles.deliveryInfoCard}>
+          <View style={styles.deliveryInfoRow}>
+            <Ionicons name="location-outline" size={20} color="#3498DB" />
+            <View style={styles.deliveryInfoContent}>
+              {typeof deliveryAddress === 'string' ? (
+                <Text style={styles.deliveryAddressText}>{deliveryAddress}</Text>
+              ) : (
+                <>
+                  <Text style={styles.deliveryName}>{deliveryAddress.fullName || 'Delivery Address'}</Text>
+                  <Text style={styles.deliveryAddressText}>
+                    {[deliveryAddress.address, deliveryAddress.city, deliveryAddress.state, deliveryAddress.postalCode]
+                      .filter(Boolean)
+                      .join(', ')}
                   </Text>
-                </View>
+                  {deliveryAddress.phone && (
+                    <Text style={styles.deliveryPhone}>{deliveryAddress.phone}</Text>
+                  )}
+                </>
               )}
-
-              <View style={styles.buyerButtonsRow}>
-                <TouchableOpacity 
-                  style={styles.releaseFundsButton}
-                  onPress={handleReleaseFunds}
-                >
-                  <Ionicons name="checkmark-circle" size={20} color="white" />
-                  <Text style={styles.releaseFundsButtonText}>Release Funds</Text>
-                </TouchableOpacity>
-
-                {existingDisputeId ? (
-                  <TouchableOpacity 
-                    style={styles.viewDisputeButton}
-                    onPress={() => (navigation as any).navigate('DisputeDetails', { disputeId: existingDisputeId })}
-                  >
-                    <Ionicons name="document-text" size={20} color="white" />
-                    <Text style={styles.viewDisputeButtonText}>View Dispute</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity 
-                    style={styles.reportIssueButton}
-                    onPress={() => (navigation as any).navigate('CreateDispute', { orderId })}
-                  >
-                    <Ionicons name="alert-circle" size={20} color="white" />
-                    <Text style={styles.reportIssueButtonText}>File Dispute</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              <Text style={styles.buyerActionsNote}>
-                If you're satisfied, release funds now. If there's an issue, report it within 24 hours to get a refund.
+            </View>
+          </View>
+          {order.deliveryInstructions && (
+            <View style={styles.deliveryInstructionsRow}>
+              <Ionicons name="information-circle-outline" size={18} color="#888" />
+              <Text style={styles.deliveryInstructionsText}>{order.deliveryInstructions}</Text>
+            </View>
+          )}
+          {order.estimatedDelivery && (
+            <View style={styles.estimatedDeliveryRow}>
+              <Ionicons name="time-outline" size={18} color="#F39C12" />
+              <Text style={styles.estimatedDeliveryText}>
+                Estimated Delivery: {formatDate(order.estimatedDelivery)}
               </Text>
             </View>
           )}
+        </View>
+      </View>
+    );
+  };
+
+  // ✅ Render Payment Details Section
+  const renderPaymentDetails = () => {
+    if (!order) return null;
+
+    const escrowFee = order.metadata?.escrow_fee || 0;
+    const taxAmount = order.tax || order.metadata?.tax_amount || 0;
+    const subtotal = order.subtotal || (order.total - order.deliveryFee - escrowFee - taxAmount);
+
+    return (
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>💳 Payment Details</Text>
+        <View style={styles.paymentDetailsCard}>
+          <View style={styles.paymentRow}>
+            <Text style={styles.paymentLabel}>Subtotal</Text>
+            <Text style={styles.paymentValue}>{walletAPI.formatFreti(subtotal)}</Text>
+          </View>
+          {order.deliveryFee > 0 && (
+            <View style={styles.paymentRow}>
+              <Text style={styles.paymentLabel}>Delivery Fee</Text>
+              <Text style={styles.paymentValue}>{walletAPI.formatFreti(order.deliveryFee)}</Text>
+            </View>
+          )}
+          {taxAmount > 0 && (
+            <View style={styles.paymentRow}>
+              <Text style={styles.paymentLabel}>Tax</Text>
+              <Text style={styles.paymentValue}>{walletAPI.formatFreti(taxAmount)}</Text>
+            </View>
+          )}
+          {escrowFee > 0 && (
+            <View style={styles.paymentRow}>
+              <Text style={styles.paymentLabel}>Escrow Fee</Text>
+              <Text style={styles.paymentValue}>{walletAPI.formatFreti(escrowFee)}</Text>
+            </View>
+          )}
+          <View style={styles.paymentDivider} />
+          <View style={styles.paymentRow}>
+            <Text style={styles.paymentTotalLabel}>Total</Text>
+            <Text style={styles.paymentTotalValue}>{walletAPI.formatFreti(order.total)}</Text>
+          </View>
+          {order.escrowInfo && (
+            <View style={styles.escrowStatusRow}>
+              <Ionicons 
+                name={order.escrowInfo.status === 'held' ? 'shield-checkmark' : 'checkmark-circle'} 
+                size={18} 
+                color={order.escrowInfo.status === 'held' ? '#F39C12' : '#27AE60'} 
+              />
+              <Text style={styles.escrowStatusText}>
+                Payment {order.escrowInfo.status === 'held' ? 'Secured in Escrow' : 'Released'}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  // ✅ Render Delivery PIN Section (for buyers)
+  const renderDeliveryPIN = () => {
+    if (!order) return null;
+
+    // Show delivery PIN for delivery orders
+    if (order.deliveryType !== 'pickup' && order.deliveryPin && order.status !== 'delivered') {
+      return (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>🔐 Delivery PIN</Text>
+          <View style={styles.pinCard}>
+            <Text style={styles.pinDescription}>
+              Give this PIN to the rider when they deliver your order
+            </Text>
+            <View style={styles.pinDisplay}>
+              <Text style={styles.pinText}>{order.deliveryPin}</Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.copyPinButton}
+              onPress={() => {
+                // In a real app, copy to clipboard
+                Alert.alert('PIN Copied', 'Delivery PIN copied to clipboard');
+              }}
+            >
+              <Ionicons name="copy-outline" size={16} color="#3498DB" />
+              <Text style={styles.copyPinText}>Copy PIN</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+
+    return null;
+  };
+
+  // ✅ Render Order Progress Timeline
+  const renderOrderProgress = () => {
+    if (!order) return null;
+
+    const getProgressSteps = () => {
+      const steps = [
+        { key: 'placed', label: 'Order Placed', status: order.status !== 'pending' },
+        { key: 'confirmed', label: 'Confirmed', status: ['confirmed', 'processing', 'shipped', 'out_for_delivery', 'delivered', 'completed'].includes(order.status) },
+        { key: 'processing', label: 'Processing', status: ['processing', 'shipped', 'out_for_delivery', 'delivered', 'completed'].includes(order.status) },
+        { key: 'shipped', label: 'Shipped', status: ['shipped', 'out_for_delivery', 'delivered', 'completed'].includes(order.status) },
+        { key: 'delivered', label: 'Delivered', status: ['delivered', 'completed'].includes(order.status) },
+      ];
+
+      return steps;
+    };
+
+    const steps = getProgressSteps();
+    const currentStepIndex = steps.findIndex(step => step.status);
+
+    return (
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>📊 Order Progress</Text>
+        <View style={styles.progressTimeline}>
+          {steps.map((step, index) => (
+            <React.Fragment key={step.key}>
+              <View style={styles.progressStepContainer}>
+                <View style={[
+                  styles.progressStepDot,
+                  step.status && styles.progressStepDotCompleted,
+                  index === currentStepIndex && styles.progressStepDotCurrent
+                ]}>
+                  {step.status && <Ionicons name="checkmark" size={14} color="#FFF" />}
+                </View>
+                <Text style={[
+                  styles.progressStepLabel,
+                  step.status && styles.progressStepLabelCompleted
+                ]}>
+                  {step.label}
+                </Text>
+              </View>
+              {index < steps.length - 1 && (
+                <View style={[
+                  styles.progressStepLine,
+                  step.status && styles.progressStepLineCompleted
+                ]} />
+              )}
+            </React.Fragment>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
+  // ✅ Render Additional Actions
+  const renderAdditionalActions = () => {
+    if (!order) return null;
+
+    return (
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>More Actions</Text>
+        <View style={styles.additionalActionsRow}>
+          <TouchableOpacity 
+            style={styles.additionalActionButton}
+            onPress={handleReorder}
+          >
+            <Ionicons name="repeat-outline" size={20} color="#3498DB" />
+            <Text style={styles.additionalActionText}>Reorder</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.additionalActionButton}
+            onPress={handleViewInvoice}
+          >
+            <Ionicons name="receipt-outline" size={20} color="#3498DB" />
+            <Text style={styles.additionalActionText}>Receipt</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.additionalActionButton}
+            onPress={handleContactSupport}
+          >
+            <Ionicons name="help-circle-outline" size={20} color="#3498DB" />
+            <Text style={styles.additionalActionText}>Support</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -956,8 +1412,8 @@ const OrderTrackingScreen: React.FC = () => {
     if (!order?.riderInfo || order.currentPhase.phase === 'vendor') return null;
 
     return (
-      <View style={styles.riderSection}>
-        <Text style={styles.sectionTitle}>Your Delivery Rider</Text>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>🚴 Your Delivery Rider</Text>
         <View style={styles.riderCard}>
           <Image 
             source={{ uri: order.riderInfo.avatar || 'https://picsum.photos/60/60?random=1' }}
@@ -1077,70 +1533,71 @@ const OrderTrackingScreen: React.FC = () => {
             </View>
           )}
 
-          {/* Timer Section */}
+          {/* 1. Order Summary Header */}
+          {renderOrderSummary()}
+
+          {/* 2. Timer Section */}
           {renderTimerSection()}
 
-          {/* Order Status Progress */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Order Progress</Text>
-            <View style={styles.progressSteps}>
-              <View style={[styles.progressStep, order.status !== 'pending' && styles.progressStepCompleted]}>
-                <View style={[styles.progressDot, order.status !== 'pending' && styles.progressDotCompleted]}>
-                  <Ionicons name="checkmark" size={16} color="#FFF" />
-                </View>
-                <Text style={styles.progressLabel}>Order Placed</Text>
-              </View>
-              <View style={styles.progressLine} />
-              <View style={[styles.progressStep, ['accepted', 'ready_for_pickup', 'delivered'].includes(order.status) && styles.progressStepCompleted]}>
-                <View style={[styles.progressDot, ['accepted', 'ready_for_pickup', 'delivered'].includes(order.status) && styles.progressDotCompleted]}>
-                  <Ionicons name="checkmark" size={16} color="#FFF" />
-                </View>
-                <Text style={styles.progressLabel}>Preparing</Text>
-              </View>
-              <View style={styles.progressLine} />
-              <View style={[styles.progressStep, ['ready_for_pickup', 'delivered'].includes(order.status) && styles.progressStepCompleted]}>
-                <View style={[styles.progressDot, ['ready_for_pickup', 'delivered'].includes(order.status) && styles.progressDotCompleted]}>
-                  <Ionicons name="checkmark" size={16} color="#FFF" />
-                </View>
-                <Text style={styles.progressLabel}>Ready</Text>
-              </View>
-              <View style={styles.progressLine} />
-              <View style={[styles.progressStep, order.status === 'delivered' && styles.progressStepCompleted]}>
-                <View style={[styles.progressDot, order.status === 'delivered' && styles.progressDotCompleted]}>
-                  <Ionicons name="checkmark" size={16} color="#FFF" />
-                </View>
-                <Text style={styles.progressLabel}>Collected</Text>
-              </View>
-            </View>
-          </View>
+          {/* 3. Order Progress Timeline */}
+          {renderOrderProgress()}
 
-          {/* Escrow Status */}
-          {order.escrowInfo && (
-            <View style={styles.escrowSection}>
-              <Text style={styles.sectionTitle}>Payment Status</Text>
-              <View style={styles.escrowCard}>
-                <Ionicons 
-                  name="shield-checkmark" 
-                  size={24} 
-                  color={order.escrowInfo.status === 'held' ? '#F39C12' : '#27AE60'} 
-                />
-                <View style={styles.escrowDetails}>
-                  <Text style={styles.escrowStatus}>
-                    Funds {order.escrowInfo.status === 'held' ? 'Secured in Escrow' : 'Released to Vendor'}
-                  </Text>
-                  <Text style={styles.escrowDescription}>
-                    {order.escrowInfo.status === 'held' 
-                      ? 'Your money is safe until you confirm pickup'
-                      : 'Payment has been completed'}
-                  </Text>
+          {/* 4. Pickup PIN (for self-pickup orders) */}
+          {order.deliveryPin && order.status !== 'delivered' && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>🔐 Your Pickup PIN</Text>
+              <View style={styles.pinCard}>
+                <Text style={styles.pinDescription}>
+                  Provide this PIN to the vendor when collecting your order
+                </Text>
+                <View style={styles.pinDisplay}>
+                  <Text style={styles.pinText}>{order.deliveryPin}</Text>
                 </View>
+                <TouchableOpacity 
+                  style={styles.copyPinButton}
+                  onPress={() => {
+                    Alert.alert('PIN Copied', 'Pickup PIN copied to clipboard');
+                  }}
+                >
+                  <Ionicons name="copy-outline" size={16} color="#3498DB" />
+                  <Text style={styles.copyPinText}>Copy PIN</Text>
+                </TouchableOpacity>
               </View>
             </View>
           )}
 
-          {/* Order Items */}
+          {/* 5. Vendor Location & Contact */}
+          {order.vendorInfo && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>🏪 Pickup Location</Text>
+              <View style={styles.vendorCard}>
+                <Ionicons name="storefront" size={24} color="#3498DB" />
+                <View style={styles.vendorDetails}>
+                  <Text style={styles.vendorName}>{order.vendorInfo.name}</Text>
+                  {order.vendorLocation && (
+                    <Text style={styles.vendorAddress}>{order.vendorLocation.address}</Text>
+                  )}
+                  {order.vendorInfo.phone && (
+                    <TouchableOpacity 
+                      style={styles.contactButton}
+                      onPress={() => Alert.alert('Call Vendor', `Call ${order.vendorInfo.phone}?`)}
+                    >
+                      <Ionicons name="call" size={16} color="#27AE60" />
+                      <Text style={styles.contactText}>{order.vendorInfo.phone}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <TouchableOpacity style={styles.directionsButton}>
+                  <Ionicons name="navigate" size={20} color="#3498DB" />
+                  <Text style={styles.directionsText}>Directions</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* 6. Order Items */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Order Items ({order.items.length})</Text>
+            <Text style={styles.sectionTitle}>📦 Order Items ({order.items.length})</Text>
             {order.items.map((item) => (
               <View key={item.id} style={styles.orderItem}>
                 <Image source={{ uri: item.image }} style={styles.itemImage} />
@@ -1158,16 +1615,25 @@ const OrderTrackingScreen: React.FC = () => {
             ))}
           </View>
 
-          {/* Confirm Pickup Button (for buyer after delivered) */}
-          {userRole === 'buyer' && order.status === 'delivered' && order.escrowInfo?.canRelease && (
-            <TouchableOpacity 
-              style={styles.confirmButton}
-              onPress={() => handleMilestoneAction('order_received')}
-            >
-              <Text style={styles.confirmButtonText}>Confirm Pickup & Release Funds</Text>
-            </TouchableOpacity>
-          )}
+          {/* 7. Payment Details */}
+          {renderPaymentDetails()}
+
+          {/* 8. Buyer Actions */}
+          {renderBuyerActions()}
+
+          {/* 9. Additional Actions */}
+          {renderAdditionalActions()}
         </ScrollView>
+
+        {/* ✅ Full-Screen Tracking Modal (Bolt-style) */}
+        <Modal
+          visible={showTrackingModal}
+          animationType="slide"
+          presentationStyle="fullScreen"
+          onRequestClose={() => setShowTrackingModal(false)}
+        >
+          {renderTrackingModal()}
+        </Modal>
       </View>
     );
   }
@@ -1199,50 +1665,74 @@ const OrderTrackingScreen: React.FC = () => {
           />
         }
       >
-        {/* Timer Section */}
+        {/* 1. Order Summary Header */}
+        {renderOrderSummary()}
+
+        {/* 2. Timer Section */}
         {renderTimerSection()}
 
-        {/* Real-time Map - Only show if order is not delivered */}
-        {order.status !== 'delivered' && (
-          <View style={styles.mapSection}>
-            <Text style={styles.sectionTitle}>Live Tracking</Text>
-            {renderMap()}
+        {/* 3. Order Progress Timeline */}
+        {renderOrderProgress()}
+
+        {/* 4. Compact Tracking Card - Shows ETA and opens modal */}
+        {order.status !== 'delivered' && 
+         order.deliveryType !== 'pickup' && 
+         (order.status === 'out_for_delivery' || order.status === 'shipped' || order.currentPhase?.phase === 'rider') && (
+          <View style={styles.section}>
+            {showTracking ? (
+              // Show compact tracking info when tracking is enabled
+              <TouchableOpacity 
+                style={styles.trackingCard}
+                onPress={() => setShowTrackingModal(true)}
+              >
+                <View style={styles.trackingCardHeader}>
+                  <View style={styles.trackingCardLeft}>
+                    <Ionicons name="location" size={20} color="#3498DB" />
+                    <View style={styles.trackingCardInfo}>
+                      <Text style={styles.trackingCardTitle}>Live Tracking Active</Text>
+                      {order.riderLocation && order.buyerLocation && (
+                        <>
+                          <Text style={styles.trackingCardETA}>
+                            {riderLocationAPI.formatETA(calculateETAFromRider().eta)} • {riderLocationAPI.formatDistance(calculateETAFromRider().distance)} away
+                          </Text>
+                          <View style={styles.progressBarContainer}>
+                            <View style={[styles.progressBar, { width: `${calculateRouteProgress()}%` }]} />
+                          </View>
+                        </>
+                      )}
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#888" />
+                </View>
+              </TouchableOpacity>
+            ) : (
+              // Show "Enable Tracking" button when tracking not enabled
+              <TouchableOpacity 
+                style={styles.enableTrackingButton}
+                onPress={enableLiveTracking}
+              >
+                <Ionicons name="location" size={24} color="white" />
+                <View style={styles.enableTrackingContent}>
+                  <Text style={styles.enableTrackingTitle}>Show Live Tracking</Text>
+                  <Text style={styles.enableTrackingSubtitle}>
+                    Track your order in real-time on the map
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={24} color="white" />
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
-        {/* Rider Information - Only show if order is not delivered */}
-        {order.status !== 'delivered' && renderRiderInfo()}
+        {/* 5. Rider Information - Only show if order is not delivered */}
+        {order.status !== 'delivered' && order.riderInfo && renderRiderInfo()}
 
-        {/* Milestone Buttons */}
-        {renderMilestoneButtons()}
+        {/* 6. Delivery PIN */}
+        {renderDeliveryPIN()}
 
-        {/* Escrow Status */}
-        {order.escrowInfo && (
-          <View style={styles.escrowSection}>
-            <Text style={styles.sectionTitle}>Payment Status</Text>
-            <View style={styles.escrowCard}>
-              <Ionicons 
-                name="shield-checkmark" 
-                size={24} 
-                color={order.escrowInfo.status === 'held' ? '#F39C12' : '#27AE60'} 
-              />
-              <View style={styles.escrowDetails}>
-                <Text style={styles.escrowStatus}>
-                  Funds {order.escrowInfo.status === 'held' ? 'Secured in Escrow' : 'Released to Vendor'}
-                </Text>
-                <Text style={styles.escrowDescription}>
-                  {order.escrowInfo.status === 'held' 
-                    ? 'Your money is safe until you confirm delivery'
-                    : 'Payment has been completed'}
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
-
-        {/* Order Items */}
+        {/* 7. Order Items */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Order Items ({order.items.length})</Text>
+          <Text style={styles.sectionTitle}>📦 Order Items ({order.items.length})</Text>
           {order.items.map((item) => (
             <View key={item.id} style={styles.orderItem}>
               <Image source={{ uri: item.image }} style={styles.itemImage} />
@@ -1259,6 +1749,18 @@ const OrderTrackingScreen: React.FC = () => {
             </View>
           ))}
         </View>
+
+        {/* 8. Delivery Information */}
+        {renderDeliveryInfo()}
+
+        {/* 9. Payment Details */}
+        {renderPaymentDetails()}
+
+        {/* 10. Buyer Actions */}
+        {renderBuyerActions()}
+
+        {/* 11. Additional Actions */}
+        {renderAdditionalActions()}
       </ScrollView>
     </View>
   );
@@ -1943,6 +2445,618 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  // ✅ Order Summary Styles
+  orderSummarySection: {
+    padding: 20,
+    backgroundColor: '#1a1a1a',
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  orderSummaryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  orderSummaryLeft: {
+    flex: 1,
+  },
+  orderNumberText: {
+    color: 'white',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  orderDateText: {
+    color: '#888',
+    fontSize: 14,
+  },
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  statusBadgeText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  orderTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  orderTotalLabel: {
+    color: '#888',
+    fontSize: 14,
+  },
+  orderTotalAmount: {
+    color: '#27AE60',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  // ✅ Delivery Info Styles
+  deliveryInfoCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+  },
+  deliveryInfoRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  deliveryInfoContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  deliveryName: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  deliveryAddressText: {
+    color: '#CCC',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  deliveryPhone: {
+    color: '#3498DB',
+    fontSize: 14,
+    marginTop: 4,
+  },
+  deliveryInstructionsRow: {
+    flexDirection: 'row',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  deliveryInstructionsText: {
+    color: '#888',
+    fontSize: 13,
+    marginLeft: 8,
+    flex: 1,
+  },
+  estimatedDeliveryRow: {
+    flexDirection: 'row',
+    marginTop: 8,
+  },
+  estimatedDeliveryText: {
+    color: '#F39C12',
+    fontSize: 13,
+    marginLeft: 8,
+    fontWeight: '500',
+  },
+  // ✅ Payment Details Styles
+  paymentDetailsCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+  },
+  paymentRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  paymentLabel: {
+    color: '#888',
+    fontSize: 14,
+  },
+  paymentValue: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  paymentDivider: {
+    height: 1,
+    backgroundColor: '#333',
+    marginVertical: 12,
+  },
+  paymentTotalLabel: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  paymentTotalValue: {
+    color: '#27AE60',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  escrowStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  escrowStatusText: {
+    color: '#888',
+    fontSize: 13,
+    marginLeft: 8,
+  },
+  // ✅ Delivery PIN Styles
+  pinCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+  },
+  pinDescription: {
+    color: '#888',
+    fontSize: 13,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  pinDisplay: {
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    borderRadius: 12,
+    padding: 20,
+    borderWidth: 2,
+    borderColor: 'rgba(52, 152, 219, 0.3)',
+    marginBottom: 16,
+    width: '100%',
+    alignItems: 'center',
+  },
+  pinText: {
+    color: '#FFF',
+    fontSize: 32,
+    fontWeight: 'bold',
+    letterSpacing: 8,
+  },
+  copyPinButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    borderWidth: 1,
+    borderColor: '#3498DB',
+  },
+  copyPinText: {
+    color: '#3498DB',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  // ✅ Progress Timeline Styles
+  progressTimeline: {
+    paddingVertical: 8,
+  },
+  progressStepContainer: {
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  progressStepDot: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#333',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  progressStepDotCompleted: {
+    backgroundColor: '#27AE60',
+  },
+  progressStepDotCurrent: {
+    backgroundColor: '#3498DB',
+    borderWidth: 3,
+    borderColor: '#27AE60',
+  },
+  progressStepLabel: {
+    color: '#888',
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  progressStepLabelCompleted: {
+    color: '#CCC',
+    fontWeight: '500',
+  },
+  progressStepLine: {
+    width: 2,
+    height: 24,
+    backgroundColor: '#333',
+    marginLeft: 15,
+    marginBottom: 4,
+  },
+  progressStepLineCompleted: {
+    backgroundColor: '#27AE60',
+  },
+  // ✅ Buyer Actions Styles
+  buyerActionsSection: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  confirmReceiptButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#27AE60',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  confirmReceiptButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  // ✅ Additional Actions Styles
+  additionalActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    gap: 12,
+  },
+  additionalActionButton: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  additionalActionText: {
+    color: '#3498DB',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 8,
+  },
+  // ✅ Enable Tracking Button Styles
+  enableTrackingButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3498DB',
+    padding: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2980B9',
+  },
+  enableTrackingContent: {
+    flex: 1,
+    marginLeft: 16,
+  },
+  enableTrackingTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  enableTrackingSubtitle: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 13,
+  },
+  mapSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  hideTrackingButton: {
+    padding: 8,
+  },
+  // ✅ Tracking Card Styles
+  trackingCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  trackingCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  trackingCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  trackingCardInfo: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  trackingCardTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  trackingCardETA: {
+    color: '#888',
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  progressBarContainer: {
+    height: 4,
+    backgroundColor: '#333',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    backgroundColor: '#3498DB',
+    borderRadius: 2,
+  },
+  // ✅ Modal Styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  modalCloseButton: {
+    padding: 8,
+  },
+  modalTitle: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  modalETACard: {
+    backgroundColor: '#1a1a1a',
+    margin: 16,
+    borderRadius: 12,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalETARow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 16,
+  },
+  modalETAColumn: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  modalETADivider: {
+    width: 1,
+    backgroundColor: '#333',
+  },
+  modalETALabel: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  modalETAValue: {
+    color: 'white',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  modalProgressContainer: {
+    marginTop: 16,
+  },
+  modalProgressBar: {
+    height: 6,
+    backgroundColor: '#333',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  modalProgressFill: {
+    height: '100%',
+    backgroundColor: '#3498DB',
+    borderRadius: 3,
+  },
+  modalProgressText: {
+    color: '#888',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  modalMapContainer: {
+    flex: 1,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#1a1a1a',
+  },
+  modalMap: {
+    flex: 1,
+  },
+  modalMapPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+  },
+  modalMapPlaceholderText: {
+    color: '#888',
+    fontSize: 14,
+    marginTop: 16,
+  },
+  // ✅ Bolt-Style Map Styles
+  boltMapContainer: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+    position: 'relative',
+  },
+  boltRouteVisualization: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  boltMapPoint: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  boltMapMarkerVendor: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#3498DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    borderWidth: 3,
+    borderColor: 'white',
+  },
+  boltMapMarkerRider: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F39C12',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    borderWidth: 3,
+    borderColor: 'white',
+    position: 'relative',
+  },
+  boltMapMarkerPulse: {
+    position: 'absolute',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(243, 156, 18, 0.3)',
+  },
+  boltMapMarkerBuyer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#27AE60',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    borderWidth: 3,
+    borderColor: 'white',
+  },
+  boltMapPointLabel: {
+    color: '#888',
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  boltRouteLine: {
+    width: 4,
+    height: 60,
+    backgroundColor: '#333',
+    marginHorizontal: 8,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  boltRouteLineProgress: {
+    width: '100%',
+    backgroundColor: '#3498DB',
+    position: 'absolute',
+    bottom: 0,
+  },
+  boltRouteLineRemaining: {
+    width: '100%',
+    backgroundColor: '#555',
+    position: 'absolute',
+    top: 0,
+  },
+  boltMapOverlay: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  boltMapOverlayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  boltMapOverlayText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  // ✅ Modal Route Info Styles
+  modalRouteInfo: {
+    backgroundColor: '#1a1a1a',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalRoutePoint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  modalRouteIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#333',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  modalRouteIconMoving: {
+    backgroundColor: 'rgba(243, 156, 18, 0.2)',
+  },
+  modalRouteIconDestination: {
+    backgroundColor: 'rgba(39, 174, 96, 0.2)',
+  },
+  modalRouteDetails: {
+    flex: 1,
+  },
+  modalRouteLabel: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  modalRouteAddress: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  modalRiderName: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 4,
   },
 });
 
