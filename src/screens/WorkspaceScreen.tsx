@@ -240,8 +240,8 @@ const WorkspaceScreen: React.FC = () => {
     // ✅ If user can access workspace, they ARE a seller or rider
     // Show button based on order status, not user role check
     
-    // ✅ Check if this is a self-pickup order (no rider)
-    const isSelfPickup = order.deliveryType === 'pickup' || !order.riderId;
+    // ✅ Check if this is a self-pickup order - must be explicitly 'pickup' type
+    const isSelfPickup = order.deliveryType === 'pickup';
     
     // VENDOR ACTIONS (for orders assigned to this vendor)
     switch (order.status) {

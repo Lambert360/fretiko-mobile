@@ -136,15 +136,41 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
             walletAPI.getTransactionHistory(riderDeliveryParams)
           ]);
           
-          // Merge and sort by date
-          const mergedData = [...holdData, ...releaseData, ...refundData, ...vendorSaleData, ...riderDeliveryData].sort(
+          // Merge and sort by date, removing duplicates by ID
+          const allTransactions = [...holdData, ...releaseData, ...refundData, ...vendorSaleData, ...riderDeliveryData];
+          
+          // Deduplicate by transaction ID to prevent duplicate key errors
+          const uniqueTransactionsMap = new Map();
+          allTransactions.forEach(transaction => {
+            if (transaction.id && !uniqueTransactionsMap.has(transaction.id)) {
+              uniqueTransactionsMap.set(transaction.id, transaction);
+            }
+          });
+          
+          const mergedData = Array.from(uniqueTransactionsMap.values()).sort(
             (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           );
+          
+          // Log warning if duplicates were found (for debugging)
+          if (allTransactions.length !== mergedData.length) {
+            console.warn(`⚠️ Duplicate transactions detected: ${allTransactions.length - mergedData.length} duplicates removed`);
+          }
           
           if (reset) {
             setTransactions(mergedData);
           } else {
-            setTransactions(prev => [...prev, ...mergedData]);
+            // Also deduplicate when appending to prevent duplicates from pagination
+            setTransactions(prev => {
+              const prevMap = new Map(prev.map(t => [t.id, t]));
+              mergedData.forEach(t => {
+                if (t.id && !prevMap.has(t.id)) {
+                  prevMap.set(t.id, t);
+                }
+              });
+              return Array.from(prevMap.values()).sort(
+                (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+              );
+            });
           }
           
           setOffset(currentOffset + mergedData.length);
@@ -738,7 +764,7 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
             activeTab === 'escrow' ? renderEscrowTransaction :
             renderTransaction
           }
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item, index) => item.id || `transaction-${index}`}
           style={styles.transactionsList}
           contentContainerStyle={[
             styles.transactionsContainer,

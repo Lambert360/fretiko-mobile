@@ -30,6 +30,7 @@ const InvoiceDetailsScreen: React.FC = () => {
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [expandedDescriptions, setExpandedDescriptions] = useState<{ [key: string]: boolean }>({});
 
   useEffect(() => {
     loadInvoice();
@@ -234,9 +235,34 @@ const InvoiceDetailsScreen: React.FC = () => {
 
               <Text style={styles.itemName}>{item.name}</Text>
 
-              {item.description && (
-                <Text style={styles.itemDescription}>{item.description}</Text>
-              )}
+              {item.description && (() => {
+                const INSTRUCTIONS_LIMIT = 120;
+                const itemKey = item.id || `item-${index}`;
+                const isLong = item.description.length > INSTRUCTIONS_LIMIT;
+                const isExpanded = expandedDescriptions[itemKey] || false;
+                const displayText = isExpanded || !isLong
+                  ? item.description
+                  : `${item.description.substring(0, INSTRUCTIONS_LIMIT)}...`;
+                
+                return (
+                  <View style={styles.itemDescriptionContainer}>
+                    <Text style={styles.itemDescription}>{displayText}</Text>
+                    {isLong && (
+                      <TouchableOpacity
+                        onPress={() => setExpandedDescriptions(prev => ({
+                          ...prev,
+                          [itemKey]: !prev[itemKey]
+                        }))}
+                        style={styles.seeMoreButton}
+                      >
+                        <Text style={styles.seeMoreText}>
+                          {isExpanded ? 'See less' : 'See more'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              })()}
 
               {item.itemType === InvoiceItemType.SERVICE && item.appointmentDate && (
                 <View style={styles.appointmentContainer}>
@@ -512,11 +538,23 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 8,
   },
+  itemDescriptionContainer: {
+    marginBottom: 12,
+  },
   itemDescription: {
     color: '#888',
     fontSize: 14,
-    marginBottom: 12,
     lineHeight: 20,
+  },
+  seeMoreButton: {
+    marginTop: 4,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+  },
+  seeMoreText: {
+    color: '#3498DB',
+    fontSize: 13,
+    fontWeight: '500',
   },
   appointmentContainer: {
     flexDirection: 'row',

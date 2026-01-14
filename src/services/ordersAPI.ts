@@ -12,6 +12,7 @@ export interface Order {
   orderDate: string;
   estimatedDelivery?: string;
   deliveryAddress?: DeliveryAddress;
+  deliveryInstructions?: string; // ✅ Add delivery instructions/notes from checkout
   items: OrderItem[];
   source?: 'regular' | 'live_stream' | 'auction' | 'service_booking';
   metadata?: {

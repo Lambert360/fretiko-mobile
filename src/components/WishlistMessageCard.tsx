@@ -29,6 +29,13 @@ interface WishlistData {
   previewItems: WishlistPreviewItem[];
   canAddItems: boolean;
   sharedAt: Date;
+  purchaseStatus?: {
+    itemsPurchased: number;
+    itemsProcessing: number;
+    itemsCompleted: number;
+    totalItems: number;
+    overallStatus: 'none' | 'processing' | 'completed';
+  };
 }
 
 interface WishlistMessageCardProps {
@@ -42,7 +49,13 @@ const WishlistMessageCard: React.FC<WishlistMessageCardProps> = ({
   isCurrentUser,
   onPress,
 }) => {
-  const { shareId, shareType, itemCount, ownerName, ownerId, previewItems, canAddItems } = wishlistData;
+  const { shareId, shareType, itemCount, ownerName, ownerId, previewItems, canAddItems, purchaseStatus } = wishlistData;
+
+  // 🔥 DEBUG: Log purchaseStatus to verify it's being passed
+  React.useEffect(() => {
+    console.log('🎁 WishlistMessageCard purchaseStatus:', purchaseStatus);
+    console.log('🎁 WishlistMessageCard itemCount:', itemCount);
+  }, [purchaseStatus, itemCount]);
 
   const handlePress = () => {
     onPress(shareId, ownerId, ownerName, shareType);
@@ -64,6 +77,38 @@ const WishlistMessageCard: React.FC<WishlistMessageCardProps> = ({
     }
   };
 
+  const getPurchaseStatusBadge = () => {
+    if (!purchaseStatus || purchaseStatus.overallStatus === 'none') {
+      return null;
+    }
+
+    const { overallStatus, itemsPurchased, totalItems } = purchaseStatus;
+    
+    if (overallStatus === 'processing') {
+      return (
+        <View style={styles.purchaseStatusBadge}>
+          <Ionicons name="time" size={14} color="#FFA726" />
+          <Text style={styles.purchaseStatusTextProcessing}>
+            {itemsPurchased} of {totalItems} processing
+          </Text>
+        </View>
+      );
+    }
+
+    if (overallStatus === 'completed') {
+      return (
+        <View style={styles.purchaseStatusBadge}>
+          <Ionicons name="checkmark-circle" size={14} color="#66BB6A" />
+          <Text style={styles.purchaseStatusTextCompleted}>
+            {itemsPurchased} of {totalItems} completed
+          </Text>
+        </View>
+      );
+    }
+
+    return null;
+  };
+
   return (
     <TouchableOpacity
       style={[
@@ -83,6 +128,12 @@ const WishlistMessageCard: React.FC<WishlistMessageCardProps> = ({
             {isCurrentUser ? 'You shared your wishlist' : `${ownerName}'s Wishlist`}
           </Text>
           <Text style={styles.subtitle}>{itemCount} item{itemCount > 1 ? 's' : ''}</Text>
+          {/* 🔥 FIX: Always check purchaseStatus exists and has valid data */}
+          {purchaseStatus && purchaseStatus.overallStatus !== 'none' && purchaseStatus.totalItems > 0 && (
+            <View style={styles.purchaseStatusContainer}>
+              {getPurchaseStatusBadge()}
+            </View>
+          )}
         </View>
       </View>
 
@@ -90,7 +141,7 @@ const WishlistMessageCard: React.FC<WishlistMessageCardProps> = ({
       {previewItems.length > 0 && (
         <View style={styles.previewContainer}>
           {previewItems.slice(0, 3).map((item, index) => (
-            <View key={item.id} style={styles.previewItemWrapper}>
+            <View key={`preview-${item.id}`} style={styles.previewItemWrapper}>
               <Image
                 source={{ uri: item.image }}
                 style={styles.previewImage}
@@ -110,7 +161,7 @@ const WishlistMessageCard: React.FC<WishlistMessageCardProps> = ({
       {previewItems.length > 0 && (
         <View style={styles.itemNamesContainer}>
           {previewItems.slice(0, 2).map((item) => (
-            <View key={item.id} style={styles.itemNameRow}>
+            <View key={`name-${item.id}`} style={styles.itemNameRow}>
               <Text style={styles.itemName} numberOfLines={1}>
                 • {item.name}
               </Text>
@@ -301,6 +352,29 @@ const styles = StyleSheet.create({
   viewButtonText: {
     color: '#FFFFFF',
     fontSize: 13,
+    fontWeight: '600',
+  },
+  purchaseStatusContainer: {
+    marginTop: 6,
+  },
+  purchaseStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    gap: 4,
+  },
+  purchaseStatusTextProcessing: {
+    color: '#FFA726',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  purchaseStatusTextCompleted: {
+    color: '#66BB6A',
+    fontSize: 11,
     fontWeight: '600',
   },
 });

@@ -76,6 +76,21 @@ const LiveStreamViewerScreen = () => {
     try {
       setLoading(true);
       const streamData = await liveSalesAPI.getStreamById(streamId);
+
+      // If stream is live, try to get HLS URL
+      if (streamData.status === 'live') {
+        try {
+          const hlsData = await liveSalesAPI.getHLSUrl(streamId);
+          if (hlsData.hlsUrl) {
+            streamData.stream_url = hlsData.hlsUrl;
+          }
+          // HLS URL will be polled if not ready yet
+        } catch (hlsError) {
+          console.warn('HLS URL not available yet:', hlsError);
+          // Continue without HLS URL - it will be polled
+        }
+      }
+
       setStream(streamData);
       setViewerCount(streamData.viewer_count);
     } catch (error) {
@@ -84,6 +99,22 @@ const LiveStreamViewerScreen = () => {
       navigation.goBack();
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Poll for HLS URL when stream is live but URL isn't available
+  const pollForHLSUrl = async () => {
+    if (!stream || stream.status !== 'live' || stream.stream_url) return;
+
+    try {
+      const hlsData = await liveSalesAPI.getHLSUrl(streamId);
+      if (hlsData.hlsUrl && hlsData.hlsUrl !== stream.stream_url) {
+        console.log('HLS URL now available:', hlsData.hlsUrl);
+        setStream(prev => prev ? { ...prev, stream_url: hlsData.hlsUrl } : null);
+      }
+    } catch (error) {
+      // Silently continue polling
+      console.debug('HLS URL still not available, will retry...');
     }
   };
 
@@ -130,6 +161,26 @@ const LiveStreamViewerScreen = () => {
       };
     }, [])
   );
+
+  // HLS URL polling when stream is live but URL isn't ready
+  useEffect(() => {
+    if (!stream || stream.status !== 'live' || stream.stream_url || !isScreenFocused) {
+      return;
+    }
+
+    console.log('🔄 Starting HLS URL polling...');
+
+    // Poll immediately
+    pollForHLSUrl();
+
+    // Then poll every 5 seconds
+    const interval = setInterval(pollForHLSUrl, 5000);
+
+    return () => {
+      console.log('⏹️ Stopping HLS URL polling');
+      clearInterval(interval);
+    };
+  }, [stream?.status, stream?.stream_url, isScreenFocused]);
 
   // Socket event handlers
   const handleNewComment = (comment: LiveComment) => {

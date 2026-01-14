@@ -459,109 +459,107 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
 
       let order;
 
-      // Handle invoice-based checkout
-      if (source === 'invoice' && invoiceId) {
-        console.log('📄 Creating order from invoice:', invoiceId);
+      // Regular checkout flow (cart, direct product, auction, wishlist, or invoice)
+      const baseOrderData = {
+        deliveryAddress,
+        paymentMethodId: selectedPaymentMethod,
+        useEscrow,
+        deliveryInstructions: deliveryInstructions.trim() || undefined,
+        useRewards,
+        rewardsAmount,
+        directCheckout: directCheckout ? { productId, quantity } : undefined,
+        auctionCheckout: auctionCheckout ? { auctionId: auctionCheckout.auctionId } : undefined,
+        invoiceCheckout: source === 'invoice' && invoiceId && invoiceItems && vendorId ? {
+          invoiceId,
+          invoiceNumber: `INV-${invoiceId.substring(0, 8)}`, // Generate invoice number from ID
+          items: invoiceItems,
+          totalAmount: invoiceTotal || 0,
+          vendorId,
+        } : undefined,
+        selectedItemIds: selectedItemIds || undefined, // NEW: For selective checkout
+        wishlistItemIds: source === 'wishlist' ? wishlistItemIds : undefined, // NEW: For wishlist checkout
+      };
 
-        // Create order from invoice using the backend endpoint
-        const { orderId } = await invoiceAPI.createOrderFromInvoice(invoiceId);
-
-        // Fetch the created order details
-        order = { id: orderId, orderNumber: `INV-${invoiceId.substring(0, 8)}` };
-
-        console.log('✅ Order created from invoice:', orderId);
-      } else {
-        // Regular checkout flow (cart, direct product, auction, or wishlist)
-        const baseOrderData = {
-          deliveryAddress,
-          paymentMethodId: selectedPaymentMethod,
-          useEscrow,
-          deliveryInstructions: deliveryInstructions.trim() || undefined,
-          useRewards,
-          rewardsAmount,
-          directCheckout: directCheckout ? { productId, quantity } : undefined,
-          auctionCheckout: auctionCheckout ? { auctionId: auctionCheckout.auctionId } : undefined,
-          selectedItemIds: selectedItemIds || undefined, // NEW: For selective checkout
-          wishlistItemIds: source === 'wishlist' ? wishlistItemIds : undefined, // NEW: For wishlist checkout
+      // Multi-vendor checkout: use grouped order API
+      if (isMultiVendor && riderAssignments.length > 0) {
+        console.log('🏪 Creating grouped order for multi-vendor checkout...');
+        
+        const groupedOrderData = {
+          ...baseOrderData,
+          riderAssignments,
+          totalRiderFee,
         };
 
-        // Multi-vendor checkout: use grouped order API
-        if (isMultiVendor && riderAssignments.length > 0) {
-          console.log('🏪 Creating grouped order for multi-vendor checkout...');
-          
-          const groupedOrderData = {
-            ...baseOrderData,
-            riderAssignments,
-            totalRiderFee,
-          };
+        const result = await checkoutAPI.createGroupedOrder(groupedOrderData);
+        order = { 
+          id: result.orderGroup.id, 
+          orderNumber: result.orderGroup.group_number,
+          isGrouped: true,
+          orders: result.orders,
+        };
 
-          const result = await checkoutAPI.createGroupedOrder(groupedOrderData);
-          order = { 
-            id: result.orderGroup.id, 
-            orderNumber: result.orderGroup.group_number,
-            isGrouped: true,
-            orders: result.orders,
-          };
+        console.log(`✅ Grouped order created: ${result.orders.length} individual orders`);
+      } else {
+        // Single-vendor checkout: use regular order API
+        console.log('🛒 Creating single order...');
+        
+        const orderData = {
+          ...baseOrderData,
+          selectedRider: selectedRider === 'pickup' ? {
+            riderId: 'pickup',
+            riderName: 'Self Pickup',
+            vehicleType: 'pickup',
+            deliveryPrice: 0,
+            estimatedArrival: 0,
+          } : selectedRider ? {
+            riderId: selectedRider.id,
+            riderName: selectedRider.name,
+            vehicleType: selectedRider.vehicleType,
+            deliveryPrice: selectedRider.price,
+            estimatedArrival: selectedRider.estimatedArrival,
+          } : undefined,
+        };
 
-          console.log(`✅ Grouped order created: ${result.orders.length} individual orders`);
-        } else {
-          // Single-vendor checkout: use regular order API
-          console.log('🛒 Creating single order...');
-          
-          const orderData = {
-            ...baseOrderData,
-            selectedRider: selectedRider === 'pickup' ? {
-              riderId: 'pickup',
-              riderName: 'Self Pickup',
-              vehicleType: 'pickup',
-              deliveryPrice: 0,
-              estimatedArrival: 0,
-            } : selectedRider ? {
-              riderId: selectedRider.id,
-              riderName: selectedRider.name,
-              vehicleType: selectedRider.vehicleType,
-              deliveryPrice: selectedRider.price,
-              estimatedArrival: selectedRider.estimatedArrival,
-            } : undefined,
-          };
-
-          console.log('📦 Order data being sent to backend:');
-          console.log('  - Payment method:', orderData.paymentMethodId);
-          console.log('  - Number of items:', orderSummary.items.length);
-          console.log('  - Items:', orderSummary.items.map(i => ({ id: i.id, name: i.name })));
-          console.log('  - Total:', orderSummary.subtotal);
-
-          order = await checkoutAPI.createOrder(orderData);
-          console.log(`✅ Single order created: ${order.orderNumber}`);
+        console.log('📦 Order data being sent to backend:');
+        console.log('  - Payment method:', orderData.paymentMethodId);
+        console.log('  - Source:', source);
+        console.log('  - Number of items:', orderSummary.items.length);
+        console.log('  - Items:', orderSummary.items.map(i => ({ id: i.id, name: i.name })));
+        console.log('  - Total:', orderSummary.subtotal);
+        if (source === 'invoice') {
+          console.log('  - Invoice ID:', invoiceId);
         }
 
-        // Clear cart items
-        if (!directCheckout && !auctionCheckout) {
-          // Check if we have specific cart item IDs to remove (selective checkout)
-          if (selectedCartItemIds && selectedCartItemIds.length > 0) {
-            console.log(`🗑️ Removing ${selectedCartItemIds.length} selected items from cart`);
-            console.log('🗑️ Cart item IDs to remove:', selectedCartItemIds);
-            
-            // Remove items sequentially to avoid race conditions
-            for (const itemId of selectedCartItemIds) {
-              try {
-                console.log(`🗑️ Removing cart item: ${itemId}`);
-                await cartAPI.removeItem(itemId);
-                console.log(`✅ Successfully removed cart item: ${itemId}`);
-              } catch (error) {
-                console.error(`❌ Failed to remove cart item ${itemId}:`, error);
-              }
+        order = await checkoutAPI.createOrder(orderData);
+        console.log(`✅ Single order created: ${order.orderNumber}`);
+      }
+
+      // Clear cart items
+      if (!directCheckout && !auctionCheckout && source !== 'invoice') {
+        // Check if we have specific cart item IDs to remove (selective checkout)
+        if (selectedCartItemIds && selectedCartItemIds.length > 0) {
+          console.log(`🗑️ Removing ${selectedCartItemIds.length} selected items from cart`);
+          console.log('🗑️ Cart item IDs to remove:', selectedCartItemIds);
+          
+          // Remove items sequentially to avoid race conditions
+          for (const itemId of selectedCartItemIds) {
+            try {
+              console.log(`🗑️ Removing cart item: ${itemId}`);
+              await cartAPI.removeItem(itemId);
+              console.log(`✅ Successfully removed cart item: ${itemId}`);
+            } catch (error) {
+              console.error(`❌ Failed to remove cart item ${itemId}:`, error);
             }
-            console.log('✅ Finished removing all selected cart items');
-          } else if (selectedItemIds && selectedItemIds.length > 0) {
-            // Legacy: If we only have product/service IDs but no cart item IDs
-            // Don't clear cart - this is safer than accidentally clearing everything
-            console.warn('⚠️ No cart item IDs provided, skipping cart cleanup for safety');
-          } else {
-            // No selection info at all - this is a full cart checkout (old flow)
-            console.log('🗑️ Clearing entire cart (no selection info)');
-            await cartAPI.clearCart();
           }
+          console.log('✅ Finished removing all selected cart items');
+        } else if (selectedItemIds && selectedItemIds.length > 0) {
+          // Legacy: If we only have product/service IDs but no cart item IDs
+          // Don't clear cart - this is safer than accidentally clearing everything
+          console.warn('⚠️ No cart item IDs provided, skipping cart cleanup for safety');
+        } else {
+          // No selection info at all - this is a full cart checkout (old flow)
+          console.log('🗑️ Clearing entire cart (no selection info)');
+          await cartAPI.clearCart();
         }
       }
       

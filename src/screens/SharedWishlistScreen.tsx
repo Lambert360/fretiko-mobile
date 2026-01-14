@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { wishlistAPI, WishlistItem } from '../services/wishlistAPI';
 import { walletAPI } from '../services/walletAPI';
 import { WishlistAddItemDrawer } from '../components/WishlistAddItemDrawer';
 import MultiStepGiftPurchase from '../components/MultiStepGiftPurchase';
+import { realtimeAPI } from '../services/realtimeAPI';
 
 interface SharedWishlistScreenProps {
   navigation: any;
@@ -37,6 +38,130 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
   useEffect(() => {
     loadSharedWishlist();
   }, [ownerId]);
+
+  // 🔥 NEW: Join wishlist room for real-time updates
+  useEffect(() => {
+    if (!ownerId || !realtimeAPI.isConnected()) {
+      console.log('⚠️ WebSocket not connected or ownerId missing, skipping wishlist room join');
+      return;
+    }
+
+    // Join the wishlist room to receive updates
+    realtimeAPI.joinWishlist(ownerId);
+
+    // Cleanup: Leave the room when component unmounts
+    return () => {
+      realtimeAPI.leaveWishlist(ownerId);
+    };
+  }, [ownerId]); // Re-join if ownerId changes
+
+  // 🔥 NEW: WebSocket subscriptions for real-time wishlist updates
+  useEffect(() => {
+    if (!ownerId || !realtimeAPI.isConnected()) {
+      console.log('⚠️ WebSocket not connected or ownerId missing, skipping wishlist subscriptions');
+      return;
+    }
+
+    console.log('🔌 Setting up WebSocket listeners for shared wishlist:', ownerId);
+
+    // Subscribe to wishlist item gift ordered event (when someone purchases an item)
+    const giftOrderedListener = realtimeAPI.subscribe('wishlist_item_gift_ordered', (data: any) => {
+      console.log('🎁 Wishlist gift order received:', data);
+      
+      // Only update if this is for this owner's wishlist
+      if (data.wishlistItemId) {
+        setWishlistItems(prevItems => {
+          return prevItems.map(item => {
+            if (item.id === data.wishlistItemId) {
+              // Update item with gift order status
+              return {
+                ...item,
+                giftOrderStatus: {
+                  status: data.giftOrderStatus?.status || data.orderStatus || 'pending',
+                  orderId: data.orderId,
+                  orderNumber: data.orderNumber || null,
+                  orderStatus: data.giftOrderStatus?.orderStatus || data.orderStatus || null,
+                },
+              };
+            }
+            return item;
+          });
+        });
+        
+        console.log(`✅ Updated wishlist item ${data.wishlistItemId} with gift order status`);
+      }
+    });
+
+    // Subscribe to gift order status update (when order status changes)
+    const giftStatusUpdateListener = realtimeAPI.subscribe('gift_order_status_update', (data: any) => {
+      console.log('📦 Gift order status update received:', data);
+      
+      // Only update if this is for this owner's wishlist
+      if (data.wishlistItemId) {
+        setWishlistItems(prevItems => {
+          return prevItems.map(item => {
+            if (item.id === data.wishlistItemId) {
+              // Update item with new gift order status
+              return {
+                ...item,
+                giftOrderStatus: {
+                  status: data.giftOrderStatus?.status || data.orderStatus || 'pending',
+                  orderId: data.orderId,
+                  orderNumber: data.orderNumber || item.giftOrderStatus?.orderNumber || null,
+                  orderStatus: data.giftOrderStatus?.orderStatus || data.orderStatus || null,
+                },
+              };
+            }
+            return item;
+          });
+        });
+        
+        console.log(`✅ Updated wishlist item ${data.wishlistItemId} with new status: ${data.orderStatus}`);
+      }
+    });
+
+    // Subscribe to general order status updates (in case they come through the general channel)
+    // Filter for orders that are gift orders for items in this wishlist
+    const orderStatusListener = realtimeAPI.subscribe('order_status_update', (data: any) => {
+      console.log('📦 Order status update received (checking if gift order):', data);
+      
+      // Check if this order is associated with any wishlist item in this list
+      if (data.orderId) {
+        setWishlistItems(prevItems => {
+          let updated = false;
+          const updatedItems = prevItems.map(item => {
+            // If this item has a gift order with this orderId, update it
+            if (item.giftOrderStatus?.orderId === data.orderId) {
+              updated = true;
+              return {
+                ...item,
+                giftOrderStatus: {
+                  ...item.giftOrderStatus,
+                  status: data.status,
+                  orderStatus: data.status,
+                },
+              };
+            }
+            return item;
+          });
+          
+          if (updated) {
+            console.log(`✅ Updated wishlist item with order status: ${data.status}`);
+          }
+          
+          return updatedItems;
+        });
+      }
+    });
+
+    // Cleanup subscriptions on unmount
+    return () => {
+      console.log('🔌 Cleaning up WebSocket listeners for shared wishlist:', ownerId);
+      giftOrderedListener();
+      giftStatusUpdateListener();
+      orderStatusListener();
+    };
+  }, [ownerId]); // Re-subscribe if ownerId changes
 
   const loadSharedWishlist = async () => {
     try {
@@ -88,7 +213,39 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
   };
 
   const calculateTotalPrice = () => {
-    return wishlistItems.reduce((total, item) => total + item.price, 0);
+    // Only calculate total for unpurchased items
+    const unpurchasedItems = wishlistItems.filter(item => !item.giftOrderStatus);
+    return unpurchasedItems.reduce((total, item) => total + item.price, 0);
+  };
+
+  // 🔥 NEW: Helper function to check purchase status of all items
+  const getAllItemsPurchaseStatus = () => {
+    if (wishlistItems.length === 0) {
+      return { allPurchased: false, allCompleted: false, hasProcessing: false };
+    }
+
+    const purchasedItems = wishlistItems.filter(item => item.giftOrderStatus);
+    const allPurchased = purchasedItems.length === wishlistItems.length;
+    
+    if (!allPurchased) {
+      return { allPurchased: false, allCompleted: false, hasProcessing: false };
+    }
+
+    // All items are purchased, check their statuses
+    const completedItems = purchasedItems.filter(item => {
+      const status = item.giftOrderStatus?.orderStatus || item.giftOrderStatus?.status;
+      return status === 'completed' || status === 'delivered';
+    });
+    
+    const processingItems = purchasedItems.filter(item => {
+      const status = item.giftOrderStatus?.orderStatus || item.giftOrderStatus?.status;
+      return status && status !== 'completed' && status !== 'delivered' && status !== 'cancelled';
+    });
+
+    const allCompleted = completedItems.length === wishlistItems.length;
+    const hasProcessing = processingItems.length > 0;
+
+    return { allPurchased: true, allCompleted, hasProcessing };
   };
 
   const handleBuyAllAsGift = () => {
@@ -97,13 +254,51 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
       return;
     }
 
-    setSelectedGiftItems(wishlistItems);
+    // Filter out items that already have gift orders
+    const unpurchasedItems = wishlistItems.filter(item => !item.giftOrderStatus);
+    
+    if (unpurchasedItems.length === 0) {
+      Alert.alert('All Items Purchased', 'All items in this wishlist have already been purchased.');
+      return;
+    }
+
+    setSelectedGiftItems(unpurchasedItems);
     setIsMultiStepGiftVisible(true);
   };
 
   const handleGiftPurchaseComplete = () => {
     // Refresh the wishlist to show updated items
     loadSharedWishlist();
+  };
+
+  const getOrderStatusBadge = (item: WishlistItem) => {
+    if (!item.giftOrderStatus) return null;
+    
+    const status = item.giftOrderStatus.orderStatus || item.giftOrderStatus.status;
+    let badgeColor = '#3498DB';
+    let statusText = 'Order Created';
+    let statusIcon: 'checkmark-circle' | 'time' | 'checkmark-done-circle' = 'checkmark-circle';
+    
+    if (status === 'completed' || status === 'delivered') {
+      badgeColor = '#27AE60';
+      statusText = 'Completed';
+      statusIcon = 'checkmark-done-circle';
+    } else if (status === 'confirmed' || status === 'preparing' || status === 'ready' || status === 'processing') {
+      badgeColor = '#F39C12';
+      statusText = 'Processing';
+      statusIcon = 'time';
+    } else if (status === 'pending') {
+      badgeColor = '#3498DB';
+      statusText = 'Order Created';
+      statusIcon = 'checkmark-circle';
+    }
+    
+    return (
+      <View style={[styles.orderStatusBadge, { backgroundColor: badgeColor + '20', borderColor: badgeColor }]}>
+        <Ionicons name={statusIcon} size={14} color={badgeColor} />
+        <Text style={[styles.orderStatusText, { color: badgeColor }]}>{statusText}</Text>
+      </View>
+    );
   };
 
   const renderWishlistItem = ({ item }: { item: WishlistItem }) => (
@@ -114,7 +309,11 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
       <Image source={{ uri: item.productImage }} style={styles.productImage} />
 
       <View style={styles.itemInfo}>
-        <Text style={styles.productName} numberOfLines={2}>{item.productName}</Text>
+        <View style={styles.itemHeader}>
+          <Text style={styles.productName} numberOfLines={2}>{item.productName}</Text>
+          {item.giftOrderStatus && getOrderStatusBadge(item)}
+        </View>
+        
         <Text style={styles.productPrice}>{walletAPI.formatFreti(item.price)}</Text>
         <Text style={styles.addedDate}>
           {item.addedByFriend
@@ -127,13 +326,19 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
           <Text style={styles.collaborationNote}>💬 {item.collaborationNote}</Text>
         )}
 
-        <TouchableOpacity
-          style={styles.giftButton}
-          onPress={() => handleBuyAsGift(item)}
-        >
-          <Ionicons name="gift" size={16} color="#FFF" />
-          <Text style={styles.giftButtonText}>Buy as Gift</Text>
-        </TouchableOpacity>
+        {item.giftOrderStatus?.orderNumber && (
+          <Text style={styles.orderNumber}>Order: {item.giftOrderStatus.orderNumber}</Text>
+        )}
+
+        {!item.giftOrderStatus && (
+          <TouchableOpacity
+            style={styles.giftButton}
+            onPress={() => handleBuyAsGift(item)}
+          >
+            <Ionicons name="gift" size={16} color="#FFF" />
+            <Text style={styles.giftButtonText}>Buy as Gift</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -221,24 +426,49 @@ const SharedWishlistScreen: React.FC<SharedWishlistScreenProps> = ({ navigation,
         recipientId={ownerId}
         recipientName={ownerUsername}
         onPurchaseComplete={handleGiftPurchaseComplete}
+        navigation={navigation}
       />
 
-      {/* Buy All as Gift Floating Action Button */}
-      {wishlistItems.length > 0 && (
-        <TouchableOpacity
-          style={styles.buyAllFAB}
-          onPress={handleBuyAllAsGift}
-          activeOpacity={0.9}
-        >
-          <View style={styles.fabContent}>
-            <Ionicons name="gift" size={24} color="#FFF" />
-            <View style={styles.fabTextContainer}>
-              <Text style={styles.fabText}>Buy All as Gift</Text>
-              <Text style={styles.fabPrice}>{walletAPI.formatFreti(calculateTotalPrice())}</Text>
+      {/* Buy All as Gift Floating Action Button - Smart Button */}
+      {wishlistItems.length > 0 && (() => {
+        const purchaseStatus = getAllItemsPurchaseStatus();
+        const isDisabled = purchaseStatus.allPurchased;
+        const buttonText = purchaseStatus.allCompleted 
+          ? 'All Completed' 
+          : purchaseStatus.hasProcessing 
+          ? 'Processing...' 
+          : 'Buy All as Gift';
+        
+        return (
+          <TouchableOpacity
+            style={[
+              styles.buyAllFAB,
+              isDisabled && styles.buyAllFABDisabled
+            ]}
+            onPress={handleBuyAllAsGift}
+            activeOpacity={isDisabled ? 1 : 0.9}
+            disabled={isDisabled}
+          >
+            <View style={styles.fabContent}>
+              <Ionicons 
+                name={purchaseStatus.allCompleted ? "checkmark-circle" : purchaseStatus.hasProcessing ? "time" : "gift"} 
+                size={24} 
+                color={isDisabled ? "#999" : "#FFF"} 
+              />
+              <View style={styles.fabTextContainer}>
+                <Text style={[styles.fabText, isDisabled && styles.fabTextDisabled]}>
+                  {buttonText}
+                </Text>
+                {!isDisabled && (
+                  <Text style={styles.fabPrice}>
+                    {walletAPI.formatFreti(calculateTotalPrice())}
+                  </Text>
+                )}
+              </View>
             </View>
-          </View>
-        </TouchableOpacity>
-      )}
+          </TouchableOpacity>
+        );
+      })()}
     </View>
   );
 };
@@ -392,6 +622,11 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 8,
   },
+  buyAllFABDisabled: {
+    backgroundColor: '#333',
+    opacity: 0.6,
+    shadowOpacity: 0.1,
+  },
   fabContent: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -406,12 +641,43 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
+  fabTextDisabled: {
+    color: '#999',
+  },
   fabPrice: {
     color: '#FFF',
     fontSize: 14,
     fontWeight: '600',
     opacity: 0.9,
     marginTop: 2,
+  },
+  itemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 4,
+    gap: 8,
+  },
+  orderStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 4,
+    flexShrink: 1,
+  },
+  orderStatusText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  orderNumber: {
+    color: '#3498DB',
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
 });
 

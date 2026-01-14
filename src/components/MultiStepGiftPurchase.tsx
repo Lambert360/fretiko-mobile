@@ -10,10 +10,22 @@ import {
   Image,
   TextInput,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { wishlistAPI } from '../services/wishlistAPI';
 import { walletAPI } from '../services/walletAPI';
+
+interface Rider {
+  id: string;
+  name: string;
+  price: number;
+  vehicleType: string;
+  rating: number;
+  distanceFromPickup: number;
+  estimatedArrival: number;
+}
 
 interface MultiStepGiftPurchaseProps {
   visible: boolean;
@@ -28,6 +40,7 @@ interface MultiStepGiftPurchaseProps {
   recipientId: string;
   recipientName: string;
   onPurchaseComplete: () => void;
+  navigation?: any; // Optional navigation for rider selection
 }
 
 type Step = 'validation' | 'confirmation' | 'processing' | 'complete';
@@ -39,17 +52,29 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
   recipientId,
   recipientName,
   onPurchaseComplete,
+  navigation,
 }) => {
   const [currentStep, setCurrentStep] = useState<Step>('validation');
   const [validationResult, setValidationResult] = useState<any>(null);
   const [walletBalance, setWalletBalance] = useState(0);
   const [processing, setProcessing] = useState(false);
   const [giftMessage, setGiftMessage] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState({
+    fullName: '',
+    phone: '',
+    address: '',
+    city: '',
+    state: '',
+    postalCode: '',
+  });
+  const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>('pickup'); // Default to self-pickup
 
   useEffect(() => {
     if (visible) {
       validatePurchase();
       loadWalletBalance();
+      // Reset rider selection when modal opens
+      setSelectedRider('pickup');
     }
   }, [visible]);
 
@@ -98,6 +123,18 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
   };
 
   const handlePurchase = async () => {
+    // Validate delivery address
+    if (!deliveryAddress.fullName || !deliveryAddress.address || 
+        !deliveryAddress.phone || !deliveryAddress.city || 
+        !deliveryAddress.state) {
+      Alert.alert(
+        'Delivery Address Required',
+        'Please provide the recipient\'s delivery address including full name, phone, address, city, and state.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     try {
       setProcessing(true);
       setCurrentStep('processing');
@@ -106,6 +143,27 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
       const validItems = validationResult.availableItems;
       const results = await Promise.all(
         validItems.map((item: any) => {
+          const addressData = {
+            fullName: deliveryAddress.fullName,
+            phone: deliveryAddress.phone,
+            address: deliveryAddress.address,
+            city: deliveryAddress.city,
+            state: deliveryAddress.state,
+            postalCode: deliveryAddress.postalCode || '',
+          };
+
+          const riderInfo = selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object'
+            ? {
+                riderId: selectedRider.id,
+                riderName: selectedRider.name,
+                vehicleType: selectedRider.vehicleType,
+                deliveryPrice: selectedRider.price,
+                estimatedArrival: selectedRider.estimatedArrival,
+              }
+            : selectedRider === 'pickup'
+            ? { riderId: 'pickup' }
+            : undefined;
+
           if (!item.wishlistItemId) {
             // Fallback: find original item by product ID if wishlistItemId missing
             const originalItem = items.find(orig => orig.productId === item.id);
@@ -118,6 +176,8 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
               wishlistItemId: originalItem.id, // Use original wishlist item ID
               giftMessage: giftMessage.trim() || undefined,
               isSurprise: false,
+              deliveryAddress: addressData,
+              selectedRider: riderInfo,
             });
           }
           return wishlistAPI.createGiftOrder({
@@ -126,6 +186,8 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
             wishlistItemId: item.wishlistItemId, // 🔥 FIX: Use wishlistItemId from validation result
             giftMessage: giftMessage.trim() || undefined,
             isSurprise: false,
+            deliveryAddress: addressData,
+            selectedRider: riderInfo,
           });
         })
       );
@@ -168,7 +230,17 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
   );
 
   const renderConfirmationStep = () => (
-    <ScrollView contentContainerStyle={styles.stepContainer}>
+    <KeyboardAvoidingView
+      style={styles.keyboardAvoidingView}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
+      <ScrollView
+        contentContainerStyle={styles.stepContainer}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+      >
       <Text style={styles.stepTitle}>Confirm Your Gift Purchase</Text>
       <Text style={styles.stepDescription}>
         Review your gift items and proceed with the purchase.
@@ -187,16 +259,147 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
         ))}
       </View>
 
+      {/* Delivery Option */}
+      <View style={styles.deliveryContainer}>
+        <Text style={styles.deliveryLabel}>Delivery Option *</Text>
+        <Text style={styles.deliverySubtitle}>
+          Choose how the gift will be delivered
+        </Text>
+        
+        <View style={styles.deliveryOptions}>
+          <TouchableOpacity
+            style={[
+              styles.deliveryOptionCard,
+              selectedRider === 'pickup' && styles.deliveryOptionCardSelected
+            ]}
+            onPress={() => setSelectedRider('pickup')}
+          >
+            <View style={styles.deliveryOptionIcon}>
+              <Ionicons name="walk" size={24} color={selectedRider === 'pickup' ? "#3498DB" : "#666"} />
+            </View>
+            <View style={styles.deliveryOptionInfo}>
+              <Text style={[
+                styles.deliveryOptionTitle,
+                selectedRider === 'pickup' && styles.deliveryOptionTitleSelected
+              ]}>
+                Self Pickup
+              </Text>
+              <Text style={styles.deliveryOptionSubtitle}>Pick up from vendor (Free)</Text>
+            </View>
+            {selectedRider === 'pickup' && (
+              <Ionicons name="checkmark-circle" size={24} color="#3498DB" />
+            )}
+          </TouchableOpacity>
+
+          {navigation ? (
+            <TouchableOpacity
+              style={[
+                styles.deliveryOptionCard,
+                selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' && styles.deliveryOptionCardSelected
+              ]}
+              onPress={() => {
+                if (!deliveryAddress.address || !deliveryAddress.city) {
+                  Alert.alert(
+                    'Address Required',
+                    'Please provide delivery address (street and city) before selecting a rider.',
+                    [{ text: 'OK' }]
+                  );
+                  return;
+                }
+                // Navigate to rider selection
+                navigation.navigate('RiderSelection', {
+                  pickupLocation: {
+                    latitude: 6.5244, // TODO: Get vendor location from product
+                    longitude: 3.3792,
+                    address: 'Vendor Location',
+                  },
+                  deliveryLocation: {
+                    latitude: 6.5244, // TODO: Geocode delivery address
+                    longitude: 3.3792,
+                    address: `${deliveryAddress.address}, ${deliveryAddress.city}`,
+                  },
+                  orderDetails: {
+                    weight: validationResult?.availableItems?.length * 0.5 || 1,
+                    itemCount: validationResult?.availableItems?.length || 1,
+                    distance: 5, // TODO: Calculate actual distance
+                  },
+                  onRiderSelected: (rider: Rider) => {
+                    setSelectedRider(rider);
+                  },
+                });
+              }}
+            >
+              <View style={styles.deliveryOptionIcon}>
+                <Ionicons 
+                  name="bicycle" 
+                  size={24} 
+                  color={selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' ? "#3498DB" : "#666"} 
+                />
+              </View>
+              <View style={styles.deliveryOptionInfo}>
+                <Text style={[
+                  styles.deliveryOptionTitle,
+                  selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' && styles.deliveryOptionTitleSelected
+                ]}>
+                  {selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object'
+                    ? selectedRider.name
+                    : 'Select Delivery Rider'
+                  }
+                </Text>
+                <Text style={styles.deliveryOptionSubtitle}>
+                  {selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object'
+                    ? `${selectedRider.vehicleType} • ${walletAPI.formatFreti(selectedRider.price)} • ${selectedRider.estimatedArrival} min`
+                    : 'Choose a delivery rider'
+                  }
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#666" />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.deliveryOptionCard}>
+              <View style={styles.deliveryOptionIcon}>
+                <Ionicons name="information-circle" size={24} color="#999" />
+              </View>
+              <View style={styles.deliveryOptionInfo}>
+                <Text style={styles.deliveryOptionTitle}>Delivery Rider</Text>
+                <Text style={styles.deliveryOptionSubtitle}>
+                  Delivery will be arranged after order confirmation
+                </Text>
+              </View>
+            </View>
+          )}
+        </View>
+      </View>
+
       {/* Total Price */}
       <View style={styles.totalContainer}>
-        <Text style={styles.totalLabel}>Total Gift Cost</Text>
+        <Text style={styles.totalLabel}>Item Total</Text>
         <Text style={styles.totalPrice}>
           {walletAPI.formatFreti(validationResult?.totalPrice || 0)}
         </Text>
       </View>
 
+      {selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' && (
+        <View style={styles.deliveryFeeContainer}>
+          <Text style={styles.deliveryFeeLabel}>Delivery Fee</Text>
+          <Text style={styles.deliveryFeePrice}>
+            {walletAPI.formatFreti(selectedRider.price)}
+          </Text>
+        </View>
+      )}
+
+      <View style={styles.finalTotalContainer}>
+        <Text style={styles.finalTotalLabel}>Total Gift Cost</Text>
+        <Text style={styles.finalTotalPrice}>
+          {walletAPI.formatFreti(
+            (validationResult?.totalPrice || 0) + 
+            (selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' ? selectedRider.price : 0)
+          )}
+        </Text>
+      </View>
+
       {/* Wallet Balance Check */}
-      {walletBalance < (validationResult?.totalPrice || 0) && (
+      {walletBalance < ((validationResult?.totalPrice || 0) + (selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' ? selectedRider.price : 0)) && (
         <View style={styles.insufficientFunds}>
           <Ionicons name="warning" size={20} color="#FF6B6B" />
           <Text style={styles.insufficientFundsText}>
@@ -218,6 +421,75 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
         />
       </View>
 
+      {/* Delivery Address */}
+      <View style={styles.addressContainer}>
+        <Text style={styles.addressLabel}>Delivery Address *</Text>
+        <Text style={styles.addressSubtitle}>
+          Please provide {recipientName}'s delivery address where the gift should be sent
+        </Text>
+        
+        <TextInput
+          style={styles.addressInput}
+          placeholder="Full Name *"
+          placeholderTextColor="#666"
+          value={deliveryAddress.fullName}
+          onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, fullName: text })}
+        />
+        
+        <TextInput
+          style={styles.addressInput}
+          placeholder="Phone Number *"
+          placeholderTextColor="#666"
+          value={deliveryAddress.phone}
+          onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, phone: text })}
+          keyboardType="phone-pad"
+        />
+        
+        <TextInput
+          style={[styles.addressInput, styles.addressInputLarge]}
+          placeholder="Street Address *"
+          placeholderTextColor="#666"
+          value={deliveryAddress.address}
+          onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, address: text })}
+          multiline
+          numberOfLines={2}
+          textAlignVertical="top"
+        />
+        
+        <View style={styles.addressRow}>
+          <TextInput
+            style={[styles.addressInput, styles.addressInputHalf]}
+            placeholder="City *"
+            placeholderTextColor="#666"
+            value={deliveryAddress.city}
+            onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, city: text })}
+          />
+          <TextInput
+            style={[styles.addressInput, styles.addressInputHalf]}
+            placeholder="State *"
+            placeholderTextColor="#666"
+            value={deliveryAddress.state}
+            onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, state: text })}
+          />
+        </View>
+        
+        <TextInput
+          style={styles.addressInput}
+          placeholder="Postal Code (Optional)"
+          placeholderTextColor="#666"
+          value={deliveryAddress.postalCode}
+          onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, postalCode: text })}
+          keyboardType="numeric"
+        />
+
+        <View style={styles.privacyNote}>
+          <Ionicons name="lock-closed" size={16} color="#3498DB" />
+          <Text style={styles.privacyText}>
+            This address will only be used for delivery and will not be shared with the recipient
+          </Text>
+        </View>
+      </View>
+
       {/* Action Buttons */}
       <View style={styles.actionButtons}>
         <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
@@ -226,16 +498,17 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
         <TouchableOpacity
           style={[
             styles.purchaseButton,
-            (walletBalance < (validationResult?.totalPrice || 0) || processing) && styles.buttonDisabled
+            (walletBalance < ((validationResult?.totalPrice || 0) + (selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' ? selectedRider.price : 0)) || processing) && styles.buttonDisabled
           ]}
           onPress={handlePurchase}
-          disabled={walletBalance < (validationResult?.totalPrice || 0) || processing}
+          disabled={walletBalance < ((validationResult?.totalPrice || 0) + (selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' ? selectedRider.price : 0)) || processing}
         >
           <Ionicons name="gift" size={18} color="#FFF" />
           <Text style={styles.purchaseButtonText}>Send Gift</Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 
   const renderProcessingStep = () => (
@@ -309,8 +582,12 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
+  keyboardAvoidingView: {
+    flex: 1,
+  },
   stepContainer: {
     padding: 20,
+    paddingBottom: 40,
   },
   stepTitle: {
     fontSize: 20,
@@ -440,6 +717,150 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     marginLeft: 8,
+  },
+  addressContainer: {
+    marginTop: 20,
+  },
+  addressLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+    marginBottom: 8,
+  },
+  addressSubtitle: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 16,
+  },
+  addressInput: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8,
+    padding: 12,
+    color: '#FFF',
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    marginBottom: 12,
+  },
+  addressInputLarge: {
+    minHeight: 60,
+    paddingTop: 12,
+  },
+  addressInputHalf: {
+    flex: 1,
+  },
+  addressRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  privacyNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  privacyText: {
+    color: '#3498DB',
+    fontSize: 12,
+    marginLeft: 8,
+    flex: 1,
+  },
+  deliveryContainer: {
+    marginTop: 20,
+  },
+  deliveryLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+    marginBottom: 8,
+  },
+  deliverySubtitle: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 16,
+  },
+  deliveryOptions: {
+    gap: 12,
+  },
+  deliveryOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  deliveryOptionCardSelected: {
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    borderColor: '#3498DB',
+  },
+  deliveryOptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  deliveryOptionInfo: {
+    flex: 1,
+  },
+  deliveryOptionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#CCC',
+    marginBottom: 4,
+  },
+  deliveryOptionTitleSelected: {
+    color: '#FFF',
+  },
+  deliveryOptionSubtitle: {
+    fontSize: 12,
+    color: '#999',
+  },
+  deliveryFeeContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  deliveryFeeLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#CCC',
+  },
+  deliveryFeePrice: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3498DB',
+  },
+  finalTotalContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#3498DB',
+  },
+  finalTotalLabel: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFF',
+  },
+  finalTotalPrice: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#4CAF50',
   },
 });
 

@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { wishlistAPI, WishlistItem } from '../services/wishlistAPI';
 import { walletAPI } from '../services/walletAPI';
+import { riderAPI, Rider } from '../services/riderAPI';
 
 interface GiftCheckoutScreenProps {
   navigation: any;
@@ -44,6 +45,16 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
   const [walletBalance, setWalletBalance] = useState(0);
   const [giftMessage, setGiftMessage] = useState('');
   const [canPurchase, setCanPurchase] = useState(false);
+  const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>('pickup'); // Default to self-pickup
+  const [loadingRiders, setLoadingRiders] = useState(false);
+  const [deliveryAddress, setDeliveryAddress] = useState({
+    fullName: '',
+    phone: '',
+    address: '',
+    city: '',
+    state: '',
+    postalCode: '',
+  });
 
   useEffect(() => {
     loadGiftCheckoutData();
@@ -85,12 +96,62 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
   };
 
   const calculateTotal = () => {
-    // 🔥 FIX: Gift purchases - buyer pays ONLY item price (no tax, no escrow fee, no platform fee)
+    // 🔥 FIX: Gift purchases - buyer pays item price + delivery fee (if rider selected)
     // Platform fee is deducted from vendor during escrow release, not from buyer
-    return items.reduce((sum, item) => sum + item.price, 0);
+    const itemTotal = items.reduce((sum, item) => sum + item.price, 0);
+    const deliveryFee = selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object'
+      ? selectedRider.price
+      : 0;
+    return itemTotal + deliveryFee;
+  };
+
+  const handleSelectRider = () => {
+    // Validate address is filled before allowing rider selection
+    if (!deliveryAddress.address || !deliveryAddress.city) {
+      Alert.alert(
+        'Address Required',
+        'Please provide delivery address (street and city) before selecting a rider.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    // Navigate to rider selection screen
+    navigation.navigate('RiderSelection', {
+      pickupLocation: {
+        latitude: 6.5244, // TODO: Get vendor location from product
+        longitude: 3.3792,
+        address: 'Vendor Location',
+      },
+      deliveryLocation: {
+        latitude: 6.5244, // TODO: Geocode delivery address
+        longitude: 3.3792,
+        address: `${deliveryAddress.address}, ${deliveryAddress.city}`,
+      },
+      orderDetails: {
+        weight: items.length * 0.5, // Estimate 0.5kg per item
+        itemCount: items.length,
+        distance: 5, // TODO: Calculate actual distance
+      },
+      onRiderSelected: (rider: Rider) => {
+        setSelectedRider(rider);
+      },
+    });
   };
 
   const handlePlaceGiftOrder = () => {
+    // Validate delivery address
+    if (!deliveryAddress.fullName || !deliveryAddress.address || 
+        !deliveryAddress.phone || !deliveryAddress.city || 
+        !deliveryAddress.state) {
+      Alert.alert(
+        'Delivery Address Required',
+        'Please provide the recipient\'s delivery address including full name, phone, address, city, and state.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     const total = calculateTotal();
 
     if (walletBalance < total) {
@@ -112,9 +173,15 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
       ? items[0].productName
       : `${items.length} items`;
 
+    const deliveryOption = selectedRider === 'pickup'
+      ? 'Self Pickup (Free)'
+      : selectedRider && typeof selectedRider === 'object'
+      ? `${selectedRider.name} (${walletAPI.formatFreti(selectedRider.price)})`
+      : 'Not Selected (Delivery will be arranged later)';
+
     Alert.alert(
       'Confirm Gift Purchase',
-      `You're buying ${itemDescription} as a gift for ${recipientName}.\n\nTotal: ${walletAPI.formatFreti(total)}\n\nThe items will be delivered to ${recipientName}, and they will be notified of your gift.`,
+      `You're buying ${itemDescription} as a gift for ${recipientName}.\n\nDelivery Address:\n${deliveryAddress.fullName}\n${deliveryAddress.address}\n${deliveryAddress.city}, ${deliveryAddress.state}\n\nDelivery: ${deliveryOption}\n\nTotal: ${walletAPI.formatFreti(total)}\n\nThe items will be delivered to the address you provided, and ${recipientName} will be notified of your gift.`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Confirm Purchase', onPress: processGiftOrder },
@@ -127,6 +194,18 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
       setProcessingOrder(true);
 
       // Process each item as a gift order
+      const riderInfo = selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object'
+        ? {
+            riderId: selectedRider.id,
+            riderName: selectedRider.name,
+            vehicleType: selectedRider.vehicleType,
+            deliveryPrice: selectedRider.price,
+            estimatedArrival: selectedRider.estimatedArrival,
+          }
+        : selectedRider === 'pickup'
+        ? { riderId: 'pickup' }
+        : undefined;
+
       const results = await Promise.all(
         items.map(item =>
           wishlistAPI.createGiftOrder({
@@ -135,6 +214,15 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
             wishlistItemId: item.id,
             giftMessage: giftMessage.trim() || undefined,
             isSurprise: false, // Based on user requirements
+            deliveryAddress: {
+              fullName: deliveryAddress.fullName,
+              phone: deliveryAddress.phone,
+              address: deliveryAddress.address,
+              city: deliveryAddress.city,
+              state: deliveryAddress.state,
+              postalCode: deliveryAddress.postalCode || '',
+            },
+            selectedRider: riderInfo,
           })
         )
       );
@@ -211,6 +299,7 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
         contentContainerStyle={{ paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
         {/* Gift Recipient Section */}
         <View style={styles.section}>
@@ -262,29 +351,169 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
           <Text style={styles.charCount}>{giftMessage.length}/200</Text>
         </View>
 
-        {/* Delivery Information */}
+        {/* Delivery Address Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Delivery Information</Text>
+          <Text style={styles.sectionTitle}>Delivery Address</Text>
+          <Text style={styles.sectionSubtitle}>
+            Please provide {recipientName}'s delivery address where the gift should be sent
+          </Text>
+          
+          <TextInput
+            style={styles.addressInput}
+            placeholder="Full Name *"
+            placeholderTextColor="#666"
+            value={deliveryAddress.fullName}
+            onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, fullName: text })}
+          />
+          
+          <TextInput
+            style={styles.addressInput}
+            placeholder="Phone Number *"
+            placeholderTextColor="#666"
+            value={deliveryAddress.phone}
+            onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, phone: text })}
+            keyboardType="phone-pad"
+          />
+          
+          <TextInput
+            style={[styles.addressInput, styles.addressInputLarge]}
+            placeholder="Street Address *"
+            placeholderTextColor="#666"
+            value={deliveryAddress.address}
+            onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, address: text })}
+            multiline
+            numberOfLines={2}
+            textAlignVertical="top"
+          />
+          
+          <View style={styles.addressRow}>
+            <TextInput
+              style={[styles.addressInput, styles.addressInputHalf]}
+              placeholder="City *"
+              placeholderTextColor="#666"
+              value={deliveryAddress.city}
+              onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, city: text })}
+            />
+            <TextInput
+              style={[styles.addressInput, styles.addressInputHalf]}
+              placeholder="State *"
+              placeholderTextColor="#666"
+              value={deliveryAddress.state}
+              onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, state: text })}
+            />
+          </View>
+          
+          <TextInput
+            style={styles.addressInput}
+            placeholder="Postal Code (Optional)"
+            placeholderTextColor="#666"
+            value={deliveryAddress.postalCode}
+            onChangeText={(text) => setDeliveryAddress({ ...deliveryAddress, postalCode: text })}
+            keyboardType="numeric"
+          />
+
           <View style={styles.infoCard}>
             <View style={styles.infoRow}>
-              <Ionicons name="location" size={20} color="#3498DB" />
-              <Text style={styles.infoText}>
-                Will be delivered to {recipientName}'s address
-              </Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Ionicons name="notifications" size={20} color="#3498DB" />
-              <Text style={styles.infoText}>
-                {recipientName} will be notified with your name
-              </Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Ionicons name="eye" size={20} color="#3498DB" />
-              <Text style={styles.infoText}>
-                Both of you can track the order
+              <Ionicons name="lock-closed" size={16} color="#3498DB" />
+              <Text style={styles.privacyText}>
+                This address will only be used for delivery and will not be shared with the recipient
               </Text>
             </View>
           </View>
+        </View>
+
+        {/* Rider Selection Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Delivery Option (Optional)</Text>
+          <Text style={styles.sectionSubtitle}>
+            Select a rider for delivery or choose self-pickup. You can skip this and arrange delivery later.
+          </Text>
+
+          {selectedRider === 'pickup' ? (
+            <View style={styles.selectedRiderCard}>
+              <View style={styles.selectedRiderInfo}>
+                <View style={styles.selectedRiderAvatar}>
+                  <Ionicons name="walk" size={24} color="#3498DB" />
+                </View>
+                <View style={styles.selectedRiderDetails}>
+                  <Text style={styles.selectedRiderName}>Self Pickup</Text>
+                  <Text style={styles.selectedRiderDistance}>
+                    Pick up the order directly from the vendor (Free)
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.changeRiderButton}
+                onPress={handleSelectRider}
+              >
+                <Text style={styles.changeRiderText}>Change</Text>
+              </TouchableOpacity>
+            </View>
+          ) : selectedRider && typeof selectedRider === 'object' ? (
+            <View style={styles.selectedRiderCard}>
+              <View style={styles.selectedRiderInfo}>
+                <View style={styles.selectedRiderAvatar}>
+                  <Text style={styles.selectedRiderInitial}>
+                    {selectedRider.name.charAt(0)}
+                  </Text>
+                </View>
+                <View style={styles.selectedRiderDetails}>
+                  <Text style={styles.selectedRiderName}>{selectedRider.name}</Text>
+                  <View style={styles.selectedRiderStats}>
+                    <Ionicons name="star" size={12} color="#F39C12" />
+                    <Text style={styles.selectedRiderRating}>{selectedRider.rating}</Text>
+                    <Text style={styles.selectedRiderVehicle}>
+                      • {selectedRider.vehicleType.charAt(0).toUpperCase() + selectedRider.vehicleType.slice(1)}
+                    </Text>
+                  </View>
+                  <Text style={styles.selectedRiderDistance}>
+                    {selectedRider.distanceFromPickup.toFixed(1)}km away • {selectedRider.estimatedArrival} min arrival
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.selectedRiderPrice}>
+                <Text style={styles.selectedRiderPriceText}>
+                  {walletAPI.formatFreti(selectedRider.price)}
+                </Text>
+                <TouchableOpacity
+                  style={styles.changeRiderButton}
+                  onPress={handleSelectRider}
+                >
+                  <Text style={styles.changeRiderText}>Change</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.deliveryOptions}>
+              <TouchableOpacity style={styles.selectRiderCard} onPress={handleSelectRider}>
+                <View style={styles.selectRiderIcon}>
+                  <Ionicons name="person-add" size={24} color="#3498DB" />
+                </View>
+                <View style={styles.selectRiderText}>
+                  <Text style={styles.selectRiderTitle}>Select a Rider</Text>
+                  <Text style={styles.selectRiderSubtitle}>
+                    Choose a delivery rider or select self-pickup
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#666" />
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[styles.selectRiderCard, styles.pickupOption]} 
+                onPress={() => setSelectedRider('pickup')}
+              >
+                <View style={styles.selectRiderIcon}>
+                  <Ionicons name="walk" size={24} color="#3498DB" />
+                </View>
+                <View style={styles.selectRiderText}>
+                  <Text style={styles.selectRiderTitle}>Self Pickup (Free)</Text>
+                  <Text style={styles.selectRiderSubtitle}>
+                    Pick up directly from the vendor
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* Payment Method Section */}
@@ -315,10 +544,26 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
               </Text>
             </View>
 
+            {selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Delivery Fee</Text>
+                <Text style={styles.summaryValue}>
+                  {walletAPI.formatFreti(selectedRider.price)}
+                </Text>
+              </View>
+            )}
+
+            {selectedRider === 'pickup' && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Delivery</Text>
+                <Text style={styles.summaryValue}>Self Pickup (Free)</Text>
+              </View>
+            )}
+
             <View style={styles.summaryNote}>
               <Ionicons name="gift" size={16} color="#E91E63" />
               <Text style={styles.noteText}>
-                You pay only the item price. Payment held securely in escrow until {recipientName} confirms delivery.
+                You pay the item price{selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' ? ' plus delivery fee' : ''}. Payment held securely in escrow until {recipientName} confirms delivery.
               </Text>
             </View>
 
@@ -494,6 +739,39 @@ const styles = StyleSheet.create({
     fontSize: 14,
     flex: 1,
   },
+  sectionSubtitle: {
+    color: '#999',
+    fontSize: 12,
+    marginBottom: 16,
+    marginTop: 4,
+  },
+  addressInput: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8,
+    padding: 12,
+    color: '#FFF',
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    marginBottom: 12,
+  },
+  addressInputLarge: {
+    minHeight: 60,
+    paddingTop: 12,
+  },
+  addressInputHalf: {
+    flex: 1,
+  },
+  addressRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  privacyText: {
+    color: '#3498DB',
+    fontSize: 12,
+    flex: 1,
+    marginLeft: 8,
+  },
   paymentCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -651,6 +929,125 @@ const styles = StyleSheet.create({
   backButtonText: {
     color: '#FFF',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  deliveryOptions: {
+    gap: 12,
+  },
+  selectRiderCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    gap: 12,
+  },
+  pickupOption: {
+    borderColor: 'rgba(52, 152, 219, 0.3)',
+    backgroundColor: 'rgba(52, 152, 219, 0.05)',
+  },
+  selectRiderIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(52, 152, 219, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectRiderText: {
+    flex: 1,
+  },
+  selectRiderTitle: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  selectRiderSubtitle: {
+    color: '#999',
+    fontSize: 12,
+  },
+  selectedRiderCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 152, 219, 0.3)',
+  },
+  selectedRiderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 12,
+  },
+  selectedRiderAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#3498DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  selectedRiderInitial: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  selectedRiderDetails: {
+    flex: 1,
+  },
+  selectedRiderName: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  selectedRiderStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  selectedRiderRating: {
+    color: '#F39C12',
+    fontSize: 12,
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  selectedRiderVehicle: {
+    color: '#999',
+    fontSize: 12,
+    marginLeft: 4,
+  },
+  selectedRiderDistance: {
+    color: '#CCC',
+    fontSize: 12,
+  },
+  selectedRiderPrice: {
+    alignItems: 'flex-end',
+  },
+  selectedRiderPriceText: {
+    color: '#27AE60',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  changeRiderButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(52, 152, 219, 0.2)',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 152, 219, 0.4)',
+  },
+  changeRiderText: {
+    color: '#3498DB',
+    fontSize: 12,
     fontWeight: '600',
   },
 });

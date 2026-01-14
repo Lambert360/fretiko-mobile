@@ -118,19 +118,6 @@ class InvoiceAPI {
   }
 
   /**
-   * Create order from invoice (buyer action - "Buy Instantly")
-   */
-  async createOrderFromInvoice(invoiceId: string): Promise<{ orderId: string }> {
-    try {
-      const response = await api.post(`/chat/invoices/${invoiceId}/checkout`);
-      return response.data.data;
-    } catch (error) {
-      console.error('Error creating order from invoice:', error);
-      throw error;
-    }
-  }
-
-  /**
    * Helper: Calculate total amount from items
    */
   calculateTotal(items: InvoiceItem[]): number {

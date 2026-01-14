@@ -344,6 +344,18 @@ class LiveSalesAPI {
     }
   }
 
+  /**
+   * Get HLS stream URL for viewers
+   */
+  async getHLSUrl(streamId: string): Promise<{ hlsUrl: string; status: string }> {
+    try {
+      return await this.request(`/live-sales/streams/${streamId}/hls-url`);
+    } catch (error) {
+      console.error('Error getting HLS URL:', error);
+      throw error;
+    }
+  }
+
   // =====================
   // COMMENTS & REACTIONS
   // =====================

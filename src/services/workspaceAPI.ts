@@ -13,6 +13,8 @@ export interface WorkspaceOrder {
   total: number;
   deliveryAddress: string;
   deliveryFee: number;
+  deliveryType?: 'pickup' | 'delivery'; // ✅ Add deliveryType
+  riderId?: string | null; // ✅ Add riderId
   createdAt: string;
   updatedAt: string;
   estimatedPreparationTime?: number; // in minutes

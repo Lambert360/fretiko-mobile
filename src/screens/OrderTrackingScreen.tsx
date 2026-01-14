@@ -79,6 +79,7 @@ const OrderTrackingScreen: React.FC = () => {
   const [mapLoading, setMapLoading] = useState(false); // ✨ Only load when tracking is enabled
   const [refreshing, setRefreshing] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
+  const [showFullInstructions, setShowFullInstructions] = useState(false);
   const [locationPermission, setLocationPermission] = useState<boolean>(false);
   const [distance, setDistance] = useState<number>(0);
   const [eta, setETA] = useState<number>(0);
@@ -1212,12 +1213,32 @@ const OrderTrackingScreen: React.FC = () => {
               )}
             </View>
           </View>
-          {order.deliveryInstructions && (
-            <View style={styles.deliveryInstructionsRow}>
-              <Ionicons name="information-circle-outline" size={18} color="#888" />
-              <Text style={styles.deliveryInstructionsText}>{order.deliveryInstructions}</Text>
-            </View>
-          )}
+          {order.deliveryInstructions && (() => {
+            const INSTRUCTIONS_LIMIT = 120;
+            const isLong = order.deliveryInstructions.length > INSTRUCTIONS_LIMIT;
+            const displayText = showFullInstructions || !isLong
+              ? order.deliveryInstructions
+              : `${order.deliveryInstructions.substring(0, INSTRUCTIONS_LIMIT)}...`;
+            
+            return (
+              <View style={styles.deliveryInstructionsRow}>
+                <Ionicons name="information-circle-outline" size={18} color="#888" />
+                <View style={styles.deliveryInstructionsContainer}>
+                  <Text style={styles.deliveryInstructionsText}>{displayText}</Text>
+                  {isLong && (
+                    <TouchableOpacity
+                      onPress={() => setShowFullInstructions(!showFullInstructions)}
+                      style={styles.seeMoreButton}
+                    >
+                      <Text style={styles.seeMoreText}>
+                        {showFullInstructions ? 'See less' : 'See more'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          })()}
           {order.estimatedDelivery && (
             <View style={styles.estimatedDeliveryRow}>
               <Ionicons name="time-outline" size={18} color="#F39C12" />
@@ -2536,12 +2557,25 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#333',
+    alignItems: 'flex-start',
+  },
+  deliveryInstructionsContainer: {
+    flex: 1,
+    marginLeft: 8,
   },
   deliveryInstructionsText: {
     color: '#888',
     fontSize: 13,
-    marginLeft: 8,
-    flex: 1,
+    lineHeight: 18,
+  },
+  seeMoreButton: {
+    marginTop: 4,
+    paddingVertical: 4,
+  },
+  seeMoreText: {
+    color: '#3498DB',
+    fontSize: 13,
+    fontWeight: '500',
   },
   estimatedDeliveryRow: {
     flexDirection: 'row',

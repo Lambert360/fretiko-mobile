@@ -236,6 +236,48 @@ class RealtimeAPI {
           console.log('⚖️ RAW dispute_update EVENT RECEIVED:', data);
           this.handleRealtimeMessage({ type: 'dispute_update', ...data });
         });
+        this.chatSocket.on('order_status_update', (data) => {
+          console.log('📦 RAW order_status_update EVENT RECEIVED:', data);
+          // Directly notify listeners (used by OrderTrackingScreen and SharedWishlistScreen)
+          const listeners = this.eventListeners.get('order_status_update');
+          if (listeners && listeners.length > 0) {
+            listeners.forEach((callback) => {
+              try {
+                callback(data);
+              } catch (error) {
+                console.error('❌ Error in order_status_update listener:', error);
+              }
+            });
+          }
+        });
+        this.chatSocket.on('wishlist_item_gift_ordered', (data) => {
+          console.log('🎁 RAW wishlist_item_gift_ordered EVENT RECEIVED:', data);
+          // Directly notify listeners
+          const listeners = this.eventListeners.get('wishlist_item_gift_ordered');
+          if (listeners && listeners.length > 0) {
+            listeners.forEach((callback) => {
+              try {
+                callback(data);
+              } catch (error) {
+                console.error('❌ Error in wishlist_item_gift_ordered listener:', error);
+              }
+            });
+          }
+        });
+        this.chatSocket.on('gift_order_status_update', (data) => {
+          console.log('📦 RAW gift_order_status_update EVENT RECEIVED:', data);
+          // Directly notify listeners
+          const listeners = this.eventListeners.get('gift_order_status_update');
+          if (listeners && listeners.length > 0) {
+            listeners.forEach((callback) => {
+              try {
+                callback(data);
+              } catch (error) {
+                console.error('❌ Error in gift_order_status_update listener:', error);
+              }
+            });
+          }
+        });
         this.chatSocket.on('call_signal', (data) => {
           console.log('📞 RAW call_signal RECEIVED:', data);
           // Directly notify call_signal listeners (don't go through handleRealtimeMessage)
@@ -404,6 +446,42 @@ class RealtimeAPI {
     this.chatSocket.on('call_event', (data) => {
       console.log('📞 RAW call_event EVENT RECEIVED (reconnect):', data);
       this.handleRealtimeMessage({ type: 'call_event', ...data });
+    });
+    this.chatSocket.on('order_status_update', (data) => {
+      const listeners = this.eventListeners.get('order_status_update');
+      if (listeners && listeners.length > 0) {
+        listeners.forEach((callback) => {
+          try {
+            callback(data);
+          } catch (error) {
+            console.error('❌ Error in order_status_update listener (reconnect):', error);
+          }
+        });
+      }
+    });
+    this.chatSocket.on('wishlist_item_gift_ordered', (data) => {
+      const listeners = this.eventListeners.get('wishlist_item_gift_ordered');
+      if (listeners && listeners.length > 0) {
+        listeners.forEach((callback) => {
+          try {
+            callback(data);
+          } catch (error) {
+            console.error('❌ Error in wishlist_item_gift_ordered listener (reconnect):', error);
+          }
+        });
+      }
+    });
+    this.chatSocket.on('gift_order_status_update', (data) => {
+      const listeners = this.eventListeners.get('gift_order_status_update');
+      if (listeners && listeners.length > 0) {
+        listeners.forEach((callback) => {
+          try {
+            callback(data);
+          } catch (error) {
+            console.error('❌ Error in gift_order_status_update listener (reconnect):', error);
+          }
+        });
+      }
     });
   }
 
@@ -929,6 +1007,54 @@ class RealtimeAPI {
       console.log(`⚖️ Leaving dispute: ${disputeId}`);
       this.chatSocket.emit('leave_dispute', {
         disputeId
+      });
+      this.joinedRooms.delete(roomKey);
+    } else {
+      // Still remove from tracker even if disconnected
+      this.joinedRooms.delete(roomKey);
+    }
+  }
+
+  // Join a wishlist room for real-time updates
+  joinWishlist(ownerId: string) {
+    // Check if already joined to prevent duplicates
+    const roomKey = `wishlist_${ownerId}`;
+    if (this.joinedRooms.has(roomKey)) {
+      console.log(`🎁 Already joined wishlist room for owner ${ownerId}, skipping duplicate join`);
+      return;
+    }
+
+    if (this.chatSocket && this.chatSocket.connected) {
+      console.log(`🎁 Joining wishlist room for owner: ${ownerId}`);
+      this.chatSocket.emit('join_wishlist', {
+        ownerId
+      }, (response: any) => {
+        if (response?.error) {
+          console.error(`❌ Failed to join wishlist room for owner ${ownerId}:`, response.error);
+        } else {
+          console.log(`✅ Successfully joined wishlist room for owner: ${ownerId}`);
+          this.joinedRooms.add(roomKey);
+        }
+      });
+
+      this.chatSocket.once('joined_wishlist', (data: any) => {
+        if (data.ownerId === ownerId && data.success) {
+          console.log(`🎉 Confirmed joined wishlist room for owner: ${ownerId} (room size: ${data.roomSize})`);
+          this.joinedRooms.add(roomKey);
+        }
+      });
+    } else {
+      console.warn(`🎁 Chat socket not connected - cannot join wishlist room for owner ${ownerId}`);
+    }
+  }
+
+  // Leave a wishlist room
+  leaveWishlist(ownerId: string) {
+    const roomKey = `wishlist_${ownerId}`;
+    if (this.chatSocket && this.chatSocket.connected) {
+      console.log(`🎁 Leaving wishlist room for owner: ${ownerId}`);
+      this.chatSocket.emit('leave_wishlist', {
+        ownerId
       });
       this.joinedRooms.delete(roomKey);
     } else {

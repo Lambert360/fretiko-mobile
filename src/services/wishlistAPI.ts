@@ -15,6 +15,13 @@ export interface WishlistItem {
   priority?: number;
   addedByFriend?: string;
   collaborationNote?: string;
+  canAddItems?: boolean;
+  giftOrderStatus?: {
+    status: string;
+    orderId: string;
+    orderNumber: string | null;
+    orderStatus: string | null;
+  } | null;
 }
 
 export interface ShareWishlistRequest {
@@ -35,10 +42,25 @@ export interface AddToFriendWishlistRequest {
 
 export interface CreateGiftOrderRequest {
   giftRecipientId: string;
-  orderId: string;
+  orderId: string | null;
   wishlistItemId: string;
   giftMessage?: string;
   isSurprise?: boolean;
+  deliveryAddress: {
+    fullName: string;
+    phone: string;
+    address: string;
+    city: string;
+    state: string;
+    postalCode: string;
+  };
+  selectedRider?: {
+    riderId: string;
+    riderName?: string;
+    vehicleType?: string;
+    deliveryPrice?: number;
+    estimatedArrival?: number;
+  };
 }
 
 export interface ShareableFriend {

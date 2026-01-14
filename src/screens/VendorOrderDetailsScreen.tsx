@@ -90,6 +90,7 @@ const VendorOrderDetailsScreen: React.FC = () => {
   const [locationPermission, setLocationPermission] = useState<boolean>(false);
   const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const locationSubscriptionRef = useRef<Location.LocationSubscription | null>(null);
+  const [showFullInstructions, setShowFullInstructions] = useState(false);
 
   useEffect(() => {
     loadOrderDetails();
@@ -938,12 +939,33 @@ const VendorOrderDetailsScreen: React.FC = () => {
               <Ionicons name="location-outline" size={20} color="#666" />
               <Text style={styles.deliveryAddress}>{orderDetails.deliveryDetails.address}</Text>
             </View>
-            {orderDetails.deliveryDetails.instructions && (
-              <View style={styles.instructionsRow}>
-                <Ionicons name="information-circle-outline" size={20} color="#666" />
-                <Text style={styles.deliveryInstructions}>{orderDetails.deliveryDetails.instructions}</Text>
-              </View>
-            )}
+            {orderDetails.deliveryDetails.instructions && (() => {
+              const INSTRUCTIONS_LIMIT = 120;
+              const instructions = orderDetails.deliveryDetails.instructions;
+              const isLong = instructions.length > INSTRUCTIONS_LIMIT;
+              const displayText = showFullInstructions || !isLong
+                ? instructions
+                : `${instructions.substring(0, INSTRUCTIONS_LIMIT)}...`;
+              
+              return (
+                <View style={styles.instructionsRow}>
+                  <Ionicons name="information-circle-outline" size={20} color="#666" />
+                  <View style={styles.instructionsContainer}>
+                    <Text style={styles.deliveryInstructions}>{displayText}</Text>
+                    {isLong && (
+                      <TouchableOpacity
+                        onPress={() => setShowFullInstructions(!showFullInstructions)}
+                        style={styles.seeMoreButton}
+                      >
+                        <Text style={styles.seeMoreText}>
+                          {showFullInstructions ? 'See less' : 'See more'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              );
+            })()}
             {orderDetails.deliveryDetails.coordinates && (
               <TouchableOpacity 
                 style={styles.directionsButton}
@@ -1310,12 +1332,26 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 12,
   },
+  instructionsContainer: {
+    flex: 1,
+    marginLeft: 8,
+  },
   deliveryInstructions: {
     fontSize: 14,
     color: '#ccc',
-    marginLeft: 8,
     flex: 1,
     fontStyle: 'italic',
+    lineHeight: 20,
+  },
+  seeMoreButton: {
+    marginTop: 4,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+  },
+  seeMoreText: {
+    color: '#007AFF',
+    fontSize: 13,
+    fontWeight: '500',
   },
   deliveryFeeRow: {
     flexDirection: 'row',

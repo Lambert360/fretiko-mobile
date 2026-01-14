@@ -131,6 +131,13 @@ interface Message extends Omit<ChatMessage, 'timestamp'> {
     }>;
     canAddItems: boolean;
     sharedAt: Date;
+    purchaseStatus?: {
+      itemsPurchased: number;
+      itemsProcessing: number;
+      itemsCompleted: number;
+      totalItems: number;
+      overallStatus: 'none' | 'processing' | 'completed';
+    };
   };
   // IKO recommendation data
   ikoRecommendations?: {
@@ -465,9 +472,19 @@ const IndividualChatScreen = () => {
             senderId: msg.senderId,
             hasWishlistData: !!converted.wishlistData,
             ownerId: converted.wishlistData?.ownerId,
+            purchaseStatus: converted.wishlistData?.purchaseStatus,
+            hasPurchaseStatus: !!converted.wishlistData?.purchaseStatus,
+            purchaseStatusOverall: converted.wishlistData?.purchaseStatus?.overallStatus,
+            metadata: (msg as any).metadata,
             'user?.id': user?.id,
             willShowOnRight: msg.senderId === user?.id || converted.wishlistData?.ownerId === user?.id
           });
+          
+          // 🔥 FIX: Ensure purchaseStatus is extracted from metadata if not directly in wishlistData
+          if (converted.wishlistData && !converted.wishlistData.purchaseStatus && (msg as any).metadata?.wishlistData?.purchaseStatus) {
+            converted.wishlistData.purchaseStatus = (msg as any).metadata.wishlistData.purchaseStatus;
+            console.log('✅ Extracted purchaseStatus from metadata:', converted.wishlistData.purchaseStatus);
+          }
         }
         
         return converted;
@@ -577,6 +594,16 @@ const IndividualChatScreen = () => {
           wishlistData: data.message.metadata?.wishlistData || data.message.wishlistData, // ✅ Extract wishlist data
           productData: data.message.metadata?.productData || data.message.productData, // ✅ Extract product data
         };
+
+        // 🔥 FIX: Ensure purchaseStatus is properly extracted for wishlist messages
+        if (newMessage.messageType === 'wishlist' && newMessage.wishlistData && !newMessage.wishlistData.purchaseStatus) {
+          const metadataWishlistData = data.message.metadata?.wishlistData;
+          if (metadataWishlistData?.purchaseStatus) {
+            newMessage.wishlistData.purchaseStatus = metadataWishlistData.purchaseStatus;
+            console.log('✅ Extracted purchaseStatus from WebSocket message metadata:', newMessage.wishlistData.purchaseStatus);
+          }
+        }
+
         console.log('✅ Adding new message to UI:', newMessage);
 
         // 🔥 FIX: Add message deduplication to prevent duplicates
@@ -646,6 +673,107 @@ const IndividualChatScreen = () => {
 
         console.log('✅ Reactions updated in UI');
       }
+    });
+
+    // 🔥 NEW: Subscribe to wishlist gift order events to update wishlist cards in chat
+    const unsubscribeWishlistGiftOrder = realtimeAPI.subscribe('wishlist_item_gift_ordered', (data: any) => {
+      console.log('🎁 Wishlist gift order received in chat:', data);
+      
+      // Update wishlist messages in this chat when items are purchased
+      setMessages(prev => prev.map(msg => {
+        if (msg.messageType === 'wishlist' && 
+            msg.wishlistData?.ownerId === data.wishlistOwnerId &&
+            msg.wishlistData?.shareId) {
+          // Update purchase status in the wishlist data
+          const currentStatus = msg.wishlistData.purchaseStatus || {
+            itemsPurchased: 0,
+            itemsProcessing: 0,
+            itemsCompleted: 0,
+            totalItems: msg.wishlistData.itemCount || 0,
+            overallStatus: 'none' as const,
+          };
+          
+          // Check order status to determine how to update counts
+          const orderStatus = data.orderStatus || data.giftOrderStatus?.status || 'pending';
+          let newStatus = { ...currentStatus };
+          
+          // New gift order created - increment appropriate counts based on initial status
+          if (orderStatus === 'completed' || orderStatus === 'delivered') {
+            // Order already completed (unlikely but handle it)
+            newStatus = {
+              ...currentStatus,
+              itemsPurchased: Math.min(currentStatus.itemsPurchased + 1, currentStatus.totalItems),
+              itemsCompleted: Math.min(currentStatus.itemsCompleted + 1, currentStatus.totalItems),
+              overallStatus: currentStatus.itemsCompleted + 1 >= currentStatus.totalItems ? 'completed' as const : 'processing' as const,
+            };
+          } else {
+            // New order in pending/processing state
+            newStatus = {
+              ...currentStatus,
+              itemsPurchased: Math.min(currentStatus.itemsPurchased + 1, currentStatus.totalItems),
+              itemsProcessing: Math.min(currentStatus.itemsProcessing + 1, currentStatus.totalItems),
+              overallStatus: 'processing' as const,
+            };
+          }
+          
+          return {
+            ...msg,
+            wishlistData: {
+              ...msg.wishlistData,
+              purchaseStatus: newStatus,
+            },
+          };
+        }
+        return msg;
+      }));
+    });
+
+    // 🔥 NEW: Subscribe to gift order status updates
+    const unsubscribeGiftOrderStatus = realtimeAPI.subscribe('gift_order_status_update', (data: any) => {
+      console.log('📦 Gift order status update received in chat:', data);
+      
+      // Update wishlist messages when order status changes
+      setMessages(prev => prev.map(msg => {
+        if (msg.messageType === 'wishlist' && 
+            msg.wishlistData?.ownerId === data.wishlistOwnerId &&
+            msg.wishlistData?.shareId) {
+          const currentStatus = msg.wishlistData.purchaseStatus || {
+            itemsPurchased: 0,
+            itemsProcessing: 0,
+            itemsCompleted: 0,
+            totalItems: msg.wishlistData.itemCount || 0,
+            overallStatus: 'none' as const,
+          };
+          
+          // Update status based on order status change
+          let newStatus = { ...currentStatus };
+          
+          if (data.orderStatus === 'completed' || data.orderStatus === 'delivered') {
+            // Move from processing to completed
+            newStatus = {
+              ...currentStatus,
+              itemsProcessing: Math.max(0, currentStatus.itemsProcessing - 1),
+              itemsCompleted: currentStatus.itemsCompleted + 1,
+              overallStatus: currentStatus.itemsCompleted + 1 >= currentStatus.totalItems ? 'completed' as const : 'processing' as const,
+            };
+          } else if (data.orderStatus && data.orderStatus !== 'cancelled') {
+            // Status is processing
+            newStatus = {
+              ...currentStatus,
+              overallStatus: 'processing' as const,
+            };
+          }
+          
+          return {
+            ...msg,
+            wishlistData: {
+              ...msg.wishlistData,
+              purchaseStatus: newStatus,
+            },
+          };
+        }
+        return msg;
+      }));
     });
 
     const unsubscribeTyping = realtimeAPI.subscribe('chat_typing', (data) => {
@@ -808,6 +936,8 @@ const IndividualChatScreen = () => {
       unsubscribeInvoicePaid();
       unsubscribeInvoiceExpired();
       unsubscribeInvoiceCancelled();
+      unsubscribeWishlistGiftOrder(); // 🔥 NEW: Cleanup wishlist subscriptions
+      unsubscribeGiftOrderStatus(); // 🔥 NEW: Cleanup gift order status subscriptions
       hasSubscribedRef.current = false; // 🔥 Reset subscription state
       activeChatIdRef.current = null; // 🔥 Reset active chatId
     };
@@ -1342,6 +1472,7 @@ const IndividualChatScreen = () => {
 
       // Create optimistic message (like image sharing does)
       // 🔥 FIX: Use current user's ID as senderId (you are the sender)
+      // 🔥 NEW: Ensure purchaseStatus is included from backend response
       const wishlistMessage: Message = {
         id: chatMessageData.messageId,
         conversationId: chatMessageData.conversationId,
@@ -1354,9 +1485,20 @@ const IndividualChatScreen = () => {
         timestamp: new Date(),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        wishlistData: chatMessageData.wishlistData,
-        metadata: { wishlistData: chatMessageData.wishlistData },
+        wishlistData: {
+          ...chatMessageData.wishlistData,
+          // 🔥 FIX: Ensure purchaseStatus is included if present
+          purchaseStatus: chatMessageData.wishlistData.purchaseStatus || undefined,
+        },
+        metadata: { 
+          wishlistData: {
+            ...chatMessageData.wishlistData,
+            purchaseStatus: chatMessageData.wishlistData.purchaseStatus || undefined,
+          }
+        },
       };
+
+      console.log('🎁 Wishlist message created optimistically with purchaseStatus:', wishlistMessage.wishlistData?.purchaseStatus);
 
       console.log('🎁 Wishlist message created optimistically:', {
         messageId: wishlistMessage.id,
