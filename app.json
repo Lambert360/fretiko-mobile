@@ -59,7 +59,7 @@
       "./assets/sounds/crowd_sound.MP3",
       "./assets/sounds/gavel.MP3",
       "./assets/sounds/laugh.MP3",
-      "./assets/sounds/notification-sound.MP3",
+      "./assets/sounds/notification_sound.MP3",
       "./assets/sounds/timer.MP3",
       "./assets/sounds/winner1.MP3",
       "./assets/sounds/winner2.MP3"
@@ -83,7 +83,7 @@
           "icon": "./assets/horse.png",
           "color": "#3498DB",
           "sounds": [
-            "./assets/sounds/notification-sound.MP3"
+            "./assets/sounds/notification_sound.MP3"
           ],
           "mode": "production"
         }
