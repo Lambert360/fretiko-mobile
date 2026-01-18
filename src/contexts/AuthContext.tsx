@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { authAPI } from '../services/api';
 import { warningsAPI } from '../services/warningsAPI';
+import { pushNotificationService } from '../services/pushNotificationService';
 
 // Types for our auth system
 export interface User {
@@ -79,6 +80,29 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     loadAuthData();
   }, []);
+
+  // Register push notification token when user is authenticated
+  // Push notification registration
+  useEffect(() => {
+    const registerPushToken = async () => {
+      if (authState.isAuthenticated && authState.accessToken && authState.user) {
+        try {
+          console.log('📱 Registering push notification token for user:', authState.user.id);
+          const success = await pushNotificationService.registerPushToken(authState.accessToken);
+          
+          if (success) {
+            console.log('✅ Push token registered successfully');
+          } else {
+            console.log('⚠️ Push token registration skipped (not available on this device)');
+          }
+        } catch (error) {
+          console.error('❌ Error registering push token:', error);
+        }
+      }
+    };
+
+    registerPushToken();
+  }, [authState.isAuthenticated, authState.accessToken, authState.user?.id]);
 
   const loadAuthData = async () => {
     try {
@@ -578,6 +602,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const signout = async () => {
     try {
+      // Unregister push token before signing out
+      if (authState.accessToken) {
+        try {
+          console.log('📱 Unregistering push notification token...');
+          await pushNotificationService.unregisterPushToken(authState.accessToken);
+          console.log('✅ Push token unregistered');
+        } catch (pushError) {
+          console.error('⚠️ Error unregistering push token:', pushError);
+          // Continue with signout even if push token unregistration fails
+        }
+      }
+
       await clearAuthData();
       setAuthState({
         user: null,

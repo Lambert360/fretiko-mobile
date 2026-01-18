@@ -4,14 +4,14 @@
     "slug": "fretiko-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/horse.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "scheme": "fretiko",
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/horse.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#000000"
     },
     "ios": {
       "supportsTablet": true,
@@ -20,14 +20,18 @@
         "NSCameraUsageDescription": "This app needs access to the camera to take photos, videos, and for video calls.",
         "NSPhotoLibraryUsageDescription": "This app needs access to the photo library to select profile pictures.",
         "NSMicrophoneUsageDescription": "This app needs access to the microphone for video calls and real-time voice conversations with Iko AI.",
-        "UIBackgroundModes": ["audio"],
+        "NSUserNotificationsUsageDescription": "This app needs access to send you notifications about orders, messages, deliveries, and other important updates.",
+        "UIBackgroundModes": [
+          "audio",
+          "remote-notification"
+        ],
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/horse.png",
+        "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
@@ -35,14 +39,31 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.POST_NOTIFICATIONS"
       ],
       "package": "com.kinging.fretikomobile",
-      "networkSecurityConfig": "./assets/network_security_config.xml"
+      "googleServicesFile": "./google-services.json",
+      "useNextNotificationsApi": true
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
+    "notification": {
+      "icon": "./assets/horse.png",
+      "color": "#3498DB",
+      "iosDisplayInForeground": true,
+      "androidMode": "default",
+      "androidCollapsedTitle": "#{unread_notifications} new notifications"
     },
+    "assets": [
+      "./assets/sounds/cheer.MP3",
+      "./assets/sounds/clapping.MP3",
+      "./assets/sounds/crowd_sound.MP3",
+      "./assets/sounds/gavel.MP3",
+      "./assets/sounds/laugh.MP3",
+      "./assets/sounds/notification-sound.MP3",
+      "./assets/sounds/timer.MP3",
+      "./assets/sounds/winner1.MP3",
+      "./assets/sounds/winner2.MP3"
+    ],
     "plugins": [
       "expo-secure-store",
       "expo-audio",
@@ -57,11 +78,19 @@
         }
       ],
       [
-        "@siteed/expo-audio-studio",
+        "expo-notifications",
         {
-          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone for real-time voice streaming with Iko AI assistant."
+          "icon": "./assets/horse.png",
+          "color": "#3498DB",
+          "sounds": [
+            "./assets/sounds/notification-sound.MP3"
+          ],
+          "mode": "production"
         }
-      ]
+      ],
+      "@config-plugins/react-native-webrtc",
+      "expo-font",
+      "expo-maps"
     ],
     "extra": {
       "eas": {

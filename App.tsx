@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
+import * as Notifications from 'expo-notifications';
 
 // Import base64 polyfill first
 import './src/utils/base64-polyfill';
@@ -12,6 +13,9 @@ import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { CartProvider } from './src/contexts/CartContext';
 import { FilterProvider } from './src/contexts/FilterContext';
+
+// Import services
+import { pushNotificationService } from './src/services/pushNotificationService';
 
 // Import auth screens
 import { SplashScreen } from './src/screens/SplashScreen';
@@ -83,7 +87,11 @@ import LiveStreamHostScreen from './src/screens/LiveStreamHostScreen';
 import LiveStreamBroadcastScreen from './src/screens/LiveStreamBroadcastScreen';
 import LiveStreamSetupScreen from './src/screens/LiveStreamSetupScreen';
 import LiveMiniCheckoutScreen from './src/screens/LiveMiniCheckoutScreen';
+import LiveCartCheckoutScreen from './src/screens/LiveCartCheckoutScreen';
+import LiveAuctionCartCheckoutScreen from './src/screens/LiveAuctionCartCheckoutScreen';
 import AuctionLiveViewerScreen from './src/screens/AuctionLiveViewerScreen';
+import AuctionLiveBroadcastScreen from './src/screens/AuctionLiveBroadcastScreen';
+import LiveAuctionDetailsScreen from './src/screens/LiveAuctionDetailsScreen';
 import StoresScreen from './src/screens/StoresScreen';
 
 // Import stories screens
@@ -109,6 +117,9 @@ import CreateContentReportScreen from './src/screens/CreateContentReportScreen';
 import { AccountStatusScreen } from './src/screens/AccountStatusScreen';
 import { SuspensionScreen } from './src/screens/SuspensionScreen';
 
+// Import notification settings screen
+import NotificationSettingsScreen from './src/screens/NotificationSettingsScreen';
+
 // Import shared wishlist screen
 import SharedWishlistScreen from './src/screens/SharedWishlistScreen';
 
@@ -117,7 +128,7 @@ import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
 const Stack = createStackNavigator();
 
 // Deep linking configuration
-const linking = {
+const linking: any = {
   prefixes: [Linking.createURL('/'), 'fretiko://', 'https://fretiko.com', 'http://fretiko.com'],
   config: {
     screens: {
@@ -193,6 +204,119 @@ class ErrorBoundary extends React.Component<
 // Navigation component that handles auth state
 const AppNavigator: React.FC = () => {
   const { isAuthenticated, isLoading, isNewUser, isSuspended, isDeleted, isCheckingSuspension } = useAuth();
+  const navigationRef = useRef<any>(null);
+
+  // Configure Android notification channels
+  useEffect(() => {
+    pushNotificationService.configureNotificationChannel();
+  }, []);
+
+  // Setup notification handlers
+  useEffect(() => {
+    console.log('📱 Setting up notification handlers...');
+
+    // Setup notification listeners
+    pushNotificationService.setupNotificationListeners({
+      onNotificationReceived: (notification) => {
+        console.log('📬 Notification received in foreground:', notification.request.content);
+        
+        // Update badge count
+        pushNotificationService.setBadgeCount(1);
+        
+        // Optional: Show a custom in-app notification banner
+        // You can implement a custom notification component here if needed
+      },
+      onNotificationResponse: (response) => {
+        console.log('👆 User tapped on notification:', response.notification.request.content);
+        
+        // Handle navigation based on notification data
+        const data = response.notification.request.content.data;
+        
+        if (navigationRef.current) {
+          handleNotificationNavigation(data);
+        }
+      },
+    });
+
+    // Cleanup listeners on unmount
+    return () => {
+      console.log('🔇 Cleaning up notification listeners...');
+      pushNotificationService.removeNotificationListeners();
+    };
+  }, []);
+
+  // Handle navigation based on notification data
+  const handleNotificationNavigation = (data: any) => {
+    console.log('🧭 Handling notification navigation:', data);
+
+    try {
+      const { type, orderId, conversationId, messageId, userId, notificationId } = data;
+
+      switch (type) {
+        case 'order_status':
+        case 'order_update':
+          if (orderId) {
+            navigationRef.current?.navigate('GroupedOrder', { orderId });
+          }
+          break;
+
+        case 'message':
+        case 'new_message':
+          if (conversationId) {
+            navigationRef.current?.navigate('IndividualChat', {
+              userId,
+              conversationId,
+            });
+          }
+          break;
+
+        case 'delivery_update':
+        case 'rider_assigned':
+          if (orderId) {
+            navigationRef.current?.navigate('OrderTracking', { orderId });
+          }
+          break;
+
+        case 'payment_received':
+        case 'wallet_update':
+          navigationRef.current?.navigate('Wallet');
+          break;
+
+        case 'connection_request':
+          navigationRef.current?.navigate('ConnectionRequests');
+          break;
+
+        case 'live_stream_started':
+          // Navigate to live stream viewer
+          if (data.streamId) {
+            navigationRef.current?.navigate('LiveStreamViewer', {
+              streamId: data.streamId,
+            });
+          }
+          break;
+
+        case 'auction_update':
+        case 'auction_won':
+          if (data.auctionId) {
+            navigationRef.current?.navigate('AuctionDetails', {
+              auctionId: data.auctionId,
+            });
+          }
+          break;
+
+        default:
+          console.log('⚠️ Unknown notification type:', type);
+          // Navigate to home by default
+          navigationRef.current?.navigate('Main');
+          break;
+      }
+
+      // Clear the notification badge after handling
+      pushNotificationService.setBadgeCount(0);
+    } catch (error) {
+      console.error('❌ Error handling notification navigation:', error);
+    }
+  };
 
   // Show loading screen while checking auth state or suspension status
   if (isLoading || isCheckingSuspension) {
@@ -210,7 +334,7 @@ const AppNavigator: React.FC = () => {
   // This allows suspended users to see the screen and submit appeals
   if (isSuspended || isDeleted) {
     return (
-      <NavigationContainer linking={linking}>
+      <NavigationContainer ref={navigationRef} linking={linking}>
         <Stack.Navigator
           screenOptions={{
             headerShown: false,
@@ -225,34 +349,34 @@ const AppNavigator: React.FC = () => {
   }
 
   return (
-    <NavigationContainer linking={linking}>
+    <NavigationContainer ref={navigationRef} linking={linking}>
       <Stack.Navigator
         screenOptions={{
           headerShown: false, // Hide default headers for clean look
           cardStyle: { backgroundColor: '#000000' }, // Match app dark theme
-          animationEnabled: true, // Smooth transitions
           gestureEnabled: true, // Allow swipe back gestures
         }}
       >
         {isAuthenticated ? (
           isNewUser ? (
             <>
-              <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
+              <Stack.Screen name="RoleSelection" component={RoleSelectionScreen as any} />
               <Stack.Screen name="Welcome" component={WelcomeScreen} />
             </>
           ) : (
             <>
               <Stack.Screen name="Main" component={BottomTabNavigator} />
-              <Stack.Screen name="EditProfile" component={EditProfileScreen} />
+              <Stack.Screen name="EditProfile" component={EditProfileScreen as any} />
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
+              <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} />
               <Stack.Screen name="AccountStatus" component={AccountStatusScreen} />
               <Stack.Screen name="Suspension" component={SuspensionScreen} />
-              <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
-              <Stack.Screen name="ConnectionsList" component={ConnectionsListScreen} />
-              <Stack.Screen name="ConnectionDetails" component={ConnectionDetailsScreen} />
+              <Stack.Screen name="RoleSelection" component={RoleSelectionScreen as any} />
+              <Stack.Screen name="ConnectionsList" component={ConnectionsListScreen as any} />
+              <Stack.Screen name="ConnectionDetails" component={ConnectionDetailsScreen as any} />
               <Stack.Screen name="ConnectionRequests" component={ConnectionRequestsScreen} />
-              <Stack.Screen name="PublicProfile" component={PublicProfileScreen} />
-              <Stack.Screen name="PublicStore" component={PublicStoreScreen} />
+              <Stack.Screen name="PublicProfile" component={PublicProfileScreen as any} />
+              <Stack.Screen name="PublicStore" component={PublicStoreScreen as any} />
               <Stack.Screen name="Wallet" component={WalletScreen} />
               <Stack.Screen name="WalletHistory" component={WalletHistoryScreen} />
               <Stack.Screen name="WalletDeposit" component={WalletDepositScreen} />
@@ -260,19 +384,19 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="AddBankAccount" component={AddBankAccountScreen} />
               <Stack.Screen name="CreatePIN" component={CreatePINScreen} />
               <Stack.Screen name="ProductUpload" component={ProductUploadScreen} />
-              <Stack.Screen name="ProductDetails" component={ProductDetailsScreen} />
+              <Stack.Screen name="ProductDetails" component={ProductDetailsScreen as any} />
               <Stack.Screen name="ServiceUpload" component={ServiceUploadScreen} />
               <Stack.Screen name="ServiceDetails" component={ServiceDetailsScreen} />
-              <Stack.Screen name="ServiceBooking" component={ServiceBookingScreen} />
+              <Stack.Screen name="ServiceBooking" component={ServiceBookingScreen as any} />
               <Stack.Screen name="Cart" component={CartScreen} />
               <Stack.Screen name="Wishlist" component={WishlistScreen} />
               <Stack.Screen name="SharedWishlist" component={SharedWishlistScreen} />
               <Stack.Screen name="Checkout" component={CheckoutScreen} />
               <Stack.Screen name="AddressBook" component={AddressBookScreen} />
-              <Stack.Screen name="GiftCheckout" component={GiftCheckoutScreen} />
+              <Stack.Screen name="GiftCheckout" component={GiftCheckoutScreen as any} />
               <Stack.Screen name="Orders" component={OrdersScreen} />
               <Stack.Screen name="OrderTracking" component={OrderTrackingScreen} />
-              <Stack.Screen name="GroupedOrder" component={GroupedOrderScreen} />
+              <Stack.Screen name="GroupedOrder" component={GroupedOrderScreen as any} />
               <Stack.Screen 
                 name="RateOrder" 
                 component={RateOrderScreen} 
@@ -283,9 +407,9 @@ const AppNavigator: React.FC = () => {
                   cardOverlayEnabled: true,
                 }} 
               />
-              <Stack.Screen name="RiderSelection" component={RiderSelectionScreen} />
+              <Stack.Screen name="RiderSelection" component={RiderSelectionScreen as any} />
               <Stack.Screen name="RiderDetailScreen" component={RiderDetailScreen} />
-              <Stack.Screen name="IndividualChatScreen" component={IndividualChatScreen} />
+              <Stack.Screen name="IndividualChat" component={IndividualChatScreen} />
               <Stack.Screen name="CreateInvoice" component={CreateInvoiceScreen} />
               <Stack.Screen name="InvoiceDetails" component={InvoiceDetailsScreen} />
               <Stack.Screen name="LiveSales" component={LiveSalesScreen} />
@@ -294,6 +418,8 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="LiveStreamBroadcast" component={LiveStreamBroadcastScreen} />
               <Stack.Screen name="LiveStreamSetup" component={LiveStreamSetupScreen} />
               <Stack.Screen name="LiveMiniCheckout" component={LiveMiniCheckoutScreen} />
+              <Stack.Screen name="LiveCartCheckout" component={LiveCartCheckoutScreen as any} />
+              <Stack.Screen name="LiveAuctionCartCheckout" component={LiveAuctionCartCheckoutScreen as any} />
               <Stack.Screen name="Stores" component={StoresScreen} />
               <Stack.Screen name="Stories" component={StoriesScreen} />
               <Stack.Screen name="StoryUpload" component={StoryUploadScreen} />
@@ -313,6 +439,8 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="AuctionBidHistory" component={AuctionBidHistoryScreen} />
               <Stack.Screen name="AuctionWatchlist" component={AuctionWatchlistScreen} />
               <Stack.Screen name="AuctionLiveViewer" component={AuctionLiveViewerScreen} />
+              <Stack.Screen name="AuctionLiveBroadcast" component={AuctionLiveBroadcastScreen} />
+              <Stack.Screen name="LiveAuctionDetails" component={LiveAuctionDetailsScreen} />
               <Stack.Screen name="CreateAuction" component={CreateAuctionScreen} />
             </>
           )
