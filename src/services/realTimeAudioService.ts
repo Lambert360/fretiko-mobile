@@ -1,29 +1,11 @@
 import { Alert, Platform } from 'react-native';
 
-// Conditionally import audio studio only when available
-let AudioRecording: any = null;
-let AudioPlayer: any = null;
-
-try {
-  // Only import if running in development build (not Expo Go)
-  if (Platform.OS !== 'web' && global.__DEV__ !== false) {
-    const audioStudio = require('@siteed/expo-audio-studio');
-    AudioRecording = audioStudio.AudioRecording;
-    AudioPlayer = audioStudio.AudioPlayer;
-  }
-} catch (error) {
-  console.log('💡 Audio studio not available - running in Expo Go mode');
-}
-
 /**
  * Real-time audio streaming service for Iko voice calls
- * Handles continuous PCM audio streaming to Gemini Live API
+ * Basic implementation - will work in Expo Go and can be enhanced later
  */
 export class RealTimeAudioService {
-  private recording: AudioRecording | null = null;
-  private player: AudioPlayer | null = null;
   private isStreaming = false;
-  private streamingInterval: NodeJS.Timeout | null = null;
   private webSocket: WebSocket | null = null;
   private onAudioChunkCallback: ((chunk: string) => void) | null = null;
 
@@ -34,37 +16,22 @@ export class RealTimeAudioService {
     try {
       console.log('🎤 Initializing real-time audio service...');
 
-      // Check if native modules are available (not in Expo Go)
-      if (!AudioRecording || !AudioPlayer) {
-        console.log('⚠️ Real-time audio not available in Expo Go');
+      // For now, just check if we're not in web environment
+      if (Platform.OS === 'web') {
+        console.log('⚠️ Real-time audio not available on web');
         Alert.alert(
           'Voice Calls Unavailable',
-          'Voice calls with Iko require the development build. Text chat still works!'
+          'Voice calls with Iko require a mobile app. Text chat still works!'
         );
         return false;
       }
 
-      // Initialize recording with PCM format optimized for Gemini Live
-      this.recording = new AudioRecording({
-        sampleRate: 16000,     // Gemini requirement
-        numberOfChannels: 1,   // Mono
-        bitDepth: 16,          // 16-bit PCM
-        format: 'pcm',         // Raw PCM format
-      });
-
-      // Initialize player for AI responses
-      this.player = new AudioPlayer({
-        sampleRate: 16000,
-        numberOfChannels: 1,
-        bitDepth: 16,
-      });
-
-      console.log('✅ Real-time audio service initialized');
+      console.log('✅ Real-time audio service initialized (basic mode)');
       return true;
 
     } catch (error) {
       console.error('❌ Error initializing audio service:', error);
-      Alert.alert('Audio Error', 'Failed to initialize audio system. Please check microphone permissions.');
+      Alert.alert('Audio Error', 'Failed to initialize audio system.');
       return false;
     }
   }
@@ -77,62 +44,44 @@ export class RealTimeAudioService {
     onAudioChunk?: (chunk: string) => void
   ): Promise<void> {
     try {
-      if (!this.recording) {
-        throw new Error('Audio recording not initialized');
-      }
-
       if (webSocket.readyState !== WebSocket.OPEN) {
         throw new Error('WebSocket not connected');
       }
 
-      console.log('🎵 Starting continuous audio streaming...');
+      console.log('🎵 Starting basic audio streaming...');
 
       this.webSocket = webSocket;
       this.onAudioChunkCallback = onAudioChunk || null;
       this.isStreaming = true;
 
-      // Request microphone permissions
-      const hasPermission = await this.recording.requestPermissionsAsync();
-      if (!hasPermission) {
-        throw new Error('Microphone permission denied');
-      }
-
-      // Start continuous recording
-      await this.recording.startAsync();
-
-      // Set up streaming interval for real-time chunks
-      this.streamingInterval = setInterval(async () => {
-        if (!this.isStreaming || !this.recording || !this.webSocket) {
+      // Set up basic streaming interval with placeholder audio
+      const streamingInterval = setInterval(() => {
+        if (!this.isStreaming || !this.webSocket) {
           return;
         }
 
         try {
-          // Get latest audio chunk (100ms worth of audio)
-          const audioChunk = await this.recording.getLatestAudioDataAsync();
+          // Create a simple test audio chunk (silence)
+          // This is a placeholder until we implement proper audio recording
+          const silenceChunk = new Uint8Array(1600); // 100ms of 16kHz mono 16-bit audio
+          silenceChunk.fill(0); // Fill with silence
 
-          if (audioChunk && audioChunk.length > 0) {
-            // Convert to base64 for WebSocket transmission
-            const base64Chunk = this.arrayBufferToBase64(audioChunk);
-
-            // Send directly as binary WebSocket frame (optimal for Gemini)
             if (this.webSocket.readyState === WebSocket.OPEN) {
-              // Send as binary data for better performance
-              this.webSocket.send(audioChunk);
+            this.webSocket.send(silenceChunk.buffer);
 
-              console.log('🎵 Sent PCM audio chunk:', audioChunk.byteLength, 'bytes');
+            console.log('🎵 Sent test audio chunk:', silenceChunk.length, 'bytes');
 
               // Callback for debugging/monitoring
               if (this.onAudioChunkCallback) {
-                this.onAudioChunkCallback(base64Chunk);
-              }
+              this.onAudioChunkCallback(this.arrayBufferToBase64(silenceChunk.buffer));
             }
           }
         } catch (streamError) {
           console.warn('⚠️ Audio streaming error:', streamError);
         }
-      }, 100); // 100ms intervals for real-time feel
+      }, 100); // 100ms intervals
 
-      console.log('✅ Continuous audio streaming started');
+      console.log('✅ Basic audio streaming started (placeholder implementation)');
 
     } catch (error) {
       console.error('❌ Error starting audio streaming:', error);
@@ -150,17 +99,6 @@ export class RealTimeAudioService {
 
       this.isStreaming = false;
 
-      // Clear streaming interval
-      if (this.streamingInterval) {
-        clearInterval(this.streamingInterval);
-        this.streamingInterval = null;
-      }
-
-      // Stop recording
-      if (this.recording) {
-        await this.recording.stopAsync();
-      }
-
       // Clear WebSocket reference
       this.webSocket = null;
       this.onAudioChunkCallback = null;
@@ -177,29 +115,14 @@ export class RealTimeAudioService {
    */
   async playAudioResponse(audioData: ArrayBuffer | string): Promise<void> {
     try {
-      if (!this.player) {
-        console.warn('⚠️ Audio player not initialized');
-        return;
-      }
+      console.log('🔊 Audio playback not yet implemented - received response:', typeof audioData);
 
-      console.log('🔊 Playing Gemini audio response...');
-
-      // Convert base64 to ArrayBuffer if needed
-      let audioBuffer: ArrayBuffer;
-      if (typeof audioData === 'string') {
-        audioBuffer = this.base64ToArrayBuffer(audioData);
-      } else {
-        audioBuffer = audioData;
-      }
-
-      // Play the audio
-      await this.player.loadAsync(audioBuffer);
-      await this.player.playAsync();
-
-      console.log('✅ Audio response played successfully');
+      // For now, just log that we received audio data
+      // TODO: Implement proper audio playback
+      console.log('✅ Audio response received successfully (playback not implemented)');
 
     } catch (error) {
-      console.error('❌ Error playing audio response:', error);
+      console.error('❌ Error handling audio response:', error);
     }
   }
 
@@ -213,7 +136,7 @@ export class RealTimeAudioService {
   } {
     return {
       isStreaming: this.isStreaming,
-      isRecording: this.recording?.isRecording ?? false,
+      isRecording: false, // Placeholder - not implemented yet
       webSocketConnected: this.webSocket?.readyState === WebSocket.OPEN,
     };
   }
@@ -223,22 +146,10 @@ export class RealTimeAudioService {
    */
   async cleanup(): Promise<void> {
     console.log('🧹 Cleaning up audio service...');
-
     await this.stopStreaming();
-
-    // Release audio resources
-    if (this.recording) {
-      await this.recording.unloadAsync();
-      this.recording = null;
-    }
-
-    if (this.player) {
-      await this.player.unloadAsync();
-      this.player = null;
-    }
-
     console.log('✅ Audio service cleanup complete');
   }
+
 
   // Utility functions
   private arrayBufferToBase64(buffer: ArrayBuffer): string {

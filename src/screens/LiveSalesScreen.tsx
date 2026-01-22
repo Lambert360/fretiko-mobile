@@ -13,28 +13,23 @@ import {
   Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { VideoView, ResizeMode } from 'expo-video';
+// VideoView removed for performance - using thumbnails instead
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { liveSalesAPI, LiveStream } from '../services/liveSalesAPI';
 import { userAPI } from '../services/userAPI';
+import { liveStreamSocket, StreamStatusUpdate } from '../services/liveStreamSocket';
 
 const { width: screenWidth } = Dimensions.get('window');
 
 // Component for plugged vendors horizontal cards (Facebook-style)
-const PluggedVendorCard = ({ 
-  stream, 
-  onPress, 
-  isAudioEnabled,
-  onAudioToggle,
-  isScreenFocused,
-}: { 
-  stream: LiveStream; 
+const PluggedVendorCard = ({
+  stream,
+  onPress,
+}: {
+  stream: LiveStream;
   onPress: () => void;
-  isAudioEnabled: boolean;
-  onAudioToggle: () => void;
-  isScreenFocused: boolean;
 }) => {
   const formatViewerCount = (count: number) => {
     if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
@@ -47,48 +42,22 @@ const PluggedVendorCard = ({
       onPress={onPress}
       activeOpacity={0.9}
     >
-      {/* Live video preview */}
+      {/* Live stream preview */}
       <View style={styles.pluggedVideoContainer}>
-        {stream.stream_url && isScreenFocused ? (
-          <VideoView
-            style={styles.pluggedVideo}
-            player={{
-              uri: stream.stream_url,
-              autoplay: true,
-              loop: true,
-              muted: !isAudioEnabled,
-            }}
-            nativeControls={false}
-            contentFit="cover"
-          />
-        ) : (
-          <Image
-            source={{ 
-              uri: stream.thumbnail_url || stream.vendor.avatar_url || 'https://via.placeholder.com/100x140' 
-            }}
-            style={styles.pluggedVideo}
-            resizeMode="cover"
-          />
-        )}
-        
+        <Image
+          source={{
+            uri: stream.thumbnail_url || stream.vendor.avatar_url || 'https://via.placeholder.com/100x140'
+          }}
+          style={styles.pluggedVideo}
+          resizeMode="cover"
+        />
+
         {/* Live indicator */}
         <View style={styles.pluggedLiveIndicator}>
           <View style={styles.pluggedLiveDot} />
           <Text style={styles.pluggedLiveText}>LIVE</Text>
         </View>
-        
-        {/* Audio toggle */}
-        <TouchableOpacity 
-          style={styles.pluggedAudioToggle}
-          onPress={onAudioToggle}
-        >
-          <Ionicons 
-            name={isAudioEnabled ? "volume-high" : "volume-mute"} 
-            size={12} 
-            color="white" 
-          />
-        </TouchableOpacity>
-        
+
         {/* Viewer count */}
         <View style={styles.pluggedViewerCount}>
           <Text style={styles.pluggedViewerText}>{formatViewerCount(stream.viewer_count)}</Text>
@@ -114,21 +83,15 @@ const PluggedVendorCard = ({
   );
 };
 
-// Enhanced main stream card with video preview and focus audio
-const LiveStreamCard = ({ 
-  stream, 
-  onPress, 
+// Enhanced main stream card with thumbnail preview
+const LiveStreamCard = ({
+  stream,
+  onPress,
   isFocused,
-  isAudioEnabled,
-  onAudioToggle,
-  isScreenFocused,
-}: { 
-  stream: LiveStream; 
+}: {
+  stream: LiveStream;
   onPress: () => void;
   isFocused: boolean;
-  isAudioEnabled: boolean;
-  onAudioToggle: () => void;
-  isScreenFocused: boolean;
 }) => {
   const formatViewerCount = (count: number) => {
     if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
@@ -148,53 +111,25 @@ const LiveStreamCard = ({
       onPress={onPress}
       activeOpacity={0.9}
     >
-      {/* Stream video preview */}
+      {/* Stream thumbnail preview */}
       <View style={styles.thumbnailContainer}>
-        {stream.stream_url && isScreenFocused ? (
-          <VideoView
-            style={styles.thumbnail}
-            player={{
-              uri: stream.stream_url,
-              autoplay: isFocused && isScreenFocused,
-              loop: true,
-              muted: !isAudioEnabled,
-            }}
-            nativeControls={false}
-            contentFit="cover"
-          />
-        ) : (
-          <Image
-            source={{ 
-              uri: stream.thumbnail_url || stream.vendor.avatar_url || 'https://via.placeholder.com/400x600' 
-            }}
-            style={styles.thumbnail}
-            resizeMode="cover"
-          />
-        )}
-        
+        <Image
+          source={{
+            uri: stream.thumbnail_url || stream.vendor.avatar_url || 'https://via.placeholder.com/400x600'
+          }}
+          style={styles.thumbnail}
+          resizeMode="cover"
+        />
+
         {/* Dark overlay for readability */}
         <View style={styles.overlay} />
-        
+
         {/* Live indicator */}
         <View style={styles.liveIndicator}>
           <View style={styles.liveDot} />
           <Text style={styles.liveText}>LIVE</Text>
         </View>
-        
-        {/* Audio toggle (only show when focused) */}
-        {isFocused && (
-          <TouchableOpacity 
-            style={styles.audioToggle}
-            onPress={onAudioToggle}
-          >
-            <Ionicons 
-              name={isAudioEnabled ? "volume-high" : "volume-mute"} 
-              size={16} 
-              color="white" 
-            />
-          </TouchableOpacity>
-        )}
-        
+
         {/* Viewer count */}
         <View style={styles.viewerCount}>
           <Ionicons name="eye" size={12} color="white" />
@@ -304,10 +239,9 @@ const LiveSalesScreen = () => {
   
   // Screen focus tracking
   const [isScreenFocused, setIsScreenFocused] = useState(true);
-  
-  // Audio management
+
+  // Focus tracking for visual feedback
   const [focusedStreamId, setFocusedStreamId] = useState<string | null>(null);
-  const [mutedStreams, setMutedStreams] = useState<Set<string>>(new Set());
   
   // Plugged vendors section visibility
   const [showPluggedVendors, setShowPluggedVendors] = useState(true);
@@ -348,7 +282,9 @@ const LiveSalesScreen = () => {
   const loadPluggedStreams = async () => {
     try {
       const plugged = await liveSalesAPI.getPluggedVendorsStreams(10);
-      setPluggedStreams(plugged);
+      // Filter out ended/paused streams
+      const activePlugged = plugged.filter(stream => stream.status === 'live');
+      setPluggedStreams(activePlugged);
     } catch (error) {
       console.error('Error loading plugged streams:', error);
     }
@@ -372,14 +308,24 @@ const LiveSalesScreen = () => {
       // Exclude plugged vendors from main feed
       const newStreams = await liveSalesAPI.getActiveStreams(limit, currentOffset, true);
       
+      // Filter out ended/paused streams as a safeguard
+      const activeStreams = newStreams.filter(stream => stream.status === 'live');
+      
       if (isRefresh || offset === 0) {
-        setMainStreams(newStreams);
+        setMainStreams(activeStreams);
         // Set first stream as focused for audio
-        if (newStreams.length > 0) {
-          setFocusedStreamId(newStreams[0].id);
+        if (activeStreams.length > 0) {
+          setFocusedStreamId(activeStreams[0].id);
         }
       } else {
-        setMainStreams(prev => [...prev, ...newStreams]);
+        setMainStreams(prev => {
+          // Combine and filter to ensure no duplicates or ended streams
+          const combined = [...prev, ...activeStreams];
+          const unique = combined.filter((stream, index, self) => 
+            index === self.findIndex(s => s.id === stream.id) && stream.status === 'live'
+          );
+          return unique;
+        });
       }
       
       // Check if there are more streams to load
@@ -442,22 +388,6 @@ const LiveSalesScreen = () => {
     navigation.navigate('LiveStreamSetup');
   };
 
-  // Audio management functions
-  const handleAudioToggle = (streamId: string) => {
-    setMutedStreams(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(streamId)) {
-        newSet.delete(streamId);
-      } else {
-        newSet.add(streamId);
-      }
-      return newSet;
-    });
-  };
-
-  const isStreamAudioEnabled = (streamId: string) => {
-    return focusedStreamId === streamId && !mutedStreams.has(streamId);
-  };
 
   // Handle scroll for focus-based audio and plugged vendors visibility
   const handleScroll = (event: any) => {
@@ -481,21 +411,69 @@ const LiveSalesScreen = () => {
     }
   };
 
-  // Handle main feed item focus for audio
+  // Handle main feed item focus for visual feedback
   const handleViewableItemsChanged = useCallback(({ viewableItems }: any) => {
     if (viewableItems.length > 0) {
-      const centerItem = viewableItems[0];
-      if (centerItem?.item?.id !== focusedStreamId) {
-        setFocusedStreamId(centerItem.item.id);
-        // Clear muted state for new focused stream
-        setMutedStreams(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(centerItem.item.id);
-          return newSet;
-        });
+      const mostVisibleItem = viewableItems.reduce((prev: any, current: any) => {
+        return (prev.itemVisiblePercent || 0) > (current.itemVisiblePercent || 0) ? prev : current;
+      });
+
+      if (mostVisibleItem?.item?.id && mostVisibleItem.item.id !== focusedStreamId) {
+        setFocusedStreamId(mostVisibleItem.item.id);
       }
     }
   }, [focusedStreamId]);
+
+  // Setup WebSocket listeners for stream status updates
+  React.useEffect(() => {
+    if (!isScreenFocused) return;
+
+    const removeStream = (streamId: string) => {
+      console.log('🗑️ Removing ended stream from lists:', streamId);
+      
+      // Remove from main streams
+      setMainStreams(prev => prev.filter(stream => stream.id !== streamId));
+      
+      // Remove from plugged streams
+      setPluggedStreams(prev => prev.filter(stream => stream.id !== streamId));
+      
+      // Clear focused stream if it was the one that ended
+      if (focusedStreamId === streamId) {
+        setFocusedStreamId(null);
+      }
+    };
+
+    const handleStreamStatusUpdate = (data: StreamStatusUpdate & { streamId?: string }) => {
+      console.log('📡 Stream status update received:', data);
+      
+      // If stream ended or paused, remove it from both lists
+      if (data.status === 'ended' || data.status === 'paused') {
+        const streamId = data.streamId;
+        if (streamId) {
+          removeStream(streamId);
+        }
+      }
+    };
+
+    const handleStreamEnded = (data: { streamId: string; reason?: string; timestamp?: string }) => {
+      console.log('🏁 Stream ended event received:', data);
+      if (data.streamId) {
+        removeStream(data.streamId);
+      }
+    };
+
+    // Listen for stream status updates
+    liveStreamSocket.on('stream_status', handleStreamStatusUpdate);
+    
+    // Also listen for stream_ended events (emitted by backend)
+    liveStreamSocket.on('stream_ended', handleStreamEnded);
+
+    return () => {
+      // Cleanup listeners
+      liveStreamSocket.off('stream_status', handleStreamStatusUpdate);
+      liveStreamSocket.off('stream_ended', handleStreamEnded);
+    };
+  }, [isScreenFocused, focusedStreamId]);
 
   // Load data when screen focuses
   useFocusEffect(
@@ -506,31 +484,25 @@ const LiveSalesScreen = () => {
       return () => {
         // Cleanup when screen unfocuses
         setIsScreenFocused(false);
-        setFocusedStreamId(null); // Stop all videos
+        setFocusedStreamId(null);
       };
     }, [])
   );
 
   // Render plugged vendor item
   const renderPluggedVendorItem = ({ item }: { item: LiveStream }) => (
-    <PluggedVendorCard 
-      stream={item} 
+    <PluggedVendorCard
+      stream={item}
       onPress={() => handleStreamPress(item)}
-      isAudioEnabled={isStreamAudioEnabled(item.id)}
-      onAudioToggle={() => handleAudioToggle(item.id)}
-      isScreenFocused={isScreenFocused}
     />
   );
 
   // Render main stream item
   const renderMainStreamItem = ({ item }: { item: LiveStream }) => (
-    <LiveStreamCard 
-      stream={item} 
+    <LiveStreamCard
+      stream={item}
       onPress={() => handleStreamPress(item)}
       isFocused={focusedStreamId === item.id}
-      isAudioEnabled={isStreamAudioEnabled(item.id)}
-      onAudioToggle={() => handleAudioToggle(item.id)}
-      isScreenFocused={isScreenFocused}
     />
   );
 
@@ -649,8 +621,12 @@ const LiveSalesScreen = () => {
         scrollEventThrottle={16}
         onViewableItemsChanged={handleViewableItemsChanged}
         viewabilityConfig={{
-          viewAreaCoveragePercentThreshold: 50,
+          itemVisiblePercentThreshold: 50,
+          minimumViewTime: 300,
         }}
+        initialNumToRender={5}
+        maxToRenderPerBatch={3}
+        windowSize={5}
         ListFooterComponent={renderFooter}
         ListEmptyComponent={renderEmptyState}
         showsVerticalScrollIndicator={false}
@@ -775,14 +751,6 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: 'bold',
   },
-  pluggedAudioToggle: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    padding: 4,
-    borderRadius: 12,
-  },
   pluggedViewerCount: {
     position: 'absolute',
     bottom: 6,
@@ -878,17 +846,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
   },
-  
-  // Audio toggle
-  audioToggle: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    padding: 6,
-    borderRadius: 16,
-  },
-  
+
   // Viewer count
   viewerCount: {
     position: 'absolute',

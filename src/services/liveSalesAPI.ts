@@ -25,6 +25,7 @@ export interface LiveStream {
   stream_url?: string;
   products?: LiveStreamProduct[];
   services?: LiveStreamService[];
+  portfolio_services?: LivePortfolioService[];
   started_at?: string;
   ended_at?: string;
   created_at: string;
@@ -70,6 +71,52 @@ export interface LiveStreamService {
   is_featured: boolean;
 }
 
+export interface PortfolioImage {
+  id: string;
+  image_url: string;
+  caption?: string;
+  display_order: number;
+  is_primary: boolean;
+}
+
+export interface TimeSlot {
+  id: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  is_available: boolean;
+}
+
+export interface LivePortfolioService {
+  id: string;
+  stream_id: string;
+  images: PortfolioImage[]; // Multiple images
+  title: string;
+  description: string;
+  price: number;
+  category: 'work_sample' | 'consultation' | 'service_package' | 'testimonial';
+  available_slots?: TimeSlot[];
+  created_at: string;
+  display_order?: number;
+  // Analytics
+  impressions?: number;
+  add_to_cart_clicks?: number;
+  bookings?: number;
+  revenue?: number;
+}
+
+export interface PortfolioAnalytics {
+  portfolio_id: string;
+  title: string;
+  impressions: number;
+  add_to_cart_clicks: number;
+  bookings: number;
+  revenue: number;
+  conversion_rate: number;
+  avg_booking_value: number;
+}
+
 export interface Comment {
   id: string;
   user: {
@@ -104,6 +151,12 @@ export interface CreateStreamData {
     display_order?: number;
     is_featured?: boolean;
   }[];
+  time_slots?: Array<{
+    date: string;
+    start_time: string;
+    end_time: string;
+    duration_minutes: number;
+  }>;
 }
 
 export interface LivePurchaseData {
@@ -117,10 +170,30 @@ export interface LivePurchaseData {
 
 export interface LiveBookingData {
   stream_id: string;
+  service_id: string;
   service_date: string;
   service_time: string;
   service_notes?: string;
   continue_watching?: boolean;
+}
+
+export interface UploadPortfolioServiceData {
+  stream_id: string;
+  images: Array<{
+    uri: string;
+    caption?: string;
+    is_primary: boolean;
+  }>;
+  title: string;
+  description: string;
+  price: number;
+  category: 'work_sample' | 'consultation' | 'service_package' | 'testimonial';
+  time_slots?: Array<{
+    date: string;
+    start_time: string;
+    end_time: string;
+    duration_minutes: number;
+  }>;
 }
 
 // =====================
@@ -186,7 +259,7 @@ class LiveSalesAPI {
       const data = await response.json();
       console.log('✅ LiveSalesAPI Success:', typeof data, Array.isArray(data) ? `${data.length} items` : 'object');
       return data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('💥 LiveSalesAPI Request Failed:', {
         url,
         error: error.message,
@@ -474,6 +547,30 @@ class LiveSalesAPI {
     }
   }
 
+  /**
+   * Add product to existing live stream
+   */
+  async addProductToStream(
+    streamId: string,
+    productData: {
+      product_id: string;
+      live_price: number;
+      live_stock: number;
+      display_order?: number;
+      is_featured?: boolean;
+    },
+  ): Promise<LiveStreamProduct> {
+    try {
+      return await this.request<LiveStreamProduct>(`/live-sales/streams/${streamId}/products`, {
+        method: 'POST',
+        body: JSON.stringify(productData),
+      });
+    } catch (error) {
+      console.error('Error adding product to stream:', error);
+      throw error;
+    }
+  }
+
   // =====================
   // VENDOR ANALYTICS
   // =====================
@@ -503,6 +600,170 @@ class LiveSalesAPI {
       return await this.request(`/live-sales/streams/${streamId}/analytics`);
     } catch (error) {
       console.error('Error fetching stream analytics:', error);
+      throw error;
+    }
+  }
+
+  // =====================
+  // PORTFOLIO SERVICES
+  // =====================
+
+  /**
+   * Upload a portfolio service during live stream with multiple images
+   */
+  async uploadPortfolioService(data: UploadPortfolioServiceData): Promise<LivePortfolioService> {
+    try {
+      // Create form data for image upload
+      const formData = new FormData();
+      formData.append('stream_id', data.stream_id);
+      formData.append('title', data.title);
+      formData.append('description', data.description);
+      formData.append('price', data.price.toString());
+      formData.append('category', data.category);
+
+      // Handle multiple images
+      data.images.forEach((img, index) => {
+        const imageFile = {
+          uri: img.uri,
+          type: 'image/jpeg',
+          name: `portfolio_${Date.now()}_${index}.jpg`,
+        } as any;
+        formData.append('images', imageFile);
+        formData.append(`image_captions[${index}]`, img.caption || '');
+        formData.append(`image_is_primary[${index}]`, img.is_primary.toString());
+      });
+
+      // Handle time slots if provided
+      if (data.time_slots && data.time_slots.length > 0) {
+        formData.append('time_slots', JSON.stringify(data.time_slots));
+      }
+
+      const headers = await this.getAuthHeaders();
+      const response = await fetch(`${this.baseURL}/live-sales/portfolio`, {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'Content-Type': 'multipart/form-data',
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to upload portfolio service');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error uploading portfolio service:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get portfolio services for a stream
+   */
+  async getPortfolioServices(streamId: string): Promise<LivePortfolioService[]> {
+    try {
+      return await this.request<LivePortfolioService[]>(`/live-sales/portfolio/${streamId}`);
+    } catch (error) {
+      console.error('Error fetching portfolio services:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a portfolio service
+   */
+  async deletePortfolioService(portfolioId: string): Promise<void> {
+    try {
+      await this.request(`/live-sales/portfolio/${portfolioId}`, {
+        method: 'DELETE',
+      });
+    } catch (error) {
+      console.error('Error deleting portfolio service:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Book a portfolio service
+   */
+  async bookPortfolioService(bookingData: {
+    stream_id: string;
+    portfolio_id: string;
+    service_date: string;
+    service_time: string;
+    service_notes?: string;
+  }): Promise<void> {
+    try {
+      await this.request('/live-sales/portfolio/book', {
+        method: 'POST',
+        body: JSON.stringify(bookingData),
+      });
+    } catch (error) {
+      console.error('Error booking portfolio service:', error);
+      throw error;
+    }
+  }
+
+  // =====================
+  // PORTFOLIO ANALYTICS
+  // =====================
+
+  /**
+   * Track portfolio item impression (view)
+   */
+  async trackPortfolioImpression(portfolioId: string): Promise<void> {
+    try {
+      await this.request(`/live-sales/portfolio/${portfolioId}/impression`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.error('Error tracking impression:', error);
+      // Don't throw - analytics failures shouldn't break UX
+    }
+  }
+
+  /**
+   * Track portfolio item add to cart
+   */
+  async trackPortfolioAddToCart(portfolioId: string): Promise<void> {
+    try {
+      await this.request(`/live-sales/portfolio/${portfolioId}/add-to-cart`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.error('Error tracking add to cart:', error);
+      // Don't throw - analytics failures shouldn't break UX
+    }
+  }
+
+  /**
+   * Get portfolio analytics for a stream
+   */
+  async getPortfolioAnalytics(streamId: string): Promise<PortfolioAnalytics[]> {
+    try {
+      return await this.request<PortfolioAnalytics[]>(`/live-sales/portfolio/analytics/${streamId}`);
+    } catch (error) {
+      console.error('Error fetching portfolio analytics:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get overall stream analytics including portfolio performance
+   */
+  async getStreamAnalyticsDetailed(streamId: string): Promise<{
+    stream: any;
+    portfolio_analytics: PortfolioAnalytics[];
+    total_revenue: number;
+    total_bookings: number;
+  }> {
+    try {
+      return await this.request(`/live-sales/streams/${streamId}/analytics/detailed`);
+    } catch (error) {
+      console.error('Error fetching detailed analytics:', error);
       throw error;
     }
   }

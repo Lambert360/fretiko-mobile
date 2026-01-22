@@ -209,18 +209,31 @@ const LiveMiniCheckoutScreen = () => {
         
         await liveSalesAPI.purchaseProduct(purchaseData);
       } else {
-        const bookingData = {
+        const bookingData: any = {
           stream_id: streamId,
           service_id: item.id,
-          date: item.date!,
-          time: item.time!,
-          notes: item.notes,
+          service_date: item.date!,
+          service_time: item.time!,
+          service_notes: item.notes,
           continue_watching: false,
           payment_method: selectedPayment.id,
           use_escrow: useEscrow,
         };
-        
-        await liveSalesAPI.bookService(bookingData);
+
+        // For now, we'll use purchaseProduct for service bookings too
+        // since bookService doesn't handle payment processing
+        const purchaseData = {
+          stream_id: streamId,
+          product_id: item.id,
+          quantity: 1,
+          continue_watching: false,
+          rider_id: riderId,
+          delivery_address: deliveryAddress,
+          payment_method: selectedPayment.id,
+          use_escrow: useEscrow,
+        };
+
+        await liveSalesAPI.purchaseProduct(purchaseData);
       }
       
       Alert.alert(

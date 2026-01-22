@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { userAPI, UserStats } from '../services/userAPI';
 import { walletAPI, Wallet, WalletStats } from '../services/walletAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
+import { giftAPI, UserGift } from '../services/giftAPI';
 import { fileUploadService } from '../services/fileUploadService';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -36,6 +37,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [walletStats, setWalletStats] = useState<WalletStats | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [gifts, setGifts] = useState<UserGift[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isOptionsVisible, setIsOptionsVisible] = useState(false);
@@ -122,13 +124,14 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
 
   const loadProfile = async () => {
     try {
-      // Load profile, stats, wallet, and orders in parallel
-      const [profileData, statsData, walletData, walletStatsData, ordersData] = await Promise.all([
+      // Load profile, stats, wallet, orders, and gifts in parallel
+      const [profileData, statsData, walletData, walletStatsData, ordersData, giftsData] = await Promise.all([
         userAPI.getProfile(),
         userAPI.getStats(),
         walletAPI.getWallet(),
         walletAPI.getWalletStats(),
-        ordersAPI.getMyOrders({ status: ['delivered', 'shipped', 'processing', 'cancelled'] })
+        ordersAPI.getMyOrders({ status: ['delivered', 'shipped', 'processing', 'cancelled'] }),
+        giftAPI.getUserGifts().catch(() => ({ gifts: [], total_gifts: 0, total_value: 0 })) // Gracefully handle errors
       ]);
       
       setProfile(profileData);
@@ -137,6 +140,8 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
       setWalletStats(walletStatsData);
       // Get latest 10 orders for profile display
       setOrders(ordersData.slice(0, 10));
+      // Get latest 10 gifts for profile display
+      setGifts(giftsData.gifts.slice(0, 10));
     } catch (error: any) {
       console.error('Error loading profile:', error);
       
@@ -313,7 +318,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         return ['#FF6B6B', '#4ECDC4', '#45B7D1'];
       case 'Rider':
         return ['#96CEB4', '#FFEAA7', '#DDA0DD'];
-      case 'User':
+      case 'Citizen':
       default:
         return ['#667eea', '#764ba2', '#f093fb'];
     }
@@ -510,7 +515,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
               <View style={styles.statsGrid}>
                 <TouchableOpacity 
                   style={styles.statItem}
-                  onPress={() => navigation.navigate('ConnectionsList', { 
+                  onPress={() => profile && navigation.navigate('ConnectionsList', { 
                     type: 'plugs', 
                     userId: profile.id,
                     title: 'My Plugs'
@@ -522,7 +527,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                 {userData.clients !== undefined && (
                   <TouchableOpacity 
                     style={styles.statItem}
-                    onPress={() => navigation.navigate('ConnectionsList', { 
+                    onPress={() => profile && navigation.navigate('ConnectionsList', { 
                       type: 'clients', 
                       userId: profile.id,
                       title: 'My Clients'
@@ -727,6 +732,59 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                   <Text style={styles.emptyOrdersText}>No orders yet</Text>
                   <Text style={styles.emptyOrdersSubtext}>Start shopping to see your orders here</Text>
                 </View>
+              )}
+            </Animated.View>
+
+            {/* My Gifts Section */}
+            <Animated.View style={[styles.modernCard]}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.sectionTitle}>My Gifts</Text>
+                <TouchableOpacity 
+                  style={styles.viewAllButton}
+                  onPress={() => navigation.navigate('MyGifts' as never)}
+                >
+                  <Text style={styles.viewAllText}>View All</Text>
+                  <Ionicons name="chevron-forward" size={14} color="#3498DB" />
+                </TouchableOpacity>
+              </View>
+              {gifts.length > 0 ? (
+                <FlatList
+                  data={gifts}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.giftCard}
+                      onPress={() => navigation.navigate('MyGifts' as never)}
+                    >
+                      <View style={styles.giftEmojiContainer}>
+                        <Text style={styles.giftEmoji}>{item.emoji}</Text>
+                        {item.quantity > 1 && (
+                          <View style={styles.giftQuantityBadge}>
+                            <Text style={styles.giftQuantityText}>{item.quantity}</Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={styles.giftDetails}>
+                        <Text style={styles.giftName} numberOfLines={1}>{item.gift_name}</Text>
+                        <Text style={styles.giftValue}>{walletAPI.formatFreti(item.total_value)}</Text>
+                        <Text style={styles.giftSource}>{item.source.replace(/_/g, ' ')}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.giftList}
+                />
+              ) : (
+                <TouchableOpacity 
+                  style={styles.emptyGiftsContainer}
+                  onPress={() => navigation.navigate('MyGifts' as never)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="gift-outline" size={48} color="rgba(255,255,255,0.3)" />
+                  <Text style={styles.emptyGiftsText}>No gifts yet</Text>
+                  <Text style={styles.emptyGiftsSubtext}>Purchase, convert, or send gifts to others</Text>
+                </TouchableOpacity>
               )}
             </Animated.View>
 
@@ -943,7 +1001,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    backdropFilter: 'blur(10px)',
   },
   headerTitle: {
     color: '#FFFFFF',
@@ -963,7 +1020,6 @@ const styles = StyleSheet.create({
     bottom: 20,
     left: 0,
     right: 0,
-    backdropFilter: 'blur(20px)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
   },
@@ -1070,7 +1126,6 @@ const styles = StyleSheet.create({
     padding: 20,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
-    backdropFilter: 'blur(20px)',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -1453,7 +1508,6 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     padding: 8,
     width: 200,
-    backdropFilter: 'blur(20px)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
   },
@@ -1604,6 +1658,87 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#FFFFFF',
+  },
+  giftList: {
+    paddingVertical: 8,
+  },
+  giftCard: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 16,
+    marginRight: 16,
+    padding: 12,
+    width: 140,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+  },
+  giftEmojiContainer: {
+    position: 'relative',
+    marginBottom: 12,
+    width: 60,
+    height: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 30,
+  },
+  giftEmoji: {
+    fontSize: 32,
+  },
+  giftQuantityBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#F39C12',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    minWidth: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  giftQuantityText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  giftDetails: {
+    alignItems: 'center',
+    gap: 4,
+    width: '100%',
+  },
+  giftName: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  giftValue: {
+    color: '#F39C12',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  giftSource: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 10,
+    textTransform: 'capitalize',
+  },
+  emptyGiftsContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  emptyGiftsText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 12,
+  },
+  emptyGiftsSubtext: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 14,
+    marginTop: 4,
+    textAlign: 'center',
   },
 });
 

@@ -104,6 +104,57 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     registerPushToken();
   }, [authState.isAuthenticated, authState.accessToken, authState.user?.id]);
 
+  // Token refresh mechanism - refresh token every 30 minutes to prevent expiration
+  useEffect(() => {
+    if (!authState.isAuthenticated || !authState.accessToken) {
+      return;
+    }
+
+    const refreshToken = async () => {
+      try {
+        console.log('🔄 Refreshing authentication token...');
+        // Validate current token by making a lightweight API call
+        const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/users/profile`, {
+          headers: {
+            'Authorization': `Bearer ${authState.accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.status === 401) {
+          // Token expired, need to re-authenticate
+          console.log('⚠️ Token expired, logging out...');
+          await signout();
+        } else if (response.ok) {
+          console.log('✅ Token still valid');
+          // Token is still valid, update user data if needed
+          const profileData = await response.json();
+          setAuthState(prev => ({
+            ...prev,
+            user: {
+              ...prev.user!,
+              isSeller: profileData.isSeller,
+              isRider: profileData.isRider,
+              is_seller: profileData.isSeller,
+              is_rider: profileData.isRider,
+              is_verified: profileData.is_verified,
+            },
+          }));
+        }
+      } catch (error) {
+        console.error('❌ Error refreshing token:', error);
+      }
+    };
+
+    // Refresh immediately on mount
+    refreshToken();
+
+    // Set up interval to refresh every 30 minutes
+    const refreshInterval = setInterval(refreshToken, 30 * 60 * 1000);
+
+    return () => clearInterval(refreshInterval);
+  }, [authState.isAuthenticated, authState.accessToken]);
+
   const loadAuthData = async () => {
     try {
       console.log('🔍 Loading auth data...');

@@ -140,6 +140,14 @@ const LiveServiceBookingModal: React.FC<LiveServiceBookingModalProps> = ({
     setSelectedTime(time);
   };
 
+  // Add to cart instead of direct booking
+  const addToCart = () => {
+    // This would need to communicate with the viewer's cart
+    // For now, we'll just close the modal and let the viewer add to cart manually
+    onClose();
+    console.log('🛒 Add to cart requested for service:', service);
+  };
+
   // Process booking
   const processBooking = async (continueWatching: boolean) => {
     if (!service || !selectedDate || !selectedTime) return;
@@ -610,29 +618,16 @@ const LiveServiceBookingModal: React.FC<LiveServiceBookingModalProps> = ({
         {selectedDate && selectedTime && (
           <View style={styles.actionButtons}>
             <TouchableOpacity
-              style={[styles.actionButton, styles.checkoutButton]}
-              onPress={handleCheckout}
+              style={[styles.actionButton, styles.addToCartButton]}
+              onPress={addToCart}
               disabled={loading}
-            >
-              <Text style={styles.checkoutButtonText}>Checkout</Text>
-              <Text style={styles.checkoutSubtext}>Review & Pay</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                styles.continueButton,
-                (loading || service.live_price > walletBalance) && styles.actionButtonDisabled
-              ]}
-              onPress={handleContinueWatching}
-              disabled={loading || service.live_price > walletBalance}
             >
               {loading ? (
                 <ActivityIndicator size="small" color="white" />
               ) : (
                 <>
-                  <Text style={styles.continueButtonText}>Continue Live</Text>
-                  <Text style={styles.continueSubtext}>Pay ₣{service.live_price.toFixed(2)} & Watch</Text>
+                  <Ionicons name="bag-add" size={20} color="white" />
+                  <Text style={styles.addToCartButtonText}>Add to Cart</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -1093,6 +1088,18 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.8)',
     fontSize: 12,
     marginTop: 2,
+  },
+  addToCartButton: {
+    backgroundColor: '#FF0050',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  addToCartButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });
 

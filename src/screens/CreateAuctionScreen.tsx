@@ -53,7 +53,8 @@ const CreateAuctionScreen: React.FC = () => {
   const [startingPrice, setStartingPrice] = useState('');
   const [reservePrice, setReservePrice] = useState('');
   const [bidIncrement, setBidIncrement] = useState('');
-  const [startTime, setStartTime] = useState(new Date());
+  // Set start time to 1 hour from now to ensure it's always in the future
+  const [startTime, setStartTime] = useState(new Date(Date.now() + 60 * 60 * 1000)); // 1 hour from now
   const [endTime, setEndTime] = useState(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)); // 7 days from now
   const [images, setImages] = useState<string[]>([]);
   const [video, setVideo] = useState<string | null>(null);
@@ -67,6 +68,11 @@ const CreateAuctionScreen: React.FC = () => {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showStartTimePicker, setShowStartTimePicker] = useState(false);
   const [showEndTimePicker, setShowEndTimePicker] = useState(false);
+  // Separate date/time pickers for Android
+  const [showStartDatePicker, setShowStartDatePicker] = useState(false);
+  const [showStartTimePickerOnly, setShowStartTimePickerOnly] = useState(false);
+  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
+  const [showEndTimePickerOnly, setShowEndTimePickerOnly] = useState(false);
   const [loading, setLoading] = useState(false);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -132,11 +138,15 @@ const CreateAuctionScreen: React.FC = () => {
 
     // For relist mode, reset times to future
     if (isRelistMode) {
-      setStartTime(new Date());
+      setStartTime(new Date(Date.now() + 60 * 60 * 1000)); // 1 hour from now
       setEndTime(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
     } else if (isEditMode) {
-      // For edit mode, keep original times if they're in the future
-      setStartTime(data.start_time ? new Date(data.start_time) : new Date());
+      // For edit mode, keep original times if they're in the future, otherwise set to 1 hour from now
+      const originalStartTime = data.start_time ? new Date(data.start_time) : null;
+      const now = new Date();
+      setStartTime(originalStartTime && originalStartTime > now 
+        ? originalStartTime 
+        : new Date(Date.now() + 60 * 60 * 1000)); // 1 hour from now if in past
       setEndTime(data.end_time ? new Date(data.end_time) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
     }
   };
@@ -227,6 +237,14 @@ const CreateAuctionScreen: React.FC = () => {
 
       if (reservePrice && parseFloat(reservePrice) < parseFloat(startingPrice)) {
         Alert.alert('Invalid Reserve Price', 'Reserve price must be higher than starting price');
+        resolve(false);
+        return;
+      }
+
+      // Validate that start time is in the future
+      const now = new Date();
+      if (startTime <= now) {
+        Alert.alert('Invalid Start Time', 'Start time must be in the future. Please select a future date and time.');
         resolve(false);
         return;
       }
@@ -378,16 +396,16 @@ const CreateAuctionScreen: React.FC = () => {
             {
               text: 'Go Live Now',
               onPress: () => {
-                navigation.replace('LiveStreamHost' as never, {
+                (navigation as any).replace('LiveStreamHost', {
                   auctionId: createdAuction.id,
                   auction: createdAuction
-                } as never);
+                });
               },
             },
             {
               text: 'View Details',
               onPress: () => {
-                navigation.navigate('AuctionDetails' as never, { auctionId: createdAuction.id } as never);
+                (navigation as any).navigate('AuctionDetails', { auctionId: createdAuction.id });
               },
             },
             {
@@ -412,7 +430,7 @@ const CreateAuctionScreen: React.FC = () => {
             {
               text: 'View Auction',
               onPress: () => {
-                navigation.navigate('AuctionDetails' as never, { auctionId: createdAuction.id } as never);
+                (navigation as any).navigate('AuctionDetails', { auctionId: createdAuction.id });
               },
             },
             {
@@ -711,7 +729,15 @@ const CreateAuctionScreen: React.FC = () => {
             <Text style={styles.inputLabel}>Start Time *</Text>
             <TouchableOpacity
               style={styles.datePickerButton}
-              onPress={() => setShowStartTimePicker(true)}
+              onPress={() => {
+                if (Platform.OS === 'android') {
+                  // On Android, show date picker first
+                  setShowStartDatePicker(true);
+                } else {
+                  // On iOS, show combined datetime picker
+                  setShowStartTimePicker(true);
+                }
+              }}
             >
               <Ionicons name="calendar-outline" size={20} color="#8E44AD" />
               <Text style={styles.datePickerButtonText}>
@@ -720,15 +746,63 @@ const CreateAuctionScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
 
-          {showStartTimePicker && (
+          {/* Android: Separate Date Picker for Start Time */}
+          {Platform.OS === 'android' && showStartDatePicker && (
+            <DateTimePicker
+              value={startTime}
+              mode="date"
+              display="default"
+              onChange={(event, selectedDate) => {
+                if (event.type === 'set' && selectedDate) {
+                  // Update date part, keep time part
+                  const newDate = new Date(selectedDate);
+                  newDate.setHours(startTime.getHours());
+                  newDate.setMinutes(startTime.getMinutes());
+                  setStartTime(newDate);
+                  // Close date picker and show time picker
+                  setShowStartDatePicker(false);
+                  setShowStartTimePickerOnly(true);
+                } else if (event.type === 'dismissed') {
+                  setShowStartDatePicker(false);
+                }
+              }}
+            />
+          )}
+
+          {/* Android: Separate Time Picker for Start Time */}
+          {Platform.OS === 'android' && showStartTimePickerOnly && (
+            <DateTimePicker
+              value={startTime}
+              mode="time"
+              display="default"
+              onChange={(event, selectedDate) => {
+                if (event.type === 'set' && selectedDate) {
+                  // Update time part, keep date part
+                  const newDate = new Date(startTime);
+                  newDate.setHours(selectedDate.getHours());
+                  newDate.setMinutes(selectedDate.getMinutes());
+                  setStartTime(newDate);
+                  setShowStartTimePickerOnly(false);
+                } else if (event.type === 'dismissed') {
+                  setShowStartTimePickerOnly(false);
+                }
+              }}
+            />
+          )}
+
+          {/* iOS: Combined DateTime Picker for Start Time */}
+          {Platform.OS === 'ios' && showStartTimePicker && (
             <DateTimePicker
               value={startTime}
               mode="datetime"
               display="default"
-              themeVariant="dark"
               onChange={(event, selectedDate) => {
-                setShowStartTimePicker(Platform.OS === 'ios');
-                if (selectedDate) setStartTime(selectedDate);
+                if (event.type === 'set' && selectedDate) {
+                  setStartTime(selectedDate);
+                  setShowStartTimePicker(false);
+                } else if (event.type === 'dismissed') {
+                  setShowStartTimePicker(false);
+                }
               }}
             />
           )}
@@ -738,7 +812,15 @@ const CreateAuctionScreen: React.FC = () => {
             <Text style={styles.inputLabel}>End Time *</Text>
             <TouchableOpacity
               style={styles.datePickerButton}
-              onPress={() => setShowEndTimePicker(true)}
+              onPress={() => {
+                if (Platform.OS === 'android') {
+                  // On Android, show date picker first
+                  setShowEndDatePicker(true);
+                } else {
+                  // On iOS, show combined datetime picker
+                  setShowEndTimePicker(true);
+                }
+              }}
             >
               <Ionicons name="calendar-outline" size={20} color="#8E44AD" />
               <Text style={styles.datePickerButtonText}>
@@ -747,15 +829,63 @@ const CreateAuctionScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
 
-          {showEndTimePicker && (
+          {/* Android: Separate Date Picker for End Time */}
+          {Platform.OS === 'android' && showEndDatePicker && (
+            <DateTimePicker
+              value={endTime}
+              mode="date"
+              display="default"
+              onChange={(event, selectedDate) => {
+                if (event.type === 'set' && selectedDate) {
+                  // Update date part, keep time part
+                  const newDate = new Date(selectedDate);
+                  newDate.setHours(endTime.getHours());
+                  newDate.setMinutes(endTime.getMinutes());
+                  setEndTime(newDate);
+                  // Close date picker and show time picker
+                  setShowEndDatePicker(false);
+                  setShowEndTimePickerOnly(true);
+                } else if (event.type === 'dismissed') {
+                  setShowEndDatePicker(false);
+                }
+              }}
+            />
+          )}
+
+          {/* Android: Separate Time Picker for End Time */}
+          {Platform.OS === 'android' && showEndTimePickerOnly && (
+            <DateTimePicker
+              value={endTime}
+              mode="time"
+              display="default"
+              onChange={(event, selectedDate) => {
+                if (event.type === 'set' && selectedDate) {
+                  // Update time part, keep date part
+                  const newDate = new Date(endTime);
+                  newDate.setHours(selectedDate.getHours());
+                  newDate.setMinutes(selectedDate.getMinutes());
+                  setEndTime(newDate);
+                  setShowEndTimePickerOnly(false);
+                } else if (event.type === 'dismissed') {
+                  setShowEndTimePickerOnly(false);
+                }
+              }}
+            />
+          )}
+
+          {/* iOS: Combined DateTime Picker for End Time */}
+          {Platform.OS === 'ios' && showEndTimePicker && (
             <DateTimePicker
               value={endTime}
               mode="datetime"
               display="default"
-              themeVariant="dark"
               onChange={(event, selectedDate) => {
-                setShowEndTimePicker(Platform.OS === 'ios');
-                if (selectedDate) setEndTime(selectedDate);
+                if (event.type === 'set' && selectedDate) {
+                  setEndTime(selectedDate);
+                  setShowEndTimePicker(false);
+                } else if (event.type === 'dismissed') {
+                  setShowEndTimePicker(false);
+                }
               }}
             />
           )}
@@ -1012,6 +1142,12 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 12,
     marginBottom: 8,
+    fontStyle: 'italic',
+  },
+  helpText: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 8,
     fontStyle: 'italic',
   },
   pickerButton: {

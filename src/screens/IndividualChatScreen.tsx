@@ -1,4 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute, useIsFocused } from '@react-navigation/native';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
@@ -17,6 +19,7 @@ import {
   Modal,
   ScrollView,
   Linking,
+  PanResponder,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { chatAPI, ChatMessage } from '../services/chatAPI';
@@ -27,6 +30,13 @@ import { ikoAPI } from '../services/ikoAPI';
 import { realTimeAudioService } from '../services/realTimeAudioService';
 import { invoiceAPI, Invoice, InvoiceStatus } from '../services/invoiceAPI';
 import { wishlistAPI } from '../services/wishlistAPI';
+// Agora imports for video calling
+import { agoraCallService, AgoraCallConfig } from '../services/agoraCallService';
+import { RtcSurfaceView, RenderModeType } from 'react-native-agora';
+// Gift imports
+import { giftAPI, VirtualGift } from '../services/giftAPI';
+import GiftAnimation from '../components/GiftAnimation';
+import { walletAPI } from '../services/walletAPI';
 import * as ImagePicker from 'expo-image-picker';
 import InvoiceMessageCard from '../components/InvoiceMessageCard';
 import ProductMessageCard from '../components/ProductMessageCard';
@@ -219,7 +229,7 @@ const IndividualChatScreen = () => {
   const [isSending, setIsSending] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [recordingInterval, setRecordingInterval] = useState<NodeJS.Timeout | null>(null);
+  const [recordingInterval, setRecordingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
   const [showWishlistShareModal, setShowWishlistShareModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
@@ -230,8 +240,10 @@ const IndividualChatScreen = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [currentCallSessionId, setCurrentCallSessionId] = useState<string | null>(null);
-  const [localStream, setLocalStream] = useState<any>(null);
-  const [remoteStream, setRemoteStream] = useState<any>(null);
+  // Agora call states
+  const [agoraCallEngine, setAgoraCallEngine] = useState<any | null>(null);
+  const [remoteUid, setRemoteUid] = useState<number | null>(null);
+  const [agoraConfig, setAgoraConfig] = useState<AgoraCallConfig | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [remoteVideoEnabled, setRemoteVideoEnabled] = useState(true); // Remote participant's video status
@@ -239,11 +251,16 @@ const IndividualChatScreen = () => {
   const [callDuration, setCallDuration] = useState(0);
   const [callStartTime, setCallStartTime] = useState<number | null>(null);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
-  const [callStatus, setCallStatus] = useState<'calling' | 'connecting' | 'connected' | 'ending'>('calling');
+  const [callStatus, setCallStatus] = useState<'calling' | 'connecting' | 'ringing' | 'connected' | 'ending' | 'reconnecting'>('calling');
   const [incomingCall, setIncomingCall] = useState<{callSessionId: string, callerName: string, callType: 'audio' | 'video'} | null>(null);
   const incomingCallRef = useRef<{callSessionId: string, callerName: string, callType: 'audio' | 'video'} | null>(null); // 🔥 Persist across remounts
-  const [ringbackTimeout, setRingbackTimeout] = useState<NodeJS.Timeout | null>(null);
-  const [soundInterval, setSoundInterval] = useState<NodeJS.Timeout | null>(null);
+  const isAcceptingCallRef = useRef<boolean>(false); // Prevent duplicate accept calls
+  const currentCallSessionIdRef = useRef<string | null>(null); // 🔥 Persist call session ID across remounts
+  const isReinitializingRef = useRef<boolean>(false); // Track if we're reinitializing to prevent premature call end
+  const isEndingCallRef = useRef<boolean>(false); // Prevent duplicate endCall calls
+  const ringbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Use ref to avoid closure issues
+  const [ringbackTimeout, setRingbackTimeout] = useState<ReturnType<typeof setTimeout> | null>(null); // Keep for cleanup on unmount
+  const [soundInterval, setSoundInterval] = useState<ReturnType<typeof setInterval> | null>(null);
 
   // Camera and video call states
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -251,13 +268,28 @@ const IndividualChatScreen = () => {
   const [cameraType, setCameraType] = useState<CameraType>('front');
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [showVideoUI, setShowVideoUI] = useState(false);
+  const [isLocalVideoPrimary, setIsLocalVideoPrimary] = useState(false); // Track which video is full-screen
+  const [showCallOverlay, setShowCallOverlay] = useState(true); // Control overlay visibility (auto-hide)
+  const overlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Auto-hide timer
+
+  // Gift states for calls
+  const [showGiftModal, setShowGiftModal] = useState(false);
+  const [availableGifts, setAvailableGifts] = useState<Array<{id: string, emoji: string, name: string, quantity: number}>>([]);
+  const [loadingGifts, setLoadingGifts] = useState(false);
+  // Gift animation states - array of active animations
+  const [activeGiftAnimations, setActiveGiftAnimations] = useState<Array<{
+    id: string;
+    emoji: string;
+    quantity: number;
+  }>>([]);
+  
 
   // AI voice call states
   const [isAICall, setIsAICall] = useState(false);
   const [geminiLiveWs, setGeminiLiveWs] = useState<WebSocket | null>(null);
   const [isConnectedToGemini, setIsConnectedToGemini] = useState(false);
   const [callSessionId] = useState(() => `ai-call-${Date.now()}`); // Unique identifier for this call session
-  const [streamInterval, setStreamInterval] = useState<NodeJS.Timeout | null>(null);
+  const [streamInterval, setStreamInterval] = useState<ReturnType<typeof setInterval> | null>(null);
   const [reconnectionCount, setReconnectionCount] = useState(0);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isCleaningUp, setIsCleaningUp] = useState(false);
@@ -291,6 +323,8 @@ const IndividualChatScreen = () => {
   // Audio player for voice messages
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const audioPlayer = useAudioPlayer('');
+  // Store audio durations for messages (keyed by messageId)
+  const [audioDurations, setAudioDurations] = useState<{ [messageId: string]: number }>({});
 
   // Audio recorder for voice messages (use the same one for AI calls too)
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -335,9 +369,129 @@ const IndividualChatScreen = () => {
   // Animation refs
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
-  const callTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const soundIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const soundIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cameraRef = useRef<CameraView>(null);
+  
+  // Call UI animations
+  const rippleAnim1 = useRef(new Animated.Value(0)).current;
+  const rippleAnim2 = useRef(new Animated.Value(0)).current;
+  const rippleAnim3 = useRef(new Animated.Value(0)).current;
+  const statusFadeAnim = useRef(new Animated.Value(1)).current;
+  
+  // Incoming call ripple animations
+  const incomingRipple1 = useRef(new Animated.Value(0)).current;
+  const incomingRipple2 = useRef(new Animated.Value(0)).current;
+  const incomingRipple3 = useRef(new Animated.Value(0)).current;
+  
+  // Incoming call ripple animation effect
+  useEffect(() => {
+    if (!incomingCall) {
+      incomingRipple1.setValue(0);
+      incomingRipple2.setValue(0);
+      incomingRipple3.setValue(0);
+      return;
+    }
+
+    const createRipple = (animValue: Animated.Value, delay: number) => {
+      return Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.parallel([
+            Animated.timing(animValue, {
+              toValue: 1,
+              duration: 2000,
+              useNativeDriver: true,
+            }),
+          ]),
+          Animated.timing(animValue, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+    };
+
+    const r1 = createRipple(incomingRipple1, 0);
+    const r2 = createRipple(incomingRipple2, 600);
+    const r3 = createRipple(incomingRipple3, 1200);
+
+    r1.start();
+    r2.start();
+    r3.start();
+
+    return () => {
+      r1.stop();
+      r2.stop();
+      r3.stop();
+    };
+  }, [incomingCall]);
+  
+  // Ripple animation effect
+  useEffect(() => {
+    if (callStatus === 'connected' && showCallModal) {
+      // Start ripple animations
+      const createRippleAnimation = (animValue: Animated.Value, delay: number) => {
+        return Animated.loop(
+          Animated.sequence([
+            Animated.delay(delay),
+            Animated.parallel([
+              Animated.timing(animValue, {
+                toValue: 1,
+                duration: 2000,
+                useNativeDriver: true,
+              }),
+              Animated.timing(statusFadeAnim, {
+                toValue: 1,
+                duration: 300,
+                useNativeDriver: true,
+              }),
+            ]),
+            Animated.timing(animValue, {
+              toValue: 0,
+              duration: 0,
+              useNativeDriver: true,
+            }),
+          ])
+        );
+      };
+
+      const ripple1 = createRippleAnimation(rippleAnim1, 0);
+      const ripple2 = createRippleAnimation(rippleAnim2, 600);
+      const ripple3 = createRippleAnimation(rippleAnim3, 1200);
+
+      ripple1.start();
+      ripple2.start();
+      ripple3.start();
+
+      return () => {
+        ripple1.stop();
+        ripple2.stop();
+        ripple3.stop();
+      };
+    } else {
+      rippleAnim1.setValue(0);
+      rippleAnim2.setValue(0);
+      rippleAnim3.setValue(0);
+    }
+  }, [callStatus, showCallModal]);
+  
+  // Status text animation
+  useEffect(() => {
+    Animated.sequence([
+      Animated.timing(statusFadeAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(statusFadeAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [callStatus]);
 
   // Call duration timer effect
   useEffect(() => {
@@ -463,7 +617,14 @@ const IndividualChatScreen = () => {
           // 🔥 FIX: Explicitly preserve wishlistData from metadata
           wishlistData: (msg as any).metadata?.wishlistData || (msg as any).wishlistData,
           productData: (msg as any).metadata?.productData || (msg as any).productData,
+          metadata: (msg as any).metadata,
         };
+        
+        // Extract and store audio duration from metadata
+        if (msg.messageType === 'audio' && (msg as any).metadata?.audioDuration) {
+          const duration = (msg as any).metadata.audioDuration;
+          setAudioDurations(prev => ({ ...prev, [msg.id]: duration }));
+        }
         
         // Debug log for wishlist messages
         if (msg.messageType === 'wishlist') {
@@ -593,7 +754,14 @@ const IndividualChatScreen = () => {
           timestamp: new Date(data.message.created_at || data.message.createdAt),
           wishlistData: data.message.metadata?.wishlistData || data.message.wishlistData, // ✅ Extract wishlist data
           productData: data.message.metadata?.productData || data.message.productData, // ✅ Extract product data
+          metadata: data.message.metadata,
         };
+        
+        // Extract and store audio duration from metadata
+        if (newMessage.messageType === 'audio' && newMessage.metadata?.audioDuration) {
+          const duration = newMessage.metadata.audioDuration;
+          setAudioDurations(prev => ({ ...prev, [newMessage.id]: duration }));
+        }
 
         // 🔥 FIX: Ensure purchaseStatus is properly extracted for wishlist messages
         if (newMessage.messageType === 'wishlist' && newMessage.wishlistData && !newMessage.wishlistData.purchaseStatus) {
@@ -828,13 +996,13 @@ const IndividualChatScreen = () => {
           break;
 
         case 'call_ended':
-          console.log('📞 Call ended by remote participant');
+          console.log('📞 Call ended by remote participant (from call_event)');
           // Hide incoming call UI if showing
           setIncomingCall(null);
           incomingCallRef.current = null;
           stopCallSounds();
-          // End active call (don't check isInCall - just end it)
-          endCall('completed');
+          // End active call - pass fromRemote=true to prevent sending duplicate signal
+          endCall('completed', true);
           break;
 
         case 'participant_joined':
@@ -844,12 +1012,33 @@ const IndividualChatScreen = () => {
             setCallStatus('connected');
             setCallStartTime(Date.now());
             stopCallSounds();
+            
+            // Clear call timeout - participant has joined
+            if (ringbackTimeoutRef.current) {
+              console.log('🛑 Clearing call timeout - participant joined');
+              clearTimeout(ringbackTimeoutRef.current);
+              ringbackTimeoutRef.current = null;
+              setRingbackTimeout(null);
+            }
+            
             playCallSound('connected');
           }
           break;
 
         case 'participant_left':
           console.log('📞 Participant left the call');
+          break;
+
+        case 'gift_sent':
+          console.log('🎁 Gift received during call:', data);
+          // Show gift notification
+          if (data.giftId && data.quantity) {
+            Alert.alert(
+              '🎁 Gift Received!',
+              `You received ${data.quantity}x gift during the call!`,
+              [{ text: 'OK' }]
+            );
+          }
           break;
 
         default:
@@ -922,6 +1111,14 @@ const IndividualChatScreen = () => {
       }
     });
 
+    // === Agora Call Handlers (WebRTC signaling not needed - Agora handles connection automatically) ===
+    // Note: Agora handles all media connection automatically via its SD-RTN network
+    // We only need to handle call control signals (call_ended, mute_toggle, etc.) which are handled in handleIncomingCallSignal
+    const unsubscribeWebRTC = () => {
+      // No-op: Agora doesn't need WebRTC signaling subscription
+      console.log('📞 Agora call: No WebRTC signaling subscription needed');
+    };
+
     const cleanup = () => {
       console.log('🧹 Cleaning up real-time message subscriptions');
       unsubscribeMessage();
@@ -938,6 +1135,7 @@ const IndividualChatScreen = () => {
       unsubscribeInvoiceCancelled();
       unsubscribeWishlistGiftOrder(); // 🔥 NEW: Cleanup wishlist subscriptions
       unsubscribeGiftOrderStatus(); // 🔥 NEW: Cleanup gift order status subscriptions
+      unsubscribeWebRTC(); // Cleanup (no-op for Agora)
       hasSubscribedRef.current = false; // 🔥 Reset subscription state
       activeChatIdRef.current = null; // 🔥 Reset active chatId
     };
@@ -1659,84 +1857,255 @@ const IndividualChatScreen = () => {
   };
 
   // Expo-Compatible Call Functions
-  const initializeWebRTC = async (rtcConfiguration: any) => {
+  const initializeAgoraCall = async (agoraCallConfig: AgoraCallConfig, isVideoCall: boolean) => {
     try {
-      console.log('🔗 Initializing Expo call system...');
+      console.log('📞 Initializing Agora call with Communication profile...');
 
-      // For Expo, we use expo-av and expo-camera for media
-      // This provides a simplified but functional call experience
-
-      // 1. Set up audio for calls
-      await setupAudioForCall();
-
-      // 2. For video calls, prepare camera (if needed)
-      if (callType === 'video') {
-        await setupVideoForCall();
+      // Get App ID - prefer from backend, fallback to env variable
+      const appId = agoraCallConfig.appId || process.env.EXPO_PUBLIC_AGORA_APP_ID;
+      
+      if (!appId) {
+        throw new Error('Agora App ID not configured. Please set EXPO_PUBLIC_AGORA_APP_ID in .env or ensure backend provides it.');
       }
 
-      // 3. Set up real-time signaling via WebSocket
-      await setupCallSignaling();
+      // Normalize channel name (backend returns 'channel', frontend expects 'channelName')
+      const normalizedConfig: AgoraCallConfig = {
+        ...agoraCallConfig,
+        appId,
+        channelName: agoraCallConfig.channelName || agoraCallConfig.channel,
+      };
 
-      console.log('✅ Expo call system initialized');
+      if (!normalizedConfig.channelName) {
+        throw new Error('Channel name not provided by backend');
+      }
+
+      console.log('📞 Agora config:', {
+        appId: normalizedConfig.appId ? 'present' : 'missing',
+        channel: normalizedConfig.channelName,
+        token: normalizedConfig.token ? 'present' : 'missing',
+        uid: normalizedConfig.uid,
+      });
+
+      // Check if we need to reinitialize (engine already exists for different call)
+      const currentChannel = agoraCallService.getCurrentChannelName();
+      if (currentChannel && currentChannel !== normalizedConfig.channelName) {
+        console.log('📞 Different channel detected, will reinitialize');
+        isReinitializingRef.current = true;
+      }
+
+      // Initialize Agora call service with App ID and callbacks
+      // Pass channelName so service can skip reinitialization if already in same channel
+      await agoraCallService.initialize(normalizedConfig.appId, {
+        onJoinChannelSuccess: (connection, elapsed) => {
+          console.log('📞 Joined Agora call channel successfully - waiting for recipient to join');
+          // Set status to 'ringing' - caller is connected but recipient hasn't joined yet
+          setCallStatus('ringing');
+          // For video calls, show video UI so caller can see their own preview
+          if (callType === 'video') {
+            setShowVideoUI(true);
+            setShowCameraPreview(true);
+          }
+          // Don't start the timer yet - wait for recipient to join
+          // Keep playing ringback sound until recipient joins
+          // Don't clear ringback timeout yet - it will be cleared when recipient joins
+        },
+        onUserJoined: (connection, remoteUid, elapsed) => {
+          console.log('📞 Remote user joined call:', remoteUid);
+          setRemoteUid(remoteUid);
+          // Reset remote video state when user joins (assume video is enabled initially)
+          setRemoteVideoEnabled(true);
+          setRemoteMuted(false);
+          
+          // 🔥 Restore call session ID from ref if state was lost (e.g., after remount)
+          if (!currentCallSessionId && currentCallSessionIdRef.current) {
+            console.log('🔄 Restoring call session ID from ref:', currentCallSessionIdRef.current);
+            setCurrentCallSessionId(currentCallSessionIdRef.current);
+          }
+          
+          // Now both users are in the call - set to connected and start timer
+          setCallStatus('connected');
+          setCallStartTime(Date.now());
+          stopCallSounds();
+          
+          // Clear ringback timeout now that recipient has joined
+          if (ringbackTimeoutRef.current) {
+            console.log('🛑 Clearing call timeout - recipient has joined');
+            clearTimeout(ringbackTimeoutRef.current);
+            ringbackTimeoutRef.current = null;
+            setRingbackTimeout(null);
+          }
+        },
+        onUserOffline: (connection, remoteUid, reason) => {
+          console.log('📞 Remote user left call:', remoteUid);
+          setRemoteUid(null);
+          // Don't end call immediately, wait for call_ended signal
+        },
+        onConnectionStateChanged: (state, reason) => {
+          console.log('📞 Agora connection state changed:', { state, reason });
+          
+          // According to Agora React Native SDK documentation:
+          // ConnectionStateType:
+          // 1 = DISCONNECTED (1)
+          // 2 = CONNECTING (2)
+          // 3 = CONNECTED (3)
+          // 4 = RECONNECTING (4)
+          // 5 = FAILED (5)
+          
+          // ConnectionChangedReasonType:
+          // 0 = CONNECTION_CHANGED_CONNECTING
+          // 1 = CONNECTION_CHANGED_JOIN_SUCCESS
+          // 2 = CONNECTION_CHANGED_INTERRUPTED (temporary network issue)
+          // 5 = CONNECTION_CHANGED_LEAVE_CHANNEL (user left)
+          // 16 = CONNECTION_CHANGED_LOST (connection lost)
+          
+          // Only end call on explicit user actions or permanent failures
+          // Don't end on temporary network interruptions - SDK will reconnect
+          if (state === 1) {
+            // DISCONNECTED state
+            if (reason === 5) {
+              // LEAVE_CHANNEL - but check if we're reinitializing
+              // If we just cleaned up for reinitialization, don't end the call
+              const isReinitializing = isReinitializingRef.current || agoraCallService.isReinitializingEngine();
+              if (isReinitializing) {
+                console.log('📞 Left channel during reinitialization - ignoring');
+                isReinitializingRef.current = false;
+                return; // Don't end call
+              }
+              // User explicitly left the channel
+              console.log('📞 User left channel, ending call');
+              endCall('completed');
+            } else if (reason === 16) {
+              // Connection lost - wait a bit for reconnection
+              console.log('📞 Connection lost, waiting for reconnection...');
+              setCallStatus('reconnecting');
+              // Don't end call immediately - give SDK time to reconnect
+            } else {
+              // Other disconnect reasons (temporary network issues)
+              console.log('📞 Temporary disconnect, SDK will attempt to reconnect');
+              setCallStatus('reconnecting');
+            }
+          } else if (state === 3) {
+            // CONNECTED - connection to Agora server established
+            // But don't set status to 'connected' yet - wait for recipient to join
+            // Only update if we're still in 'connecting' state
+            console.log('📞 Connection to Agora server established');
+            if (callStatus === 'connecting') {
+              setCallStatus('ringing');
+            }
+            // If already 'ringing', keep it as 'ringing' until recipient joins
+          } else if (state === 4) {
+            // RECONNECTING - don't end call, just update status
+            console.log('📞 Reconnecting...');
+            setCallStatus('reconnecting');
+          } else if (state === 5) {
+            // FAILED - connection failed permanently
+            console.log('📞 Connection failed permanently, ending call');
+            endCall('completed');
+          }
+          // State 2 (CONNECTING) - no action needed, just wait
+        },
+        onRemoteVideoStateChanged: (uid, state, reason, elapsed) => {
+          console.log('📞 Remote video state changed:', { uid, state, reason, elapsed });
+          // state: 0 = stopped, 1 = starting, 2 = decoding, 3 = failed
+          // reason: 0 = mute/unmute by user, 1 = network issue, 2 = codec not supported
+          // Only update state if it's a meaningful change to prevent flickering
+          if (state === 0 && reason === 0) {
+            // Video stopped by user (muted) - user turned off camera
+            console.log('📹 Remote video stopped by user');
+            setRemoteVideoEnabled(false);
+          } else if (state === 3) {
+            // Video failed - connection issue, but don't disable immediately
+            // It might recover, so keep the state as is
+            console.log('📹 Remote video failed, keeping current state for potential recovery');
+          } else if (state === 1 || state === 2) {
+            // Video starting or decoding - enable it
+            console.log('📹 Remote video starting/decoding - enabling');
+            setRemoteVideoEnabled(true);
+          }
+          // For state 0 with reason !== 0, it might be temporary - don't change state
+        },
+        onRemoteAudioStateChanged: (uid, state, reason, elapsed) => {
+          console.log('📞 Remote audio state changed:', { uid, state, reason });
+          // state: 0 = stopped, 2 = starting, 1 = decoded
+          setRemoteMuted(state === 0);
+        },
+        onError: (err, msg) => {
+          console.error('❌ Agora call error:', err, msg);
+          if (err !== 110) { // Ignore error 110 (ERR_NO_BUFFER) as it's a timing issue
+            Alert.alert('Call Error', `Error: ${msg || err}`);
+          }
+        }
+      }, normalizedConfig.channelName);
+
+      // For video calls, enable video and start preview BEFORE joining channel
+      // This ensures the initiator's video starts immediately
+      if (isVideoCall) {
+        const engine = agoraCallService.getEngine();
+        if (engine) {
+          try {
+            console.log('📹 Starting preview BEFORE joining channel (initiator)');
+            // Enable video first
+            await engine.enableVideo();
+            console.log('✅ Video enabled before join');
+            
+            // Start preview BEFORE joining - this is critical for initiator
+            await engine.startPreview();
+            console.log('✅ Preview started before join - initiator will see themselves immediately');
+            setShowCameraPreview(true);
+            setShowVideoUI(true);
+          } catch (previewError) {
+            console.error('❌ Error starting preview before join:', previewError);
+            // Continue anyway - preview might start after join
+          }
+        }
+      }
+
+      // Join the call channel with normalized config
+      const result = await agoraCallService.joinChannel(normalizedConfig, isVideoCall);
+      
+      if (result === 0) {
+        const engine = agoraCallService.getEngine();
+        if (engine) {
+          setAgoraCallEngine(engine);
+          setAgoraConfig(normalizedConfig);
+          console.log('✅ Agora call initialized and joined successfully');
+          
+          // For video calls, ensure preview is still running after join
+          if (isVideoCall && engine) {
+            try {
+              // Double-check video is enabled (should already be)
+              await engine.enableVideo();
+              // Ensure preview is still running
+              await engine.startPreview();
+              console.log('✅ Camera preview confirmed after join');
+              setShowCameraPreview(true);
+              setShowVideoUI(true);
+            } catch (previewError) {
+              console.error('❌ Error confirming camera preview after join:', previewError);
+              // Continue anyway - preview might already be running
+            }
+          }
+        } else {
+          console.warn('⚠️ Engine is null after join - this may indicate we skipped initialization');
+          // If we skipped initialization, we still need to set the config
+          setAgoraConfig(normalizedConfig);
+        }
+      } else {
+        throw new Error(`Failed to join Agora channel with error code: ${result}`);
+      }
     } catch (error) {
-      console.error('❌ Error initializing call system:', error);
+      console.error('❌ Error initializing Agora call:', error);
       throw error;
     }
   };
 
-  const setupAudioForCall = async () => {
-    try {
-      console.log('🎤 Delegating audio setup to system...');
-
-      // Delegate audio configuration to system
-      // System will automatically configure audio for calls
-      console.log('📱 Audio configuration delegated to system - iOS/Android will handle call audio automatically');
-
-      // Create mock audio stream for UI purposes
-      const audioStream = {
-        id: 'audio-stream',
-        type: 'audio',
-        recording: null, // System-managed
-        isActive: true,
-      };
-
-      setLocalStream(audioStream);
-      console.log('✅ Audio delegation complete');
-    } catch (error) {
-      console.warn('⚠️ Audio delegation warning:', error);
-      // System will still handle audio automatically
-    }
-  };
-
-  const setupVideoForCall = async () => {
-    try {
-      console.log('📹 Setting up video for call...');
-
-      // For video calls in Expo, we would use expo-camera
-      // This is a simplified setup - in production you'd show camera preview
-
-      // Simulate video stream setup
-      const videoStream = {
-        id: 'video-stream',
-        type: 'video',
-        isActive: isVideoEnabled,
-        resolution: '720p',
-      };
-
-      console.log('✅ Video setup complete');
-      return videoStream;
-    } catch (error) {
-      console.error('❌ Video setup error:', error);
-      throw error;
-    }
-  };
-
+  // Simplified signaling - Agora handles media automatically, we only need call control signals
   const setupCallSignaling = async () => {
     try {
-      console.log('📡 Setting up call signaling...');
+      console.log('📡 Setting up call signaling (simplified for Agora)...');
 
       if (realtimeAPI.isConnected() && currentCallSessionId) {
-        // Subscribe to incoming call signals
+        // Subscribe to incoming call signals (for call control only, no WebRTC signaling needed)
         const unsubscribe = realtimeAPI.subscribe('call_signal', handleIncomingCallSignal);
 
         // Send call ready signal
@@ -1765,14 +2134,54 @@ const IndividualChatScreen = () => {
           console.log('📞 Call initiated signal received (for caller\'s reference)');
           break;
 
+        case 'gift_animation':
+          // Handle gift animation event - display floating emoji animation
+          console.log('🎁 Gift animation signal received:', data.data);
+          console.log('🎁 Current activeGiftAnimations count:', activeGiftAnimations.length);
+          if (data.data && data.data.giftEmoji && data.data.quantity) {
+            const animationId = `gift-${Date.now()}-${Math.random()}`;
+            console.log('🎁 Adding gift animation:', { id: animationId, emoji: data.data.giftEmoji, quantity: data.data.quantity });
+            setActiveGiftAnimations(prev => {
+              const updated = [...prev, {
+                id: animationId,
+                emoji: data.data.giftEmoji,
+                quantity: data.data.quantity || 1,
+              }];
+              console.log('🎁 Updated activeGiftAnimations count:', updated.length);
+              return updated;
+            });
+            
+            // Remove animation after it completes (component will call this)
+            setTimeout(() => {
+              setActiveGiftAnimations(prev => {
+                const filtered = prev.filter(anim => anim.id !== animationId);
+                console.log('🎁 Removed animation, remaining count:', filtered.length);
+                return filtered;
+              });
+            }, 5000); // Clean up after 5 seconds (longer to ensure visibility)
+          } else {
+            console.warn('🎁 Gift animation signal missing required data:', data.data);
+          }
+          break;
+
+        case 'gift_sent':
+          // Handle gift_sent as fallback (if backend doesn't emit gift_animation)
+          // This is mainly for backward compatibility, but we should rely on gift_animation
+          console.log('🎁 Gift sent signal received (fallback):', data.data);
+          // Don't handle here - let the backend's gift_animation handle it
+          // This case is just to prevent "Unknown call signal" log
+          break;
+
         case 'call_accepted':
           console.log('📞 Call accepted by remote participant');
           setTimeout(() => {
             stopCallSounds();
 
             // Clear call timeout - call was answered
-            if (ringbackTimeout) {
-              clearTimeout(ringbackTimeout);
+            if (ringbackTimeoutRef.current) {
+              console.log('🛑 Clearing call timeout - call was accepted');
+              clearTimeout(ringbackTimeoutRef.current);
+              ringbackTimeoutRef.current = null;
               setRingbackTimeout(null);
             }
 
@@ -1819,10 +2228,11 @@ const IndividualChatScreen = () => {
           break;
 
         case 'call_ended':
-          console.log('📞 Call ended by remote participant');
+          console.log('📞 Call ended by remote participant (from call_signal)');
           setTimeout(() => {
-            const reason = data.data.reason || 'completed';
-            endCall(reason);
+            const reason = data.data?.reason || 'completed';
+            // Pass fromRemote=true to prevent sending duplicate signal
+            endCall(reason, true);
           }, 0);
           break;
 
@@ -1836,21 +2246,29 @@ const IndividualChatScreen = () => {
 
   const toggleMute = async () => {
     try {
-      setIsMuted(!isMuted);
+      const newMuteState = !isMuted;
+      setIsMuted(newMuteState);
+      
+      // Toggle audio in Agora
+      if (agoraCallEngine || agoraCallService.isServiceInitialized()) {
+        await agoraCallService.muteAudio(newMuteState);
+      }
       
       // Send mute status via WebSocket
       if (currentCallSessionId && realtimeAPI.isConnected()) {
         realtimeAPI.sendCallSignal(currentCallSessionId, 'mute_toggle', {
-          isMuted: !isMuted
+          isMuted: newMuteState
         }, chatId);
       }
 
       // Update call settings via API
       if (currentCallSessionId) {
         await chatAPI.updateCallSettings(currentCallSessionId, {
-          isMuted: !isMuted
+          isMuted: newMuteState
         });
       }
+      
+      console.log(`🎤 Audio ${newMuteState ? 'muted' : 'unmuted'}`);
     } catch (error) {
       console.error('Error toggling mute:', error);
     }
@@ -1858,23 +2276,43 @@ const IndividualChatScreen = () => {
 
   const toggleVideo = async () => {
     try {
-      setIsVideoEnabled(!isVideoEnabled);
+      const newVideoState = !isVideoEnabled;
+      setIsVideoEnabled(newVideoState);
+
+      // Toggle video in Agora
+      if (agoraCallEngine || agoraCallService.isServiceInitialized()) {
+        await agoraCallService.muteVideo(!newVideoState); // muteVideo takes muted state
+      }
 
       // Send video status via WebSocket
       if (currentCallSessionId && realtimeAPI.isConnected()) {
         realtimeAPI.sendCallSignal(currentCallSessionId, 'video_toggle', {
-          isVideoEnabled: !isVideoEnabled
+          isVideoEnabled: newVideoState
         }, chatId); // Pass conversationId to avoid backend lookup
       }
 
       // Update call settings via API
       if (currentCallSessionId) {
         await chatAPI.updateCallSettings(currentCallSessionId, {
-          isVideoEnabled: !isVideoEnabled
+          isVideoEnabled: newVideoState
         });
       }
+
+      console.log(`📹 Video ${newVideoState ? 'enabled' : 'disabled'}`);
     } catch (error) {
       console.error('Error toggling video:', error);
+    }
+  };
+
+  // Switch camera (front/back)
+  const switchCamera = async () => {
+    try {
+      if (agoraCallEngine || agoraCallService.isServiceInitialized()) {
+        await agoraCallService.switchCamera();
+        console.log('📷 Camera switched');
+      }
+    } catch (error) {
+      console.error('Error switching camera:', error);
     }
   };
 
@@ -1956,8 +2394,9 @@ const IndividualChatScreen = () => {
       }
 
       // Clear timeout
-      if (ringbackTimeout) {
-        clearTimeout(ringbackTimeout);
+      if (ringbackTimeoutRef.current) {
+        clearTimeout(ringbackTimeoutRef.current);
+        ringbackTimeoutRef.current = null;
         setRingbackTimeout(null);
       }
 
@@ -1992,16 +2431,34 @@ const IndividualChatScreen = () => {
         return startAIVoiceCall();
       }
 
+      // Reset call states
       setCallType(type);
       setCallStatus('calling');
       setShowCallModal(true);
+      // Ensure video is enabled for video calls
+      if (type === 'video') {
+        setIsVideoEnabled(true);
+      }
 
       // Start ringback sound for caller
       playCallSound('ringing');
 
-      // Set call timeout (30 seconds)
-      const timeout = setTimeout(handleCallTimeout, 30000);
+      // Set call timeout (60 seconds to match backend timeout)
+      // This timeout will be cleared when recipient joins or call is answered
+      // Use ref to avoid closure issues
+      const timeout = setTimeout(() => {
+        // Check if timeout was cleared (ref will be null if cleared)
+        if (ringbackTimeoutRef.current === timeout) {
+          // Timeout wasn't cleared, so call wasn't answered
+          console.log('📞 Call timeout - no answer after 60 seconds');
+          handleCallTimeout();
+        } else {
+          console.log('📞 Call timeout fired but was already cleared, ignoring');
+        }
+      }, 60000);
+      ringbackTimeoutRef.current = timeout;
       setRingbackTimeout(timeout);
+      console.log('⏱️ Call timeout set for 60 seconds');
       
       // Delegate microphone permissions to system
       try {
@@ -2052,11 +2509,40 @@ const IndividualChatScreen = () => {
       const participantIds = (otherUserId ? [user?.id, otherUserId] : [user?.id]).filter((id): id is string => Boolean(id));
       const callData = await chatAPI.startCall(chatId, type, participantIds);
       setCurrentCallSessionId(callData.callSessionId);
+      currentCallSessionIdRef.current = callData.callSessionId; // 🔥 Also store in ref
       
-      // Initialize WebRTC connection
-      await initializeWebRTC(callData.rtcConfiguration);
+      console.log('📞 Call data received from backend:', {
+        callSessionId: callData.callSessionId,
+        hasAgoraConfig: !!callData.agoraConfig,
+        hasRtcConfiguration: !!callData.rtcConfiguration,
+        agoraConfig: callData.agoraConfig,
+        rtcConfiguration: callData.rtcConfiguration,
+      });
       
-      // Send call initiation via WebSocket
+      // Initialize Agora call with Communication profile
+      if (callData.agoraConfig || callData.rtcConfiguration) {
+        const agoraCallConfig = callData.agoraConfig || callData.rtcConfiguration;
+        
+        // Normalize config (backend returns 'channel', frontend expects 'channelName')
+        const normalizedConfig: AgoraCallConfig = {
+          ...agoraCallConfig,
+          channelName: agoraCallConfig.channelName || agoraCallConfig.channel,
+        };
+        
+        console.log('📞 Normalized Agora config:', {
+          appId: normalizedConfig.appId ? 'present' : 'missing',
+          channelName: normalizedConfig.channelName,
+          channel: agoraCallConfig.channel,
+          token: normalizedConfig.token ? 'present' : 'missing',
+          uid: normalizedConfig.uid,
+        });
+        
+        await initializeAgoraCall(normalizedConfig, type === 'video');
+      } else {
+        throw new Error('Agora configuration not provided by backend');
+      }
+      
+      // Send call initiation via WebSocket (simplified - no SDP/ICE needed)
       if (realtimeAPI.isConnected()) {
         realtimeAPI.sendCallSignal(callData.callSessionId, 'call_initiated', {
           callType: type,
@@ -2066,7 +2552,7 @@ const IndividualChatScreen = () => {
         }, chatId);
       }
       
-      console.log('📞 Call initiated, waiting for response...');
+      console.log('📞 Agora call initiated, waiting for response...');
 
     } catch (error) {
       console.error('Error starting call:', error);
@@ -2099,6 +2585,12 @@ const IndividualChatScreen = () => {
   const acceptCall = async () => {
     console.log('📞 acceptCall called, incomingCall state:', incomingCall, 'ref:', incomingCallRef.current);
 
+    // Prevent duplicate accept calls
+    if (isAcceptingCallRef.current) {
+      console.log('⚠️ Already accepting call, ignoring duplicate request');
+      return;
+    }
+
     // Use the one with valid callSessionId (prefer ref if state is corrupted)
     const callToAccept = (incomingCall?.callSessionId ? incomingCall : incomingCallRef.current);
 
@@ -2112,6 +2604,14 @@ const IndividualChatScreen = () => {
       return;
     }
 
+    // Check if we're already in a call with this session
+    if (currentCallSessionId === callToAccept.callSessionId && agoraCallEngine) {
+      console.log('⚠️ Already in this call, ignoring accept request');
+      return;
+    }
+
+    isAcceptingCallRef.current = true;
+
     try {
       console.log('📞 Accepting call...', callToAccept.callSessionId);
       setCallStatus('connecting');
@@ -2123,6 +2623,7 @@ const IndividualChatScreen = () => {
       console.log('✅ Successfully joined call:', joinResult);
 
       setCurrentCallSessionId(callToAccept.callSessionId);
+      currentCallSessionIdRef.current = callToAccept.callSessionId; // 🔥 Also store in ref
       setCallType(callToAccept.callType);
       setIncomingCall(null);
       incomingCallRef.current = null; // Clear ref too
@@ -2135,36 +2636,69 @@ const IndividualChatScreen = () => {
         }, chatId); // Pass conversationId to avoid backend lookup
       }
 
-      // For video calls, setup camera
+      // Get Agora configuration from backend for joining the call
+      const agoraCallConfig = joinResult.agoraConfig || joinResult.rtcConfiguration;
+      
+      if (!agoraCallConfig) {
+        throw new Error('Agora configuration not provided by backend');
+      }
+
+      // Normalize config (backend returns 'channel', frontend expects 'channelName')
+      const normalizedConfig: AgoraCallConfig = {
+        ...agoraCallConfig,
+        channelName: agoraCallConfig.channelName || agoraCallConfig.channel,
+      };
+
+      // For video calls, request camera permission BEFORE initializing Agora
       if (callToAccept.callType === 'video') {
         if (!cameraPermission?.granted) {
           const permission = await requestCameraPermission();
           if (!permission.granted) {
             Alert.alert('Permission Required', 'Camera permission is required for video calls.');
+            isAcceptingCallRef.current = false;
             endCall('cancelled');
             return;
           }
         }
+      }
 
+      // Initialize Agora call for accepting
+      await initializeAgoraCall(normalizedConfig, callToAccept.callType === 'video');
+
+      // For video calls, setup camera and video UI
+      if (callToAccept.callType === 'video') {
         // Start camera preview for video calls
         console.log('📹 Starting camera preview for accepted video call');
         setShowCameraPreview(true);
         setShowVideoUI(true);
+        // Ensure video is enabled (should already be enabled in joinChannel, but double-check)
+        if (agoraCallEngine) {
+          try {
+            await agoraCallEngine.enableVideo();
+            await agoraCallEngine.startPreview();
+            console.log('✅ Camera preview explicitly started for recipient');
+          } catch (error) {
+            console.error('❌ Error starting camera preview:', error);
+          }
+        }
       }
 
-      // Start call
-      setCallStatus('connected');
+      // Note: Agora handles connection automatically - no SDP/ICE exchange needed
+
+      // Start call UI
+      setCallStatus('ringing'); // Will change to 'connected' when recipient joins
       setIsInCall(true);
       setShowCallModal(false);
-      setCallStartTime(Date.now());
-      setCallDuration(0);
 
       playCallSound('connected');
+      
+      isAcceptingCallRef.current = false; // Reset flag after successful accept
 
     } catch (error) {
       console.error('Error accepting call:', error);
       Alert.alert('Error', 'Failed to accept call.');
       setIncomingCall(null);
+      isAcceptingCallRef.current = false; // Reset flag on error
     }
   };
 
@@ -2186,15 +2720,171 @@ const IndividualChatScreen = () => {
     setIncomingCall(null);
   };
 
-  const endCall = async (reason: 'completed' | 'declined' | 'missed' | 'cancelled' = 'completed') => {
+  // Gift functions for calls
+  const loadAvailableGifts = async () => {
     try {
-      console.log(`📞 Ending call with reason: ${reason}`);
+      setLoadingGifts(true);
+      // Get user's owned gifts instead of all available gifts
+      const userGiftsResponse = await giftAPI.getUserGifts();
+      
+      // Group gifts by gift_id and sum quantities
+      const giftMap = new Map<string, {id: string, emoji: string, name: string, quantity: number}>();
+      
+      userGiftsResponse.gifts.forEach((userGift) => {
+        const existing = giftMap.get(userGift.gift_id);
+        if (existing) {
+          existing.quantity += userGift.quantity;
+        } else {
+          giftMap.set(userGift.gift_id, {
+            id: userGift.gift_id,
+            emoji: userGift.emoji,
+            name: userGift.gift_name,
+            quantity: userGift.quantity,
+          });
+        }
+      });
+      
+      // Convert map to array and filter out gifts with 0 quantity
+      const ownedGifts = Array.from(giftMap.values()).filter(gift => gift.quantity > 0);
+      setAvailableGifts(ownedGifts);
+    } catch (error: any) {
+      console.error('Error loading gifts:', error);
+      Alert.alert('Error', error.message || 'Failed to load gifts');
+    } finally {
+      setLoadingGifts(false);
+    }
+  };
+
+
+  const handleSendGift = async (giftId: string, quantity: number = 1) => {
+    // Validate recipient
+    if (!otherUserId) {
+      Alert.alert('Error', 'Cannot send gift: missing recipient');
+      return;
+    }
+
+    // Validate call is connected (gift button only shows when callStatus === 'connected')
+    if (callStatus !== 'connected') {
+      Alert.alert('Error', 'Cannot send gift: call is not connected');
+      return;
+    }
+
+    // Get call session ID from state or ref (ref persists across remounts)
+    // Priority: state > ref > incomingCall ref > extract from Agora channel
+    let activeCallSessionId = currentCallSessionId || currentCallSessionIdRef.current || incomingCallRef.current?.callSessionId;
+    
+    // 🔥 Fallback: Try to extract from Agora channel name (format: call_<callSessionId>)
+    if (!activeCallSessionId && agoraConfig?.channel) {
+      const channelMatch = agoraConfig.channel.match(/^call_(.+)$/);
+      if (channelMatch && channelMatch[1]) {
+        console.log('🔄 Extracting call session ID from Agora channel:', channelMatch[1]);
+        activeCallSessionId = channelMatch[1];
+        setCurrentCallSessionId(activeCallSessionId);
+        currentCallSessionIdRef.current = activeCallSessionId;
+      }
+    }
+    
+    // 🔥 If we found it in ref but not in state, restore it to state
+    if (!currentCallSessionId && currentCallSessionIdRef.current) {
+      console.log('🔄 Restoring call session ID from ref before sending gift:', currentCallSessionIdRef.current);
+      setCurrentCallSessionId(currentCallSessionIdRef.current);
+      activeCallSessionId = currentCallSessionIdRef.current;
+    }
+    
+    console.log('🎁 Sending gift - Call session ID check:', {
+      state: currentCallSessionId,
+      ref: currentCallSessionIdRef.current,
+      incomingCallRef: incomingCallRef.current?.callSessionId,
+      agoraChannel: agoraConfig?.channel,
+      activeCallSessionId,
+      callStatus,
+      isInCall,
+    });
+    
+    if (!activeCallSessionId) {
+      Alert.alert('Error', 'Cannot send gift: call session ID not found');
+      return;
+    }
+
+    // Validate quantity
+    if (quantity <= 0 || quantity > 10) {
+      Alert.alert('Error', 'Gift quantity must be between 1 and 10');
+      return;
+    }
+
+    try {
+      await giftAPI.sendGift({
+        gift_id: giftId,
+        quantity,
+        recipient_id: otherUserId,
+        session_type: 'call',
+        session_id: activeCallSessionId,
+      });
+
+      // Send real-time notification via WebSocket
+      if (realtimeAPI.isConnected() && activeCallSessionId) {
+        realtimeAPI.sendCallSignal(activeCallSessionId, 'gift_sent', {
+          giftId,
+          quantity,
+          senderId: userProfile?.id,
+        });
+      }
+
+      setShowGiftModal(false);
+      
+      // Trigger local animation immediately (don't wait for websocket confirmation)
+      // The backend will also emit the event, so both users see it
+      const animationId = `gift-local-${Date.now()}-${Math.random()}`;
+      
+      // Get gift emoji from available gifts
+      const gift = availableGifts.find(g => g.id === giftId);
+      if (gift && gift.emoji) {
+        setActiveGiftAnimations(prev => [...prev, {
+          id: animationId,
+          emoji: gift.emoji,
+          quantity: quantity,
+        }]);
+        
+        // Remove animation after it completes
+        setTimeout(() => {
+          setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animationId));
+        }, 3000);
+      }
+      
+      // Don't show alert - animation handles the visual feedback
+    } catch (error: any) {
+      console.error('Error sending gift:', error);
+      const errorMessage = error.message || 'Failed to send gift';
+      
+      // Provide user-friendly error messages
+      if (errorMessage.includes('only have') || errorMessage.includes('Insufficient')) {
+        Alert.alert('Insufficient Gifts', errorMessage);
+      } else if (errorMessage.includes('not found')) {
+        Alert.alert('Gift Not Found', 'The selected gift is no longer available');
+      } else {
+        Alert.alert('Error', errorMessage);
+      }
+    }
+  };
+
+  const endCall = async (reason: 'completed' | 'declined' | 'missed' | 'cancelled' = 'completed', fromRemote: boolean = false) => {
+    // Prevent duplicate endCall calls
+    if (isEndingCallRef.current) {
+      console.log('⚠️ endCall already in progress, ignoring duplicate call');
+      return;
+    }
+
+    isEndingCallRef.current = true;
+
+    try {
+      console.log(`📞 Ending call with reason: ${reason}${fromRemote ? ' (from remote)' : ''}`);
       console.log('🔍 Call end details:', {
         reason,
         reasonType: typeof reason,
         isAICall,
         callStatus,
-        isInCall
+        isInCall,
+        fromRemote
       });
 
       // Log stack trace to see what triggered the call end
@@ -2223,28 +2913,37 @@ const IndividualChatScreen = () => {
 
       Alert.alert('Call Ended', reasonMessages[reason]);
 
-      // Clean up system-delegated streams
-      if (localStream) {
-        console.log('🔊 Delegating stream cleanup to system');
-        // System will handle stream cleanup automatically
-        setLocalStream(null);
-      }
-      if (remoteStream) {
-        setRemoteStream(null);
-      }
+      // Clean up Agora call connection
+      console.log('🔌 Closing Agora call connection...');
+      await agoraCallService.cleanup();
+      
+      setAgoraCallEngine(null);
+      setRemoteUid(null);
+      setAgoraConfig(null);
 
-      // Send call end signal with reason
-      if (currentCallSessionId && realtimeAPI.isConnected()) {
+      // Send call end signal with reason (only if we're not ending due to remote signal)
+      // This prevents sending duplicate signals when we receive call_ended from the other participant
+      if (!fromRemote && currentCallSessionId && realtimeAPI.isConnected()) {
+        console.log('📤 Sending call ended signal to other participants');
         realtimeAPI.sendCallSignal(currentCallSessionId, 'call_ended', {
           reason,
           endedBy: user?.id,
           timestamp: new Date().toISOString(),
         }, chatId);
+        
+        // Also send WebRTC call ended signal
+        realtimeAPI.sendCallEnded(currentCallSessionId, reason);
+      } else if (fromRemote) {
+        console.log('📥 Received call_ended from remote, not sending duplicate signal');
       }
 
-      // End call on backend
-      if (currentCallSessionId) {
+      // End call on backend (only if we're not ending due to remote signal)
+      // The other participant already called the backend, so we don't need to do it again
+      if (!fromRemote && currentCallSessionId) {
+        console.log('📡 Ending call on backend');
         await chatAPI.endCall(currentCallSessionId, reason);
+      } else if (fromRemote) {
+        console.log('📥 Received call_ended from remote, skipping backend call (already handled by other participant)');
       }
 
       // Delegate audio mode reset to system
@@ -2257,10 +2956,13 @@ const IndividualChatScreen = () => {
       // Ensure all sounds/haptics are stopped
       stopCallSounds();
 
-      // Reset all call states
-      setIsInCall(false);
-      setShowCallModal(false);
+      // Reset all call states (ensure proper cleanup order)
+      setShowCallModal(false); // Close outgoing modal first
+      setIsInCall(false); // Then close in-call overlay
+      setIncomingCall(null); // Clear any incoming call state
+      incomingCallRef.current = null; // Clear ref
       setCurrentCallSessionId(null);
+      currentCallSessionIdRef.current = null; // 🔥 Also clear ref
       setCallStartTime(null);
       setCallDuration(0);
       setIsMuted(false);
@@ -2272,12 +2974,16 @@ const IndividualChatScreen = () => {
       setShowCameraPreview(false);
       setShowVideoUI(false);
       setIsCameraReady(false);
+      setIsLocalVideoPrimary(false); // Reset video swap state
 
       // Stop call timer
       if (callTimerRef.current) {
         clearInterval(callTimerRef.current);
         callTimerRef.current = null;
       }
+
+      // Reset ending flag
+      isEndingCallRef.current = false;
     }
   };
 
@@ -2304,12 +3010,29 @@ const IndividualChatScreen = () => {
         return;
       }
 
+      // Ensure audio mode is configured for recording
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        shouldPlayInBackground: false,
+      });
+
       // Prepare and start recording
       await audioRecorder.prepareToRecordAsync();
       console.log('✅ Prepared to record');
 
       await audioRecorder.record();
       console.log('✅ Recording started');
+
+      // ✅ VERIFY recording actually started
+      if (!audioRecorder.isRecording) {
+        throw new Error('Recording failed to start');
+      }
+
+      console.log('🔍 Recording status:', {
+        isRecording: audioRecorder.isRecording,
+        uri: audioRecorder.uri,
+      });
 
       setIsRecording(true);
       setRecordingDuration(0);
@@ -2329,6 +3052,7 @@ const IndividualChatScreen = () => {
 
     } catch (error) {
       console.error('❌ Error starting recording:', error);
+      setIsRecording(false);
       Alert.alert('Error', 'Failed to start recording. Please try again.');
     }
   };
@@ -2339,8 +3063,32 @@ const IndividualChatScreen = () => {
     try {
       console.log('🛑 Stopping recording...');
 
+      // ✅ Ensure we're actually recording before stopping
+      if (!audioRecorder.isRecording) {
+        console.warn('⚠️ Recorder not in recording state');
+        setIsRecording(false);
+        setRecordingDuration(0);
+        if (recordingInterval) {
+          clearInterval(recordingInterval);
+          setRecordingInterval(null);
+        }
+        return;
+      }
+
       // Stop recording
       await audioRecorder.stop();
+      
+      // ✅ Wait for recording to actually stop before accessing URI
+      // Poll for URI with timeout (more reliable than fixed delay)
+      let uri = audioRecorder.uri;
+      let attempts = 0;
+      const maxAttempts = 10; // 500ms total wait time
+      
+      while (!uri && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        uri = audioRecorder.uri;
+        attempts++;
+      }
 
       setIsRecording(false);
 
@@ -2350,11 +3098,15 @@ const IndividualChatScreen = () => {
         setRecordingInterval(null);
       }
 
-      // Get the recorded audio URI
-      const uri = audioRecorder.uri;
+      console.log('🔍 After stop status:', {
+        isRecording: audioRecorder.isRecording,
+        uri: uri,
+        duration: recordingDuration,
+        attempts: attempts,
+      });
 
       if (!uri) {
-        console.error('❌ No audio URI found');
+        console.error('❌ No audio URI found after stopping');
         Alert.alert('Error', 'Failed to record audio. Please try again.');
         setRecordingDuration(0);
         return;
@@ -2369,6 +3121,8 @@ const IndividualChatScreen = () => {
           size: '0', // File size will be determined by the upload
           type: 'audio/m4a',
         });
+      } else {
+        console.warn('⚠️ Recording too short, not sending');
       }
 
       setRecordingDuration(0);
@@ -2758,10 +3512,8 @@ const IndividualChatScreen = () => {
   const startLiveAudioStreaming = async () => {
     try {
       // Clean up any existing streaming first
-      // @ts-expect-error - streamInterval state is defined above, false positive hoisting error
       if (streamInterval) {
         console.log('🔇 Cleaning up existing audio streaming...');
-        // @ts-expect-error - streamInterval state is defined above, false positive hoisting error
         clearInterval(streamInterval);
         setStreamInterval(null);
       }
@@ -2863,8 +3615,8 @@ const IndividualChatScreen = () => {
       };
 
       // Stream audio chunks every 500ms for natural conversation
-      const streamInterval = setInterval(streamContinuousAudio, 500);
-      setStreamInterval(streamInterval);
+      const intervalId = setInterval(streamContinuousAudio, 500);
+      setStreamInterval(intervalId);
 
       console.log('✅ Natural conversation mode active - Gemini VAD will handle turn-taking');
 
@@ -3261,13 +4013,55 @@ const IndividualChatScreen = () => {
       audioPlayer.play();
       setPlayingAudioId(messageId);
 
-      // Listen for when audio finishes
+      // Listen for status changes to get duration and handle playback
       // @ts-expect-error - expo-audio event types vary by version
-      audioPlayer.addListener('statusChange', (status: any) => {
+      const statusListener = audioPlayer.addListener('statusChange', (status: any) => {
+        // Extract duration if available and not already stored
+        if (status.isLoaded && status.duration) {
+          const durationSeconds = Math.floor(status.duration / 1000); // Convert ms to seconds
+          
+          // Only update if we don't have this duration yet
+          setAudioDurations(prev => {
+            if (!prev[messageId]) {
+              console.log(`📊 Audio duration extracted: ${durationSeconds}s for message ${messageId}`);
+              
+              // Update message metadata with duration
+              setMessages(prevMessages =>
+                prevMessages.map(msg =>
+                  msg.id === messageId && msg.messageType === 'audio'
+                    ? {
+                        ...msg,
+                        metadata: {
+                          ...msg.metadata,
+                          audioDuration: durationSeconds,
+                        },
+                      }
+                    : msg
+                )
+              );
+              
+              return { ...prev, [messageId]: durationSeconds };
+            }
+            return prev;
+          });
+        }
+        
+        // Handle playback completion
         if (status.isLoaded && !status.isPlaying && playingAudioId === messageId) {
           setPlayingAudioId(null);
         }
       });
+      
+      // Cleanup: remove listener after a delay to allow it to capture duration
+      setTimeout(() => {
+        try {
+          // @ts-expect-error - expo-audio event types vary by version
+          audioPlayer.removeListener(statusListener);
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }, 5000); // Remove listener after 5 seconds (should be enough to get duration)
+      
     } catch (error) {
       console.error('❌ Error playing audio:', error);
       Alert.alert('Error', 'Failed to play audio message.');
@@ -3378,13 +4172,14 @@ const IndividualChatScreen = () => {
     const tempId = `temp-${Date.now()}`;
     try {
       // Create optimistic message with local URI for preview
+      const audioDurationSeconds = messageType === 'audio' ? Math.floor(recordingDuration) : undefined;
       const tempMessage: Message = {
         id: tempId,
         conversationId: chatId,
         senderId: user?.id || 'unknown',
         senderName: 'You',
-        content: messageType === 'audio' ? `Voice message (${Math.floor(recordingDuration)}s)` : '',
-        text: messageType === 'audio' ? `🎤 Voice message (${Math.floor(recordingDuration)}s)` : '',
+        content: messageType === 'audio' ? `Voice message (${audioDurationSeconds}s)` : '',
+        text: messageType === 'audio' ? `🎤 Voice message (${audioDurationSeconds}s)` : '',
         messageType,
         status: 'sending',
         mediaUrl: uri, // Use local URI for immediate display
@@ -3396,8 +4191,16 @@ const IndividualChatScreen = () => {
           size: fileData.size,
           type: fileData.type,
           url: uri,
-        } : undefined
+        } : undefined,
+        metadata: messageType === 'audio' && audioDurationSeconds ? {
+          audioDuration: audioDurationSeconds,
+        } : undefined,
       };
+      
+      // Store duration in local state for quick access
+      if (messageType === 'audio' && audioDurationSeconds) {
+        setAudioDurations(prev => ({ ...prev, [tempId]: audioDurationSeconds }));
+      }
 
       setMessages(prev => [...prev, tempMessage]);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
@@ -3406,7 +4209,10 @@ const IndividualChatScreen = () => {
       const createdMessage = await chatAPI.sendMessage({
         conversationId: chatId,
         messageType,
-        content: messageType === 'audio' ? `Voice message (${Math.floor(recordingDuration)}s)` : '',
+        content: messageType === 'audio' ? `Voice message (${audioDurationSeconds}s)` : '',
+        metadata: messageType === 'audio' && audioDurationSeconds ? {
+          audioDuration: audioDurationSeconds,
+        } : undefined,
       });
 
       console.log('✅ Message created with ID:', createdMessage.id);
@@ -3434,11 +4240,12 @@ const IndividualChatScreen = () => {
 
       // Update optimistic message with real data
       // Convert snake_case from backend to camelCase for frontend
+      const finalMessageId = updatedMessage.id;
       setMessages(prev =>
         prev.map(msg =>
           msg.id === tempId
             ? {
-                id: updatedMessage.id,
+                id: finalMessageId,
                 conversationId: (updatedMessage as any).conversation_id || updatedMessage.conversationId || chatId,
                 senderId: (updatedMessage as any).sender_id || updatedMessage.senderId || user?.id || '',
                 senderName: 'You',
@@ -3450,11 +4257,22 @@ const IndividualChatScreen = () => {
                 timestamp: new Date((updatedMessage as any).created_at || updatedMessage.createdAt),
                 createdAt: (updatedMessage as any).created_at || updatedMessage.createdAt,
                 updatedAt: (updatedMessage as any).updated_at || updatedMessage.updatedAt,
-                fileData: messageType === 'file' ? uploadResult.fileData : undefined
+                fileData: messageType === 'file' ? uploadResult.fileData : undefined,
+                metadata: tempMessage.metadata || (updatedMessage as any).metadata,
               }
             : msg
         )
       );
+      
+      // Update duration state with final message ID
+      if (messageType === 'audio' && audioDurationSeconds) {
+        setAudioDurations(prev => {
+          const newDurations = { ...prev };
+          delete newDurations[tempId]; // Remove temp ID
+          newDurations[finalMessageId] = audioDurationSeconds; // Add with final ID
+          return newDurations;
+        });
+      }
     } catch (error) {
       console.error('❌ Error sending media message:', error);
       Alert.alert('Error', `Failed to send ${messageType}. Please try again.`);
@@ -3838,35 +4656,61 @@ const IndividualChatScreen = () => {
             </TouchableOpacity>
           )}
           
-          {item.messageType === 'audio' && item.mediaUrl && (
-            <TouchableOpacity
-              style={styles.audioContainer}
-              onPress={() => handlePlayAudio(item.mediaUrl!, item.id)}
-            >
-              <Ionicons
-                name={playingAudioId === item.id ? "pause-circle" : "play-circle"}
-                size={32}
-                color="#FFFFFF"
-              />
-              <View style={styles.audioInfo}>
-                <Text style={[styles.audioText, isCurrentUser ? styles.currentUserText : styles.otherUserText]}>
-                  {item.content || 'Voice Message'}
-                </Text>
-                <View style={styles.audioWaveform}>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((_, i) => (
-                    <View
-                      key={i}
-                      style={[
-                        styles.audioWaveBar,
-                        { height: Math.random() * 20 + 10 },
-                        playingAudioId === item.id && styles.audioWaveBarActive
-                      ]}
-                    />
-                  ))}
+          {item.messageType === 'audio' && item.mediaUrl && (() => {
+            // Get duration from metadata, local state, or content
+            const durationFromMetadata = item.metadata?.audioDuration;
+            const durationFromState = audioDurations[item.id];
+            const duration = durationFromMetadata || durationFromState;
+            
+            // Extract duration from content if available (fallback for old messages)
+            let durationText = '';
+            if (duration) {
+              durationText = ` ${duration}s`;
+            } else if (item.content && item.content.includes('(')) {
+              // Try to extract from content like "Voice message (5s)"
+              const match = item.content.match(/\((\d+)s\)/);
+              if (match) {
+                durationText = ` ${match[1]}s`;
+              }
+            }
+            
+            return (
+              <TouchableOpacity
+                style={styles.audioContainer}
+                onPress={() => handlePlayAudio(item.mediaUrl!, item.id)}
+              >
+                <Ionicons
+                  name={playingAudioId === item.id ? "pause-circle" : "play-circle"}
+                  size={32}
+                  color="#FFFFFF"
+                />
+                <View style={styles.audioInfo}>
+                  <View style={styles.audioHeader}>
+                    <Text style={[styles.audioText, isCurrentUser ? styles.currentUserText : styles.otherUserText]}>
+                      {item.content?.replace(/\s*\(\d+s\)/, '') || 'Voice Message'}
+                    </Text>
+                    {durationText ? (
+                      <Text style={[styles.audioDuration, isCurrentUser ? styles.currentUserText : styles.otherUserText]}>
+                        {durationText}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={styles.audioWaveform}>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((_, i) => (
+                      <View
+                        key={i}
+                        style={[
+                          styles.audioWaveBar,
+                          { height: Math.random() * 20 + 10 },
+                          playingAudioId === item.id && styles.audioWaveBarActive
+                        ]}
+                      />
+                    ))}
+                  </View>
                 </View>
-              </View>
-            </TouchableOpacity>
-          )}
+              </TouchableOpacity>
+            );
+          })()}
           
           {item.messageType === 'file' && item.fileData && (
             <TouchableOpacity
@@ -4315,182 +5159,298 @@ const IndividualChatScreen = () => {
     </Modal>
   );
 
-  // Render Call Modal
-  const renderCallModal = () => (
-    <Modal
-      visible={showCallModal}
-      transparent={true}
-      animationType="fade"
-      onRequestClose={() => endCall()}
-    >
-      <View style={styles.callModalOverlay}>
-        {/* Camera Preview Background for Video Calls */}
-        {callType === 'video' && showCameraPreview && (
-          <CameraView
-            ref={cameraRef}
-            style={StyleSheet.absoluteFillObject}
-            facing={cameraType}
-            onCameraReady={onCameraReady}
-          />
-        )}
+  // Get dynamic status text
+  const getCallStatusText = () => {
+    if (isAICall) {
+      if (callStatus === 'connecting') {
+        return 'Connecting...';
+      } else if (callStatus === 'connected') {
+        if (isConnectedToGemini) {
+          if (isReconnecting) {
+            return '🔄 Reconnecting for continuous chat...';
+          }
+          return streamInterval ? '🎙️ Natural conversation active' : '✨ Ready to chat naturally';
+        }
+        return 'Connecting to Iko...';
+      }
+      return 'Calling...';
+    } else {
+      // Regular calls
+      if (callStatus === 'connecting') {
+        return 'Connecting...';
+      } else if (callStatus === 'ringing') {
+        return 'Ringing...';
+      } else if (callStatus === 'connected') {
+        return 'Connected';
+      } else if (callStatus === 'ending') {
+        return 'Ending call...';
+      }
+      return callType === 'video' ? 'Video calling...' : 'Calling...';
+    }
+  };
 
-        {/* WhatsApp-Style AI Call UI */}
-        {isAICall ? (
-          <View style={styles.whatsappCallModal}>
+  // Render Call Modal
+  const renderCallModal = () => {
+    // Don't show if already in call (prevent modal conflicts)
+    if (!showCallModal || isInCall) return null;
+
+    const ripple1Scale = rippleAnim1.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1.4],
+    });
+    const ripple1Opacity = rippleAnim1.interpolate({
+      inputRange: [0, 0.5, 1],
+      outputRange: [0.6, 0.3, 0],
+    });
+    const ripple2Scale = rippleAnim2.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1.4],
+    });
+    const ripple2Opacity = rippleAnim2.interpolate({
+      inputRange: [0, 0.5, 1],
+      outputRange: [0.5, 0.25, 0],
+    });
+    const ripple3Scale = rippleAnim3.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1.4],
+    });
+    const ripple3Opacity = rippleAnim3.interpolate({
+      inputRange: [0, 0.5, 1],
+      outputRange: [0.4, 0.2, 0],
+    });
+
+    return (
+      <Modal
+        visible={showCallModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => endCall('cancelled')}
+      >
+        <LinearGradient
+          colors={['#0A0E27', '#1A1F3A', '#2D1B4E']}
+          style={StyleSheet.absoluteFillObject}
+        >
+          {/* Camera Preview Background for Video Calls */}
+          {callType === 'video' && showCameraPreview && (
+            <CameraView
+              ref={cameraRef}
+              style={StyleSheet.absoluteFillObject}
+              facing={cameraType}
+              onCameraReady={onCameraReady}
+            />
+          )}
+
+          <BlurView intensity={20} style={styles.modernCallContainer}>
             {/* Header */}
-            <View style={styles.whatsappCallHeader}>
+            <View style={styles.modernCallHeader}>
               <TouchableOpacity
-                style={styles.whatsappBackButton}
+                style={styles.modernBackButton}
                 onPress={() => endCall('cancelled')}
               >
-                <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+                <Ionicons name="chevron-down" size={28} color="#FFFFFF" />
               </TouchableOpacity>
-              <Text style={styles.whatsappCallTitle}>Voice call</Text>
+              <Text style={styles.modernCallTitle}>
+                {isAICall ? 'Voice call' : callType === 'video' ? 'Video call' : 'Voice call'}
+              </Text>
+              <View style={{ width: 40 }} />
             </View>
 
-            {/* Avatar and Status */}
-            <View style={styles.whatsappCallContent}>
-              <View style={styles.whatsappAvatarContainer}>
-                <Image
-                  source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar}
-                  style={styles.whatsappCallAvatar}
-                />
-                {/* Ripple animation for active call */}
-                {callStatus === 'connected' && (
-                  <>
-                    <View style={[styles.ripple, styles.ripple1]} />
-                    <View style={[styles.ripple, styles.ripple2]} />
-                    <View style={[styles.ripple, styles.ripple3]} />
-                  </>
-                )}
+            {/* Main Content */}
+            <View style={styles.modernCallContent}>
+              {/* Avatar Container with Ripples */}
+              <View style={styles.modernAvatarContainer}>
+                <View style={styles.modernAvatarWrapper}>
+                  <Image
+                    source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar}
+                    style={styles.modernCallAvatar}
+                  />
+                  
+                  {/* Animated Ripples */}
+                  {callStatus === 'connected' && (
+                    <>
+                      <Animated.View
+                        style={[
+                          styles.modernRipple,
+                          {
+                            transform: [{ scale: ripple1Scale }],
+                            opacity: ripple1Opacity,
+                          },
+                        ]}
+                      />
+                      <Animated.View
+                        style={[
+                          styles.modernRipple,
+                          {
+                            transform: [{ scale: ripple2Scale }],
+                            opacity: ripple2Opacity,
+                          },
+                        ]}
+                      />
+                      <Animated.View
+                        style={[
+                          styles.modernRipple,
+                          {
+                            transform: [{ scale: ripple3Scale }],
+                            opacity: ripple3Opacity,
+                          },
+                        ]}
+                      />
+                    </>
+                  )}
+                  
+                  {/* Pulsing dot for connecting */}
+                  {callStatus === 'connecting' && (
+                    <View style={styles.connectingDot}>
+                      <View style={styles.connectingPulse} />
+                    </View>
+                  )}
+                </View>
               </View>
 
-              <Text style={styles.whatsappCallName}>{chatName}</Text>
-              <Text style={styles.whatsappCallStatus}>
-                {callStatus === 'connecting'
-                  ? 'Connecting...'
-                  : callStatus === 'connected'
-                    ? (isConnectedToGemini
-                        ? (isReconnecting
-                            ? '🔄 Reconnecting for continuous chat...'
-                            : (streamInterval ? '🎙️ Natural conversation active' : '✨ Ready to chat naturally'))
-                        : 'Connecting to Iko...'
-                      )
-                    : 'Calling...'
-                }
-              </Text>
+              {/* Name */}
+              <Text style={styles.modernCallName}>{chatName}</Text>
 
-              {/* Natural Conversation Indicator */}
-              {callStatus === 'connected' && isConnectedToGemini && (
-                <View style={styles.naturalConversationIndicator}>
-                  <Text style={styles.naturalConversationText}>
-                    💬 Just start speaking - no need to tap
-                  </Text>
-                  <Text style={styles.naturalConversationSubtext}>
-                    Powered by Gemini 2.5 Flash with Voice Activity Detection
+              {/* Dynamic Status Text */}
+              <Animated.View style={{ opacity: statusFadeAnim }}>
+                <Text style={styles.modernCallStatus}>{getCallStatusText()}</Text>
+              </Animated.View>
+
+              {/* Call Duration - only show when actually connected (both users joined) */}
+              {callStatus === 'connected' && callStartTime && (
+                <View style={styles.modernCallDurationContainer}>
+                  <Text style={styles.modernCallDuration}>
+                    {Math.floor(callDuration / 60).toString().padStart(2, '0')}:
+                    {(callDuration % 60).toString().padStart(2, '0')}
                   </Text>
                 </View>
               )}
 
-              {callStatus === 'connected' && (
-                <View style={styles.whatsappCallDuration}>
-                  <Text style={styles.callDurationText}>
-                    {Math.floor(callDuration / 60).toString().padStart(2, '0')}:
-                    {(callDuration % 60).toString().padStart(2, '0')}
+              {/* AI-specific indicators */}
+              {isAICall && callStatus === 'connected' && isConnectedToGemini && (
+                <View style={styles.modernAIIndicator}>
+                  <Text style={styles.modernAIText}>
+                    💬 Just start speaking - no need to tap
+                  </Text>
+                  <Text style={styles.modernAISubtext}>
+                    Powered by Gemini 2.5 Flash
                   </Text>
                 </View>
               )}
             </View>
 
             {/* Call Controls */}
-            <View style={styles.whatsappCallControls}>
+            <View style={styles.modernCallControls}>
               {callStatus === 'connected' && (
                 <>
+                  {/* Mute Button */}
                   <TouchableOpacity
-                    style={[styles.whatsappControlButton, styles.muteButton, isMuted && styles.activeButton]}
+                    style={[
+                      styles.modernControlButton,
+                      isMuted && styles.modernControlButtonActive,
+                    ]}
                     onPress={toggleMute}
                   >
                     <Ionicons
                       name={isMuted ? "mic-off" : "mic"}
-                      size={24}
+                      size={22}
                       color={isMuted ? "#FF3B30" : "#FFFFFF"}
                     />
                   </TouchableOpacity>
 
+                  {/* Speaker Button */}
                   <TouchableOpacity
-                    style={[styles.whatsappControlButton, styles.speakerButton, isSpeakerOn && styles.activeButton]}
+                    style={[
+                      styles.modernControlButton,
+                      isSpeakerOn && styles.modernControlButtonActive,
+                    ]}
                     onPress={toggleSpeaker}
                   >
                     <Ionicons
                       name={isSpeakerOn ? "volume-high" : "volume-medium"}
-                      size={24}
+                      size={22}
                       color="#FFFFFF"
                     />
                   </TouchableOpacity>
 
-                  {/* Natural Conversation Status Indicator */}
-                  <View style={[styles.whatsappControlButton, styles.naturalConversationButton]}>
-                    {streamInterval ? (
-                      <>
-                        <Ionicons name="radio" size={24} color="#00D4AA" />
-                        <View style={styles.pulsingIndicator} />
-                      </>
-                    ) : (
-                      <Ionicons name="mic" size={24} color="#FFFFFF" opacity={0.6} />
-                    )}
-                  </View>
+                  {/* Video Toggle (for video calls) */}
+                  {callType === 'video' && (
+                    <TouchableOpacity
+                      style={[
+                        styles.modernControlButton,
+                        !isVideoEnabled && styles.modernControlButtonActive,
+                      ]}
+                      onPress={toggleVideo}
+                    >
+                      <Ionicons
+                        name={isVideoEnabled ? "videocam" : "videocam-off"}
+                        size={22}
+                        color="#FFFFFF"
+                      />
+                    </TouchableOpacity>
+                  )}
+
+                  {/* AI Conversation Indicator */}
+                  {isAICall && (
+                    <View style={[styles.modernControlButton, styles.modernAIControlButton]}>
+                      {streamInterval ? (
+                        <>
+                          <Ionicons name="radio" size={22} color="#00D4AA" />
+                          <View style={styles.modernPulseIndicator} />
+                        </>
+                      ) : (
+                        <Ionicons name="mic" size={22} color="#FFFFFF" />
+                      )}
+                    </View>
+                  )}
                 </>
               )}
 
+              {/* End Call Button */}
               <TouchableOpacity
-                style={[styles.whatsappControlButton, styles.whatsappEndCallButton]}
+                style={styles.modernEndCallButton}
                 onPress={() => endCall('completed')}
               >
-                <Ionicons name="call" size={24} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : (
-          /* Original Call UI for regular calls */
-          <View style={styles.callModal}>
-            {/* Only show avatar for audio calls or when camera is not ready */}
-            {(callType === 'audio' || !showCameraPreview) && (
-              <Image
-                source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar}
-                style={styles.callAvatar}
-              />
-            )}
-
-            <Text style={styles.callName}>{chatName}</Text>
-            <Text style={styles.callStatus}>
-              {callType === 'video' ? 'Video calling...' : 'Calling...'}
-            </Text>
-
-            {/* Video Call Controls */}
-            {callType === 'video' && showCameraPreview && (
-              <View style={styles.videoCallControls}>
-                <TouchableOpacity
-                  style={styles.videoCameraToggle}
-                  onPress={toggleCamera}
+                <LinearGradient
+                  colors={['#FF3B30', '#FF1744']}
+                  style={styles.modernEndCallGradient}
                 >
-                  <Ionicons name="camera-reverse" size={20} color="#FFFFFF" />
-                </TouchableOpacity>
-              </View>
-            )}
-
-            <View style={styles.callActions}>
-              <TouchableOpacity
-                style={[styles.callButton, styles.endCallButton]}
-                onPress={() => endCall('completed')}
-              >
-                <Ionicons name="call" size={24} color="#FFFFFF" />
+                  <Ionicons name="call" size={26} color="#FFFFFF" />
+                </LinearGradient>
               </TouchableOpacity>
             </View>
-          </View>
-        )}
-      </View>
-    </Modal>
-  );
+          </BlurView>
+        </LinearGradient>
+      </Modal>
+    );
+  };
+
+  // Handle tap on video call screen to toggle overlay
+  // Tapping empty areas (not videos) shows/hides overlay - NO AUTO-HIDE
+  const handleVideoCallTap = () => {
+    // Toggle overlay visibility - user controls it manually
+    setShowCallOverlay(!showCallOverlay);
+    
+    // Clear any existing timeout (shouldn't be any, but just in case)
+    if (overlayTimeoutRef.current) {
+      clearTimeout(overlayTimeoutRef.current);
+      overlayTimeoutRef.current = null;
+    }
+  };
+
+  // Keep overlay visible when call starts - NO AUTO-HIDE
+  useEffect(() => {
+    if (isInCall && callStatus === 'connected') {
+      // Always show overlay - user can manually toggle if needed
+      setShowCallOverlay(true);
+    }
+    return () => {
+      // Cleanup any timeouts (shouldn't be any, but cleanup anyway)
+      if (overlayTimeoutRef.current) {
+        clearTimeout(overlayTimeoutRef.current);
+        overlayTimeoutRef.current = null;
+      }
+    };
+  }, [isInCall, callStatus]);
 
   // Render In-Call Overlay
   const renderInCallOverlay = () => (
@@ -4500,75 +5460,250 @@ const IndividualChatScreen = () => {
       animationType="none"
       onRequestClose={() => endCall()}
     >
-      <View style={styles.inCallOverlay}>
-        {/* Remote Participant Video (Full Screen Background) */}
-        {callType === 'video' && showVideoUI && callStatus === 'connected' && (
-          <View style={styles.remoteVideoContainer}>
-            {/* Placeholder for remote participant's video stream */}
-            <View style={styles.remoteVideoPlaceholder}>
-              <Image
-                source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar}
-                style={styles.remoteVideoAvatar}
-              />
-              <Text style={styles.remoteVideoText}>
-                {chatName}'s camera is {remoteVideoEnabled ? 'on' : 'off'}
-              </Text>
-              {remoteMuted && (
-                <View style={styles.remoteMutedIndicator}>
-                  <Ionicons name="mic-off" size={16} color="#FFFFFF" />
-                  <Text style={styles.remoteMutedText}>Muted</Text>
-                </View>
-              )}
-            </View>
+      <TouchableOpacity
+        style={styles.inCallOverlay}
+        activeOpacity={1}
+        onPress={callType === 'video' && showVideoUI ? handleVideoCallTap : undefined}
+      >
+        {/* Gift Animations - Render above video */}
+        {activeGiftAnimations.length > 0 && (
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, pointerEvents: 'none' }}>
+            {activeGiftAnimations.map((animation) => {
+              console.log('🎁 Rendering GiftAnimation:', animation.id, animation.emoji);
+              return (
+                <GiftAnimation
+                  key={animation.id}
+                  emoji={animation.emoji}
+                  quantity={animation.quantity}
+                  onComplete={() => {
+                    // Animation completed - remove from active animations
+                    console.log('🎁 GiftAnimation onComplete called for:', animation.id);
+                    setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animation.id));
+                  }}
+                />
+              );
+            })}
           </View>
         )}
 
-        {/* Local Camera (Picture-in-Picture) */}
-        {callType === 'video' && showVideoUI && isVideoEnabled && callStatus === 'connected' && (
+        {/* Full Screen Primary Video - Remote (Default) or Local (When Swapped) */}
+        {/* Always show video UI when in video call - keep containers visible */}
+        {callType === 'video' && showVideoUI && (
           <TouchableOpacity
-            style={styles.localVideoContainer}
-            onPress={swapVideoViews}
-            activeOpacity={0.8}
+            style={styles.remoteVideoContainer}
+            activeOpacity={1}
+            onPress={(e) => {
+              e.stopPropagation(); // Prevent parent overlay toggle
+              swapVideoViews(); // Swap videos
+            }}
           >
-            <CameraView
-              ref={cameraRef}
-              style={styles.localVideoView}
-              facing={cameraType}
-              onCameraReady={onCameraReady}
-            />
-            <TouchableOpacity
-              style={styles.localVideoToggle}
-              onPress={toggleCamera}
-            >
-              <Ionicons name="camera-reverse" size={16} color="#FFFFFF" />
-            </TouchableOpacity>
+            {!isLocalVideoPrimary ? (
+              // Remote video full screen (default), but show local video if no remote video yet
+              <>
+                {remoteUid !== null && remoteVideoEnabled ? (
+                  // Remote video is available - show it full screen
+                  <RtcSurfaceView
+                    style={StyleSheet.absoluteFillObject}
+                    zOrderMediaOverlay={true}
+                    canvas={{
+                      uid: remoteUid,
+                      renderMode: RenderModeType.RenderModeFit,
+                    }}
+                  />
+                ) : (
+                  // No remote video yet - show local video full screen so caller sees themselves
+                  <>
+                    {isVideoEnabled && agoraConfig ? (
+                      <RtcSurfaceView
+                        style={StyleSheet.absoluteFillObject}
+                        zOrderMediaOverlay={true}
+                        canvas={{
+                          uid: 0, // Local video uses UID 0
+                          renderMode: RenderModeType.RenderModeFit,
+                        }}
+                      />
+                    ) : null}
+                    <View style={styles.remoteVideoPlaceholder}>
+                      <Image
+                        source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar}
+                        style={styles.remoteVideoAvatar}
+                      />
+                      <Text style={styles.remoteVideoText}>
+                        {remoteVideoEnabled === false 
+                          ? `${chatName}'s camera is off`
+                          : `Waiting for ${chatName}'s video...`}
+                      </Text>
+                    </View>
+                  </>
+                )}
+                {/* Remote status indicators */}
+                <View style={styles.remoteStatusIndicators}>
+                  {remoteMuted && (
+                    <View style={styles.remoteStatusIndicator}>
+                      <Ionicons name="mic-off" size={16} color="#FFFFFF" />
+                      <Text style={styles.remoteStatusText}>Muted</Text>
+                    </View>
+                  )}
+                  {remoteVideoEnabled === false && (
+                    <View style={styles.remoteStatusIndicator}>
+                      <Ionicons name="videocam-off" size={16} color="#FFFFFF" />
+                      <Text style={styles.remoteStatusText}>Camera Off</Text>
+                    </View>
+                  )}
+                </View>
+              </>
+            ) : (
+              // Local video full screen (when swapped)
+              <>
+                {isVideoEnabled && agoraConfig ? (
+                  <RtcSurfaceView
+                    style={StyleSheet.absoluteFillObject}
+                    zOrderMediaOverlay={true}
+                    canvas={{
+                      uid: 0, // Local video always uses UID 0 in Agora
+                      renderMode: RenderModeType.RenderModeFit,
+                    }}
+                  />
+                ) : (
+                  <View style={StyleSheet.absoluteFillObject}>
+                    <View style={styles.localVideoPlaceholder}>
+                      <Ionicons name="videocam-off" size={24} color="rgba(255,255,255,0.6)" />
+                      <Text style={styles.localVideoPlaceholderText}>Your Camera Off</Text>
+                    </View>
+                  </View>
+                )}
+                {isMuted && (
+                  <View style={styles.remoteMutedIndicator}>
+                    <Ionicons name="mic-off" size={16} color="#FFFFFF" />
+                    <Text style={styles.remoteMutedText}>You're Muted</Text>
+                  </View>
+                )}
+              </>
+            )}
           </TouchableOpacity>
         )}
 
-        {/* Full Screen Camera for Calling Phase */}
-        {callType === 'video' && showVideoUI && isVideoEnabled && callStatus !== 'connected' && (
-          <CameraView
-            ref={cameraRef}
-            style={StyleSheet.absoluteFillObject}
-            facing={cameraType}
-            onCameraReady={onCameraReady}
-          />
+        {/* Picture-in-Picture Secondary Video - Local (Default) or Remote (When Swapped) */}
+        {/* Always show PIP video when in video call - keep containers visible */}
+        {callType === 'video' && showVideoUI && (
+          <TouchableOpacity
+            style={styles.localVideoContainer}
+            onPress={(e) => {
+              e.stopPropagation(); // Prevent parent overlay toggle
+              swapVideoViews(); // Swap videos
+            }}
+            activeOpacity={0.8}
+          >
+            {!isLocalVideoPrimary ? (
+              // Local video in picture-in-picture (default)
+              // Only show in PIP if remote video is available (otherwise it's shown full screen above)
+              <>
+                {remoteUid !== null && remoteVideoEnabled && isVideoEnabled && agoraConfig ? (
+                  <RtcSurfaceView
+                    style={StyleSheet.absoluteFillObject}
+                    zOrderMediaOverlay={true}
+                    canvas={{
+                      uid: 0, // Local video always uses UID 0 in Agora
+                      renderMode: RenderModeType.RenderModeFit,
+                    }}
+                  />
+                ) : !isVideoEnabled || !agoraConfig ? (
+                  <View style={StyleSheet.absoluteFillObject}>
+                    <View style={styles.localVideoPlaceholder}>
+                      <Ionicons name="videocam-off" size={24} color="rgba(255,255,255,0.6)" />
+                      <Text style={styles.localVideoPlaceholderText}>Camera Off</Text>
+                    </View>
+                  </View>
+                ) : null}
+                {showCallOverlay && (
+                  <TouchableOpacity
+                    style={styles.localVideoToggle}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      switchCamera();
+                    }}
+                  >
+                    <Ionicons name="camera-reverse" size={16} color="#FFFFFF" />
+                  </TouchableOpacity>
+                )}
+              </>
+            ) : (
+              // Remote video in picture-in-picture (when swapped)
+              remoteUid !== null && remoteVideoEnabled ? (
+                <>
+                  <RtcSurfaceView
+                    style={StyleSheet.absoluteFillObject}
+                    zOrderMediaOverlay={true}
+                    canvas={{
+                      uid: remoteUid,
+                      renderMode: RenderModeType.RenderModeFit,
+                    }}
+                  />
+                  {/* Status indicators in PIP */}
+                  {(remoteMuted || !remoteVideoEnabled) && (
+                    <View style={styles.pipStatusIndicators}>
+                      {remoteMuted && (
+                        <View style={styles.pipStatusIndicator}>
+                          <Ionicons name="mic-off" size={12} color="#FFFFFF" />
+                        </View>
+                      )}
+                      {!remoteVideoEnabled && (
+                        <View style={styles.pipStatusIndicator}>
+                          <Ionicons name="videocam-off" size={12} color="#FFFFFF" />
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </>
+              ) : (
+                <View style={styles.localVideoView}>
+                  <Image
+                    source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar}
+                    style={[styles.remoteVideoAvatar, { width: 60, height: 60, borderRadius: 30 }]}
+                  />
+                  {/* Status indicators in placeholder */}
+                  {(remoteMuted || remoteVideoEnabled === false) && (
+                    <View style={styles.pipStatusIndicators}>
+                      {remoteMuted && (
+                        <View style={styles.pipStatusIndicator}>
+                          <Ionicons name="mic-off" size={12} color="#FFFFFF" />
+                        </View>
+                      )}
+                      {remoteVideoEnabled === false && (
+                        <View style={styles.pipStatusIndicator}>
+                          <Ionicons name="videocam-off" size={12} color="#FFFFFF" />
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+              )
+            )}
+          </TouchableOpacity>
         )}
 
-        {/* Floating Call Header for Video Calls */}
-        <View style={[
-          styles.inCallHeader,
-          callType === 'video' && showVideoUI && styles.videoCallHeader
-        ]}>
-          <View style={styles.inCallInfo}>
-            {/* Only show avatar for audio calls or when video is off */}
-            {(callType === 'audio' || !showVideoUI || !isVideoEnabled) && (
-              <Image
-                source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar}
-                style={styles.inCallAvatar}
-              />
-            )}
-            <View>
+        {/* Full Screen Local Video for Calling Phase - REMOVED: This was causing the local video to disappear when connected */}
+        {/* Local video is now handled in the primary/secondary video views above to keep it always visible */}
+
+        {/* Redesigned Floating Call Header - Only show when showCallOverlay is true */}
+        {showCallOverlay && (
+          <View style={[
+            styles.inCallHeader,
+            callType === 'video' && showVideoUI && styles.videoCallHeader
+          ]}>
+            {/* Back Button - Top Left */}
+            <TouchableOpacity
+              style={styles.callHeaderBackButton}
+              onPress={(e) => {
+                e.stopPropagation(); // Prevent parent overlay toggle
+                endCall('completed');
+              }}
+            >
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            {/* Name and Duration - Center */}
+            <View style={styles.callHeaderCenter}>
               <Text style={[
                 styles.inCallName,
                 callType === 'video' && showVideoUI && styles.videoCallText
@@ -4579,96 +5714,124 @@ const IndividualChatScreen = () => {
                 styles.inCallDuration,
                 callType === 'video' && showVideoUI && styles.videoCallText
               ]}>
-                {isAICall
-                  ? '🤖 AI Voice Chat'
-                  : (callType === 'video' ? '📹 Video call' : '🎤 Voice call')
-                } • {formatCallDuration(callDuration)}
-              </Text>
-              <Text style={[
-                styles.inCallStatus,
-                callType === 'video' && showVideoUI && styles.videoCallText
-              ]}>
-                {isAICall
-                  ? (isConnectedToGemini
-                      ? '💬 Tap to speak with Iko'
-                      : '🔄 Connecting...')
-                  : (isMuted ? '🔇 Muted' : '🎤 Live')
-                } {!isAICall && callType === 'video' && (!isVideoEnabled ? ' • 📹 Camera Off' : ' • 📹 Camera On')}
+                {formatCallDuration(callDuration)}
               </Text>
             </View>
+
+            {/* Flip Camera Button - Top Right (Video calls only) */}
+            {callType === 'video' && showVideoUI && (
+              <TouchableOpacity
+                style={styles.callHeaderFlipButton}
+                onPress={(e) => {
+                  e.stopPropagation(); // Prevent parent overlay toggle
+                  switchCamera();
+                }}
+              >
+                <Ionicons name="camera-reverse" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
+
+            {/* Spacer for audio calls (no flip button) */}
+            {callType === 'audio' && <View style={styles.callHeaderFlipButton} />}
           </View>
-
-          {/* Camera Toggle for Video Calls */}
-          {callType === 'video' && showVideoUI && (
-            <TouchableOpacity
-              style={styles.videoHeaderCameraToggle}
-              onPress={toggleCamera}
-            >
-              <Ionicons name="camera-reverse" size={20} color="#FFFFFF" />
-            </TouchableOpacity>
-          )}
-        </View>
+        )}
         
-        {/* Call Controls */}
-        <View style={styles.inCallControls}>
-          <TouchableOpacity 
-            style={[styles.callControlButton, isMuted && styles.callControlButtonActive]}
-            onPress={toggleMute}
-          >
-            <Ionicons 
-              name={isMuted ? "mic-off" : "mic"} 
-              size={24} 
-              color={isMuted ? "#E74C3C" : "#FFFFFF"} 
-            />
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={[styles.callControlButton, isSpeakerOn && styles.callControlButtonActive]}
-            onPress={toggleSpeaker}
-          >
-            <Ionicons
-              name={isSpeakerOn ? "volume-high" : "volume-medium"}
-              size={24}
-              color={isSpeakerOn ? "#3498DB" : "#FFFFFF"}
-            />
-          </TouchableOpacity>
-
-          {callType === 'video' && (
-            <TouchableOpacity
-              style={[styles.callControlButton, !isVideoEnabled && styles.callControlButtonActive]}
-              onPress={toggleVideo}
+        {/* Call Controls - Only show when showCallOverlay is true */}
+        {showCallOverlay && (
+          <View style={styles.inCallControls}>
+            <TouchableOpacity 
+              style={[styles.callControlButton, isMuted && styles.callControlButtonActive]}
+              onPress={(e) => {
+                e.stopPropagation(); // Prevent parent overlay toggle
+                toggleMute();
+              }}
             >
-              <Ionicons
-                name={isVideoEnabled ? "videocam" : "videocam-off"}
-                size={24}
-                color={!isVideoEnabled ? "#E74C3C" : "#FFFFFF"}
+              <Ionicons 
+                name={isMuted ? "mic-off" : "mic"} 
+                size={24} 
+                color={isMuted ? "#E74C3C" : "#FFFFFF"} 
               />
             </TouchableOpacity>
-          )}
+            
+            {/* Speaker Button - Only show for audio calls */}
+            {callType === 'audio' && (
+              <TouchableOpacity
+                style={[styles.callControlButton, isSpeakerOn && styles.callControlButtonActive]}
+                onPress={(e) => {
+                  e.stopPropagation(); // Prevent parent overlay toggle
+                  toggleSpeaker();
+                }}
+              >
+                <Ionicons
+                  name={isSpeakerOn ? "volume-high" : "volume-medium"}
+                  size={24}
+                  color={isSpeakerOn ? "#3498DB" : "#FFFFFF"}
+                />
+              </TouchableOpacity>
+            )}
 
-          {/* AI Talk Button - Simple Live Streaming */}
-          {isAICall && (
+            {callType === 'video' && (
+              <TouchableOpacity
+                style={[styles.callControlButton, !isVideoEnabled && styles.callControlButtonActive]}
+                onPress={(e) => {
+                  e.stopPropagation(); // Prevent parent overlay toggle
+                  toggleVideo();
+                }}
+              >
+                <Ionicons
+                  name={isVideoEnabled ? "videocam" : "videocam-off"}
+                  size={24}
+                  color={!isVideoEnabled ? "#E74C3C" : "#FFFFFF"}
+                />
+              </TouchableOpacity>
+            )}
+
+            {/* AI Talk Button - Simple Live Streaming */}
+            {isAICall && (
+              <TouchableOpacity
+                style={[styles.callControlButton, isConnectedToGemini && styles.callControlButtonActive]}
+                onPress={(e) => {
+                  e.stopPropagation(); // Prevent parent overlay toggle
+                  startLiveAudioStreaming();
+                }}
+                disabled={!isConnectedToGemini}
+              >
+                <Ionicons
+                  name={isConnectedToGemini ? "mic" : "mic-outline"}
+                  size={24}
+                  color={isConnectedToGemini ? "#2ECC71" : "#95a5a6"}
+                />
+              </TouchableOpacity>
+            )}
+
+            {/* Gift Button - Only show when call is connected */}
+            {callStatus === 'connected' && !isAICall && (
+              <TouchableOpacity
+                style={styles.callControlButton}
+                onPress={(e) => {
+                  e.stopPropagation(); // Prevent parent overlay toggle
+                  setShowGiftModal(!showGiftModal);
+                  if (!showGiftModal) {
+                    loadAvailableGifts();
+                  }
+                }}
+              >
+                <Ionicons name="gift" size={24} color="#FFD700" />
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
-              style={[styles.callControlButton, isConnectedToGemini && styles.callControlButtonActive]}
-              onPress={startLiveAudioStreaming}
-              disabled={!isConnectedToGemini}
+              style={[styles.callControlButton, styles.endCallButton]}
+              onPress={(e) => {
+                e.stopPropagation(); // Prevent parent overlay toggle
+                endCall('completed');
+              }}
             >
-              <Ionicons
-                name={isConnectedToGemini ? "mic" : "mic-outline"}
-                size={24}
-                color={isConnectedToGemini ? "#2ECC71" : "#95a5a6"}
-              />
+              <Ionicons name="call" size={24} color="#FFFFFF" />
             </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={[styles.callControlButton, styles.endCallButton]}
-            onPress={() => endCall('completed')}
-          >
-            <Ionicons name="call" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-      </View>
+          </View>
+        )}
+      </TouchableOpacity>
     </Modal>
   );
 
@@ -4685,13 +5848,37 @@ const IndividualChatScreen = () => {
   // Video view swap functionality (WhatsApp-style)
   const swapVideoViews = () => {
     console.log('🔄 Swapping video views');
-    // In a real implementation, this would swap the local and remote video streams
-    // For now, we'll add visual feedback
+    setIsLocalVideoPrimary(!isLocalVideoPrimary);
   };
 
   // Render incoming call modal
   const renderIncomingCallModal = () => {
     if (!incomingCall) return null;
+
+    const ripple1Scale = incomingRipple1.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1.3],
+    });
+    const ripple1Opacity = incomingRipple1.interpolate({
+      inputRange: [0, 0.5, 1],
+      outputRange: [0.6, 0.3, 0],
+    });
+    const ripple2Scale = incomingRipple2.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1.3],
+    });
+    const ripple2Opacity = incomingRipple2.interpolate({
+      inputRange: [0, 0.5, 1],
+      outputRange: [0.5, 0.25, 0],
+    });
+    const ripple3Scale = incomingRipple3.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1.3],
+    });
+    const ripple3Opacity = incomingRipple3.interpolate({
+      inputRange: [0, 0.5, 1],
+      outputRange: [0.4, 0.2, 0],
+    });
 
     return (
       <Modal
@@ -4699,43 +5886,93 @@ const IndividualChatScreen = () => {
         transparent={true}
         animationType="fade"
       >
-        <View style={styles.incomingCallOverlay}>
-          <View style={styles.incomingCallModal}>
+        <LinearGradient
+          colors={['#0A0E27', '#1A1F3A', '#2D1B4E']}
+          style={StyleSheet.absoluteFillObject}
+        >
+          <BlurView intensity={30} style={styles.modernIncomingCallContainer}>
             {/* Caller Info */}
-            <View style={styles.incomingCallInfo}>
-              <View style={styles.incomingCallAvatarContainer}>
-                <Image
-                  source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar}
-                  style={styles.incomingCallAvatar}
-                />
+            <View style={styles.modernIncomingCallContent}>
+              <View style={styles.modernIncomingAvatarContainer}>
+                <View style={styles.modernIncomingAvatarWrapper}>
+                  <Image
+                    source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar}
+                    style={styles.modernIncomingCallAvatar}
+                  />
+                  
+                  {/* Animated Ripples */}
+                  <Animated.View
+                    style={[
+                      styles.modernIncomingRipple,
+                      {
+                        transform: [{ scale: ripple1Scale }],
+                        opacity: ripple1Opacity,
+                      },
+                    ]}
+                  />
+                  <Animated.View
+                    style={[
+                      styles.modernIncomingRipple,
+                      {
+                        transform: [{ scale: ripple2Scale }],
+                        opacity: ripple2Opacity,
+                      },
+                    ]}
+                  />
+                  <Animated.View
+                    style={[
+                      styles.modernIncomingRipple,
+                      {
+                        transform: [{ scale: ripple3Scale }],
+                        opacity: ripple3Opacity,
+                      },
+                    ]}
+                  />
+                </View>
               </View>
-              <Text style={styles.incomingCallName}>{incomingCall.callerName}</Text>
-              <Text style={styles.incomingCallType}>
+
+              <Text style={styles.modernIncomingCallName}>{incomingCall.callerName}</Text>
+              <Text style={styles.modernIncomingCallType}>
                 {incomingCall.callType === 'video' ? '📹 Video Call' : '📞 Voice Call'}
               </Text>
-              <Text style={styles.incomingCallStatus}>Incoming call...</Text>
+              <View style={styles.modernIncomingCallStatusContainer}>
+                <View style={styles.modernIncomingCallPulse} />
+                <Text style={styles.modernIncomingCallStatus}>Incoming call...</Text>
+              </View>
             </View>
 
             {/* Call Actions */}
-            <View style={styles.incomingCallActions}>
+            <View style={styles.modernIncomingCallActions}>
+              {/* Decline Button */}
               <TouchableOpacity
-                style={[styles.incomingCallButton, styles.declineButton]}
+                style={styles.modernIncomingDeclineButton}
                 onPress={declineCall}
               >
-                <Ionicons name="close" size={32} color="#FFFFFF" />
-                <Text style={styles.incomingCallButtonText}>Decline</Text>
+                <LinearGradient
+                  colors={['#FF3B30', '#FF1744']}
+                  style={styles.modernIncomingButtonGradient}
+                >
+                  <Ionicons name="close" size={28} color="#FFFFFF" />
+                </LinearGradient>
+                <Text style={styles.modernIncomingButtonText}>Decline</Text>
               </TouchableOpacity>
 
+              {/* Accept Button */}
               <TouchableOpacity
-                style={[styles.incomingCallButton, styles.acceptButton]}
+                style={styles.modernIncomingAcceptButton}
                 onPress={acceptCall}
               >
-                <Ionicons name="call" size={32} color="#FFFFFF" />
-                <Text style={styles.incomingCallButtonText}>Accept</Text>
+                <LinearGradient
+                  colors={['#34C759', '#30D158']}
+                  style={styles.modernIncomingButtonGradient}
+                >
+                  <Ionicons name="call" size={28} color="#FFFFFF" />
+                </LinearGradient>
+                <Text style={styles.modernIncomingButtonText}>Accept</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </BlurView>
+        </LinearGradient>
       </Modal>
     );
   };
@@ -4891,6 +6128,62 @@ const IndividualChatScreen = () => {
       {renderIncomingCallModal()}
       {renderImageViewer()}
       {renderVideoPlayer()}
+      
+      {/* Gift Modal for Calls */}
+      <Modal
+        visible={showGiftModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowGiftModal(false)}
+      >
+        <View style={styles.giftModalOverlay}>
+          <View style={styles.giftModalContainer}>
+            <View style={styles.giftModalHeader}>
+              <Text style={styles.giftModalTitle}>Send Gift</Text>
+              <TouchableOpacity
+                onPress={() => setShowGiftModal(false)}
+                style={styles.giftModalCloseButton}
+              >
+                <Ionicons name="close" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.giftModalContent}>
+              {loadingGifts ? (
+                <View style={styles.giftModalLoading}>
+                  <Text style={styles.giftModalLoadingText}>Loading gifts...</Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={availableGifts}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.giftModalItem}
+                      onPress={() => {
+                        handleSendGift(item.id, 1);
+                        setShowGiftModal(false);
+                      }}
+                    >
+                      <Text style={styles.giftModalEmoji}>{item.emoji}</Text>
+                      <Text style={styles.giftModalName}>{item.name}</Text>
+                      <Text style={styles.giftModalQuantity}>x{item.quantity}</Text>
+                    </TouchableOpacity>
+                  )}
+                  keyExtractor={(item) => item.id}
+                  numColumns={3}
+                  contentContainerStyle={styles.giftModalGrid}
+                  showsVerticalScrollIndicator={false}
+                  ListEmptyComponent={
+                    <View style={styles.giftModalEmpty}>
+                      <Text style={styles.giftModalEmptyText}>You don't have any gifts to send</Text>
+                    </View>
+                  }
+                />
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
       {renderReactionPicker()}
 
       {/* Wishlist Share Modal */}
@@ -5294,9 +6587,20 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 4,
   },
+  audioHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   audioText: {
     fontSize: 12,
     fontWeight: '500',
+    flex: 1,
+  },
+  audioDuration: {
+    fontSize: 11,
+    fontWeight: '400',
+    opacity: 0.8,
   },
   audioWaveform: {
     flexDirection: 'row',
@@ -5475,6 +6779,190 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  // Modern Call UI Styles
+  modernCallContainer: {
+    flex: 1,
+    justifyContent: 'space-between',
+    paddingTop: 50,
+    paddingBottom: 60,
+  },
+  modernCallHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    marginBottom: 20,
+  },
+  modernBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modernCallTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  modernCallContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  modernAvatarContainer: {
+    marginBottom: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modernAvatarWrapper: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modernCallAvatar: {
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    borderWidth: 4,
+    borderColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  modernRipple: {
+    position: 'absolute',
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+  connectingDot: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#34C759',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#000000',
+  },
+  connectingPulse: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#34C759',
+    opacity: 0.6,
+  },
+  modernCallName: {
+    color: '#FFFFFF',
+    fontSize: 32,
+    fontWeight: '300',
+    marginBottom: 12,
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  modernCallStatus: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 17,
+    fontWeight: '400',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  modernCallDurationContainer: {
+    marginTop: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  modernCallDuration: {
+    color: 'rgba(255,255,255,0.95)',
+    fontSize: 20,
+    fontWeight: '300',
+    letterSpacing: 1,
+  },
+  modernAIIndicator: {
+    marginTop: 30,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0, 212, 170, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 212, 170, 0.3)',
+    alignItems: 'center',
+  },
+  modernAIText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '500',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  modernAISubtext: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  modernCallControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 30,
+    gap: 20,
+  },
+  modernControlButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  modernControlButtonActive: {
+    backgroundColor: 'rgba(255,59,48,0.3)',
+    borderColor: 'rgba(255,59,48,0.5)',
+  },
+  modernAIControlButton: {
+    position: 'relative',
+    backgroundColor: 'rgba(0, 212, 170, 0.2)',
+    borderColor: 'rgba(0, 212, 170, 0.4)',
+  },
+  modernPulseIndicator: {
+    position: 'absolute',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(0, 212, 170, 0.3)',
+    opacity: 0.8,
+  },
+  modernEndCallButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 8,
+    shadowColor: '#FF3B30',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+  },
+  modernEndCallGradient: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   callModal: {
     alignItems: 'center',
     padding: 40,
@@ -5516,12 +7004,38 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(39, 174, 96, 0.9)',
   },
   inCallHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: 50,
-    paddingBottom: 20,
+    paddingBottom: 16,
+    zIndex: 10,
+  },
+  callHeaderBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  callHeaderCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  callHeaderFlipButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   inCallInfo: {
     flexDirection: 'row',
@@ -5549,22 +7063,23 @@ const styles = StyleSheet.create({
   },
   inCallControls: {
     position: 'absolute',
-    bottom: 60,
+    bottom: 40,
     left: 0,
     right: 0,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
+    paddingHorizontal: 20,
+    zIndex: 10,
   },
   callControlButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginHorizontal: 15,
+    marginHorizontal: 8, // Reduced from 15 to 8 for closer spacing
   },
   callControlButtonActive: {
     backgroundColor: 'rgba(231,76,60,0.8)',
@@ -5587,12 +7102,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   videoCallHeader: {
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 15,
-    marginHorizontal: 20,
-    marginTop: 20,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 0,
+    marginHorizontal: 0,
+    marginTop: 0,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
   },
   videoCallText: {
     color: '#FFFFFF',
@@ -5645,20 +7160,93 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginLeft: 6,
   },
+  // Remote status indicators (for video calls)
+  remoteStatusIndicators: {
+    position: 'absolute',
+    bottom: 20,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  remoteStatusIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  remoteStatusText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    marginLeft: 6,
+    fontWeight: '500',
+  },
+  // PIP status indicators (smaller, for picture-in-picture view)
+  pipStatusIndicators: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    flexDirection: 'row',
+    gap: 4,
+  },
+  pipStatusIndicator: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Header status indicators (for audio calls)
+  headerStatusIndicators: {
+    flexDirection: 'row',
+    marginTop: 4,
+  },
+  headerStatusIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  headerStatusText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 11,
+    marginLeft: 4,
+  },
   localVideoContainer: {
     position: 'absolute',
-    top: 100,
-    right: 20,
-    width: 120,
-    height: 160,
+    top: 80, // Moved closer to top
+    right: 16, // Moved closer to edge
+    width: 110, // Slightly smaller
+    height: 150, // Slightly smaller
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#000',
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.3)',
+    zIndex: 5,
   },
   localVideoView: {
     flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  localVideoPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  localVideoPlaceholderText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
+    marginTop: 8,
   },
   localVideoToggle: {
     position: 'absolute',
@@ -5840,6 +7428,112 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  // Modern Incoming Call Styles
+  modernIncomingCallContainer: {
+    flex: 1,
+    justifyContent: 'space-between',
+    paddingTop: 60,
+    paddingBottom: 60,
+  },
+  modernIncomingCallContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  modernIncomingAvatarContainer: {
+    marginBottom: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modernIncomingAvatarWrapper: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modernIncomingCallAvatar: {
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    borderWidth: 5,
+    borderColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  modernIncomingRipple: {
+    position: 'absolute',
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    borderWidth: 3,
+    borderColor: 'rgba(52, 199, 89, 0.6)',
+  },
+  modernIncomingCallName: {
+    color: '#FFFFFF',
+    fontSize: 36,
+    fontWeight: '300',
+    marginBottom: 12,
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  modernIncomingCallType: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 18,
+    fontWeight: '400',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  modernIncomingCallStatusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  modernIncomingCallPulse: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#34C759',
+    opacity: 0.9,
+  },
+  modernIncomingCallStatus: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 16,
+    fontWeight: '400',
+    textAlign: 'center',
+  },
+  modernIncomingCallActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    paddingHorizontal: 40,
+    gap: 40,
+  },
+  modernIncomingDeclineButton: {
+    alignItems: 'center',
+    gap: 12,
+  },
+  modernIncomingAcceptButton: {
+    alignItems: 'center',
+    gap: 12,
+  },
+  modernIncomingButtonGradient: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+  },
+  modernIncomingButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 4,
+  },
   incomingCallModal: {
     width: '85%',
     backgroundColor: 'rgba(30, 30, 30, 0.98)',
@@ -5901,6 +7595,85 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     marginTop: 5,
+  },
+  // Gift modal styles
+  giftModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  giftModalContainer: {
+    backgroundColor: '#1A1A2E',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 20,
+  },
+  giftModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  giftModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  giftModalCloseButton: {
+    padding: 4,
+  },
+  giftModalContent: {
+    padding: 20,
+  },
+  giftModalLoading: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  giftModalLoadingText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 16,
+  },
+  giftModalGrid: {
+    paddingBottom: 20,
+  },
+  giftModalItem: {
+    flex: 1,
+    aspectRatio: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 12,
+    margin: 4,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 80,
+  },
+  giftModalEmoji: {
+    fontSize: 32,
+    marginBottom: 4,
+  },
+  giftModalName: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  giftModalQuantity: {
+    fontSize: 10,
+    color: '#FFD700',
+    fontWeight: 'bold',
+  },
+  giftModalEmpty: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  giftModalEmptyText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    textAlign: 'center',
   },
   // Image viewer modal styles
   imageViewerOverlay: {

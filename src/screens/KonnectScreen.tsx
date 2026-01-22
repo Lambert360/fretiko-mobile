@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Alert,
   Animated,
@@ -15,6 +15,7 @@ import {
   View,
   RefreshControl,
   PanResponder,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -41,13 +42,9 @@ interface StoriesGroup {
 }
 
 const KonnectScreen = () => {
-  console.log('🎬 KonnectScreen component rendered');
-
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { user, accessToken, isLoading: authLoading, isAuthenticated } = useAuth();
-
-  console.log('🔐 Auth state - User exists:', !!user, 'User ID:', user?.id, 'Has token:', !!accessToken, 'Auth loading:', authLoading, 'Is authenticated:', isAuthenticated);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -62,13 +59,20 @@ const KonnectScreen = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [userProfile, setUserProfile] = useState<{ isSeller: boolean; isRider: boolean } | null>(null);
 
-  console.log('📊 Component state - Loading:', loading, 'Chats length:', chats.length, 'Filter:', activeFilter);
-
+  // Refs for cleanup functions
+  const cleanupFnRef = useRef<(() => void) | null>(null);
   
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  
+  // Scroll-based animations for stories section
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const storiesHeightAnim = useRef(new Animated.Value(200)).current; // Full height
+  const cardScaleAnim = useRef(new Animated.Value(1)).current; // Full card size
+  const titleOpacityAnim = useRef(new Animated.Value(1)).current;
+  const textOverlayOpacityAnim = useRef(new Animated.Value(1)).current;
 
   // Load user profile to check if seller/rider
   const loadUserProfile = async () => {
@@ -78,9 +82,8 @@ const KonnectScreen = () => {
         isSeller: profile.isSeller,
         isRider: profile.isRider || false,
       });
-      console.log('✅ User profile loaded - isSeller:', profile.isSeller, 'isRider:', profile.isRider);
     } catch (error) {
-      console.error('❌ Error loading user profile:', error);
+      console.error('Error loading user profile:', error);
       // Default to regular user if profile load fails
       setUserProfile({ isSeller: false, isRider: false });
     }
@@ -89,48 +92,27 @@ const KonnectScreen = () => {
   // Load stories from API
   const loadStories = async () => {
     if (!isAuthenticated || !user?.id) {
-      console.log('❌ Not authenticated, skipping stories load');
       setStoriesLoading(false);
       return;
     }
 
     try {
-      console.log('📖 Loading stories...');
       setStoriesLoading(true);
 
       // Load user's own stories and discovery stories separately
-      console.log('🚀 About to call getMyStories and getStoriesGroupedByUser APIs');
-
       const [myStories, groupedStories] = await Promise.all([
         storiesAPI.getMyStories().catch(error => {
-          console.error('❌ getMyStories API failed:', error);
+          console.error('getMyStories API failed:', error);
           return []; // Return empty array on failure
         }),
         storiesAPI.getStoriesGroupedByUser().catch(error => {
-          console.error('❌ getStoriesGroupedByUser API failed:', error);
+          console.error('getStoriesGroupedByUser API failed:', error);
           return []; // Return empty array on failure
         })
       ]);
 
-      console.log('✅ My stories loaded:', myStories.length, 'stories');
-      console.log('📄 My stories data:', JSON.stringify(myStories, null, 2));
-
-      // Log first story structure in detail
-      if (myStories.length > 0) {
-        console.log('🔍 First story structure:', {
-          id: myStories[0].id,
-          id_type: typeof myStories[0].id,
-          user_id: myStories[0].user_id,
-          media_url: myStories[0].media_url,
-          has_user_profiles: !!myStories[0].user_profiles
-        });
-      }
-
-      console.log('✅ Discovery stories loaded:', groupedStories.length, 'users with stories');
-
       // Only create "My Story" section if user is a seller or rider
       const canCreateStories = userProfile?.isSeller || userProfile?.isRider;
-      console.log('🎬 Can create stories:', canCreateStories, '(isSeller:', userProfile?.isSeller, 'isRider:', userProfile?.isRider, ')');
 
       let allStoriesGroups: StoriesGroup[];
 
@@ -158,7 +140,7 @@ const KonnectScreen = () => {
 
       setStoriesGroups(allStoriesGroups);
     } catch (error) {
-      console.error('❌ Error loading stories:', error);
+      console.error('Error loading stories:', error);
       // Set empty array on error to show no stories available
       setStoriesGroups([]);
     } finally {
@@ -166,68 +148,64 @@ const KonnectScreen = () => {
     }
   };
 
-  // Swipe animations for chat items (moved from renderChatItem to component level)
-  const [swipeStates, setSwipeStates] = useState<{[key: string]: {
+  // Swipe animations for chat items - use refs to persist across renders and clean up unused ones
+  const swipeStatesRef = useRef<Map<string, {
     translateX: Animated.Value;
     isSwipeActive: boolean;
-  }}>({});
+  }>>(new Map());
+
+  // Clean up swipe states for chats that no longer exist
+  useEffect(() => {
+    const currentChatIds = new Set(chats.map(chat => chat.id));
+    const swipeIds = Array.from(swipeStatesRef.current.keys());
+    
+    // Remove swipe states for chats that no longer exist
+    swipeIds.forEach(chatId => {
+      if (!currentChatIds.has(chatId)) {
+        swipeStatesRef.current.delete(chatId);
+      }
+    });
+  }, [chats]);
 
   // Get or create swipe state for a chat item
   const getSwipeState = (chatId: string) => {
-    if (!swipeStates[chatId]) {
-      setSwipeStates(prev => ({
-        ...prev,
-        [chatId]: {
-          translateX: new Animated.Value(0),
-          isSwipeActive: false
-        }
-      }));
+    if (!swipeStatesRef.current.has(chatId)) {
+      swipeStatesRef.current.set(chatId, {
+        translateX: new Animated.Value(0),
+        isSwipeActive: false
+      });
     }
-    return swipeStates[chatId] || {
-      translateX: new Animated.Value(0),
-      isSwipeActive: false
-    };
+    return swipeStatesRef.current.get(chatId)!;
   };
 
-  // Update swipe active state
+  // Update swipe active state (triggers re-render via state update)
+  const [, setSwipeActiveTrigger] = useState(0);
   const setSwipeActive = (chatId: string, isActive: boolean) => {
-    setSwipeStates(prev => ({
-      ...prev,
-      [chatId]: {
-        ...prev[chatId],
-        isSwipeActive: isActive
-      }
-    }));
+    const state = swipeStatesRef.current.get(chatId);
+    if (state) {
+      state.isSwipeActive = isActive;
+      // Trigger minimal re-render to update UI
+      setSwipeActiveTrigger(prev => prev + 1);
+    }
   };
 
 
   // Load all conversations from backend API (including AI conversations)
   const loadAllConversations = async (filter?: string, page: number = 1): Promise<ChatConversation[]> => {
     try {
-      console.log('🔍 Loading conversations with filter:', filter, 'page:', page);
       const result = await chatAPI.getFilteredConversations({
         chatType: filter && filter !== 'all' ? filter as any : undefined,
         page: page,
         limit: 20, // Load 20 conversations per page
-      });
-      console.log('📥 Conversations received:', result.conversations.length, 'conversations');
-      console.log('📝 First few conversations:', result.conversations.slice(0, 3));
-
-      // Debug: Check if name and otherUserId are present
-      result.conversations.forEach((conv, idx) => {
-        if (idx < 3) {
-          console.log(`🔍 Conv ${idx}: id=${conv.id}, name="${conv.name}", otherUserId="${conv.otherUserId}", chatType=${conv.chatType}`);
-        }
       });
 
       // Check if there are more conversations to load
       setHasMoreConversations(result.conversations.length === 20);
 
       return result.conversations;
-    } catch (error) {
-      console.error('❌ Error loading conversations from backend:', error);
-      // Show an alert to make the error visible to user for debugging
-      Alert.alert('Debug Error', `Failed to load conversations: ${error.message || error}`);
+    } catch (error: any) {
+      console.error('Error loading conversations from backend:', error);
+      Alert.alert('Error', `Failed to load conversations: ${error?.message || String(error)}`);
       return [];
     }
   };
@@ -235,9 +213,6 @@ const KonnectScreen = () => {
   // Load conversations from backend API only
   const loadConversations = async (refresh = false) => {
     try {
-      console.log('🚀 Starting loadConversations, refresh:', refresh);
-      console.log('👤 User:', user?.id, 'Token:', !!accessToken);
-
       if (refresh) {
         setRefreshing(true);
         setCurrentPage(1); // Reset to first page
@@ -256,7 +231,6 @@ const KonnectScreen = () => {
       // Sort by timestamp (most recent first)
       allConversations.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-      console.log('💬 Setting chats with', allConversations.length, 'conversations');
       setChats(allConversations);
 
       // Initialize real-time connection for all conversations
@@ -287,12 +261,10 @@ const KonnectScreen = () => {
   // Load more conversations (pagination)
   const loadMoreConversations = async () => {
     if (loadingMore || !hasMoreConversations || loading) {
-      console.log('⏸️ Skipping load more - loading:', loadingMore, 'hasMore:', hasMoreConversations, 'initialLoading:', loading);
       return;
     }
 
     try {
-      console.log('📄 Loading more conversations, page:', currentPage + 1);
       setLoadingMore(true);
 
       const nextPage = currentPage + 1;
@@ -311,43 +283,36 @@ const KonnectScreen = () => {
             realtimeAPI.joinConversation(chat.id);
           });
         }
-
-        console.log('✅ Loaded', moreConversations.length, 'more conversations');
-      } else {
-        console.log('📭 No more conversations to load');
       }
     } catch (error) {
-      console.error('❌ Error loading more conversations:', error);
+      console.error('Error loading more conversations:', error);
     } finally {
       setLoadingMore(false);
     }
   };
 
   // Initialize real-time connection
-  const initializeRealtimeConnection = async () => {
+  const initializeRealtimeConnection = async (): Promise<(() => void) | undefined> => {
     try {
       const userId = user?.id || 'anonymous';
-      console.log('🔌 Attempting real-time connection for user:', userId);
 
       // Add timeout to prevent hanging
-      const connectPromise = realtimeAPI.connect(userId, accessToken);
+      const connectPromise = realtimeAPI.connect(userId, accessToken || undefined);
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Connection timeout')), 5000)
       );
 
       await Promise.race([connectPromise, timeoutPromise]);
-      console.log('✅ Real-time connection successful');
       
       // Subscribe to real-time chat events
       const unsubscribeMessage = realtimeAPI.subscribe('chat_message', (data) => {
-        console.log('📨 New message received:', data);
         // Update conversation list with new message and provide haptic feedback
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setChats(prev => prev.map(chat =>
           chat.id === data.conversationId
             ? {
                 ...chat,
-                lastMessage: data.message.content,
+                lastMessage: data.message?.content || data.message || chat.lastMessage,
                 unreadCount: chat.unreadCount + 1,
                 timestamp: new Date().toISOString()
               }
@@ -356,7 +321,6 @@ const KonnectScreen = () => {
       });
 
       const unsubscribeTyping = realtimeAPI.subscribe('chat_typing', (data) => {
-        console.log('⌨️ Typing indicator:', data);
         // Handle typing indicators with visual feedback
         setChats(prev => prev.map(chat =>
           chat.id === data.conversationId
@@ -367,9 +331,8 @@ const KonnectScreen = () => {
 
       // Subscribe to user status updates
       const unsubscribeStatus = realtimeAPI.subscribe('user_status', (data) => {
-        console.log('👤 User status update:', data);
         setChats(prev => prev.map(chat =>
-          chat.id === data.userId
+          chat.otherUserId === data.userId
             ? { ...chat, isOnline: data.isOnline, lastSeen: data.lastSeen }
             : chat
         ));
@@ -383,59 +346,52 @@ const KonnectScreen = () => {
     } catch (error) {
       console.warn('Failed to connect to real-time services:', error);
       // Continue without real-time features
+      return undefined;
     }
   };
 
   useEffect(() => {
-    console.log('🏁 useEffect triggered - User:', !!user, 'Token:', !!accessToken, 'Auth loading:', authLoading);
-
     // Wait for auth to finish loading
     if (authLoading) {
-      console.log('⏳ Auth still loading, waiting...');
       return;
     }
 
     // Don't initialize if no user/token after auth is done loading
     if (!user || !accessToken) {
-      console.log('⚠️ No user or token after auth loaded, skipping initialization');
       setLoading(false);
       return;
     }
 
+    // Cleanup previous subscriptions if any
+    if (cleanupFnRef.current) {
+      cleanupFnRef.current();
+      cleanupFnRef.current = null;
+    }
+
     // Initialize app
     const init = async () => {
-      console.log('🚀 Initializing KonnectScreen...');
       // Set auth token for chat API
       chatAPI.setAuthToken(accessToken);
-      console.log('🔑 Auth token set for chatAPI');
 
       // Load user profile first to check seller/rider status
-      console.log('👤 Loading user profile...');
       await loadUserProfile();
 
       // Load conversations first (don't wait for real-time)
-      console.log('📱 Loading conversations...');
       await loadConversations();
 
       // Load stories
-      console.log('📖 Loading stories...');
       await loadStories();
 
       // Setup real-time connection (non-blocking - run in background)
-      let cleanup;
-      initializeRealtimeConnection()
-        .then((cleanupFn) => {
-          cleanup = cleanupFn;
-          console.log('🔗 Real-time connection initialized successfully');
-        })
-        .catch((error) => {
-          console.warn('⚠️ Real-time connection failed, continuing without it:', error);
-        });
-
-      return cleanup;
+      const cleanup = await initializeRealtimeConnection();
+      if (cleanup) {
+        cleanupFnRef.current = cleanup;
+      }
     };
 
-    const cleanup = init();
+    init().catch((error) => {
+      console.error('Initialization error:', error);
+    });
 
     // Entrance animations
     Animated.parallel([
@@ -469,9 +425,10 @@ const KonnectScreen = () => {
 
     // Cleanup on unmount
     return () => {
-      cleanup.then(cleanupFn => {
-        if (cleanupFn) cleanupFn();
-      });
+      if (cleanupFnRef.current) {
+        cleanupFnRef.current();
+        cleanupFnRef.current = null;
+      }
       realtimeAPI.disconnect();
     };
   }, [user, accessToken, authLoading]);
@@ -480,20 +437,21 @@ const KonnectScreen = () => {
   // Reload conversations when screen is focused
   useFocusEffect(
     React.useCallback(() => {
-      // Only refresh if not loading initially
-      if (!loading) {
+      // Only refresh if not loading initially and user is authenticated
+      if (!loading && isAuthenticated && user && accessToken) {
         loadConversations();
       }
-    }, [loading])
+    }, [loading, isAuthenticated, user, accessToken])
   );
 
   // Reload conversations when filter changes
   useEffect(() => {
-    if (!loading) {
+    if (!loading && isAuthenticated && user && accessToken) {
       setCurrentPage(1); // Reset page
       setHasMoreConversations(true); // Reset pagination state
       loadConversations();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFilter]);
 
   // Format timestamp to relative time (e.g., "2m ago", "1h ago", "Yesterday")
@@ -537,9 +495,7 @@ const KonnectScreen = () => {
 
   // Create or find AI conversation with consistent ID
   const createOrFindAIConversation = async () => {
-    console.log('🤖 Creating/finding AI conversation for user:', user?.id);
     if (!user) {
-      console.error('❌ No user found, cannot create AI conversation');
       return null;
     }
 
@@ -548,17 +504,15 @@ const KonnectScreen = () => {
       // For AI chats, we use a special UUID participant ID for Iko
       const aiParticipantId = AI_ASSISTANT_UUID;
 
-      console.log('🔍 Calling findOrCreateConversation with AI participant:', aiParticipantId);
       const conversation = await chatAPI.findOrCreateConversation(
         [aiParticipantId], // AI participant
         'ai' // Chat type
       );
 
-      console.log('✅ AI conversation created/found:', conversation?.id);
       return conversation;
-    } catch (error) {
-      console.error('❌ Error creating AI conversation:', error);
-      Alert.alert('AI Chat Error', `Failed to create AI conversation: ${error.message || error}`);
+    } catch (error: any) {
+      console.error('Error creating AI conversation:', error);
+      Alert.alert('AI Chat Error', `Failed to create AI conversation: ${error?.message || String(error)}`);
       return null;
     }
   };
@@ -695,21 +649,22 @@ const KonnectScreen = () => {
   };
 
   // Filter and sort chats with Iko always at the top
-  console.log('🔢 Total chats:', chats.length, 'Loading:', loading);
   const filteredChats = chats
     .filter(chat => {
       // Search filter with null checks and object handling
       const lastMessageText = typeof chat.lastMessage === 'string'
         ? chat.lastMessage
-        : chat.lastMessage?.content || '';
+        : (chat.lastMessage && typeof chat.lastMessage === 'object' && 'content' in chat.lastMessage)
+          ? (chat.lastMessage as any).content || ''
+          : '';
 
       const matchesSearch = (chat.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
         (lastMessageText || '').toLowerCase().includes(searchQuery.toLowerCase());
 
       // Type filter
-      let matchesType = true;
+      let matchesType: boolean = true;
       if (activeFilter !== 'all') {
-        matchesType = chat.chatType === activeFilter || (activeFilter === 'ai' && chat.isAI);
+        matchesType = chat.chatType === activeFilter || (activeFilter === 'ai' && chat.isAI === true);
       }
 
       return matchesSearch && matchesType;
@@ -727,7 +682,6 @@ const KonnectScreen = () => {
       return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
     });
 
-  console.log('📋 Filtered chats:', filteredChats.length, 'Search:', searchQuery, 'Filter:', activeFilter);
 
   const renderHeader = () => (
     <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
@@ -781,11 +735,90 @@ const KonnectScreen = () => {
     </View>
   );
 
-  const renderStories = () => (
-    <View style={styles.storiesStickyContainer}>
-      {/* Plugs Stories */}
-      <View style={styles.storiesContainer}>
-        <Text style={styles.storiesTitle}>My Plugs  🔌</Text>
+  // Handle scroll to animate stories section
+  const handleScroll = (event: any) => {
+    const offsetY = event.nativeEvent.contentOffset.y;
+    
+    // Animate stories height: shrink from 200px to 80px when scrolling up
+    const heightValue = Math.max(80, Math.min(200, 200 - offsetY * 0.6));
+    Animated.timing(storiesHeightAnim, {
+      toValue: heightValue,
+      duration: 100,
+      useNativeDriver: false,
+    }).start();
+    
+    // Animate card scale: shrink from 1 to 0.55 (card to circle)
+    const scaleValue = Math.max(0.55, Math.min(1, 1 - offsetY * 0.003));
+    Animated.timing(cardScaleAnim, {
+      toValue: scaleValue,
+      duration: 100,
+      useNativeDriver: false,
+    }).start();
+    
+    // Animate title opacity: fade out when scrolling
+    const titleOpacity = Math.max(0, Math.min(1, 1 - offsetY * 0.01));
+    Animated.timing(titleOpacityAnim, {
+      toValue: titleOpacity,
+      duration: 100,
+      useNativeDriver: true,
+    }).start();
+    
+    // Animate text overlay opacity: fade out when scrolling
+    const textOpacity = Math.max(0, Math.min(1, 1 - offsetY * 0.008));
+    Animated.timing(textOverlayOpacityAnim, {
+      toValue: textOpacity,
+      duration: 100,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const renderStories = () => {
+    // Interpolate values for animations
+    const storiesHeight = storiesHeightAnim.interpolate({
+      inputRange: [80, 200],
+      outputRange: [80, 200],
+      extrapolate: 'clamp',
+    });
+    
+    const cardWidth = cardScaleAnim.interpolate({
+      inputRange: [0.55, 1],
+      outputRange: [50, 90],
+      extrapolate: 'clamp',
+    });
+    
+    const cardHeight = cardScaleAnim.interpolate({
+      inputRange: [0.55, 1],
+      outputRange: [50, 140],
+      extrapolate: 'clamp',
+    });
+    
+    const cardBorderRadius = cardScaleAnim.interpolate({
+      inputRange: [0.55, 1],
+      outputRange: [25, 12], // Circle to rounded rectangle
+      extrapolate: 'clamp',
+    });
+    
+    const cardMargin = cardScaleAnim.interpolate({
+      inputRange: [0.55, 1],
+      outputRange: [8, 12],
+      extrapolate: 'clamp',
+    });
+    
+    return (
+      <Animated.View 
+        style={[
+          styles.storiesStickyContainer,
+          { height: storiesHeight }
+        ]}
+      >
+        {/* Plugs Stories */}
+        <Animated.View 
+          style={[
+            styles.storiesContainer,
+            { opacity: titleOpacityAnim }
+          ]}
+        >
+          <Animated.Text style={styles.storiesTitle}>My Plugs  🔌</Animated.Text>
         {storiesLoading ? (
           <View style={styles.storiesLoadingContainer}>
             <Text style={styles.storiesLoadingText}>Loading stories...</Text>
@@ -806,7 +839,7 @@ const KonnectScreen = () => {
                   <TouchableOpacity
                     style={styles.findPlugsButton}
                     onPress={() => {
-                      navigation.navigate('Search');
+                      (navigation as any).navigate('Search');
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }}
                   >
@@ -835,14 +868,19 @@ const KonnectScreen = () => {
                   : null;
 
                 return (
-                  <TouchableOpacity
+                  <Animated.View
                     key={isMyStory ? `my-story-${group.user.id}` : `discovery-${group.user.id}`}
-                    style={styles.storyItem}
-                    onPress={() => {
+                    style={{
+                      marginRight: cardMargin,
+                      width: cardWidth,
+                    }}
+                  >
+                    <TouchableOpacity
+                      onPress={() => {
                       if (isMyStory) {
-                        if (hasStories) {
+                        if (hasStories && user) {
                           // User has stories - view them (backend provides user_profiles)
-                          navigation.navigate('Stories', {
+                          (navigation as any).navigate('Stories', {
                             stories: group.stories,
                             initialIndex: 0,
                             userInfo: {
@@ -851,13 +889,13 @@ const KonnectScreen = () => {
                             },
                             canAddMore: true, // Allow user to add more stories
                           });
-                        } else {
+                        } else if (user) {
                           // User has no stories - navigate to upload
-                          navigation.navigate('StoryUpload');
+                          (navigation as any).navigate('StoryUpload');
                         }
                       } else {
                         // Navigate to stories viewer with this user's stories
-                        navigation.navigate('Stories', {
+                        (navigation as any).navigate('Stories', {
                           stories: group.stories,
                           initialIndex: 0,
                           userInfo: group.user,
@@ -865,10 +903,16 @@ const KonnectScreen = () => {
                       }
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }}
-                  >
-                    {/* Picture Frame Design */}
-                    <View style={[
-                      styles.storyFrame,
+                    >
+                    {/* Picture Frame Design - Animated */}
+                    <Animated.View style={[
+                      {
+                        width: cardWidth,
+                        height: cardHeight,
+                        borderRadius: cardBorderRadius,
+                        overflow: 'hidden',
+                        position: 'relative',
+                      },
                       isMyStory && hasStories ? styles.myStoryFrame :
                       isMyStory && !hasStories ? styles.myStoryEmptyFrame :
                       hasStories && hasUnviewed ? styles.unviewedStoryFrame :
@@ -881,18 +925,43 @@ const KonnectScreen = () => {
                         style={styles.storyImage}
                       />
                       {isMyStory && (
-                        <View style={styles.addStoryIconFrame}>
+                        <Animated.View 
+                          style={[
+                            styles.addStoryIconFrame,
+                            {
+                              opacity: cardScaleAnim.interpolate({
+                                inputRange: [0.55, 1],
+                                outputRange: [0, 1],
+                                extrapolate: 'clamp',
+                              }),
+                            }
+                          ]}
+                        >
                           <Ionicons
                             name="add"
                             size={16}
                             color="#FFFFFF"
                           />
-                        </View>
+                        </Animated.View>
                       )}
-                      {/* Overlay gradient for better text visibility */}
-                      <View style={styles.storyOverlay} />
-                      {/* Username at bottom */}
-                      <View style={styles.storyTextContainer}>
+                      {/* Overlay gradient for better text visibility - Animated */}
+                      <Animated.View 
+                        style={[
+                          styles.storyOverlay,
+                          {
+                            opacity: textOverlayOpacityAnim,
+                          }
+                        ]} 
+                      />
+                      {/* Username at bottom - Animated */}
+                      <Animated.View 
+                        style={[
+                          styles.storyTextContainer,
+                          {
+                            opacity: textOverlayOpacityAnim,
+                          }
+                        ]}
+                      >
                         <Text style={styles.storyNameFrame} numberOfLines={1}>
                           {group.user.username}
                         </Text>
@@ -906,107 +975,110 @@ const KonnectScreen = () => {
                             {group.stories.length} stories
                           </Text>
                         )}
-                      </View>
-                    </View>
+                      </Animated.View>
+                    </Animated.View>
                   </TouchableOpacity>
+                  </Animated.View>
                 );
               })
             )}
           </ScrollView>
         )}
-      </View>
+        </Animated.View>
+      </Animated.View>
+    );
+  };
 
-      {/* Quick Actions */}
-      <View style={styles.quickActions}>
-        <TouchableOpacity
-          style={[
-            styles.quickAction,
-            { backgroundColor: activeFilter === 'ai' ? '#E91E63' : '#E91E6320' }
-          ]}
-          onPress={async () => {
-            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setActiveFilter(activeFilter === 'ai' ? 'all' : 'ai');
-          }}
-        >
-          <Ionicons
-            name="sparkles"
-            size={18}
-            color={activeFilter === 'ai' ? '#FFFFFF' : '#E91E63'}
-          />
-          <Text style={[
-            styles.quickActionText,
-            { color: activeFilter === 'ai' ? '#FFFFFF' : '#E91E63' }
-          ]}>
-            AI Help
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.quickAction,
-            { backgroundColor: activeFilter === 'vendor' ? '#FF9800' : '#FF980020' }
-          ]}
-          onPress={async () => {
-            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setActiveFilter(activeFilter === 'vendor' ? 'all' : 'vendor');
-          }}
-        >
-          <Ionicons
-            name="storefront"
-            size={18}
-            color={activeFilter === 'vendor' ? '#FFFFFF' : '#FF9800'}
-          />
-          <Text style={[
-            styles.quickActionText,
-            { color: activeFilter === 'vendor' ? '#FFFFFF' : '#FF9800' }
-          ]}>
-            Vendors
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.quickAction,
-            { backgroundColor: activeFilter === 'rider' ? '#9C27B0' : '#9C27B020' }
-          ]}
-          onPress={async () => {
-            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setActiveFilter(activeFilter === 'rider' ? 'all' : 'rider');
-          }}
-        >
-          <Ionicons
-            name="bicycle"
-            size={18}
-            color={activeFilter === 'rider' ? '#FFFFFF' : '#9C27B0'}
-          />
-          <Text style={[
-            styles.quickActionText,
-            { color: activeFilter === 'rider' ? '#FFFFFF' : '#9C27B0' }
-          ]}>
-            Riders
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.quickAction,
-            { backgroundColor: activeFilter === 'support' ? '#3498DB' : '#3498DB20' }
-          ]}
-          onPress={async () => {
-            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setActiveFilter(activeFilter === 'support' ? 'all' : 'support');
-          }}
-        >
-          <Ionicons
-            name="headset"
-            size={18}
-            color={activeFilter === 'support' ? '#FFFFFF' : '#3498DB'}
-          />
-          <Text style={[
-            styles.quickActionText,
-            { color: activeFilter === 'support' ? '#FFFFFF' : '#3498DB' }
-          ]}>
-            Support
-          </Text>
-        </TouchableOpacity>
-      </View>
+  const renderQuickActions = () => (
+    <View style={styles.quickActions}>
+      <TouchableOpacity
+        style={[
+          styles.quickAction,
+          { backgroundColor: activeFilter === 'ai' ? '#E91E63' : '#E91E6320' }
+        ]}
+        onPress={async () => {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setActiveFilter(activeFilter === 'ai' ? 'all' : 'ai');
+        }}
+      >
+        <Ionicons
+          name="sparkles"
+          size={18}
+          color={activeFilter === 'ai' ? '#FFFFFF' : '#E91E63'}
+        />
+        <Text style={[
+          styles.quickActionText,
+          { color: activeFilter === 'ai' ? '#FFFFFF' : '#E91E63' }
+        ]}>
+          AI Help
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.quickAction,
+          { backgroundColor: activeFilter === 'vendor' ? '#FF9800' : '#FF980020' }
+        ]}
+        onPress={async () => {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setActiveFilter(activeFilter === 'vendor' ? 'all' : 'vendor');
+        }}
+      >
+        <Ionicons
+          name="storefront"
+          size={18}
+          color={activeFilter === 'vendor' ? '#FFFFFF' : '#FF9800'}
+        />
+        <Text style={[
+          styles.quickActionText,
+          { color: activeFilter === 'vendor' ? '#FFFFFF' : '#FF9800' }
+        ]}>
+          Vendors
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.quickAction,
+          { backgroundColor: activeFilter === 'rider' ? '#9C27B0' : '#9C27B020' }
+        ]}
+        onPress={async () => {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setActiveFilter(activeFilter === 'rider' ? 'all' : 'rider');
+        }}
+      >
+        <Ionicons
+          name="bicycle"
+          size={18}
+          color={activeFilter === 'rider' ? '#FFFFFF' : '#9C27B0'}
+        />
+        <Text style={[
+          styles.quickActionText,
+          { color: activeFilter === 'rider' ? '#FFFFFF' : '#9C27B0' }
+        ]}>
+          Riders
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.quickAction,
+          { backgroundColor: activeFilter === 'support' ? '#3498DB' : '#3498DB20' }
+        ]}
+        onPress={async () => {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setActiveFilter(activeFilter === 'support' ? 'all' : 'support');
+        }}
+      >
+        <Ionicons
+          name="headset"
+          size={18}
+          color={activeFilter === 'support' ? '#FFFFFF' : '#3498DB'}
+        />
+        <Text style={[
+          styles.quickActionText,
+          { color: activeFilter === 'support' ? '#FFFFFF' : '#3498DB' }
+        ]}>
+          Support
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -1171,7 +1243,9 @@ const KonnectScreen = () => {
                 <Text style={styles.lastMessage} numberOfLines={1}>
                   {typeof item.lastMessage === 'string'
                     ? item.lastMessage
-                    : item.lastMessage?.content || 'No message'
+                    : (item.lastMessage && typeof item.lastMessage === 'object' && 'content' in item.lastMessage)
+                      ? (item.lastMessage as any).content || 'No message'
+                      : 'No message'
                   }
                 </Text>
               )}
@@ -1293,15 +1367,18 @@ const KonnectScreen = () => {
     <View style={styles.container}>
       {renderHeader()}
       {renderStories()}
+      {renderQuickActions()}
 
       <View style={styles.chatsList}>
         {filteredChats.length > 0 ? (
-          <FlatList
+          <Animated.FlatList
             data={filteredChats}
             renderItem={renderChatItem}
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={[styles.chatsListContent, { paddingBottom: insets.bottom + 100 }]}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -1438,6 +1515,7 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.1)',
+    overflow: 'hidden', // Ensure content doesn't overflow when shrinking
   },
   storiesContainer: {
     // marginBottom removed since it's now in sticky container

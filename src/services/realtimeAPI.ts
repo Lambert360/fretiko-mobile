@@ -226,6 +226,10 @@ class RealtimeAPI {
           console.log('🔒 Escrow Balance:', data.escrowBalance);
           this.handleRealtimeMessage({ type: 'wallet_balance_update', ...data });
         });
+        this.chatSocket.on('gift_collection_updated', (data) => {
+          console.log('🎁 RAW gift_collection_updated EVENT RECEIVED:', data);
+          this.handleRealtimeMessage({ type: 'gift_collection_updated', ...data });
+        });
         this.chatSocket.on('dispute_message', (data) => {
           console.log('⚖️ RAW dispute_message EVENT RECEIVED:', data);
           console.log('🔍 disputeId:', data.disputeId);
@@ -940,6 +944,121 @@ class RealtimeAPI {
         conversationId // Optional - backend will fetch if not provided
       });
     }
+  }
+
+  // === WebRTC SIGNALING METHODS ===
+
+  /**
+   * Send WebRTC SDP offer
+   * Used by call initiator to send connection details
+   */
+  sendWebRTCOffer(callSessionId: string, offer: any) {
+    console.log('📤 Sending WebRTC offer for call:', callSessionId);
+    if (this.chatSocket && this.chatSocket.connected) {
+      this.chatSocket.emit('webrtc_signal', {
+        callSessionId,
+        type: 'offer',
+        data: offer
+      });
+    } else {
+      console.error('❌ Cannot send WebRTC offer - chat socket not connected');
+    }
+  }
+
+  /**
+   * Send WebRTC SDP answer
+   * Used by call receiver to respond with connection details
+   */
+  sendWebRTCAnswer(callSessionId: string, answer: any) {
+    console.log('📤 Sending WebRTC answer for call:', callSessionId);
+    if (this.chatSocket && this.chatSocket.connected) {
+      this.chatSocket.emit('webrtc_signal', {
+        callSessionId,
+        type: 'answer',
+        data: answer
+      });
+    } else {
+      console.error('❌ Cannot send WebRTC answer - chat socket not connected');
+    }
+  }
+
+  /**
+   * Send ICE candidate
+   * Used during connection establishment for NAT traversal
+   */
+  sendIceCandidate(callSessionId: string, candidate: any) {
+    console.log('📤 Sending ICE candidate for call:', callSessionId);
+    if (this.chatSocket && this.chatSocket.connected) {
+      this.chatSocket.emit('webrtc_signal', {
+        callSessionId,
+        type: 'ice-candidate',
+        data: candidate
+      });
+    } else {
+      console.error('❌ Cannot send ICE candidate - chat socket not connected');
+    }
+  }
+
+  /**
+   * Send call ended signal
+   * Used to notify peer that call has ended
+   */
+  sendCallEnded(callSessionId: string, reason?: string) {
+    console.log('📤 Sending call ended signal:', callSessionId, reason);
+    if (this.chatSocket && this.chatSocket.connected) {
+      this.chatSocket.emit('webrtc_signal', {
+        callSessionId,
+        type: 'call-ended',
+        data: { reason }
+      });
+    }
+  }
+
+  /**
+   * Subscribe to WebRTC signaling events
+   * Returns unsubscribe function
+   */
+  subscribeToWebRTCSignals(
+    onOffer: (callSessionId: string, offer: any) => void,
+    onAnswer: (callSessionId: string, answer: any) => void,
+    onIceCandidate: (callSessionId: string, candidate: any) => void,
+    onCallEnded: (callSessionId: string, reason?: string) => void
+  ): () => void {
+    console.log('📡 Subscribing to WebRTC signals...');
+
+    if (!this.chatSocket) {
+      console.error('❌ Cannot subscribe to WebRTC signals - chat socket not initialized');
+      return () => {};
+    }
+
+    const handleWebRTCSignal = (data: any) => {
+      console.log('📥 Received WebRTC signal:', data.type, 'for call:', data.callSessionId);
+
+      switch (data.type) {
+        case 'offer':
+          onOffer(data.callSessionId, data.data);
+          break;
+        case 'answer':
+          onAnswer(data.callSessionId, data.data);
+          break;
+        case 'ice-candidate':
+          onIceCandidate(data.callSessionId, data.data);
+          break;
+        case 'call-ended':
+          onCallEnded(data.callSessionId, data.data?.reason);
+          break;
+        default:
+          console.warn('⚠️ Unknown WebRTC signal type:', data.type);
+      }
+    };
+
+    this.chatSocket.on('webrtc_signal', handleWebRTCSignal);
+
+    // Return unsubscribe function
+    return () => {
+      console.log('📡 Unsubscribing from WebRTC signals');
+      this.chatSocket?.off('webrtc_signal', handleWebRTCSignal);
+    };
   }
 
   // Start typing indicator for chat

@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { liveSalesAPI, CreateStreamData } from '../services/liveSalesAPI';
+import { liveSalesAPI, CreateStreamData, TimeSlot } from '../services/liveSalesAPI';
 import { productsAPI, Product } from '../services/productsAPI';
 import { servicesAPI, Service } from '../services/servicesAPI';
 
@@ -57,6 +57,15 @@ const LiveStreamSetupScreen = () => {
 
   // Selected items
   const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
+
+  // Time slots for services
+  const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
+  const [showSlotModal, setShowSlotModal] = useState(false);
+  const [editingSlot, setEditingSlot] = useState<TimeSlot | null>(null);
+  const [slotDate, setSlotDate] = useState('');
+  const [slotStartTime, setSlotStartTime] = useState('');
+  const [slotEndTime, setSlotEndTime] = useState('');
+  const [slotDuration, setSlotDuration] = useState('60');
 
   // Product selection modal
   const [isProductModalVisible, setProductModalVisible] = useState(false);
@@ -182,6 +191,61 @@ const LiveStreamSetupScreen = () => {
     );
   };
 
+  // Time slot management
+  const handleAddTimeSlot = () => {
+    if (!slotDate || !slotStartTime || !slotEndTime) {
+      Alert.alert('Missing Information', 'Please fill in date, start time, and end time.');
+      return;
+    }
+
+    const duration = parseInt(slotDuration) || 60;
+    if (duration <= 0) {
+      Alert.alert('Invalid Duration', 'Duration must be greater than 0 minutes.');
+      return;
+    }
+
+    const newSlot: TimeSlot = {
+      id: Date.now().toString(),
+      date: slotDate,
+      start_time: slotStartTime,
+      end_time: slotEndTime,
+      duration_minutes: duration,
+      is_available: true,
+    };
+
+    if (editingSlot) {
+      setTimeSlots(timeSlots.map(s => s.id === editingSlot.id ? newSlot : s));
+      setEditingSlot(null);
+    } else {
+      setTimeSlots([...timeSlots, newSlot]);
+    }
+
+    // Reset form
+    setSlotDate('');
+    setSlotStartTime('');
+    setSlotEndTime('');
+    setSlotDuration('60');
+    setShowSlotModal(false);
+  };
+
+  const handleEditTimeSlot = (slot: TimeSlot) => {
+    setEditingSlot(slot);
+    setSlotDate(slot.date);
+    setSlotStartTime(slot.start_time);
+    setSlotEndTime(slot.end_time);
+    setSlotDuration(slot.duration_minutes.toString());
+    setShowSlotModal(true);
+  };
+
+  const handleRemoveTimeSlot = (slotId: string) => {
+    setTimeSlots(timeSlots.filter(s => s.id !== slotId));
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  };
+
   // Create stream and navigate to broadcast screen
   const handleGoLive = async () => {
     // Validation
@@ -209,6 +273,12 @@ const LiveStreamSetupScreen = () => {
           live_stock: p.live_stock,
           display_order: p.display_order,
           is_featured: p.is_featured,
+        })) : undefined,
+        time_slots: streamType === 'services' && timeSlots.length > 0 ? timeSlots.map(slot => ({
+          date: slot.date,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+          duration_minutes: slot.duration_minutes,
         })) : undefined,
       };
 
@@ -342,6 +412,73 @@ const LiveStreamSetupScreen = () => {
             )}
           </TouchableOpacity>
         </View>
+
+        {/* Time Slots Section - Only for Services */}
+        {streamType === 'services' && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>
+                Available Time Slots ({timeSlots.length})
+              </Text>
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => {
+                  setEditingSlot(null);
+                  setSlotDate('');
+                  setSlotStartTime('');
+                  setSlotEndTime('');
+                  setSlotDuration('60');
+                  setShowSlotModal(true);
+                }}
+              >
+                <Ionicons name="time" size={20} color="#3498DB" />
+                <Text style={styles.addButtonText}>Add Slot</Text>
+              </TouchableOpacity>
+            </View>
+
+            {timeSlots.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="calendar-outline" size={60} color="#444" />
+                <Text style={styles.emptyText}>No time slots configured</Text>
+                <Text style={styles.emptySubtext}>Viewers can book services during these times</Text>
+              </View>
+            ) : (
+              <View style={styles.slotsList}>
+                {timeSlots.map((slot) => (
+                  <View key={slot.id} style={styles.slotCard}>
+                    <View style={styles.slotInfo}>
+                      <View style={styles.slotRow}>
+                        <Ionicons name="calendar" size={16} color="#3498DB" />
+                        <Text style={styles.slotDate}>{formatDate(slot.date)}</Text>
+                      </View>
+                      <View style={styles.slotRow}>
+                        <Ionicons name="time" size={16} color="#3498DB" />
+                        <Text style={styles.slotTime}>
+                          {slot.start_time} - {slot.end_time}
+                        </Text>
+                      </View>
+                      <Text style={styles.slotDuration}>{slot.duration_minutes} min duration</Text>
+                    </View>
+                    <View style={styles.slotActions}>
+                      <TouchableOpacity
+                        style={styles.slotEdit}
+                        onPress={() => handleEditTimeSlot(slot)}
+                      >
+                        <Ionicons name="pencil" size={18} color="#3498DB" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.slotDelete}
+                        onPress={() => handleRemoveTimeSlot(slot.id)}
+                      >
+                        <Ionicons name="trash" size={18} color="#e74c3c" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Products Section */}
         {streamType === 'products' && (
@@ -491,6 +628,74 @@ const LiveStreamSetupScreen = () => {
               </View>
             )}
           />
+        </View>
+      </Modal>
+
+      {/* Time Slot Modal */}
+      <Modal
+        visible={showSlotModal}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setShowSlotModal(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={[styles.modalHeader, { paddingTop: insets.top + 10 }]}>
+            <TouchableOpacity onPress={() => setShowSlotModal(false)}>
+              <Ionicons name="close" size={28} color="white" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>{editingSlot ? 'Edit Time Slot' : 'Add Time Slot'}</Text>
+            <View style={{ width: 28 }} />
+          </View>
+
+          <ScrollView style={styles.modalContent} contentContainerStyle={{ padding: 20 }}>
+            {/* Date Input */}
+            <Text style={styles.inputLabel}>Date *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="YYYY-MM-DD (e.g., 2024-12-25)"
+              placeholderTextColor="#666"
+              value={slotDate}
+              onChangeText={setSlotDate}
+            />
+
+            {/* Start Time */}
+            <Text style={styles.inputLabel}>Start Time *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="HH:MM (e.g., 14:00)"
+              placeholderTextColor="#666"
+              value={slotStartTime}
+              onChangeText={setSlotStartTime}
+            />
+
+            {/* End Time */}
+            <Text style={styles.inputLabel}>End Time *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="HH:MM (e.g., 16:00)"
+              placeholderTextColor="#666"
+              value={slotEndTime}
+              onChangeText={setSlotEndTime}
+            />
+
+            {/* Duration */}
+            <Text style={styles.inputLabel}>Duration (minutes)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="60"
+              placeholderTextColor="#666"
+              keyboardType="numeric"
+              value={slotDuration}
+              onChangeText={setSlotDuration}
+            />
+
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={handleAddTimeSlot}
+            >
+              <Text style={styles.saveButtonText}>{editingSlot ? 'Update Slot' : 'Add Slot'}</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -960,6 +1165,81 @@ const styles = StyleSheet.create({
   goLiveButtonText: {
     color: 'white',
     fontSize: 18,
+    fontWeight: 'bold',
+  },
+  
+  // Time Slot Styles
+  slotsList: {
+    gap: 12,
+  },
+  slotCard: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    padding: 16,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  slotInfo: {
+    flex: 1,
+  },
+  slotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  slotDate: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  slotTime: {
+    color: '#999',
+    fontSize: 14,
+    marginLeft: 8,
+  },
+  slotDuration: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  slotActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  slotEdit: {
+    padding: 8,
+  },
+  slotDelete: {
+    padding: 8,
+  },
+  inputLabel: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8,
+    padding: 12,
+    color: 'white',
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  saveButton: {
+    backgroundColor: '#3498DB',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 24,
+  },
+  saveButtonText: {
+    color: 'white',
+    fontSize: 16,
     fontWeight: 'bold',
   },
 });

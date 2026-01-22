@@ -123,6 +123,10 @@ import NotificationSettingsScreen from './src/screens/NotificationSettingsScreen
 // Import shared wishlist screen
 import SharedWishlistScreen from './src/screens/SharedWishlistScreen';
 
+// Import gift screens
+import MyGiftsScreen from './src/screens/MyGiftsScreen';
+import GiftMarketplaceScreen from './src/screens/GiftMarketplaceScreen';
+
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
 
 const Stack = createStackNavigator();
@@ -397,6 +401,8 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="Orders" component={OrdersScreen} />
               <Stack.Screen name="OrderTracking" component={OrderTrackingScreen} />
               <Stack.Screen name="GroupedOrder" component={GroupedOrderScreen as any} />
+              <Stack.Screen name="MyGifts" component={MyGiftsScreen} />
+              <Stack.Screen name="GiftMarketplace" component={GiftMarketplaceScreen} />
               <Stack.Screen 
                 name="RateOrder" 
                 component={RateOrderScreen} 
@@ -409,7 +415,7 @@ const AppNavigator: React.FC = () => {
               />
               <Stack.Screen name="RiderSelection" component={RiderSelectionScreen as any} />
               <Stack.Screen name="RiderDetailScreen" component={RiderDetailScreen} />
-              <Stack.Screen name="IndividualChat" component={IndividualChatScreen} />
+              <Stack.Screen name="IndividualChatScreen" component={IndividualChatScreen} />
               <Stack.Screen name="CreateInvoice" component={CreateInvoiceScreen} />
               <Stack.Screen name="InvoiceDetails" component={InvoiceDetailsScreen} />
               <Stack.Screen name="LiveSales" component={LiveSalesScreen} />

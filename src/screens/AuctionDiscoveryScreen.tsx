@@ -15,7 +15,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { VideoView, useVideoPlayer } from 'expo-video';
 import { useAuth } from '../contexts/AuthContext';
 import { auctionsAPI, auctionSocket, AuctionCategoryWithStats, AuctionWithDetails } from '../services/auctionsAPI';
 import { userAPI, UserProfile } from '../services/userAPI';
@@ -71,12 +70,12 @@ const AuctionDiscoveryScreen = () => {
       
       const now = new Date();
       
-      // Filter live lots that are actually streaming (have stream_url and haven't ended)
+      // Filter live lots that are active (status=active, type=live, and haven't ended)
+      // Don't require stream_url - show them when they become active
       const liveAuctionsData = ((results[2] as any).auctions || []).filter(
         (auction: AuctionWithDetails) => 
           auction.status === 'active' && 
           auction.auction_type === 'live' &&
-          auction.stream_url &&
           new Date(auction.end_time) > now
       );
       setLiveAuctions(liveAuctionsData);
@@ -368,7 +367,12 @@ const AuctionDiscoveryScreen = () => {
   };
 
   const navigateToAuction = (auction: AuctionWithDetails) => {
-    navigation.navigate('AuctionDetails', { auctionId: auction.id });
+    // Route live auctions to LiveAuctionDetailsScreen, others to regular AuctionDetailsScreen
+    if (auction.auction_type === 'live') {
+      navigation.navigate('LiveAuctionDetails', { auctionId: auction.id });
+    } else {
+      navigation.navigate('AuctionDetails', { auctionId: auction.id });
+    }
   };
 
   const navigateToCreateAuction = () => {
@@ -427,73 +431,6 @@ const AuctionDiscoveryScreen = () => {
     );
   };
 
-  // Live Auction Video Card Component (separate component to use hooks properly)
-  const LiveAuctionVideoCard = ({ item }: { item: AuctionWithDetails }) => {
-    const player = useVideoPlayer(item.stream_url || '', (player) => {
-      player.loop = true;
-      player.muted = false;
-    });
-
-    useEffect(() => {
-      if (item.stream_url) {
-        player.play();
-      }
-      return () => {
-        player.pause();
-      };
-    }, [item.stream_url, player]);
-
-    return (
-      <TouchableOpacity
-        style={styles.liveAuctionVideoCard}
-        onPress={() => navigateToAuction(item)}
-        activeOpacity={0.9}
-      >
-        {/* Video player */}
-        {item.stream_url ? (
-          <VideoView
-            player={player}
-            style={styles.liveAuctionVideo}
-            contentFit="cover"
-          />
-        ) : (
-          <Image
-            source={{ uri: item.thumbnail_url || item.images[0] || 'https://via.placeholder.com/400x600' }}
-            style={styles.liveAuctionVideo}
-            resizeMode="cover"
-          />
-        )}
-
-        {/* Live badge at top */}
-        <View style={styles.liveVideoBadge}>
-          <View style={styles.liveVideoPulseDot} />
-          <Ionicons name="videocam" size={14} color="white" />
-          <Text style={styles.liveVideoBadgeText}>LIVE STREAMING</Text>
-        </View>
-
-        {/* Auction info overlay at bottom */}
-        <View style={styles.liveAuctionOverlay}>
-          <View style={styles.liveAuctionInfo}>
-            <Text style={styles.liveAuctionTitle} numberOfLines={2}>{item.title}</Text>
-            <View style={styles.liveAuctionBidRow}>
-              <Text style={styles.liveAuctionBid}>
-                Current: {auctionsAPI.formatPrice(item.current_bid)}
-              </Text>
-              <Text style={styles.liveAuctionBids}>{item.total_bids} bids</Text>
-            </View>
-            <View style={styles.liveAuctionFooter}>
-              <Text style={styles.liveAuctionTime}>
-                {item.seconds_remaining ? auctionsAPI.formatTimeRemaining(item.seconds_remaining) : 'Ending soon'}
-              </Text>
-              {item.is_watched_by_user && (
-                <Ionicons name="heart" size={16} color="#E74C3C" />
-              )}
-            </View>
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
-  };
 
   // Render regular auction card for grid layout
   const renderAuctionCardGrid = (item: AuctionWithDetails) => (
@@ -510,6 +447,15 @@ const AuctionDiscoveryScreen = () => {
 
       <View style={styles.auctionOverlay}>
         <View style={styles.auctionHeader}>
+          {/* Live Streaming Badge for Live Auctions when active */}
+          {item.auction_type === 'live' && item.time_status === 'active' && (
+            <View style={styles.liveStreamBadge}>
+              <View style={styles.livePulseDot} />
+              <Ionicons name="videocam" size={12} color="white" />
+              <Text style={styles.liveStreamText}>LIVE</Text>
+            </View>
+          )}
+          
           <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(item.time_status) }]}>
             <Text style={styles.statusText}>
               {item.time_status === 'active' ? 'LIVE' : item.time_status.toUpperCase()}
@@ -942,10 +888,10 @@ const AuctionDiscoveryScreen = () => {
                   </View>
                 );
               } else if (row.type === 'video') {
-                // Full-width video card for live auctions
+                // Full-width card for live auctions
                 return (
                   <View key={`video-${rowIndex}-${row.item.id}`} style={styles.liveAuctionVideoCardContainer}>
-                    <LiveAuctionVideoCard item={row.item} />
+                    {renderAuctionCardGrid(row.item)}
                   </View>
                 );
               } else if (row.type === 'grid') {

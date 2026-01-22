@@ -125,7 +125,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
   const [walletBalance, setWalletBalance] = useState(0);
   const [useEscrow, setUseEscrow] = useState(true);
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
-  const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>('pickup'); // Default to self-pickup
+  const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>(null); // No default - user must choose
   
   // Escrow bypass eligibility
   const [escrowBypass, setEscrowBypass] = useState<{
@@ -281,8 +281,24 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       // Handle auction-based checkout
       if (source === 'auction' && auctionCheckout) {
         console.log('🔨 Loading auction checkout data for auction:', auctionCheckout.auctionId);
-        summary = await checkoutAPI.getAuctionCheckoutSummary(auctionCheckout.auctionId);
-        setUseEscrow(true); // Auctions always use escrow
+        try {
+          summary = await checkoutAPI.getAuctionCheckoutSummary(auctionCheckout.auctionId);
+          setUseEscrow(true); // Auctions always use escrow
+        } catch (error: any) {
+          console.error('Error loading auction checkout summary:', error);
+          // If auction checkout fails, show error and navigate back
+          Alert.alert(
+            'Checkout Error',
+            error.message || 'Failed to load auction checkout information. The auction may not be completed yet.',
+            [
+              {
+                text: 'OK',
+                onPress: () => navigation.goBack(),
+              },
+            ]
+          );
+          return;
+        }
       }
       // Handle invoice-based checkout
       else if (source === 'invoice' && invoiceItems && invoiceTotal !== undefined) {
@@ -401,9 +417,9 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
     // Single-vendor: use selectedRider price or default shipping
     const riderPrice = isMultiVendor 
       ? totalRiderFee 
-      : (selectedRider === 'pickup' ? 0 : selectedRider?.price || orderSummary.shipping);
+      : (selectedRider === 'pickup' ? 0 : selectedRider?.price || orderSummary?.shipping || 0);
     
-    const subtotal = orderSummary.subtotal + orderSummary.tax + riderPrice + (useEscrow ? orderSummary.escrowFee : 0);
+    const subtotal = (orderSummary?.subtotal || 0) + (orderSummary?.tax || 0) + riderPrice + (useEscrow ? (orderSummary?.escrowFee || 0) : 0);
     const rewardsDiscount = useRewards ? rewardsAmount : 0;
     return Math.max(0, subtotal - rewardsDiscount); // Can't be negative
   };
@@ -411,19 +427,31 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
   const handlePlaceOrder = async () => {
     if (!orderSummary) return;
     
-    // Validate required fields
-    if (!deliveryAddress.fullName || !deliveryAddress.address || 
-        !deliveryAddress.phone || !deliveryAddress.city || 
-        !deliveryAddress.state) {
-      Alert.alert('Missing Information', 'Please provide complete delivery address (Full Name, Phone, Address, City, State)');
+    // Validate that user has selected a delivery option
+    if (!selectedRider) {
+      Alert.alert(
+        'Delivery Option Required',
+        'Please select either Self Pickup or a Delivery Rider before proceeding.',
+        [{ text: 'OK' }]
+      );
       return;
+    }
+
+    // Validate delivery address only if delivery rider is selected (not pickup)
+    if (selectedRider !== 'pickup' && typeof selectedRider === 'object') {
+      if (!deliveryAddress.fullName || !deliveryAddress.address || 
+          !deliveryAddress.phone || !deliveryAddress.city || 
+          !deliveryAddress.state) {
+        Alert.alert('Missing Information', 'Please provide complete delivery address (Full Name, Phone, Address, City, State)');
+        return;
+      }
     }
     
     const finalTotal = calculateFinalTotal();
     if (walletBalance < finalTotal) {
       Alert.alert(
         'Insufficient Balance', 
-        `You need ${walletAPI.formatFreti(finalTotal - walletBalance)} more to complete this order. Would you like to add funds to your wallet?`,
+        `You need ${walletAPI.formatFreti((finalTotal ?? 0) - (walletBalance ?? 0))} more to complete this order. Would you like to add funds to your wallet?`,
         [
           { text: 'Cancel', style: 'cancel' },
           { 
@@ -437,9 +465,9 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       return;
     }
     
-    Alert.alert(
-      'Confirm Order',
-      `Total: ${walletAPI.formatFreti(finalTotal)}\nPayment: Freti Wallet${selectedRider === 'pickup' ? '\nDelivery: Self Pickup (Free)' : selectedRider ? `\nRider: ${selectedRider.name} (${selectedRider.vehicleType})` : ''}\n${useEscrow ? 'Funds will be held in escrow until delivery is confirmed.' : 'Payment will be processed immediately.'}`,
+      Alert.alert(
+        'Confirm Order',
+        `Total: ${walletAPI.formatFreti(finalTotal ?? 0)}\nPayment: Freti Wallet${selectedRider === 'pickup' ? '\nDelivery: Self Pickup (Free)' : (selectedRider && typeof selectedRider === 'object') ? `\nRider: ${selectedRider.name || 'Rider'} (${selectedRider.vehicleType || 'N/A'})` : ''}\n${useEscrow ? 'Funds will be held in escrow until delivery is confirmed.' : 'Payment will be processed immediately.'}`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Place Order', onPress: processOrder },
@@ -525,7 +553,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         console.log('  - Source:', source);
         console.log('  - Number of items:', orderSummary.items.length);
         console.log('  - Items:', orderSummary.items.map(i => ({ id: i.id, name: i.name })));
-        console.log('  - Total:', orderSummary.subtotal);
+        console.log('  - Total:', orderSummary?.subtotal || 0);
         if (source === 'invoice') {
           console.log('  - Invoice ID:', invoiceId);
         }
@@ -658,7 +686,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
   };
 
   const handleRemoveRider = () => {
-    setSelectedRider(null);
+    setSelectedRider(null); // Reset to show both options
   };
 
   const renderPaymentMethod = (method: PaymentMethod) => (
@@ -678,7 +706,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
           <Text style={styles.paymentMethodName}>{method.name}</Text>
           <Text style={styles.paymentMethodDescription}>{method.description}</Text>
           {method.type === 'wallet' && method.balance !== undefined && (
-            <Text style={styles.walletBalance}>Balance: {walletAPI.formatFreti(method.balance || 0)}</Text>
+            <Text style={styles.walletBalance}>Balance: {walletAPI.formatFreti(method.balance ?? 0)}</Text>
           )}
         </View>
       </View>
@@ -928,7 +956,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                           Rider {index + 1} - {assignment.rider.name}
                         </Text>
                         <Text style={styles.riderAssignmentPrice}>
-                          {walletAPI.formatFreti(assignment.pricing.total)}
+                          {walletAPI.formatFreti(assignment.pricing?.total ?? 0)}
                         </Text>
                       </View>
                       <View style={styles.riderAssignmentDetails}>
@@ -1000,7 +1028,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                 </View>
               </View>
               <View style={styles.selectedRiderPrice}>
-                <Text style={styles.selectedRiderPriceText}>{walletAPI.formatFreti(selectedRider.price)}</Text>
+                <Text style={styles.selectedRiderPriceText}>{walletAPI.formatFreti(selectedRider.price ?? 0)}</Text>
               </View>
             </View>
           ) : (
@@ -1078,8 +1106,8 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                   </View>
                 </View>
                 <View style={styles.rewardsSavings}>
-                  <Text style={styles.rewardsSavingsAmount}>
-                    -{walletAPI.formatFreti(useRewards ? rewardsAmount : 0)}
+                    <Text style={styles.rewardsSavingsAmount}>
+                    -{walletAPI.formatFreti(useRewards ? (rewardsAmount ?? 0) : 0)}
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -1124,7 +1152,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                 Your payment is held securely until you confirm delivery
               </Text>
               <Text style={styles.escrowFee}>
-                Fee: {walletAPI.formatFreti(orderSummary.escrowFee)}
+                Fee: {walletAPI.formatFreti(orderSummary.escrowFee ?? 0)}
               </Text>
               {escrowBypass && !escrowBypass.canBypass && (
                 <Text style={styles.escrowLockReason}>
@@ -1192,19 +1220,19 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
           <View style={styles.summaryCard}>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>
-                Items ({orderSummary.items.length})
+                Items ({orderSummary.items?.length || 0})
               </Text>
-              <Text style={styles.summaryValue}>{walletAPI.formatFreti(orderSummary.subtotal)}</Text>
+              <Text style={styles.summaryValue}>{walletAPI.formatFreti(orderSummary.subtotal ?? 0)}</Text>
             </View>
             
             {/* Only show rider fee if a rider is selected */}
-            {(selectedRider && selectedRider !== 'pickup') && (
+            {(selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object') && (
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>
-                  Rider Fee ({selectedRider.name})
+                  Rider Fee ({selectedRider.name || 'Rider'})
                 </Text>
                 <Text style={styles.summaryValue}>
-                  {walletAPI.formatFreti(selectedRider.price)}
+                  {walletAPI.formatFreti(selectedRider.price ?? 0)}
                 </Text>
               </View>
             )}
@@ -1216,7 +1244,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                   Rider Fee ({riderAssignments.length} riders)
                 </Text>
                 <Text style={styles.summaryValue}>
-                  {walletAPI.formatFreti(totalRiderFee)}
+                  {walletAPI.formatFreti(totalRiderFee ?? 0)}
                 </Text>
               </View>
             )}
@@ -1233,7 +1261,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                   Rewards Discount ⭐
                 </Text>
                 <Text style={[styles.summaryValue, styles.discountValue]}>
-                  -{walletAPI.formatFreti(rewardsAmount)}
+                  -{walletAPI.formatFreti(rewardsAmount ?? 0)}
                 </Text>
               </View>
             )}
@@ -1241,7 +1269,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
             <View style={[styles.summaryRow, styles.totalRow]}>
               <Text style={styles.totalLabel}>Total</Text>
               <Text style={styles.totalValue}>
-                {walletAPI.formatFreti(calculateFinalTotal())}
+                {walletAPI.formatFreti(calculateFinalTotal() ?? 0)}
               </Text>
             </View>
           </View>
@@ -1253,7 +1281,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         <View style={styles.totalPreview}>
           <Text style={styles.totalPreviewLabel}>Total</Text>
           <Text style={styles.totalPreviewValue}>
-            {walletAPI.formatFreti(calculateFinalTotal())}
+            {walletAPI.formatFreti(calculateFinalTotal() ?? 0)}
           </Text>
         </View>
         <TouchableOpacity
@@ -1295,16 +1323,16 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                   <View style={styles.infoRow}>
                     <Text style={styles.infoLabel}>Items ({orderSummary?.items?.length || 0})</Text>
                     <Text style={styles.infoValue}>
-                      {orderSummary ? walletAPI.formatFreti(orderSummary.subtotal) : '₣0'}
+                      {orderSummary ? walletAPI.formatFreti(orderSummary.subtotal ?? 0) : '₣0'}
                     </Text>
                   </View>
                   
                   {/* Only show rider fee if a rider is selected */}
-                  {(selectedRider && selectedRider !== 'pickup') && (
+                  {(selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object') && (
                     <View style={styles.infoRow}>
                       <Text style={styles.infoLabel}>Rider Fee</Text>
                       <Text style={styles.infoValue}>
-                        {walletAPI.formatFreti(selectedRider.price)}
+                        {walletAPI.formatFreti(selectedRider.price ?? 0)}
                       </Text>
                     </View>
                   )}
@@ -1314,7 +1342,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                     <View style={styles.infoRow}>
                       <Text style={styles.infoLabel}>Rider Fee ({riderAssignments.length} riders)</Text>
                       <Text style={styles.infoValue}>
-                        {walletAPI.formatFreti(totalRiderFee)}
+                        {walletAPI.formatFreti(totalRiderFee ?? 0)}
                       </Text>
                     </View>
                   )}
@@ -1327,7 +1355,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                   <View style={[styles.infoRow, styles.infoRowTotal]}>
                     <Text style={styles.infoTotalLabel}>Total</Text>
                     <Text style={styles.infoTotalValue}>
-                      {walletAPI.formatFreti(calculateFinalTotal())}
+                      {walletAPI.formatFreti(calculateFinalTotal() ?? 0)}
                     </Text>
                   </View>
                 </View>

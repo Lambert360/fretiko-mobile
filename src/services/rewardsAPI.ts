@@ -355,7 +355,10 @@ class RewardsAPIService {
   /**
    * Format rewards amount for display
    */
-  formatRewardsForDisplay(amount: number): string {
+  formatRewardsForDisplay(amount: number | null | undefined): string {
+    if (amount === null || amount === undefined || isNaN(amount)) {
+      return '⭐ 0';
+    }
     return `⭐ ${Math.floor(amount)}`;
   }
 

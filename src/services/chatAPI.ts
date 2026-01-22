@@ -53,6 +53,10 @@ export interface SendMessageRequest {
     size: string;
     type: string;
   };
+  metadata?: {
+    [key: string]: any;
+    audioDuration?: number; // Duration in seconds for audio messages
+  };
 }
 
 export interface CreateConversationRequest {
@@ -270,7 +274,13 @@ class ChatAPI {
   // Start a call
   async startCall(conversationId: string, callType: 'audio' | 'video', participantIds?: string[]): Promise<{
     callSessionId: string;
-    rtcConfiguration: any;
+    agoraConfig?: {
+      appId: string;
+      channel: string;
+      token: string;
+      uid: number;
+    };
+    rtcConfiguration?: any; // Backward compatibility
   }> {
     try {
       const response = await api.post('/chat/calls', {
@@ -290,7 +300,13 @@ class ChatAPI {
 
   // Join a call
   async joinCall(callSessionId: string): Promise<{
-    rtcConfiguration: any;
+    agoraConfig?: {
+      appId: string;
+      channel: string;
+      token: string;
+      uid: number;
+    };
+    rtcConfiguration?: any; // Backward compatibility
     participants: any[];
   }> {
     try {

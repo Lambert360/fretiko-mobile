@@ -174,6 +174,30 @@ export interface PlaceBidData {
   max_bid_amount?: number;
 }
 
+export interface AuctionItem {
+  id: string;
+  auction_id: string;
+  title: string;
+  description?: string;
+  lot_number?: string;
+  starting_price: number;
+  reserve_price?: number;
+  current_bid: number;
+  bid_increment: number;
+  bidding_status: 'waiting' | 'countdown' | 'active' | 'ended' | 'sold' | 'passed';
+  order_in_auction: number;
+  bidding_duration: number;
+  countdown_started_at?: string;
+  bidding_started_at?: string;
+  bidding_ended_at?: string;
+  images: string[];
+  video_url?: string;
+  winner_id?: string;
+  winning_bid?: number;
+  created_at: string;
+  updated_at: string;
+}
+
 /**
  * Auctions API Service
  * Handles all auction-related API calls
@@ -572,6 +596,330 @@ export const auctionsAPI = {
       throw new Error(errorMessage);
     }
   },
+
+  /**
+   * Start broadcasting for a live auction
+   */
+  async startBroadcast(auctionId: string): Promise<any> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      const response = await api.post(`/auctions/${auctionId}/start-broadcast`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Error starting broadcast:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Stop broadcasting for a live auction
+   */
+  async stopBroadcast(auctionId: string): Promise<any> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      const response = await api.post(`/auctions/${auctionId}/stop-broadcast`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Error stopping broadcast:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Generate Agora token for auction live streaming
+   */
+  async generateAgoraToken(auctionId: string, role: 'host' | 'audience' = 'host'): Promise<{
+    token: string;
+    channel: string;
+    uid: number;
+    appId: string;
+  }> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+
+      const response = await api.get(`/auctions/${auctionId}/live-stream-token?role=${role}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error generating Agora token for auction:', error);
+      throw error;
+    }
+  },
+
+  // ==================== AUCTION ITEMS MANAGEMENT ====================
+
+  /**
+   * Get current auction item
+   */
+  async getCurrentItem(auctionId: string): Promise<AuctionItem | null> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      const response = await api.get(`/auctions/${auctionId}/current-item`);
+      return response.data;
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        return null;
+      }
+      console.error('Error fetching current item:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get all auction items for an auction
+   */
+  async getAuctionItems(auctionId: string): Promise<AuctionItem[]> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      const response = await api.get(`/auctions/${auctionId}/items`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      return response.data || [];
+    } catch (error: any) {
+      console.error('Error getting auction items:', error);
+      return [];
+    }
+  },
+
+  /**
+   * Start countdown for auction item (3-2-1 countdown)
+   */
+  async startItemCountdown(auctionId: string, itemId: string): Promise<void> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      await api.post(`/auctions/${auctionId}/items/${itemId}/start-countdown`);
+    } catch (error) {
+      console.error('Error starting item countdown:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Open bidding for auction item
+   */
+  async openItemBidding(auctionId: string, itemId: string): Promise<void> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      await api.post(`/auctions/${auctionId}/items/${itemId}/open-bidding`);
+    } catch (error) {
+      console.error('Error opening item bidding:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * End bidding for auction item (manual)
+   */
+  async endItemBidding(auctionId: string, itemId: string): Promise<void> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      await api.post(`/auctions/${auctionId}/items/${itemId}/end-bidding`);
+    } catch (error) {
+      console.error('Error ending item bidding:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Mark item as sold (auctioneer strikes gavel)
+   */
+  async markItemSold(auctionId: string, itemId: string): Promise<void> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      await api.post(`/auctions/${auctionId}/items/${itemId}/mark-sold`);
+    } catch (error) {
+      console.error('Error marking item as sold:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Skip/Pass item (no bids or reserve not met)
+   */
+  async skipItem(auctionId: string, itemId: string): Promise<void> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      await api.post(`/auctions/${auctionId}/items/${itemId}/skip`);
+    } catch (error) {
+      console.error('Error skipping item:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Load next item in auction
+   */
+  async loadNextItem(auctionId: string): Promise<void> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      await api.post(`/auctions/${auctionId}/load-next-item`);
+    } catch (error) {
+      console.error('Error loading next item:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Create a new auction item during live auction
+   * Allows hosts to add items on-the-fly
+   */
+  async createAuctionItem(
+    auctionId: string,
+    itemData: {
+      title: string;
+      description?: string;
+      lot_number?: string;
+      starting_price: number;
+      reserve_price?: number;
+      bid_increment?: number;
+      bidding_duration?: number;
+      images?: string[];
+    },
+    imageUris?: string[],
+  ): Promise<AuctionItem> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+
+      const formData = new FormData();
+
+      // Add text fields
+      formData.append('title', itemData.title.trim());
+      if (itemData.description) {
+        formData.append('description', itemData.description.trim());
+      }
+      if (itemData.lot_number) {
+        formData.append('lot_number', itemData.lot_number.trim());
+      }
+      formData.append('starting_price', itemData.starting_price.toString());
+      if (itemData.reserve_price) {
+        formData.append('reserve_price', itemData.reserve_price.toString());
+      }
+      if (itemData.bid_increment) {
+        formData.append('bid_increment', itemData.bid_increment.toString());
+      }
+      if (itemData.bidding_duration) {
+        formData.append('bidding_duration', itemData.bidding_duration.toString());
+      }
+
+      // Add images as files
+      if (imageUris && imageUris.length > 0) {
+        for (let i = 0; i < imageUris.length; i++) {
+          const uri = imageUris[i];
+          const filename = `image-${i}.jpg`;
+          formData.append('images', {
+            uri,
+            type: 'image/jpeg',
+            name: filename,
+          } as any);
+        }
+      }
+
+      const response = await api.post(`/auctions/${auctionId}/items`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      return response.data;
+    } catch (error: any) {
+      console.error('Error creating auction item:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get user's auction wins
+   * Returns all won auction items (pending checkout, checked out, expired)
+   */
+  async getUserAuctionWins(status?: 'pending_checkout' | 'checked_out' | 'expired'): Promise<any[]> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+
+      const params = status ? `?status=${status}` : '';
+      const response = await api.get(`/auctions/user/my-wins${params}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      return response.data || [];
+    } catch (error: any) {
+      console.error('Error fetching user auction wins:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Mark auction win as checked out (after order is created)
+   */
+  async markWinCheckedOut(winId: string, orderId: string): Promise<void> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+
+      const response = await api.put(
+        `/auctions/wins/${winId}/checkout`,
+        { orderId },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.status !== 200) {
+        throw new Error(`Failed to mark win as checked out: ${response.statusText}`);
+      }
+    } catch (error: any) {
+      console.error('Error marking win as checked out:', error);
+      throw error;
+    }
+  },
 };
 
 /**
@@ -731,6 +1079,18 @@ class AuctionSocketManager {
     this.socket.on('viewer_left', (data: any) => {
       this.emit('viewer_left', data);
     });
+
+    // Auction item events (multi-item auctions)
+    this.socket.on('item_event', (data: any) => {
+      console.log('Auction item event:', data);
+      this.emit('item_event', data);
+    });
+
+    // Auction won events
+    this.socket.on('auction_won', (data: any) => {
+      console.log('Auction won:', data);
+      this.emit('auction_won', data);
+    });
   }
 
   /**
@@ -800,6 +1160,21 @@ class AuctionSocketManager {
       auction_id: auctionId,
       event_type: eventType,
       message,
+    });
+  }
+
+  /**
+   * Send reaction to auction (viewer feedback)
+   */
+  sendReaction(auctionId: string, reactionType: 'heart' | 'thumbs_up' | 'applause' | 'fire'): void {
+    if (!this.socket?.connected) {
+      console.error('Not connected to auction WebSocket');
+      return;
+    }
+
+    this.socket.emit('send_reaction', {
+      auction_id: auctionId,
+      reaction_type: reactionType,
     });
   }
 

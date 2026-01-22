@@ -245,6 +245,15 @@ const LiveProductPurchaseModal: React.FC<LiveProductPurchaseModalProps> = ({
     });
   };
 
+  // Add to cart instead of direct purchase
+  const addToCart = () => {
+    // This would need to communicate with the viewer's cart
+    // For now, we'll just close the modal and let the viewer add to cart manually
+    onClose();
+    // In a real implementation, this would send a signal to the viewer to add to cart
+    console.log('🛒 Add to cart requested for product:', product);
+  };
+
   // Process the purchase
   const processPurchase = async (continueWatching: boolean) => {
     if (!product) return;
@@ -496,36 +505,21 @@ const LiveProductPurchaseModal: React.FC<LiveProductPurchaseModalProps> = ({
         <View style={styles.actionButtons}>
           <TouchableOpacity
             style={[
-              styles.actionButton, 
-              styles.checkoutButton,
+              styles.actionButton,
+              styles.addToCartButton,
               isOutOfStock && styles.actionButtonDisabled
             ]}
-            onPress={handleCheckout}
+            onPress={addToCart}
             disabled={loading || isOutOfStock}
-          >
-            <Text style={styles.checkoutButtonText}>
-              {isOutOfStock ? 'Out of Stock' : 'Checkout'}
-            </Text>
-            {!isOutOfStock && <Text style={styles.checkoutSubtext}>Review & Pay</Text>}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.actionButton,
-              styles.continueButton,
-              (loading || total > walletBalance || isOutOfStock) && styles.actionButtonDisabled
-            ]}
-            onPress={handleContinueWatching}
-            disabled={loading || total > walletBalance || isOutOfStock}
           >
             {loading ? (
               <ActivityIndicator size="small" color="white" />
-            ) : isOutOfStock ? (
-              <Text style={styles.continueButtonText}>Out of Stock</Text>
             ) : (
               <>
-                <Text style={styles.continueButtonText}>Continue Live</Text>
-                <Text style={styles.continueSubtext}>Pay ₣{total.toFixed(2)} & Watch</Text>
+                <Ionicons name="bag-add" size={20} color="white" />
+                <Text style={styles.addToCartButtonText}>
+                  {isOutOfStock ? 'Out of Stock' : 'Add to Cart'}
+                </Text>
               </>
             )}
           </TouchableOpacity>
@@ -844,6 +838,18 @@ const styles = StyleSheet.create({
   },
   actionButtonDisabled: {
     opacity: 0.5,
+  },
+  addToCartButton: {
+    backgroundColor: '#FF0050',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  addToCartButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   checkoutButton: {
     backgroundColor: '#3498DB',

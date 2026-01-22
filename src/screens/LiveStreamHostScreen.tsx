@@ -21,6 +21,7 @@ import { liveSalesAPI, LiveStream, Comment } from '../services/liveSalesAPI';
 import { auctionSounds } from '../utils/auctionSounds';
 import { WinnerAnnouncementAnimation } from '../components/WinnerAnnouncementAnimation';
 import { auctionsAPI, auctionSocket } from '../services/auctionsAPI';
+import AgoraUIKit from 'agora-rn-uikit';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -192,7 +193,7 @@ const LiveStreamHostScreen = () => {
   const { user } = useAuth();
 
   // Stream data from navigation params
-  const { streamId, stream: initialStream } = route.params || {};
+  const { streamId, stream: initialStream, agoraConfig: initialAgoraConfig } = route.params || {};
 
   // State management
   const [stream, setStream] = useState<LiveStream | null>(initialStream);
@@ -215,6 +216,10 @@ const LiveStreamHostScreen = () => {
   const [showAuctionControls, setShowAuctionControls] = useState(true);
   const [showWinnerAnimation, setShowWinnerAnimation] = useState(false);
   const [winnerData, setWinnerData] = useState<any>(null);
+
+  // Agora UIKit state
+  const [agoraConfig, setAgoraConfig] = useState<any>(initialAgoraConfig);
+  const [showAgoraUI, setShowAgoraUI] = useState(!!initialAgoraConfig);
 
   // Initialize auction sounds and WebSocket when entering auction stream
   useEffect(() => {
@@ -264,7 +269,8 @@ const LiveStreamHostScreen = () => {
       setLoading(true);
       const streamData = await liveSalesAPI.getStreamById(streamId);
       setStream(streamData);
-      setIsLive(streamData.status === 'live');
+      // If we have agoraConfig, we're already broadcasting, so force isLive to true
+      setIsLive(streamData.status === 'live' || !!agoraConfig);
 
       // Load comments
       const commentsData = await liveSalesAPI.getStreamComments(streamId);
@@ -555,35 +561,43 @@ const LiveStreamHostScreen = () => {
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Stream Preview */}
+        {/* Stream Preview / Agora Video UI */}
         <View style={styles.previewContainer}>
-          <View style={styles.previewPlaceholder}>
-            <Ionicons name="videocam" size={60} color="#666" />
-            <Text style={styles.previewText}>
-              {isLive ? 'Your live stream' : 'Stream preview'}
-            </Text>
-          </View>
+          {showAgoraUI && agoraConfig ? (
+            <AgoraUIKit
+              connectionData={agoraConfig}
+              rtcCallbacks={{
+                EndCall: () => {
+                  console.log('AgoraUIKit EndCall triggered');
+                  setShowAgoraUI(false);
+                  setAgoraConfig(null);
+                  navigation.goBack();
+                }
+              }}
+            />
+          ) : (
+            <View style={styles.previewPlaceholder}>
+              <Ionicons name="videocam" size={60} color="#666" />
+              <Text style={styles.previewText}>
+                {isLive ? 'Your live stream' : 'Stream preview'}
+              </Text>
+            </View>
+          )}
 
-          {/* Stream Controls */}
-          <View style={styles.streamControls}>
-            {!isLive ? (
-              <TouchableOpacity
-                style={styles.goLiveButton}
-                onPress={handleGoLive}
-              >
-                <Ionicons name="play" size={24} color="white" />
-                <Text style={styles.goLiveText}>Go Live</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={styles.endStreamButton}
-                onPress={handleEndStream}
-              >
-                <Ionicons name="stop" size={24} color="white" />
-                <Text style={styles.endStreamText}>End Stream</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          {/* Stream Controls - Only show when not using AgoraUIKit */}
+          {!showAgoraUI && (
+            <View style={styles.streamControls}>
+              {isLive ? (
+                <TouchableOpacity
+                  style={styles.endStreamButton}
+                  onPress={handleEndStream}
+                >
+                  <Ionicons name="stop" size={24} color="white" />
+                  <Text style={styles.endStreamText}>End Stream</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )}
         </View>
 
         {/* Analytics Dashboard */}

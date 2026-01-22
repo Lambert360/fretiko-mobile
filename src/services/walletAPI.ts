@@ -526,7 +526,11 @@ export const walletAPI = {
   // HELPER FUNCTIONS
   // ================================
 
-  formatFreti: (amount: number): string => {
+  formatFreti: (amount: number | null | undefined): string => {
+    // Handle null/undefined values
+    if (amount === null || amount === undefined || isNaN(amount)) {
+      return '₣0.00';
+    }
     // Format with commas using toLocaleString
     const formatted = amount.toLocaleString('en-US', {
       minimumFractionDigits: 2,
