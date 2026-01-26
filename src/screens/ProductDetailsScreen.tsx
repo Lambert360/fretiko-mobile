@@ -24,6 +24,7 @@ import { productsAPI, Product as APIProduct } from '../services/productsAPI';
 import { wishlistAPI } from '../services/wishlistAPI';
 import { chatAPI } from '../services/chatAPI';
 import ProductVideoPlayer from '../components/ProductVideoPlayer';
+import { MediaViewerModal } from '../components/MediaViewerModal';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -65,6 +66,10 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [isInWishlist, setIsInWishlist] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
+  const [mediaViewerType, setMediaViewerType] = useState<'image' | 'video'>('image');
+  const [mediaViewerUri, setMediaViewerUri] = useState<string>('');
   
   // Animation values
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -268,81 +273,102 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
     return (
       <View style={styles.imageCarouselContainer}>
         {hasVideo ? (
-          // Render video player with dynamic aspect ratio
-          <View style={{ width: screenWidth, height: screenHeight * 0.4, backgroundColor: '#000' }}>
-            <ProductVideoPlayer
-              videoUri={product.primary_video_url!}
-              shouldAutoPlay={true}
-              containerWidth={screenWidth}
-              maxHeight={screenHeight * 0.4}
-            />
-          </View>
-        ) : (
-          // Render image carousel
-          <FlatList
-            data={product.images}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onScroll={(event) => {
-              const index = Math.round(event.nativeEvent.contentOffset.x / screenWidth);
-              setCurrentImageIndex(index);
-            }}
-            renderItem={({ item }) => (
-              <Image source={{ uri: item }} style={styles.productImage} resizeMode="cover" />
-            )}
-            keyExtractor={(_, index) => index.toString()}
-          />
-        )}
-
-        {/* Image indicators (only show for images, not video) */}
-        {!hasVideo && product?.images && product.images.length > 1 && (
-          <View style={styles.imageIndicators}>
-            {product.images.map((_, index) => (
-              <View
-                key={index}
-                style={[
-                  styles.indicator,
-                  { backgroundColor: index === currentImageIndex ? '#3498DB' : 'rgba(255,255,255,0.4)' }
-                ]}
+          <>
+            {/* Video: pointerEvents none so overlay receives touches */}
+            <View
+              style={{ width: screenWidth, height: screenHeight * 0.4, backgroundColor: '#000' }}
+              pointerEvents="none"
+            >
+              <ProductVideoPlayer
+                videoUri={product.primary_video_url!}
+                shouldAutoPlay={true}
+                containerWidth={screenWidth}
+                maxHeight={screenHeight * 0.4}
               />
-            ))}
-          </View>
+            </View>
+            {/* Overlay for video: tap-to-open modal, then buttons on top */}
+            <View
+              style={[styles.carouselOverlay, { width: screenWidth, height: screenHeight * 0.4 }]}
+              pointerEvents="box-none"
+            >
+              <TouchableOpacity
+                style={StyleSheet.absoluteFill}
+                activeOpacity={1}
+                onPress={() => {
+                  setMediaViewerType('video');
+                  setMediaViewerUri(product.primary_video_url!);
+                  setMediaViewerVisible(true);
+                }}
+              />
+              <View style={styles.videoBadge}>
+                <Ionicons name="videocam" size={16} color="white" />
+                <Text style={styles.videoBadgeText}>VIDEO PRODUCT</Text>
+              </View>
+              <TouchableOpacity style={styles.wishlistButton} onPress={handleToggleWishlist}>
+                <Ionicons
+                  name={isInWishlist ? 'heart' : 'heart-outline'}
+                  size={24}
+                  color={isInWishlist ? '#E74C3C' : '#FFF'}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.shareButton} onPress={handleShareProduct}>
+                <Ionicons name="share-outline" size={22} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : (
+          <>
+            <FlatList
+              data={product.images}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onScroll={(event) => {
+                const index = Math.round(event.nativeEvent.contentOffset.x / screenWidth);
+                setCurrentImageIndex(index);
+              }}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={{ width: screenWidth }}
+                  activeOpacity={1}
+                  onPress={() => {
+                    setMediaViewerType('image');
+                    setMediaViewerUri(item);
+                    setMediaViewerVisible(true);
+                  }}
+                >
+                  <Image source={{ uri: item }} style={styles.productImage} resizeMode="cover" />
+                </TouchableOpacity>
+              )}
+              keyExtractor={(_, index) => index.toString()}
+            />
+            {product?.images && product.images.length > 1 && (
+              <View style={styles.imageIndicators}>
+                {product.images.map((_, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.indicator,
+                      { backgroundColor: index === currentImageIndex ? '#3498DB' : 'rgba(255,255,255,0.4)' }
+                    ]}
+                  />
+                ))}
+              </View>
+            )}
+            <View style={[styles.carouselOverlay, { width: screenWidth, height: screenHeight * 0.4 }]} pointerEvents="box-none">
+              <TouchableOpacity style={styles.wishlistButton} onPress={handleToggleWishlist}>
+                <Ionicons
+                  name={isInWishlist ? 'heart' : 'heart-outline'}
+                  size={24}
+                  color={isInWishlist ? '#E74C3C' : '#FFF'}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.shareButton} onPress={handleShareProduct}>
+                <Ionicons name="share-outline" size={22} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+          </>
         )}
-
-        {/* Video badge */}
-        {hasVideo && (
-          <View style={{
-            position: 'absolute',
-            top: 16,
-            left: 16,
-            backgroundColor: 'rgba(255,71,87,0.9)',
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-            borderRadius: 16,
-            flexDirection: 'row',
-            alignItems: 'center',
-          }}>
-            <Ionicons name="videocam" size={16} color="white" />
-            <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold', marginLeft: 4 }}>
-              VIDEO PRODUCT
-            </Text>
-          </View>
-        )}
-
-        {/* Wishlist button overlay */}
-        <TouchableOpacity style={styles.wishlistButton} onPress={handleToggleWishlist}>
-          <Ionicons
-            name={isInWishlist ? 'heart' : 'heart-outline'}
-            size={24}
-            color={isInWishlist ? '#E74C3C' : '#FFF'}
-          />
-        </TouchableOpacity>
-
-        {/* Share button overlay */}
-        <TouchableOpacity style={styles.shareButton} onPress={handleShareProduct}>
-          <Ionicons name="share-outline" size={22} color="#FFF" />
-        </TouchableOpacity>
       </View>
     );
   };
@@ -422,7 +448,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
 
       <Animated.ScrollView
         style={styles.scrollView}
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 120 + (insets.bottom || 0) }}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           { useNativeDriver: false }
@@ -520,7 +546,27 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
           {/* Description */}
           <View style={styles.descriptionContainer}>
             <Text style={styles.sectionTitle}>Description</Text>
-            <Text style={styles.description}>{product.description}</Text>
+            <Text 
+              style={styles.description}
+              numberOfLines={descriptionExpanded ? undefined : 3}
+            >
+              {product.description}
+            </Text>
+            {product.description && product.description.length > 150 && (
+              <TouchableOpacity
+                onPress={() => setDescriptionExpanded(!descriptionExpanded)}
+                style={styles.seeMoreButton}
+              >
+                <Text style={styles.seeMoreText}>
+                  {descriptionExpanded ? 'See Less' : 'See More'}
+                </Text>
+                <Ionicons 
+                  name={descriptionExpanded ? 'chevron-up' : 'chevron-down'} 
+                  size={16} 
+                  color="#007AFF" 
+                />
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Tags */}
@@ -566,7 +612,13 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
       </Animated.ScrollView>
 
       {/* Bottom Action Bar */}
-      <Animated.View style={[styles.bottomBar, { transform: [{ scale: scaleAnim }] }]}>
+      <Animated.View
+        style={[
+          styles.bottomBar,
+          { transform: [{ scale: scaleAnim }] },
+          { paddingBottom: Math.max(insets.bottom || 0, 12) + 12 },
+        ]}
+      >
         <TouchableOpacity style={styles.wishlistBarButton} onPress={handleToggleWishlist}>
           <Ionicons
             name={isInWishlist ? 'heart' : 'heart-outline'}
@@ -651,6 +703,13 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
           </TouchableOpacity>
         </KeyboardAvoidingView>
       </Modal>
+
+      <MediaViewerModal
+        visible={mediaViewerVisible}
+        onClose={() => setMediaViewerVisible(false)}
+        type={mediaViewerType}
+        uri={mediaViewerUri}
+      />
     </View>
   );
 };
@@ -691,6 +750,28 @@ const styles = StyleSheet.create({
   imageCarouselContainer: {
     height: screenHeight * 0.4,
     position: 'relative',
+  },
+  carouselOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  videoBadge: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    backgroundColor: 'rgba(255,71,87,0.9)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  videoBadgeText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginLeft: 4,
   },
   productImage: {
     width: screenWidth,
@@ -909,6 +990,18 @@ const styles = StyleSheet.create({
     color: '#CCC',
     fontSize: 14,
     lineHeight: 20,
+  },
+  seeMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  seeMoreText: {
+    color: '#007AFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 4,
   },
   tagsContainer: {
     marginBottom: 24,

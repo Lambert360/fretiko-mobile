@@ -6,15 +6,26 @@ import { walletAPI, Wallet, WalletStats, WalletTransaction } from '../services/w
 import { rewardsAPI, WalletDisplayRewards } from '../services/rewardsAPI';
 import * as SecureStore from 'expo-secure-store';
 import { realtimeAPI } from '../services/realtimeAPI';
+import { userAPI } from '../services/userAPI';
+import { useAuth } from '../contexts/AuthContext';
 
 interface WalletScreenProps {
   navigation: any;
 }
 
+interface UserProfile {
+  id: string;
+  username: string;
+  isSeller: boolean;
+  isRider?: boolean;
+}
+
 const WalletScreen = ({ navigation }: WalletScreenProps) => {
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   
   // State management
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [walletStats, setWalletStats] = useState<WalletStats | null>(null);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
@@ -30,6 +41,10 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
   const screenWidth = Dimensions.get('window').width;
   
   const currencies = ['FRETI', 'USD', 'EUR', 'GBP', 'NGN'];
+
+  useEffect(() => {
+    loadProfile();
+  }, []);
 
   useEffect(() => {
     loadWalletData();
@@ -64,6 +79,19 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
       escrowReleaseListener();
     };
   }, [wallet]);
+
+  const loadProfile = async () => {
+    try {
+      const profileData = await userAPI.getProfile();
+      setProfile(profileData);
+      console.log('✅ Profile loaded for wallet screen:', {
+        isSeller: profileData.isSeller,
+        isRider: profileData.isRider,
+      });
+    } catch (error) {
+      console.error('❌ Error loading profile:', error);
+    }
+  };
 
   const loadWalletData = async () => {
     try {
@@ -264,7 +292,8 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
             </View>
             
             <View style={styles.pendingEarningsRow}>
-              {pendingEscrows.vendorAmount > 0 && (
+              {/* Only show vendor earnings if user is a vendor (not a rider) */}
+              {profile?.isSeller && !profile?.isRider && pendingEscrows.vendorAmount > 0 && (
                 <View style={styles.pendingEarningItem}>
                   <Ionicons name="storefront-outline" size={24} color="#F39C12" />
                   <Text style={styles.pendingEarningLabel}>Vendor Earnings</Text>
@@ -275,7 +304,8 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
                 </View>
               )}
               
-              {pendingEscrows.riderAmount > 0 && (
+              {/* Only show rider earnings if user is a rider (not a vendor) */}
+              {profile?.isRider && !profile?.isSeller && pendingEscrows.riderAmount > 0 && (
                 <View style={styles.pendingEarningItem}>
                   <Ionicons name="bicycle-outline" size={24} color="#27AE60" />
                   <Text style={styles.pendingEarningLabel}>Delivery Fees</Text>

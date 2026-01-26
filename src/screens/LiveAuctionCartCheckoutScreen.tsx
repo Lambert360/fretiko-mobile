@@ -313,7 +313,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 120 + (insets.bottom || 0) }}
         showsVerticalScrollIndicator={false}
       >
         {/* Info Card */}

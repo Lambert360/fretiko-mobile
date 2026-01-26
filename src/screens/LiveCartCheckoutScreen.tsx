@@ -438,7 +438,7 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 120 + (insets.bottom || 0) }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"

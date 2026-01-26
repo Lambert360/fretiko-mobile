@@ -525,7 +525,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
       </Text>
       <TouchableOpacity
         style={styles.shopButton}
-        onPress={() => navigation.navigate('Home', { screen: 'HomeTab' })}
+        onPress={() => navigation.navigate('Home' as never)}
       >
         <Text style={styles.shopButtonText}>Start Shopping</Text>
       </TouchableOpacity>
@@ -629,7 +629,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
               data={cartItems}
               renderItem={renderCartItem}
               keyExtractor={(item) => item.id}
-              contentContainerStyle={styles.listContainer}
+              contentContainerStyle={[styles.listContainer, { paddingBottom: 140 + (insets.bottom || 0) }]}
               showsVerticalScrollIndicator={false}
               refreshControl={
                 <RefreshControl
@@ -643,7 +643,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
           ) : (
             // Multi-vendor - show grouped view
             <ScrollView
-              contentContainerStyle={styles.listContainer}
+              contentContainerStyle={[styles.listContainer, { paddingBottom: 140 + (insets.bottom || 0) }]}
               showsVerticalScrollIndicator={false}
               refreshControl={
                 <RefreshControl
@@ -713,7 +713,13 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
           {renderCartSummary()}
           
           {/* Bottom Action Bar */}
-          <Animated.View style={[styles.bottomBar, { transform: [{ scale: scaleAnim }] }]}>
+          <Animated.View
+            style={[
+              styles.bottomBar,
+              { transform: [{ scale: scaleAnim }] },
+              { paddingBottom: Math.max(insets.bottom || 0, 12) + 12 },
+            ]}
+          >
             <View style={styles.totalPreview}>
               <Text style={styles.totalPreviewLabel}>
                 Selected Total {selectedItems.size > 0 && `(${selectedItems.size} items)`}

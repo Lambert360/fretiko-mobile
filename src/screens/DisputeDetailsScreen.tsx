@@ -320,7 +320,7 @@ const DisputeDetailsScreen = () => {
         ]}>
           <Text style={[
             styles.messageText,
-            isStaff || isCurrentUser ? styles.currentUserMessageText : styles.otherUserMessageText,
+            isCurrentUser ? styles.currentUserMessageText : styles.otherUserMessageText,
           ]}>
             {message.message}
           </Text>
@@ -344,11 +344,11 @@ const DisputeDetailsScreen = () => {
                   <Ionicons
                     name={att.type === 'image' ? 'image-outline' : 'document-outline'}
                     size={16}
-                    color={isStaff || isCurrentUser ? '#FFFFFF' : '#007AFF'}
+                    color={isCurrentUser ? '#FFFFFF' : '#007AFF'}
                   />
                   <Text style={[
                     styles.attachmentText,
-                    isStaff || isCurrentUser ? styles.currentUserMessageText : styles.otherUserMessageText,
+                    isCurrentUser ? styles.currentUserMessageText : styles.otherUserMessageText,
                   ]}>
                     {att.type === 'image' ? 'View Image' : 'Open Document'}
                   </Text>
@@ -357,7 +357,7 @@ const DisputeDetailsScreen = () => {
             </View>
           )}
         </View>
-        <Text style={styles.messageTime}>
+        <Text style={[styles.messageTime, !isCurrentUser && styles.messageTimeLeft]}>
           {formatTime(message.createdAt)}
         </Text>
       </View>
@@ -683,7 +683,8 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   staffMessage: {
-    alignItems: 'center',
+    // Customer care should look like an incoming chat (left-aligned)
+    alignItems: 'flex-start',
   },
   staffBadge: {
     flexDirection: 'row',
@@ -747,6 +748,9 @@ const styles = StyleSheet.create({
     color: '#999',
     marginTop: 4,
     alignSelf: 'flex-end',
+  },
+  messageTimeLeft: {
+    alignSelf: 'flex-start',
   },
   emptyMessages: {
     alignItems: 'center',

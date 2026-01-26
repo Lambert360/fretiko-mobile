@@ -984,9 +984,14 @@ const IndividualChatScreen = () => {
           }
 
           // Show incoming call UI
+          // Use chatName as fallback since we're in a chat screen and know the other user
+          const callerName = callData.initiator?.full_name || 
+                            callData.initiator?.username || 
+                            chatName || 
+                            'Unknown Caller';
           const callInfo = {
             callSessionId: callData.callSessionId,
-            callerName: callData.initiator?.full_name || callData.initiator?.username || 'Unknown',
+            callerName: callerName,
             callType: callData.callType,
           };
           setIncomingCall(callInfo);
@@ -4317,6 +4322,39 @@ const IndividualChatScreen = () => {
     }
   };
 
+  const getHeaderAvatarUrl = () => {
+    if (typeof chatAvatar === 'string') return chatAvatar;
+    if (chatAvatar && typeof chatAvatar === 'object' && 'uri' in (chatAvatar as any)) {
+      return (chatAvatar as any).uri as string;
+    }
+    return null;
+  };
+
+  const handleHeaderAvatarPress = () => {
+    if (isAI) return;
+    const url = getHeaderAvatarUrl();
+    if (!url) return;
+    setSelectedImageUrl(url);
+    setImageViewerVisible(true);
+  };
+
+  const handleHeaderProfilePress = () => {
+    if (isAI) return;
+
+    const targetUserId = otherUserId || paramOtherUserId;
+    if (!targetUserId) {
+      Alert.alert('Profile unavailable', 'This chat does not have a linked user profile.');
+      return;
+    }
+
+    if (chatType === 'vendor' || chatType === 'rider') {
+      (navigation as any).navigate('PublicStore', { userId: targetUserId });
+      return;
+    }
+
+    (navigation as any).navigate('PublicProfile', { userId: targetUserId });
+  };
+
   const renderHeader = () => (
     <Animated.View style={[
       styles.header, 
@@ -4332,7 +4370,12 @@ const IndividualChatScreen = () => {
         </TouchableOpacity>
 
         <View style={styles.chatInfo}>
-          <View style={styles.avatarContainer}>
+          <TouchableOpacity
+            style={styles.avatarContainer}
+            activeOpacity={0.85}
+            onPress={handleHeaderAvatarPress}
+            disabled={isAI}
+          >
             <Image 
               source={typeof chatAvatar === 'string' ? { uri: chatAvatar } : chatAvatar} 
               style={styles.avatar} 
@@ -4341,11 +4384,16 @@ const IndividualChatScreen = () => {
             <View style={[styles.chatTypeIndicator, { backgroundColor: getChatTypeColor(chatType) }]}>
               <Ionicons name={getChatTypeIcon(chatType) as any} size={8} color="white" />
             </View>
-          </View>
+          </TouchableOpacity>
 
-          <View style={styles.chatDetails}>
+          <TouchableOpacity
+            style={styles.chatDetails}
+            activeOpacity={0.85}
+            onPress={handleHeaderProfilePress}
+            disabled={isAI}
+          >
             <View style={styles.nameContainer}>
-              <Text style={styles.chatName}>{chatName}</Text>
+              <Text style={styles.chatName} numberOfLines={1} ellipsizeMode="tail">{chatName}</Text>
               {verified && (
                 <Ionicons name="checkmark-circle" size={16} color="#3498DB" style={{ marginLeft: 4 }} />
               )}
@@ -4354,7 +4402,7 @@ const IndividualChatScreen = () => {
               {isOnline ? 'Online' : 'Last seen recently'}
               {isTyping && ' • typing...'}
             </Text>
-          </View>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.headerActions}>
@@ -4824,7 +4872,12 @@ const IndividualChatScreen = () => {
   };
 
   const renderMessageInput = () => (
-    <View style={[styles.inputContainer, { paddingBottom: insets.bottom + 10 }]}>
+    <View
+      style={[
+        styles.inputContainer,
+        { paddingBottom: Math.max(insets.bottom || 0, 12) + 12 },
+      ]}
+    >
       {/* Product Preview Card for Bargain Mode */}
       {bargainMode && productData && (
         <View style={styles.productPreviewContainer}>
@@ -7002,6 +7055,49 @@ const styles = StyleSheet.create({
   inCallOverlay: {
     flex: 1,
     backgroundColor: 'rgba(39, 174, 96, 0.9)',
+  },
+  // Audio call UI styles
+  audioCallContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 100,
+  },
+  audioCallAvatarContainer: {
+    position: 'relative',
+    marginBottom: 24,
+  },
+  audioCallAvatar: {
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    borderWidth: 4,
+    borderColor: '#FFFFFF',
+  },
+  audioCallMutedIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(231, 76, 60, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+  },
+  audioCallName: {
+    color: '#FFFFFF',
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  audioCallStatus: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 16,
+    textAlign: 'center',
   },
   inCallHeader: {
     position: 'absolute',

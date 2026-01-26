@@ -18,6 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { workspaceAPI, WorkspaceOrder } from '../services/workspaceAPI';
 import WorkspaceLiveStreamAnalytics from '../components/WorkspaceLiveStreamAnalytics';
 import PINInputModal from '../components/PINInputModal';
+import { walletAPI } from '../services/walletAPI';
 
 const WorkspaceScreen: React.FC = () => {
   const navigation = useNavigation();
@@ -146,6 +147,10 @@ const WorkspaceScreen: React.FC = () => {
         case 'accept':
           await workspaceAPI.acceptOrder(orderId);
           Alert.alert('Success', 'Order accepted successfully');
+          break;
+        case 'decline':
+          await workspaceAPI.declineOrder(orderId, 'Vendor rejected order');
+          Alert.alert('Order Rejected', 'Order has been rejected and the buyer will be refunded (escrow).');
           break;
         case 'ready':
           // ✅ Mark order ready WITHOUT PIN (rider delivery)
@@ -282,11 +287,7 @@ const WorkspaceScreen: React.FC = () => {
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-NG', {
-      style: 'currency',
-      currency: 'NGN',
-      minimumFractionDigits: 0,
-    }).format(amount);
+    return walletAPI.formatFreti(amount);
   };
 
   const formatTime = (dateString: string) => {
@@ -309,7 +310,7 @@ const WorkspaceScreen: React.FC = () => {
       >
         <View style={styles.orderHeader}>
           <View style={styles.orderInfo}>
-            <Text style={styles.orderNumber}>#{item.orderNumber}</Text>
+            <Text style={styles.orderNumber} numberOfLines={1} ellipsizeMode="tail">#{item.orderNumber}</Text>
             <View style={[styles.statusBadge, { backgroundColor: getOrderStatusColor(item.status) }]}>
               <Text style={styles.statusText}>{item.status.replace('_', ' ').toUpperCase()}</Text>
             </View>
@@ -319,17 +320,17 @@ const WorkspaceScreen: React.FC = () => {
               return (
                 <View style={[styles.sourceBadge, { backgroundColor: sourceInfo.color }]}>
                   <Ionicons name={sourceInfo.icon as any} size={10} color="white" />
-                  <Text style={styles.sourceText}>{sourceInfo.label}</Text>
+                  <Text style={styles.sourceText} numberOfLines={1}>{sourceInfo.label}</Text>
                 </View>
               );
             })()}
           </View>
-          <Text style={styles.orderTime}>{formatTime(item.createdAt)}</Text>
+          <Text style={styles.orderTime} numberOfLines={1}>{formatTime(item.createdAt)}</Text>
         </View>
 
         <View style={styles.customerInfo}>
           <Ionicons name="person-outline" size={16} color="#666" />
-          <Text style={styles.customerText}>{item.customerName}</Text>
+          <Text style={styles.customerText} numberOfLines={1} ellipsizeMode="tail">{item.customerName}</Text>
         </View>
 
         <View style={styles.orderDetails}>
@@ -348,34 +349,73 @@ const WorkspaceScreen: React.FC = () => {
 
         {quickAction && (
           <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={[
-                styles.quickActionButton, 
-                { 
-                  opacity: isLoadingAction ? 0.6 : (quickAction.enabled ? 1 : 0.4),
-                  backgroundColor: quickAction.enabled ? '#007AFF' : '#666'
-                }
-              ]}
-              onPress={() => quickAction.enabled && handleQuickAction(item.id, quickAction.action)}
-              disabled={isLoadingAction || !quickAction.enabled}
-            >
-              {isLoadingAction ? (
-                <ActivityIndicator size="small" color="white" />
-              ) : (
-                <>
-                  <Ionicons name={quickAction.icon as any} size={16} color="white" />
-                  <Text style={styles.quickActionText}>{quickAction.label}</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            {item.status === 'pending' ? (
+              <View style={styles.pendingActionsRow}>
+                <TouchableOpacity
+                  style={[styles.quickActionButton, styles.acceptButton, { opacity: isLoadingAction ? 0.6 : 1 }]}
+                  onPress={() => handleQuickAction(item.id, 'accept')}
+                  disabled={isLoadingAction}
+                >
+                  {isLoadingAction ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark-outline" size={16} color="white" />
+                      <Text style={styles.quickActionText}>Accept</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.viewDetailsButton}
-              onPress={() => navigation.navigate('VendorOrderDetails', { orderId: item.id })}
-            >
-              <Text style={styles.viewDetailsText}>View Details</Text>
-              <Ionicons name="chevron-forward" size={16} color="#007AFF" />
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.quickActionButton, styles.rejectButton, { opacity: isLoadingAction ? 0.6 : 1 }]}
+                  onPress={() => {
+                    Alert.alert(
+                      'Reject Order',
+                      'Are you sure you want to reject this order? The buyer will be refunded from escrow.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Reject', style: 'destructive', onPress: () => handleQuickAction(item.id, 'decline') },
+                      ]
+                    );
+                  }}
+                  disabled={isLoadingAction}
+                >
+                  <Ionicons name="close-outline" size={16} color="white" />
+                  <Text style={styles.quickActionText}>Reject</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={[
+                    styles.quickActionButton,
+                    {
+                      opacity: isLoadingAction ? 0.6 : (quickAction.enabled ? 1 : 0.4),
+                      backgroundColor: quickAction.enabled ? '#007AFF' : '#666',
+                    },
+                  ]}
+                  onPress={() => quickAction.enabled && handleQuickAction(item.id, quickAction.action)}
+                  disabled={isLoadingAction || !quickAction.enabled}
+                >
+                  {isLoadingAction ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <>
+                      <Ionicons name={quickAction.icon as any} size={16} color="white" />
+                      <Text style={styles.quickActionText}>{quickAction.label}</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.viewDetailsButton}
+                  onPress={() => navigation.navigate('VendorOrderDetails', { orderId: item.id })}
+                >
+                  <Text style={styles.viewDetailsText}>View Details</Text>
+                  <Ionicons name="chevron-forward" size={16} color="#007AFF" />
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         )}
       </TouchableOpacity>
@@ -885,12 +925,16 @@ const styles = StyleSheet.create({
   orderInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+    minWidth: 0,
   },
   orderNumber: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
     color: 'white',
-    marginRight: 12,
+    marginRight: 8,
+    flexShrink: 1,
   },
   statusBadge: {
     paddingHorizontal: 8,
@@ -909,16 +953,19 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 4,
     marginLeft: 8,
+    flexShrink: 0,
   },
   sourceText: {
     fontSize: 9,
     fontWeight: '600',
     color: 'white',
     marginLeft: 3,
+    maxWidth: 60,
   },
   orderTime: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#666',
+    flexShrink: 0,
   },
   customerInfo: {
     flexDirection: 'row',
@@ -929,6 +976,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#ccc',
     marginLeft: 6,
+    flex: 1,
+    flexShrink: 1,
   },
   orderDetails: {
     marginBottom: 16,
@@ -962,13 +1011,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  pendingActionsRow: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 10,
+  },
   quickActionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#007AFF',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
+    justifyContent: 'center',
+    flex: 1,
+  },
+  acceptButton: {
+    backgroundColor: '#007AFF',
+  },
+  rejectButton: {
+    backgroundColor: '#FF3B30',
   },
   quickActionText: {
     color: 'white',

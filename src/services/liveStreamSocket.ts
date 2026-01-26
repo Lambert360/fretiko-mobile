@@ -296,6 +296,10 @@ class LiveStreamSocketService {
       this.emit('showcase_item', data);
     });
 
+    this.socket.on('highlight_item', (data: any) => {
+      this.emit('highlight_item', data);
+    });
+
     this.socket.on('error', (error: any) => {
       console.error('❌ LiveStream Socket error:', error);
       this.emit('error', error);
@@ -426,6 +430,21 @@ class LiveStreamSocketService {
     }
 
     this.socket?.emit('showcase_item', {
+      streamId: this.currentStreamId,
+      ...data,
+    });
+  }
+
+  /**
+   * Emit highlight item event
+   */
+  emitHighlightItem(data: any): void {
+    if (!this.currentStreamId) {
+      console.error('❌ Not in a stream');
+      return;
+    }
+
+    this.socket?.emit('highlight_item', {
       streamId: this.currentStreamId,
       ...data,
     });

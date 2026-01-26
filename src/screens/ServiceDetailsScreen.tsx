@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { servicesAPI, VideoFeedItem } from '../services/servicesAPI';
 import ServiceVideoPlayer from '../components/ServiceVideoPlayer';
+import { MediaViewerModal } from '../components/MediaViewerModal';
 import { useAuth } from '../contexts/AuthContext';
 import { chatAPI } from '../services/chatAPI';
 
@@ -31,8 +32,18 @@ const ServiceDetailsScreen = () => {
   const [isPlaying, setIsPlaying] = useState(true);
   const [isLiked, setIsLiked] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
+  const [mediaViewerType, setMediaViewerType] = useState<'image' | 'video'>('image');
+  const [mediaViewerUri, setMediaViewerUri] = useState<string>('');
 
   const serviceId = route.params?.serviceId;
+
+  const openMediaViewer = (type: 'image' | 'video', uri: string) => {
+    setMediaViewerType(type);
+    setMediaViewerUri(uri);
+    setMediaViewerVisible(true);
+  };
 
   useEffect(() => {
     if (serviceId) {
@@ -214,21 +225,52 @@ const ServiceDetailsScreen = () => {
         </View>
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={{ paddingBottom: (insets.bottom || 0) + 24 }}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Video Section */}
         <View style={styles.videoContainer}>
           {service.videoUri ? (
-            <ServiceVideoPlayer
-              videoUri={service.videoUri}
-              isCurrentVideo={true}
-              shouldAutoPlay={isPlaying}
-              onLoad={(status) => console.log('Video loaded:', status)}
-              onPlaybackStatusUpdate={(status) => console.log('Video status:', status)}
-            />
+            <>
+              {/* Video: pointerEvents none so overlay receives touches */}
+              <View style={styles.videoWrapper} pointerEvents="none">
+                <ServiceVideoPlayer
+                  videoUri={service.videoUri}
+                  isCurrentVideo={true}
+                  shouldAutoPlay={isPlaying}
+                  onLoad={(status) => console.log('Video loaded:', status)}
+                  onPlaybackStatusUpdate={(status) => console.log('Video status:', status)}
+                />
+              </View>
+              {/* Overlay: tap-to-open modal + play/pause; videoActions sibling stays on top */}
+              <View style={styles.videoOverlay} pointerEvents="box-none">
+                <TouchableOpacity
+                  style={StyleSheet.absoluteFill}
+                  activeOpacity={1}
+                  onPress={() => openMediaViewer('video', service.videoUri!)}
+                />
+                <TouchableOpacity
+                  style={styles.playPauseButton}
+                  onPress={() => setIsPlaying(!isPlaying)}
+                >
+                  <Ionicons
+                    name={isPlaying ? 'pause' : 'play'}
+                    size={32}
+                    color="#FFFFFF"
+                  />
+                </TouchableOpacity>
+              </View>
+            </>
           ) : service.thumbnail ? (
-            <View style={styles.thumbnailContainer}>
+            <TouchableOpacity
+              style={styles.thumbnailContainer}
+              activeOpacity={1}
+              onPress={() => openMediaViewer('image', service.thumbnail!)}
+            >
               <Image source={{ uri: service.thumbnail }} style={styles.thumbnail} />
-            </View>
+            </TouchableOpacity>
           ) : (
             <View style={styles.noVideoContainer}>
               <Ionicons name="videocam-off" size={64} color="#888" />
@@ -236,23 +278,7 @@ const ServiceDetailsScreen = () => {
             </View>
           )}
 
-          {/* Video Controls Overlay */}
-          {service.videoUri && (
-            <View style={styles.videoOverlay}>
-              <TouchableOpacity
-                style={styles.playPauseButton}
-                onPress={() => setIsPlaying(!isPlaying)}
-              >
-                <Ionicons
-                  name={isPlaying ? "pause" : "play"}
-                  size={32}
-                  color="#FFFFFF"
-                />
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Video Actions */}
+          {/* Video Actions (like, comment, bookmark) - sibling of overlay, on top */}
           <View style={styles.videoActions}>
             <TouchableOpacity style={styles.actionButton} onPress={handleLike}>
               <Ionicons
@@ -281,7 +307,27 @@ const ServiceDetailsScreen = () => {
         {/* Service Information */}
         <View style={styles.serviceInfo}>
           <Text style={styles.serviceTitle}>{service.title}</Text>
-          <Text style={styles.serviceDescription}>{service.description}</Text>
+          <Text 
+            style={styles.serviceDescription}
+            numberOfLines={descriptionExpanded ? undefined : 3}
+          >
+            {service.description}
+          </Text>
+          {service.description && service.description.length > 150 && (
+            <TouchableOpacity
+              onPress={() => setDescriptionExpanded(!descriptionExpanded)}
+              style={styles.seeMoreButton}
+            >
+              <Text style={styles.seeMoreText}>
+                {descriptionExpanded ? 'See Less' : 'See More'}
+              </Text>
+              <Ionicons 
+                name={descriptionExpanded ? 'chevron-up' : 'chevron-down'} 
+                size={16} 
+                color="#007AFF" 
+              />
+            </TouchableOpacity>
+          )}
 
           {/* Provider Info */}
           <TouchableOpacity style={styles.providerSection} onPress={handleProfilePress}>
@@ -318,6 +364,13 @@ const ServiceDetailsScreen = () => {
           </View>
         </View>
       </ScrollView>
+
+      <MediaViewerModal
+        visible={mediaViewerVisible}
+        onClose={() => setMediaViewerVisible(false)}
+        type={mediaViewerType}
+        uri={mediaViewerUri}
+      />
     </View>
   );
 };
@@ -401,6 +454,9 @@ const styles = StyleSheet.create({
     height: screenHeight * 0.6,
     position: 'relative',
   },
+  videoWrapper: {
+    ...StyleSheet.absoluteFillObject,
+  },
   thumbnailContainer: {
     flex: 1,
     backgroundColor: '#1a1a1a',
@@ -474,7 +530,20 @@ const styles = StyleSheet.create({
     color: '#CCCCCC',
     fontSize: 16,
     lineHeight: 24,
-    marginBottom: 24,
+    marginBottom: 8,
+  },
+  seeMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 16,
+    alignSelf: 'flex-start',
+  },
+  seeMoreText: {
+    color: '#007AFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 4,
   },
   providerSection: {
     flexDirection: 'row',

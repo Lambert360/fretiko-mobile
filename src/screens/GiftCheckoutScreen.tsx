@@ -296,7 +296,7 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 120 + (insets.bottom || 0) }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -578,7 +578,7 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
       </ScrollView>
 
       {/* Bottom Action Bar */}
-      <View style={styles.bottomBar}>
+      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom || 0, 12) + 12 }]}>
         <View style={styles.totalPreview}>
           <Text style={styles.totalPreviewLabel}>Total Gift Cost</Text>
           <Text style={styles.totalPreviewValue}>

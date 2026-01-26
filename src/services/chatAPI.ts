@@ -72,6 +72,27 @@ class ChatAPI {
     this.token = token;
   }
 
+  // Get total unread message count across all conversations
+  async getTotalUnreadCount(): Promise<number> {
+    try {
+      // Fetch all conversations to sum up unread counts
+      // Using a larger limit to get more accurate count
+      const response = await api.get('/chat/conversations', {
+        params: { page: 1, limit: 100 }
+      });
+
+      const backendConversations = response.data.data || [];
+      const totalUnread = backendConversations.reduce((sum: number, conv: any) => {
+        return sum + (conv.unreadCount || 0);
+      }, 0);
+
+      return totalUnread;
+    } catch (error) {
+      console.error('Error fetching total unread count:', error);
+      return 0;
+    }
+  }
+
   // Get all conversations for the current user
   async getConversations(page = 1, limit = 20): Promise<{
     conversations: ChatConversation[];

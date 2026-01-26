@@ -95,6 +95,9 @@ const LiveStreamBroadcastScreen = () => {
   const [showcasedItem, setShowcasedItem] = useState<LiveStreamProduct | LiveStreamService | LivePortfolioService | null>(null);
   const [showShowcaseControls, setShowShowcaseControls] = useState(false);
 
+  // Highlighted item (dynamic host card)
+  const [highlightedItem, setHighlightedItem] = useState<LiveStreamProduct | LiveStreamService | LivePortfolioService | null>(null);
+
   // Portfolio services
   const [portfolioServices, setPortfolioServices] = useState<LivePortfolioService[]>([]);
   const [showPortfolioUploadModal, setShowPortfolioUploadModal] = useState(false);
@@ -236,6 +239,11 @@ const LiveStreamBroadcastScreen = () => {
             // Register remaining event listeners
             liveStreamSocket.on('comment', handleNewComment);
             liveStreamSocket.on('new_reaction', handleNewReaction);
+            liveStreamSocket.on('highlight_item', (data: any) => {
+              if (data.streamId === stream.id) {
+                setHighlightedItem(data.item);
+              }
+            });
             liveStreamSocket.on('viewer_count_update', (viewerData: any) => {
               console.log('📊 Viewer count update received:', viewerData);
               setViewerCount(viewerData.count || viewerData.current_viewers || 0);
@@ -509,6 +517,29 @@ const LiveStreamBroadcastScreen = () => {
     setEditingProduct(product);
     setEditLivePrice(product.price.toString());
     setEditLiveStock(product.quantity.toString());
+  };
+
+
+  // Handle highlighting an item (billboard feature)
+  const handleHighlightItem = (item: LiveStreamProduct | LiveStreamService | LivePortfolioService) => {
+    setHighlightedItem(item);
+    // Broadcast to viewers via WebSocket
+    liveStreamSocket.emitHighlightItem({
+      item: item,
+      highlightedBy: user?.id,
+      type: 'product' in item ? 'product' : 'service' in item ? 'service' : 'portfolio',
+    });
+  };
+
+  // Handle dismissing highlight card
+  const handleDismissHighlight = () => {
+    setHighlightedItem(null);
+    // Broadcast dismissal to viewers
+    liveStreamSocket.emitHighlightItem({
+      item: null,
+      highlightedBy: user?.id,
+      type: 'dismiss',
+    });
   };
 
   // Save product configuration and add to stream
@@ -1052,6 +1083,47 @@ const LiveStreamBroadcastScreen = () => {
         <Text style={styles.streamTitle}>{stream.title}</Text>
       </View>
 
+      {/* Dynamic Highlight Card - Always visible but transparent when not highlighted */}
+      <View style={[
+        styles.highlightCard,
+        highlightedItem ? styles.highlightCardVisible : styles.highlightCardTransparent
+      ]}>
+        {highlightedItem && (
+          <>
+            <Image
+              source={{
+                uri: 'product' in highlightedItem
+                  ? (highlightedItem as LiveStreamProduct).product.primary_image_url || 'https://via.placeholder.com/80'
+                  : 'images' in highlightedItem
+                  ? (highlightedItem as LivePortfolioService).images.find(img => img.is_primary)?.image_url || (highlightedItem as LivePortfolioService).images[0]?.image_url || 'https://via.placeholder.com/80'
+                  : 'https://via.placeholder.com/80'
+              }}
+              style={styles.highlightCardImage}
+            />
+            <View style={styles.highlightCardInfo}>
+              <Text style={styles.highlightCardTitle} numberOfLines={1}>
+                {'product' in highlightedItem
+                  ? (highlightedItem as LiveStreamProduct).product.name
+                  : 'title' in highlightedItem
+                  ? (highlightedItem as LivePortfolioService).title
+                  : (highlightedItem as LiveStreamService).service?.name}
+              </Text>
+              <Text style={styles.highlightCardPrice}>
+                ₣{'price' in highlightedItem
+                  ? (highlightedItem as LivePortfolioService).price
+                  : highlightedItem.live_price}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.highlightCardCloseButton}
+              onPress={handleDismissHighlight}
+            >
+              <Ionicons name="close" size={20} color="white" />
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+
       {/* Product/Service Showcase Overlay */}
       {showcasedItem && (
         <View style={styles.showcaseOverlay}>
@@ -1132,64 +1204,85 @@ const LiveStreamBroadcastScreen = () => {
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {/* Products */}
             {stream.products?.map((product: LiveStreamProduct) => (
-              <TouchableOpacity
-                key={product.id}
-                style={[
-                  styles.controlItem,
-                  showcasedItem?.id === product.id && styles.controlItemActive
-                ]}
-                onPress={() => setShowcasedItem(product)}
-              >
-                <Image
-                  source={{ uri: product.product.primary_image_url || 'https://via.placeholder.com/60' }}
-                  style={styles.controlItemImage}
-                />
-                <Text style={styles.controlItemText} numberOfLines={1}>
-                  {product.product.name}
-                </Text>
-              </TouchableOpacity>
+              <View key={product.id} style={styles.controlItemWrapper}>
+                <TouchableOpacity
+                  style={[
+                    styles.controlItem,
+                    showcasedItem?.id === product.id && styles.controlItemActive
+                  ]}
+                  onPress={() => setShowcasedItem(product)}
+                >
+                  <Image
+                    source={{ uri: product.product.primary_image_url || 'https://via.placeholder.com/60' }}
+                    style={styles.controlItemImage}
+                  />
+                  <Text style={styles.controlItemText} numberOfLines={1}>
+                    {product.product.name}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.highlightButton}
+                  onPress={() => handleHighlightItem(product)}
+                >
+                  <Ionicons name="star" size={16} color="#FFD700" />
+                </TouchableOpacity>
+              </View>
             ))}
 
             {/* Services */}
             {stream.services?.map((service: LiveStreamService) => (
-              <TouchableOpacity
-                key={service.id}
-                style={[
-                  styles.controlItem,
-                  showcasedItem?.id === service.id && styles.controlItemActive
-                ]}
-                onPress={() => setShowcasedItem(service)}
-              >
-                <View style={styles.serviceIcon}>
-                  <Ionicons name="briefcase" size={24} color="#3498DB" />
-                </View>
-                <Text style={styles.controlItemText} numberOfLines={1}>
-                  {service.service.name}
-                </Text>
-              </TouchableOpacity>
+              <View key={service.id} style={styles.controlItemWrapper}>
+                <TouchableOpacity
+                  style={[
+                    styles.controlItem,
+                    showcasedItem?.id === service.id && styles.controlItemActive
+                  ]}
+                  onPress={() => setShowcasedItem(service)}
+                >
+                  <View style={styles.serviceIcon}>
+                    <Ionicons name="briefcase" size={24} color="#3498DB" />
+                  </View>
+                  <Text style={styles.controlItemText} numberOfLines={1}>
+                    {service.service.name}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.highlightButton}
+                  onPress={() => handleHighlightItem(service)}
+                >
+                  <Ionicons name="star" size={16} color="#FFD700" />
+                </TouchableOpacity>
+              </View>
             ))}
 
             {/* Portfolio Services */}
             {portfolioServices.map((portfolio: LivePortfolioService) => (
-              <TouchableOpacity
-                key={portfolio.id}
-                style={[
-                  styles.controlItem,
-                  showcasedItem?.id === portfolio.id && styles.controlItemActive
-                ]}
-                onPress={() => setShowcasedItem(portfolio)}
-              >
-                <Image
-                  source={{ uri: portfolio.images.find(img => img.is_primary)?.image_url || portfolio.images[0]?.image_url || 'https://via.placeholder.com/60' }}
-                  style={styles.controlItemImage}
-                />
-                <View style={styles.portfolioBadge}>
-                  <Ionicons name="star" size={10} color="#FFD700" />
-                </View>
-                <Text style={styles.controlItemText} numberOfLines={1}>
-                  {portfolio.title}
-                </Text>
-              </TouchableOpacity>
+              <View key={portfolio.id} style={styles.controlItemWrapper}>
+                <TouchableOpacity
+                  style={[
+                    styles.controlItem,
+                    showcasedItem?.id === portfolio.id && styles.controlItemActive
+                  ]}
+                  onPress={() => setShowcasedItem(portfolio)}
+                >
+                  <Image
+                    source={{ uri: portfolio.images.find(img => img.is_primary)?.image_url || portfolio.images[0]?.image_url || 'https://via.placeholder.com/60' }}
+                    style={styles.controlItemImage}
+                  />
+                  <View style={styles.portfolioBadge}>
+                    <Ionicons name="star" size={10} color="#FFD700" />
+                  </View>
+                  <Text style={styles.controlItemText} numberOfLines={1}>
+                    {portfolio.title}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.highlightButton}
+                  onPress={() => handleHighlightItem(portfolio)}
+                >
+                  <Ionicons name="star" size={16} color="#FFD700" />
+                </TouchableOpacity>
+              </View>
             ))}
           </ScrollView>
 
@@ -1334,7 +1427,7 @@ const LiveStreamBroadcastScreen = () => {
         onRequestClose={() => setShowAnalytics(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
+          <View style={[styles.modalContainer, { paddingBottom: 20 + (insets.bottom || 0) }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Live Analytics</Text>
               <TouchableOpacity
@@ -1432,7 +1525,7 @@ const LiveStreamBroadcastScreen = () => {
         <View style={styles.modalOverlay}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.modalContainer}
+            style={[styles.modalContainer, { paddingBottom: 20 + (insets.bottom || 0) }]}
           >
             <ScrollView style={styles.modalScrollContent}>
               <View style={styles.modalHeader}>
@@ -1578,7 +1671,7 @@ const LiveStreamBroadcastScreen = () => {
         }}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
+          <View style={[styles.modalContainer, { paddingBottom: 20 + (insets.bottom || 0) }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {editingProduct ? 'Configure Product' : 'Select Product'}
@@ -2500,6 +2593,74 @@ const styles = StyleSheet.create({
   },
   reactionEmoji: {
     fontSize: 32,
+  },
+  // Highlight Card Styles
+  highlightCard: {
+    position: 'absolute',
+    top: 100,
+    left: 16,
+    right: 16,
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 10,
+    pointerEvents: 'auto',
+  },
+  highlightCardTransparent: {
+    backgroundColor: 'rgba(0,0,0,0)',
+    opacity: 0,
+  },
+  highlightCardVisible: {
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    opacity: 1,
+  },
+  highlightCardImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  highlightCardInfo: {
+    flex: 1,
+  },
+  highlightCardTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  highlightCardPrice: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  highlightCardCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  controlItemWrapper: {
+    position: 'relative',
+    marginRight: 12,
+  },
+  highlightButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    zIndex: 10,
   },
 });
 

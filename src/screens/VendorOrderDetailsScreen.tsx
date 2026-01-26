@@ -19,9 +19,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { workspaceAPI, WorkspaceOrder } from '../services/workspaceAPI';
+import { walletAPI } from '../services/walletAPI';
 import { disputesAPI } from '../services/disputesAPI';
 import { riderLocationAPI } from '../services/riderLocationAPI';
 import { realtimeAPI } from '../services/realtimeAPI';
+import { chatAPI } from '../services/chatAPI';
 import * as Location from 'expo-location';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -32,6 +34,8 @@ interface VendorOrderDetailsParams {
 interface OrderDetailsData extends WorkspaceOrder {
   vendor_id?: string; // ✅ Order-specific vendor ID
   rider_id?: string; // ✅ Order-specific rider ID
+  metadata?: any;
+  deliveryInstructions?: string;
   customer: {
     id: string;
     name: string;
@@ -334,16 +338,16 @@ const VendorOrderDetailsScreen: React.FC = () => {
           break;
         case 'decline':
           Alert.alert(
-            'Decline Order',
-            'Are you sure you want to decline this order?',
+            'Reject Order',
+            'Are you sure you want to reject this order? The buyer will be refunded from escrow.',
             [
               { text: 'Cancel', style: 'cancel' },
               {
-                text: 'Decline',
+                text: 'Reject',
                 style: 'destructive',
                 onPress: async () => {
                   await workspaceAPI.declineOrder(orderId, 'Vendor declined');
-                  Alert.alert('Order Declined', 'Order has been declined');
+                  Alert.alert('Order Rejected', 'Order has been rejected and the buyer will be refunded (escrow).');
                   navigation.goBack();
                 },
               },
@@ -408,16 +412,12 @@ const VendorOrderDetailsScreen: React.FC = () => {
     }
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-NG', {
-      style: 'currency',
-      currency: 'NGN',
-      minimumFractionDigits: 0,
-    }).format(amount);
-  };
+  const formatCurrency = (amount: number) => walletAPI.formatFreti(amount);
 
-  const formatTime = (dateString: string) => {
+  const formatTime = (dateString: string | null | undefined): string => {
+    if (dateString == null || String(dateString).trim() === '') return '—';
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) return '—';
     return date.toLocaleString('en-US', {
       month: 'short',
       day: '2-digit',
@@ -448,6 +448,103 @@ const VendorOrderDetailsScreen: React.FC = () => {
     }
   };
 
+  const getServiceBookingInfo = () => {
+    if (!orderDetails) return null;
+
+    // 1) Prefer order-level metadata (most reliable if backend provides it)
+    const meta = (orderDetails as any).metadata;
+    
+    // Check for serviceBooking structure (regular service bookings)
+    const metaBooking = meta?.serviceBooking;
+    const metaDate = metaBooking?.scheduledDate || metaBooking?.serviceDate;
+    const metaTime = metaBooking?.scheduledTime || metaBooking?.serviceTime;
+    const metaNotes = metaBooking?.notes;
+
+    // Check for portfolio booking structure (portfolio service bookings)
+    // Portfolio bookings store: metadata.booking_date, metadata.booking_time, metadata.service_notes
+    const portfolioDate = meta?.booking_date;
+    const portfolioTime = meta?.booking_time;
+    const portfolioNotes = meta?.service_notes;
+
+    // 2) Fallback: look at service item fields (some APIs attach to item)
+    const serviceItem: any = (orderDetails.items || []).find((i: any) => i?.isService) || null;
+    const itemDate = serviceItem?.scheduledDate || serviceItem?.serviceDate || serviceItem?.product_metadata?.booking_date;
+    const itemTime = serviceItem?.scheduledTime || serviceItem?.serviceTime || serviceItem?.product_metadata?.booking_time;
+    const itemNotes = serviceItem?.notes || serviceItem?.product_metadata?.service_notes;
+
+    // Combine all sources, prioritizing serviceBooking > portfolio > item fields
+    const scheduledDate = metaDate || portfolioDate || itemDate;
+    const scheduledTime = metaTime || portfolioTime || itemTime;
+    const buyerNotes = (metaNotes || portfolioNotes || itemNotes || '').toString().trim() || null;
+
+    if (!scheduledDate && !scheduledTime && !buyerNotes) return null;
+    return { scheduledDate, scheduledTime, buyerNotes };
+  };
+
+  const formatServiceSchedule = (scheduledDate?: string, scheduledTime?: string): string | null => {
+    if (!scheduledDate && !scheduledTime) return null;
+    const d = (scheduledDate || '').trim();
+    const t = (scheduledTime || '').trim();
+    const opts: Intl.DateTimeFormatOptions = {
+      weekday: 'short',
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    };
+
+    if (d && t) {
+      const tryParse = (c: string) => {
+        const dt = new Date(c);
+        return !isNaN(dt.getTime()) ? dt.toLocaleString(undefined, opts) : null;
+      };
+      const parsed =
+        tryParse(`${d}T${t}`) ??
+        tryParse(`${d}T${t}:00`) ??
+        tryParse(`${d} ${t}`);
+      if (parsed) return parsed;
+      return `${d} ${t}`;
+    }
+    if (d) return d;
+    return t || null;
+  };
+
+  const handleChatBuyer = async () => {
+    if (!orderDetails || !user) return;
+
+    try {
+      // Priority: rider > vendor > friend
+      let chatType: 'friend' | 'vendor' | 'rider' = 'vendor';
+      if ((user as any).is_rider) chatType = 'rider';
+      else if ((user as any).is_seller) chatType = 'vendor';
+
+      const conversation = await chatAPI.findOrCreateConversation([orderDetails.customer.id], chatType);
+
+      (navigation as any).navigate('IndividualChatScreen', {
+        chatId: conversation.id,
+        chatName: orderDetails.customer.name || 'Customer',
+        chatAvatar: orderDetails.customer.avatar || 'https://via.placeholder.com/56',
+        chatType: chatType as const,
+        isOnline: true,
+        verified: false,
+        isAI: false,
+        otherUserId: orderDetails.customer.id,
+      });
+    } catch (error) {
+      console.error('Error starting chat with buyer:', error);
+      Alert.alert('Error', 'Unable to start chat with buyer. Please try again.');
+    }
+  };
+
+  const handleCallBuyer = () => {
+    if (!orderDetails?.customer?.phone) return;
+    const phone = orderDetails.customer.phone.replace(/\s+/g, '');
+    Linking.openURL(`tel:${phone}`).catch(() => {
+      Alert.alert('Error', 'Could not open phone app');
+    });
+  };
+
   const getAvailableActions = () => {
     if (!orderDetails || !user) return [];
 
@@ -460,8 +557,8 @@ const VendorOrderDetailsScreen: React.FC = () => {
       switch (orderDetails.status) {
         case 'pending':
           actions.push(
-            { action: 'accept', label: 'Accept Order', icon: 'checkmark-outline', color: '#34C759' },
-            { action: 'decline', label: 'Decline Order', icon: 'close-outline', color: '#FF3B30' }
+            { action: 'accept', label: 'Accept', icon: 'checkmark-outline', color: '#34C759' },
+            { action: 'decline', label: 'Reject', icon: 'close-outline', color: '#FF3B30' }
           );
           break;
         case 'processing':
@@ -747,6 +844,7 @@ const VendorOrderDetailsScreen: React.FC = () => {
 
       <ScrollView
         style={styles.scrollView}
+        contentContainerStyle={{ paddingBottom: 24 + (insets.bottom || 0) }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -760,7 +858,11 @@ const VendorOrderDetailsScreen: React.FC = () => {
         {/* Order Header */}
         <View style={styles.orderHeader}>
           <View style={styles.orderInfo}>
-            <Text style={styles.orderNumber}>#{orderDetails.orderNumber}</Text>
+            <Text style={styles.orderNumber} numberOfLines={1} ellipsizeMode="tail">
+              #{orderDetails.orderNumber}
+            </Text>
+          </View>
+          <View style={styles.orderBadgesRow}>
             <View style={[styles.statusBadge, { backgroundColor: getStatusColor(orderDetails.status) }]}>
               <Text style={styles.statusText}>{orderDetails.status.replace('_', ' ').toUpperCase()}</Text>
             </View>
@@ -779,6 +881,37 @@ const VendorOrderDetailsScreen: React.FC = () => {
           <Text style={styles.orderTotal}>{formatCurrency(orderDetails.total)}</Text>
         </View>
 
+        {/* Service Booking Info (scheduled date/time + buyer notes) */}
+        {(() => {
+          const bookingInfo = getServiceBookingInfo();
+          if (!bookingInfo) return null;
+
+          const scheduleLabel = formatServiceSchedule(bookingInfo.scheduledDate, bookingInfo.scheduledTime);
+          const showSchedule = !!scheduleLabel;
+          const showBuyerNotes = !!bookingInfo.buyerNotes;
+
+          return (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Service Booking</Text>
+              <View style={styles.serviceBookingCard}>
+                {showSchedule && (
+                  <View style={styles.bookingRow}>
+                    <Ionicons name="calendar-outline" size={18} color="#3498DB" />
+                    <Text style={styles.bookingText}>{scheduleLabel}</Text>
+                  </View>
+                )}
+
+                {showBuyerNotes && (
+                  <View style={[styles.bookingRow, { marginTop: showSchedule ? 10 : 0 }]}>
+                    <Ionicons name="chatbox-ellipses-outline" size={18} color="#888" />
+                    <Text style={styles.bookingNotesText}>{bookingInfo.buyerNotes}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          );
+        })()}
+
         {/* Customer Information */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Customer Information</Text>
@@ -794,9 +927,14 @@ const VendorOrderDetailsScreen: React.FC = () => {
                 <Text style={styles.customerEmail}>{orderDetails.customer.email}</Text>
               )}
             </View>
-            <TouchableOpacity style={styles.callButton}>
-              <Ionicons name="call-outline" size={20} color="#007AFF" />
-            </TouchableOpacity>
+            <View style={styles.customerActions}>
+              <TouchableOpacity style={styles.actionIconButton} onPress={handleChatBuyer}>
+                <Ionicons name="chatbubble-ellipses-outline" size={20} color="#007AFF" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.actionIconButton} onPress={handleCallBuyer}>
+                <Ionicons name="call-outline" size={20} color="#007AFF" />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
@@ -919,8 +1057,8 @@ const VendorOrderDetailsScreen: React.FC = () => {
           </View>
         )}
 
-        {/* Delivery Information */}
-        {orderDetails.deliveryAddress && (
+        {/* Delivery Information - Only show if order is NOT pickup */}
+        {(orderDetails.deliveryType !== 'pickup' && (orderDetails.deliveryAddress || orderDetails.deliveryDetails?.address)) && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Delivery Information</Text>
@@ -937,7 +1075,9 @@ const VendorOrderDetailsScreen: React.FC = () => {
             <View style={styles.deliveryCard}>
             <View style={styles.addressRow}>
               <Ionicons name="location-outline" size={20} color="#666" />
-              <Text style={styles.deliveryAddress}>{orderDetails.deliveryDetails.address}</Text>
+              <Text style={styles.deliveryAddress}>
+                {orderDetails.deliveryDetails?.address || orderDetails.deliveryAddress || 'No delivery address provided'}
+              </Text>
             </View>
             {orderDetails.deliveryDetails.instructions && (() => {
               const INSTRUCTIONS_LIMIT = 120;
@@ -1058,23 +1198,49 @@ const VendorOrderDetailsScreen: React.FC = () => {
             </View>
 
             <View style={styles.mainActions}>
-              {getAvailableActions().map((actionItem, index) => (
-                <TouchableOpacity
-                  key={index}
-                  style={[styles.actionButton, { backgroundColor: actionItem.color }]}
-                  onPress={() => handleAction(actionItem.action)}
-                  disabled={actionLoading === actionItem.action}
-                >
-                  {actionLoading === actionItem.action ? (
-                    <ActivityIndicator size="small" color="white" />
-                  ) : (
-                    <>
-                      <Ionicons name={actionItem.icon as any} size={20} color="white" />
-                      <Text style={styles.actionButtonText}>{actionItem.label}</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              ))}
+              {orderDetails.status === 'pending' && getAvailableActions().length === 2 ? (
+                <View style={styles.pendingMainActionsRow}>
+                  {getAvailableActions().map((actionItem, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={[styles.actionButton, styles.halfActionButton, { backgroundColor: actionItem.color }]}
+                      onPress={() => handleAction(actionItem.action)}
+                      disabled={actionLoading === actionItem.action}
+                    >
+                      {actionLoading === actionItem.action ? (
+                        <ActivityIndicator size="small" color="white" />
+                      ) : (
+                        <>
+                          <Ionicons name={actionItem.icon as any} size={20} color="white" />
+                          <Text style={styles.actionButtonText} numberOfLines={1} ellipsizeMode="tail">
+                            {actionItem.label}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                getAvailableActions().map((actionItem, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={[styles.actionButton, { backgroundColor: actionItem.color }]}
+                    onPress={() => handleAction(actionItem.action)}
+                    disabled={actionLoading === actionItem.action}
+                  >
+                    {actionLoading === actionItem.action ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <>
+                        <Ionicons name={actionItem.icon as any} size={20} color="white" />
+                        <Text style={styles.actionButtonText} numberOfLines={1} ellipsizeMode="tail">
+                          {actionItem.label}
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                ))
+              )}
             </View>
           </View>
         )}
@@ -1195,10 +1361,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   orderNumber: {
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: 'bold',
     color: 'white',
-    marginRight: 12,
+    flexShrink: 1,
+  },
+  orderBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
   },
   statusBadge: {
     paddingHorizontal: 12,
@@ -1276,10 +1449,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
   },
-  callButton: {
+  customerActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionIconButton: {
     padding: 12,
     backgroundColor: '#222',
     borderRadius: 8,
+  },
+
+  serviceBookingCard: {
+    backgroundColor: '#111',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  bookingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  bookingText: {
+    flex: 1,
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '600',
+    lineHeight: 20,
+  },
+  bookingNotesText: {
+    flex: 1,
+    color: '#ccc',
+    fontSize: 14,
+    lineHeight: 20,
   },
   deliveryCard: {
     backgroundColor: '#111',
@@ -1462,6 +1665,8 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   quickActions: {
+    flexDirection: 'row',
+    gap: 8,
     marginBottom: 20,
   },
   prepTimeButton: {
@@ -1485,7 +1690,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#222',
     padding: 12,
     borderRadius: 8,
-    marginLeft: 8,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
   },
@@ -1497,18 +1701,27 @@ const styles = StyleSheet.create({
   mainActions: {
     gap: 12,
   },
+  pendingMainActionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 16,
     borderRadius: 12,
+    minHeight: 52,
+  },
+  halfActionButton: {
+    flex: 1,
   },
   actionButtonText: {
     color: 'white',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     marginLeft: 8,
+    flexShrink: 1,
   },
   // PIN Display Styles
   pinCard: {

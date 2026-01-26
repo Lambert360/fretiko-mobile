@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
 
@@ -464,16 +465,18 @@ const AppNavigator: React.FC = () => {
 
 export default function App() {
   return (
-    <ErrorBoundary>
-      <AuthProvider>
-        <CartProvider>
-          <FilterProvider>
-            <AppNavigator />
-            <StatusBar style="light" backgroundColor="#000000" />
-          </FilterProvider>
-        </CartProvider>
-      </AuthProvider>
-    </ErrorBoundary>
+    <SafeAreaProvider>
+      <ErrorBoundary>
+        <AuthProvider>
+          <CartProvider>
+            <FilterProvider>
+              <AppNavigator />
+              <StatusBar style="light" backgroundColor="#000000" />
+            </FilterProvider>
+          </CartProvider>
+        </AuthProvider>
+      </ErrorBoundary>
+    </SafeAreaProvider>
   );
 }
 

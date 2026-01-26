@@ -10,7 +10,8 @@ import {
   Alert,
   RefreshControl,
   ActivityIndicator,
-  Dimensions
+  Dimensions,
+  Modal
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
@@ -64,6 +65,40 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
   const [services, setServices] = useState<Service[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
   const [servicesLoading, setServicesLoading] = useState(false);
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+
+  const openImageViewer = (url?: string | null) => {
+    if (!url) return;
+    setSelectedImageUrl(url);
+    setImageViewerVisible(true);
+  };
+
+  const renderImageViewer = () => (
+    <Modal
+      visible={imageViewerVisible}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={() => setImageViewerVisible(false)}
+    >
+      <View style={styles.imageViewerOverlay}>
+        <TouchableOpacity
+          style={styles.imageViewerCloseButton}
+          onPress={() => setImageViewerVisible(false)}
+        >
+          <Ionicons name="close" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
+
+        {selectedImageUrl && (
+          <Image
+            source={{ uri: selectedImageUrl }}
+            style={styles.imageViewerImage}
+            resizeMode="contain"
+          />
+        )}
+      </View>
+    </Modal>
+  );
   
 
   useEffect(() => {
@@ -297,7 +332,9 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
           {/* Avatar Section */}
           <View style={styles.whatsappAvatarSection}>
             {profile?.avatarUrl ? (
-              <Image source={{ uri: profile.avatarUrl }} style={styles.whatsappAvatar} />
+              <TouchableOpacity activeOpacity={0.85} onPress={() => openImageViewer(profile.avatarUrl)}>
+                <Image source={{ uri: profile.avatarUrl }} style={styles.whatsappAvatar} />
+              </TouchableOpacity>
             ) : (
               <View style={styles.whatsappDefaultAvatar}>
                 <Ionicons name="person" size={60} color="#B0B0B0" />
@@ -362,6 +399,7 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
             </Text>
           </View>
         </ScrollView>
+        {renderImageViewer()}
       </SafeAreaView>
     );
   }
@@ -385,15 +423,17 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
         <View style={styles.heroSection}>
           <View style={styles.heroBackground}>
             {profile?.bgPicUrl ? (
-              <Image 
-                source={{ uri: profile.bgPicUrl }} 
-                style={styles.backgroundImage}
-                blurRadius={0.5}
-              />
+              <TouchableOpacity activeOpacity={0.95} onPress={() => openImageViewer(profile.bgPicUrl)}>
+                <Image 
+                  source={{ uri: profile.bgPicUrl }} 
+                  style={styles.backgroundImage}
+                  blurRadius={0.5}
+                />
+              </TouchableOpacity>
             ) : (
               <View style={styles.defaultBackground} />
             )}
-            <View style={styles.heroOverlay} />
+            <View style={styles.heroOverlay} pointerEvents="none" />
           </View>
 
           {/* Header */}
@@ -412,31 +452,43 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
 
           {/* User Info Overlay */}
           <View style={styles.userInfoOverlay}>
-            <View style={styles.avatarContainer}>
-              {profile?.avatarUrl ? (
-                <Image source={{ uri: profile.avatarUrl }} style={styles.avatar} />
-              ) : (
-                <View style={styles.defaultAvatar}>
-                  <Text style={styles.avatarInitials}>
-                    {profile?.username?.[0]?.toUpperCase() || 'U'}
-                  </Text>
+            {/* Horizontal Layout: Avatar on left, Info on right */}
+            <View style={styles.userInfoRow}>
+              {/* Avatar on left */}
+              <View style={styles.avatarContainerLeft}>
+                <View style={styles.avatarWrapper}>
+                  {profile?.avatarUrl ? (
+                    <TouchableOpacity activeOpacity={0.85} onPress={() => openImageViewer(profile.avatarUrl)}>
+                      <Image source={{ uri: profile.avatarUrl }} style={styles.avatar} />
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.defaultAvatar}>
+                      <Text style={styles.avatarInitials}>
+                        {profile?.username?.[0]?.toUpperCase() || 'U'}
+                      </Text>
+                    </View>
+                  )}
                 </View>
-              )}
-              <View style={styles.roleIndicator}>
-                <Text style={styles.roleText}>{getUserRole()}</Text>
               </View>
-            </View>
 
-            <View style={styles.userDetails}>
-              <Text style={styles.displayName}>
-                {profile?.username || 'User'}
-              </Text>
-              {profile?.bio && (
-                <Text style={styles.bioText}>{profile.bio}</Text>
-              )}
-              <Text style={styles.locationText}>
-                📍 {profile?.location || 'Location not set'}
-              </Text>
+              {/* Name, Bio, Location on right */}
+              <View style={styles.userDetailsRight}>
+                <Text style={styles.displayName}>
+                  {profile?.username || 'User'}
+                </Text>
+                {profile?.bio && (
+                  <Text style={styles.bioText} numberOfLines={3} ellipsizeMode="tail">
+                    {profile.bio}
+                  </Text>
+                )}
+                <Text style={styles.locationText}>
+                  📍 {profile?.location || 'Location not set'}
+                </Text>
+                {/* Role indicator beneath biodata */}
+                <View style={styles.roleIndicator}>
+                  <Text style={styles.roleText}>{getUserRole()}</Text>
+                </View>
+              </View>
             </View>
 
             {/* Social Stats & Plug Button */}
@@ -572,6 +624,7 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
       <TouchableOpacity style={styles.floatingChatButton} onPress={handleChatWithUser}>
         <Ionicons name="chatbubble" size={28} color="#FFFFFF" />
       </TouchableOpacity>
+      {renderImageViewer()}
     </SafeAreaView>
   );
 };
@@ -714,6 +767,30 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.4)',
   },
+
+  // Fullscreen image viewer
+  imageViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerCloseButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageViewerImage: {
+    width: '100%',
+    height: '80%',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -745,11 +822,25 @@ const styles = StyleSheet.create({
     right: 0,
     paddingHorizontal: 20,
     paddingBottom: 20,
+    paddingTop: 20,
     zIndex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  userInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    gap: 16,
+  },
+  avatarContainerLeft: {
+    alignItems: 'center',
   },
   avatarContainer: {
     alignItems: 'center',
     marginBottom: 16,
+  },
+  avatarWrapper: {
+    position: 'relative',
   },
   avatar: {
     width: 100,
@@ -779,6 +870,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
+    alignSelf: 'flex-start', // Don't span full width
   },
   roleText: {
     color: '#FFFFFF',
@@ -789,30 +881,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
+  userDetailsRight: {
+    flex: 1,
+    justifyContent: 'flex-start',
+  },
   displayName: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#FFFFFF',
-    marginBottom: 4,
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    marginBottom: 6,
+    textAlign: 'left',
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    textShadowRadius: 4,
   },
   bioText: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#FFFFFF',
-    textAlign: 'center',
-    marginBottom: 8,
-    lineHeight: 22,
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textAlign: 'left',
+    marginBottom: 6,
+    lineHeight: 20,
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    textShadowRadius: 4,
   },
   locationText: {
-    fontSize: 14,
-    color: '#B0B0B0',
-    textAlign: 'center',
+    fontSize: 13,
+    color: '#E0E0E0',
+    textAlign: 'left',
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   socialStats: {
     flexDirection: 'row',

@@ -8,6 +8,8 @@ import { walletAPI, Wallet, WalletStats } from '../services/walletAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
 import { giftAPI, UserGift } from '../services/giftAPI';
 import { fileUploadService } from '../services/fileUploadService';
+import { productsAPI, Product } from '../services/productsAPI';
+import { searchAPI } from '../services/searchAPI';
 import * as ImagePicker from 'expo-image-picker';
 
 interface UserProfile {
@@ -38,6 +40,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
   const [walletStats, setWalletStats] = useState<WalletStats | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [gifts, setGifts] = useState<UserGift[]>([]);
+  const [trendingProducts, setTrendingProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isOptionsVisible, setIsOptionsVisible] = useState(false);
@@ -124,14 +127,15 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
 
   const loadProfile = async () => {
     try {
-      // Load profile, stats, wallet, orders, and gifts in parallel
-      const [profileData, statsData, walletData, walletStatsData, ordersData, giftsData] = await Promise.all([
+      // Load profile, stats, wallet, orders, gifts, and trending products in parallel
+      const [profileData, statsData, walletData, walletStatsData, ordersData, giftsData, featuredData] = await Promise.all([
         userAPI.getProfile(),
         userAPI.getStats(),
         walletAPI.getWallet(),
         walletAPI.getWalletStats(),
         ordersAPI.getMyOrders({ status: ['delivered', 'shipped', 'processing', 'cancelled'] }),
-        giftAPI.getUserGifts().catch(() => ({ gifts: [], total_gifts: 0, total_value: 0 })) // Gracefully handle errors
+        giftAPI.getUserGifts().catch(() => ({ gifts: [], total_gifts: 0, total_value: 0 })), // Gracefully handle errors
+        searchAPI.getFeaturedContent('products', undefined, 10).catch(() => ({ products: [] })) // Get featured/trending products
       ]);
       
       setProfile(profileData);
@@ -142,6 +146,8 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
       setOrders(ordersData.slice(0, 10));
       // Get latest 10 gifts for profile display
       setGifts(giftsData.gifts.slice(0, 10));
+      // Set trending products from featured content
+      setTrendingProducts(featuredData.products || []);
     } catch (error: any) {
       console.error('Error loading profile:', error);
       
@@ -342,11 +348,24 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
     return statusMap[status] || status;
   };
 
-  const trendItems = [
-    { id: '1', price: '$99.99', trend: '+15%', image: 'https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?w=150' },
-    { id: '2', price: '$49.99', trend: '+8%', image: 'https://images.unsplash.com/photo-1556656793-08538906a9f8?w=150' },
-    { id: '3', price: '$199.99', trend: '+23%', image: 'https://images.unsplash.com/photo-1608043152269-423dbba4e7e1?w=150' },
-  ];
+  // Helper function to get product image
+  const getProductImage = (product: Product): string => {
+    if (product.primary_image_url) return product.primary_image_url;
+    if (product.images && product.images.length > 0) {
+      return Array.isArray(product.images) ? product.images[0] : product.images[0];
+    }
+    return 'https://via.placeholder.com/150?text=No+Image';
+  };
+
+  // Helper function to calculate trend percentage (based on view/like growth)
+  const getTrendPercentage = (product: Product): string => {
+    // Calculate a simple trend based on engagement metrics
+    const engagementScore = (product.view_count || 0) + (product.like_count || 0) * 3;
+    if (engagementScore > 100) return '+25%';
+    if (engagementScore > 50) return '+15%';
+    if (engagementScore > 20) return '+8%';
+    return '+5%';
+  };
 
   const walletViews = ['balance', 'rewards', 'activity'];
 
@@ -684,7 +703,30 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                   renderItem={({ item }) => {
                     // Get first item for display
                     const firstItem = item.items?.[0];
-                    const displayImage = firstItem?.image || 'https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?w=100';
+                    
+                    // Helper function to get product image from order item
+                    const getOrderItemImage = (orderItem: any): string => {
+                      if (!orderItem) return 'https://via.placeholder.com/100?text=No+Image';
+                      
+                      // Try multiple paths to get the image
+                      if (orderItem.image) return orderItem.image;
+                      if (orderItem.productImage) return orderItem.productImage;
+                      if (orderItem.product?.primary_image_url) return orderItem.product.primary_image_url;
+                      if (orderItem.product?.image_url) return orderItem.product.image_url;
+                      if (orderItem.product?.images && Array.isArray(orderItem.product.images) && orderItem.product.images.length > 0) {
+                        const primaryImage = orderItem.product.images.find((img: any) => img.is_primary);
+                        return primaryImage?.image_url || orderItem.product.images[0]?.image_url || orderItem.product.images[0];
+                      }
+                      if (orderItem.images && Array.isArray(orderItem.images) && orderItem.images.length > 0) {
+                        const primaryImage = orderItem.images.find((img: any) => img.is_primary);
+                        return primaryImage?.image_url || orderItem.images[0]?.image_url || orderItem.images[0];
+                      }
+                      
+                      // Fallback placeholder
+                      return 'https://via.placeholder.com/100?text=No+Image';
+                    };
+                    
+                    const displayImage = getOrderItemImage(firstItem);
                     const displayTitle = firstItem?.name || `Order #${item.orderNumber}`;
                     
                     return (
@@ -693,7 +735,11 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                         onPress={() => navigation.navigate('OrderTracking', { orderId: item.id })}
                       >
                         <View style={styles.orderImageContainer}>
-                          <Image source={{ uri: displayImage }} style={styles.orderImage} />
+                          <Image 
+                            source={{ uri: displayImage }} 
+                            style={styles.orderImage}
+                            onError={() => console.log('Failed to load order image:', displayImage)}
+                          />
                           <View
                             style={[
                               styles.statusBadge,
@@ -796,24 +842,38 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                   <Text style={styles.trendText}>📈 Hot</Text>
                 </View>
               </View>
-              <FlatList
-                data={trendItems}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                renderItem={({ item }) => (
-                  <View style={styles.trendCard}>
-                    <View style={styles.trendImageContainer}>
-                      <Image source={{ uri: item.image }} style={styles.trendImage} />
-                      <View style={styles.trendBadge}>
-                        <Text style={styles.trendPercentage}>{item.trend}</Text>
+              {trendingProducts.length > 0 ? (
+                <FlatList
+                  data={trendingProducts}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.trendCard}
+                      onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.trendImageContainer}>
+                        <Image 
+                          source={{ uri: getProductImage(item) }} 
+                          style={styles.trendImage}
+                          onError={() => console.log('Failed to load product image:', item.id)}
+                        />
+                        <View style={styles.trendBadge}>
+                          <Text style={styles.trendPercentage}>{getTrendPercentage(item)}</Text>
+                        </View>
                       </View>
-                    </View>
-                    <Text style={styles.trendPrice}>{item.price}</Text>
-                  </View>
-                )}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={styles.trendList}
-              />
+                      <Text style={styles.trendPrice} numberOfLines={1}>{walletAPI.formatFreti(item.price)}</Text>
+                    </TouchableOpacity>
+                  )}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.trendList}
+                />
+              ) : (
+                <View style={styles.emptyTrendsContainer}>
+                  <Text style={styles.emptyTrendsText}>No trending products at the moment</Text>
+                </View>
+              )}
             </Animated.View>
           </>
         )}
@@ -1473,6 +1533,16 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  emptyTrendsContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+  },
+  emptyTrendsText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 14,
+    fontStyle: 'italic',
   },
   loginContainer: {
     flex: 1,

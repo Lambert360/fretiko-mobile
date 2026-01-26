@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -35,6 +36,9 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [showGenderPicker, setShowGenderPicker] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const { signup } = useAuth();
 
@@ -125,7 +129,11 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
           <View style={styles.overlay} />
         </ImageBackground>
 
-        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 40 + (insets.bottom || 0) }]}
+        >
           <View style={styles.content}>
             {/* Logo/Title */}
             <View style={styles.header}>
@@ -177,28 +185,48 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
 
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Password</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.password}
-                  onChangeText={(value) => updateFormData('password', value)}
-                  placeholder="Create a password"
-                  placeholderTextColor="#666"
-                  secureTextEntry
-                  autoCapitalize="none"
-                />
+                <View style={styles.passwordInputContainer}>
+                  <TextInput
+                    style={[styles.input, styles.passwordInput]}
+                    value={formData.password}
+                    onChangeText={(value) => updateFormData('password', value)}
+                    placeholder="Create a password"
+                    placeholderTextColor="#666"
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                    style={styles.eyeButton}
+                    onPress={() => setShowPassword(prev => !prev)}
+                  >
+                    <Ionicons name={showPassword ? 'eye-off' : 'eye'} size={20} color="#666" />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Confirm Password</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.confirmPassword}
-                  onChangeText={(value) => updateFormData('confirmPassword', value)}
-                  placeholder="Confirm your password"
-                  placeholderTextColor="#666"
-                  secureTextEntry
-                  autoCapitalize="none"
-                />
+                <View style={styles.passwordInputContainer}>
+                  <TextInput
+                    style={[styles.input, styles.passwordInput]}
+                    value={formData.confirmPassword}
+                    onChangeText={(value) => updateFormData('confirmPassword', value)}
+                    placeholder="Confirm your password"
+                    placeholderTextColor="#666"
+                    secureTextEntry={!showConfirmPassword}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                    style={styles.eyeButton}
+                    onPress={() => setShowConfirmPassword(prev => !prev)}
+                  >
+                    <Ionicons name={showConfirmPassword ? 'eye-off' : 'eye'} size={20} color="#666" />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <View style={styles.inputGroup}>
@@ -376,6 +404,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#444',
+  },
+  passwordInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  passwordInput: {
+    flex: 1,
+    paddingRight: 44,
+  },
+  eyeButton: {
+    position: 'absolute',
+    right: 6,
+    height: 44,
+    width: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   genderSelector: {
     backgroundColor: 'rgba(30, 30, 30, 0.95)',

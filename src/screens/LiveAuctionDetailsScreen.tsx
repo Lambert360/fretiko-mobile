@@ -692,6 +692,7 @@ const LiveAuctionDetailsScreen = () => {
 
       <ScrollView
         style={styles.scrollView}
+        contentContainerStyle={{ paddingBottom: 140 + (insets.bottom || 0) }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
@@ -933,7 +934,12 @@ const LiveAuctionDetailsScreen = () => {
 
       {/* Action Button */}
       {user && (
-        <View style={styles.bidButtonContainer}>
+        <View
+          style={[
+            styles.bidButtonContainer,
+            { paddingBottom: (insets.bottom || 0) + 20 },
+          ]}
+        >
           {/* Upcoming auction - Show countdown until start time, then reveal button */}
           {auction.time_status === 'upcoming' && timeRemaining !== null && timeRemaining > 0 ? (
             <View style={styles.upcomingNotice}>

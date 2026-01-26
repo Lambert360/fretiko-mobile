@@ -258,6 +258,7 @@ const HomeScreen = () => {
   const [commentsServiceId, setCommentsServiceId] = useState<string | null>(null);
   const [likedServices, setLikedServices] = useState<Set<string>>(new Set());
   const [isFilterVisible, setFilterVisible] = useState(false);
+  const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
   
   // Use filters from context (persisted)
   const filters = activeTab === 'products' ? productFilters : serviceFilters;
@@ -3268,9 +3269,34 @@ const HomeScreen = () => {
                   </TouchableOpacity>
 
                   {item.description && String(item.description).trim() ? (
-                    <Text style={{ color: 'white', fontSize: 14, marginBottom: 12 }}>
-                      {String(item.description)}
-                    </Text>
+                    <View style={{ marginBottom: 12 }}>
+                      <Text 
+                        style={{ color: 'white', fontSize: 14 }}
+                        numberOfLines={expandedDescriptions.has(item.id) ? undefined : 2}
+                      >
+                        {String(item.description)}
+                      </Text>
+                      {item.description.length > 100 && (
+                        <TouchableOpacity
+                          onPress={() => {
+                            const next = new Set(expandedDescriptions);
+                            if (next.has(item.id)) next.delete(item.id);
+                            else next.add(item.id);
+                            setExpandedDescriptions(next);
+                          }}
+                          style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
+                        >
+                          <Text style={{ color: '#007AFF', fontSize: 12, fontWeight: '600', marginRight: 4 }}>
+                            {expandedDescriptions.has(item.id) ? 'See Less' : 'See More'}
+                          </Text>
+                          <Ionicons 
+                            name={expandedDescriptions.has(item.id) ? 'chevron-up' : 'chevron-down'} 
+                            size={14} 
+                            color="#007AFF" 
+                          />
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   ) : null}
 
                   <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold', marginBottom: 16 }}>

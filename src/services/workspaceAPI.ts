@@ -14,6 +14,7 @@ export interface WorkspaceOrder {
   deliveryAddress: string;
   deliveryFee: number;
   deliveryType?: 'pickup' | 'delivery'; // ✅ Add deliveryType
+  deliveryInstructions?: string; // Optional buyer instructions (when provided)
   riderId?: string | null; // ✅ Add riderId
   createdAt: string;
   updatedAt: string;
@@ -21,6 +22,15 @@ export interface WorkspaceOrder {
   items: WorkspaceOrderItem[];
   notes?: string;
   source?: 'regular' | 'live_stream' | 'auction' | 'service_booking'; // Order source
+  metadata?: {
+    [key: string]: any;
+    serviceBooking?: {
+      serviceId?: string;
+      scheduledDate?: string;
+      scheduledTime?: string;
+      notes?: string;
+    };
+  };
 }
 
 export interface WorkspaceOrderItem {
@@ -34,6 +44,11 @@ export interface WorkspaceOrderItem {
   category: string;
   isService: boolean;
   notes?: string;
+  // Service booking fields (for service_booking orders)
+  serviceDate?: string;
+  serviceTime?: string;
+  scheduledDate?: string;
+  scheduledTime?: string;
 }
 
 export interface WorkspaceStats {

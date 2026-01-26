@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   Alert,
   Animated,
@@ -44,7 +44,7 @@ const NotificationsScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { accessToken, isAuthenticated } = useAuth();
-  const [activeTab, setActiveTab] = useState<'All' | 'Mentions' | 'Verified'>('All');
+  const [activeTab, setActiveTab] = useState<'All' | 'Orders' | 'Chats'>('All');
   const [notifications, setNotifications] = useState<FrontendNotification[]>([]);
   const [stats, setStats] = useState<NotificationStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,21 +120,13 @@ const NotificationsScreen = () => {
 
       console.log(`📲 Loading notifications (tab: ${activeTab}, refresh: ${refresh})`);
       
-      let result: PaginatedNotifications;
-
-      // Load notifications based on active tab
-      if (activeTab === 'All') {
-        result = await notificationsAPI.getNotifications(accessToken, {
-          limit: 20,
-          offset: refresh ? 0 : offset,
-          sort_by: 'created_at',
-          sort_order: 'desc'
-        });
-      } else if (activeTab === 'Mentions') {
-        result = await notificationsAPI.getMentions(accessToken);
-      } else { // Verified
-        result = await notificationsAPI.getVerifiedNotifications(accessToken);
-      }
+      // Always load all notifications, then filter client-side for Orders and Chats tabs
+      const result = await notificationsAPI.getNotifications(accessToken, {
+        limit: 20,
+        offset: refresh ? 0 : offset,
+        sort_by: 'created_at',
+        sort_order: 'desc'
+      });
 
       console.log(`✅ Loaded ${result.notifications.length} notifications`);
 
@@ -171,7 +163,7 @@ const NotificationsScreen = () => {
   /**
    * Handle tab change
    */
-  const handleTabChange = useCallback((tab: 'All' | 'Mentions' | 'Verified') => {
+  const handleTabChange = useCallback((tab: 'All' | 'Orders' | 'Chats') => {
     setActiveTab(tab);
     setOffset(0);
     setNotifications([]);
@@ -420,39 +412,47 @@ const NotificationsScreen = () => {
   /**
    * Handle notification action buttons
    */
-  const handleAction = useCallback(async (notifId: string, action: string) => {
+  const handleAction = useCallback(async (notifId: string, action: string, notification?: FrontendNotification) => {
     try {
       console.log(`Action "${action}" pressed for notification ${notifId}`);
+
+      // Find notification if not provided
+      const notif = notification || notifications.find(n => n.id === notifId);
+      if (!notif) {
+        console.error('Notification not found:', notifId);
+        Alert.alert('Error', 'Notification not found');
+        return;
+      }
 
       // Mark notification as read when action is taken
       await markAsRead(notifId);
 
+      // Normalize action label for matching
+      const normalizedAction = action.toLowerCase().trim();
+
       // Handle specific actions
-      switch (action.toLowerCase()) {
+      switch (normalizedAction) {
         case 'view':
         case 'open':
         case 'see details':
-          // Find the notification and trigger its main navigation
-          const notification = notifications.find(n => n.id === notifId);
-          if (notification) {
-            await handleNotificationPress(notification);
-          }
+        case 'view details':
+          // Trigger main navigation based on notification type
+          await handleNotificationPress(notif);
           break;
 
         case 'view profile':
+        case 'profile':
           // Navigate to the profile of the user in the notification
-          const profileNotification = notifications.find(n => n.id === notifId);
-          if (profileNotification) {
-            const userId = profileNotification.data?.requester_id ||
-                          profileNotification.data?.connected_user_id ||
-                          profileNotification.data?.acceptedBy ||
-                          profileNotification.data?.sender_id;
-            if (userId) {
-              console.log('Navigating to profile:', userId);
-              navigation.navigate('PublicProfile' as never, { userId } as never);
-            } else {
-              Alert.alert('Error', 'Unable to find user profile');
-            }
+          const userId = notif.data?.requester_id ||
+                        notif.data?.connected_user_id ||
+                        notif.data?.acceptedBy ||
+                        notif.data?.sender_id ||
+                        notif.data?.user_id;
+          if (userId) {
+            console.log('Navigating to profile:', userId);
+            navigation.navigate('PublicProfile' as never, { userId } as never);
+          } else {
+            Alert.alert('Error', 'Unable to find user profile');
           }
           break;
 
@@ -460,11 +460,11 @@ const NotificationsScreen = () => {
         case 'confirm':
         case 'accept request':
           // For connection requests, navigate to connection requests screen
-          const acceptNotification = notifications.find(n => n.id === notifId);
-          if (acceptNotification?.type === 'connection_request') {
+          if (notif.type === 'connection_request') {
             navigation.navigate('ConnectionRequests' as never);
           } else {
-            Alert.alert('Action Confirmed', `${action} completed successfully`);
+            // For other types, trigger main navigation
+            await handleNotificationPress(notif);
           }
           break;
 
@@ -476,20 +476,11 @@ const NotificationsScreen = () => {
           break;
 
         case 'reply':
-          // For chat notifications, open the conversation
-          const chatNotification = notifications.find(n => n.id === notifId);
-          if (chatNotification?.type === 'chat') {
-            await handleNotificationPress(chatNotification);
-          } else {
-            Alert.alert('Reply', 'Opening reply interface...');
-          }
-          break;
-
         case 'view chat':
+        case 'chat':
           // For chat notifications, open the conversation
-          const viewChatNotification = notifications.find(n => n.id === notifId);
-          if (viewChatNotification?.type === 'chat') {
-            await handleNotificationPress(viewChatNotification);
+          if (notif.type === 'chat') {
+            await handleNotificationPress(notif);
           } else {
             Alert.alert('Chat', 'Unable to open chat conversation');
           }
@@ -497,17 +488,82 @@ const NotificationsScreen = () => {
 
         case 'track order':
         case 'track':
-          const orderNotification = notifications.find(n => n.id === notifId);
-          if (orderNotification?.data?.order_id) {
-            navigation.navigate('Orders', {
-              screen: 'OrderTracking',
-              params: { orderId: orderNotification.data.order_id }
-            } as any);
+        case 'view order':
+          // Navigate to order details or tracking
+          const orderId = notif.data?.order_id;
+          if (orderId) {
+            if (normalizedAction.includes('track')) {
+              navigation.navigate('OrderTracking', { orderId });
+            } else {
+              navigation.navigate('GroupedOrder', { orderId });
+            }
+          } else {
+            Alert.alert('Error', 'Order ID not found');
+          }
+          break;
+
+        case 'view product':
+        case 'product':
+          // Navigate to product details
+          const productId = notif.data?.product_id;
+          if (productId) {
+            navigation.navigate('ProductDetails', { productId });
+          } else {
+            Alert.alert('Error', 'Product ID not found');
+          }
+          break;
+
+        case 'view service':
+        case 'service':
+          // Navigate to service details
+          const serviceId = notif.data?.service_id;
+          if (serviceId) {
+            navigation.navigate('ServiceDetails', { serviceId });
+          } else {
+            Alert.alert('Error', 'Service ID not found');
+          }
+          break;
+
+        case 'view dispute':
+        case 'dispute':
+          // Navigate to dispute details
+          const disputeId = notif.data?.dispute_id;
+          if (disputeId) {
+            (navigation as any).navigate('DisputeDetails', { disputeId });
+          } else {
+            (navigation as any).navigate('Disputes');
+          }
+          break;
+
+        case 'view wallet':
+        case 'wallet':
+        case 'payment':
+          // Navigate to wallet
+          const transactionId = notif.data?.transaction_id;
+          if (transactionId) {
+            // Navigate to wallet with transaction details if available
+            navigation.navigate('Wallet' as any);
+          } else {
+            navigation.navigate('Wallet' as any);
+          }
+          break;
+
+        case 'view stream':
+        case 'live':
+        case 'stream':
+          // Navigate to live stream
+          const streamId = notif.data?.stream_id;
+          if (streamId) {
+            navigation.navigate('LiveStreamViewer', { streamId });
+          } else {
+            Alert.alert('Error', 'Stream ID not found');
           }
           break;
 
         default:
-          Alert.alert('Action', `${action} completed`);
+          // For unknown actions, try to navigate based on notification type
+          console.log(`Unknown action: ${action}, attempting default navigation`);
+          await handleNotificationPress(notif);
           break;
       }
     } catch (error) {
@@ -663,12 +719,23 @@ const NotificationsScreen = () => {
     }
   };
 
-  const filteredNotifications = notifications.filter(notif => {
-    if (activeTab === 'All') return true;
-    if (activeTab === 'Mentions') return ['social', 'chat'].includes(notif.type);
-    if (activeTab === 'Verified') return ['order', 'payment', 'system'].includes(notif.type);
-    return true;
-  });
+  const filteredNotifications = useMemo(() => {
+    const filtered = notifications.filter(notif => {
+      if (activeTab === 'All') {
+        return true;
+      }
+      if (activeTab === 'Orders') {
+        // Filter order-related notifications
+        return ['order', 'delivery', 'payment'].includes(notif.type);
+      }
+      if (activeTab === 'Chats') {
+        // Filter chat notifications
+        return notif.type === 'chat';
+      }
+      return true;
+    });
+    return filtered;
+  }, [notifications, activeTab]);
 
   const unreadCount = stats?.unread_count || 0;
 
@@ -702,11 +769,11 @@ const NotificationsScreen = () => {
 
       {/* Tabs - Twitter style */}
       <View style={styles.tabsContainer}>
-        {['All', 'Mentions', 'Verified'].map((tab) => (
+        {['All', 'Orders', 'Chats'].map((tab) => (
           <TouchableOpacity
             key={tab}
             style={[styles.tab, activeTab === tab && styles.activeTab]}
-            onPress={() => handleTabChange(tab as any)}
+            onPress={() => handleTabChange(tab as 'All' | 'Orders' | 'Chats')}
           >
             <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
               {tab}
@@ -836,7 +903,10 @@ const NotificationsScreen = () => {
                       styles.actionButton,
                       action.type === 'primary' ? styles.primaryAction : styles.secondaryAction
                     ]}
-                    onPress={() => handleAction(item.id, action.label)}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleAction(item.id, action.label, item);
+                    }}
                   >
                     <Text style={[
                       styles.actionText,

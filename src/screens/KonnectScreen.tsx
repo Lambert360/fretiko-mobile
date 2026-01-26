@@ -804,11 +804,23 @@ const KonnectScreen = () => {
       extrapolate: 'clamp',
     });
     
+    const canCreateStories = !!(userProfile?.isSeller || userProfile?.isRider);
+    const hasAnyStories = storiesGroups.some(group => (group.stories?.length || 0) > 0);
+
+    // Regular users: only show this section when there are stories
+    if (!storiesLoading && !canCreateStories && !hasAnyStories) {
+      return null;
+    }
+
+    // For vendors/riders with no stories, use minimal height (just title + button)
+    const isEmptyState = canCreateStories && !hasAnyStories && !storiesLoading;
+    const containerHeight = isEmptyState ? undefined : storiesHeight;
+
     return (
       <Animated.View 
         style={[
-          styles.storiesStickyContainer,
-          { height: storiesHeight }
+          isEmptyState ? styles.storiesStickyContainerMinimal : styles.storiesStickyContainer,
+          containerHeight && { height: containerHeight }
         ]}
       >
         {/* Plugs Stories */}
@@ -824,37 +836,27 @@ const KonnectScreen = () => {
             <Text style={styles.storiesLoadingText}>Loading stories...</Text>
           </View>
         ) : (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.storiesList}
-            contentContainerStyle={styles.storiesListContent}
-          >
-            {storiesGroups.length === 0 ? (
-              // Empty state for regular users (not sellers/riders)
-              !(userProfile?.isSeller || userProfile?.isRider) ? (
-                <View style={styles.regularUserEmptyState}>
-                  <Ionicons name="people-outline" size={40} color="rgba(255,255,255,0.4)" />
-                  <Text style={styles.emptyStateMessage}>Stories from your plugs will appear here</Text>
-                  <TouchableOpacity
-                    style={styles.findPlugsButton}
-                    onPress={() => {
-                      (navigation as any).navigate('Search');
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }}
-                  >
-                    <Ionicons name="search" size={18} color="#FFFFFF" />
-                    <Text style={styles.findPlugsButtonText}>Find Plugs</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                // Empty state for sellers/riders (generic message)
-                <View style={styles.noStoriesContainer}>
-                  <Text style={styles.noStoriesText}>No stories available</Text>
-                </View>
-              )
-            ) : (
-              storiesGroups.map((group, index) => {
+          canCreateStories && !hasAnyStories ? (
+            <View style={styles.uploadOnlyContainer}>
+              <TouchableOpacity
+                style={styles.uploadStoryButton}
+                onPress={() => {
+                  (navigation as any).navigate('StoryUpload');
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+              >
+                <Ionicons name="add-circle" size={44} color="#3498DB" />
+                <Text style={styles.uploadStoryButtonText}>Upload story</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.storiesList}
+              contentContainerStyle={styles.storiesListContent}
+            >
+              {storiesGroups.map((group, index) => {
                 const isMyStory = group.user.username === 'Your Story';
                 const hasStories = group.stories.length > 0;
                 const hasUnviewed = group.hasUnviewed;
@@ -980,9 +982,9 @@ const KonnectScreen = () => {
                   </TouchableOpacity>
                   </Animated.View>
                 );
-              })
-            )}
-          </ScrollView>
+              })}
+            </ScrollView>
+          )
         )}
         </Animated.View>
       </Animated.View>
@@ -990,7 +992,13 @@ const KonnectScreen = () => {
   };
 
   const renderQuickActions = () => (
-    <View style={styles.quickActions}>
+    <View style={styles.quickActionsContainer}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.quickActionsScrollView}
+        contentContainerStyle={styles.quickActions}
+      >
       <TouchableOpacity
         style={[
           styles.quickAction,
@@ -1060,25 +1068,27 @@ const KonnectScreen = () => {
       <TouchableOpacity
         style={[
           styles.quickAction,
-          { backgroundColor: activeFilter === 'support' ? '#3498DB' : '#3498DB20' }
+          { backgroundColor: '#3498DB20' }
         ]}
         onPress={async () => {
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          setActiveFilter(activeFilter === 'support' ? 'all' : 'support');
+          // Customer care should take users to disputes (support flow)
+          (navigation as any).navigate('Disputes');
         }}
       >
         <Ionicons
           name="headset"
           size={18}
-          color={activeFilter === 'support' ? '#FFFFFF' : '#3498DB'}
+          color={'#3498DB'}
         />
         <Text style={[
           styles.quickActionText,
-          { color: activeFilter === 'support' ? '#FFFFFF' : '#3498DB' }
+          { color: '#3498DB' }
         ]}>
-          Support
+          Customer Care
         </Text>
       </TouchableOpacity>
+      </ScrollView>
     </View>
   );
 
@@ -1449,7 +1459,7 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: 'rgba(0,0,0,0.95)',
     paddingHorizontal: 20,
-    paddingBottom: 16,
+    paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.1)',
   },
@@ -1457,7 +1467,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginBottom: 8,
   },
   backButton: {
     width: 40,
@@ -1511,11 +1521,20 @@ const styles = StyleSheet.create({
   storiesStickyContainer: {
     backgroundColor: 'rgba(0,0,0,0.95)',
     paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 16,
+    paddingTop: 4,
+    paddingBottom: 4,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.1)',
-    overflow: 'hidden', // Ensure content doesn't overflow when shrinking
+    overflow: 'hidden',
+  },
+  storiesStickyContainerMinimal: {
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+    overflow: 'hidden',
   },
   storiesContainer: {
     // marginBottom removed since it's now in sticky container
@@ -1524,22 +1543,43 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   storiesList: {
     flexDirection: 'row',
-    paddingVertical: 4,
+    paddingVertical: 2,
   },
   storiesListContent: {
     paddingRight: 20, // Add padding at the end of scroll
   },
   storiesLoadingContainer: {
-    paddingVertical: 20,
+    paddingVertical: 8,
     alignItems: 'center',
   },
   storiesLoadingText: {
     color: 'rgba(255, 255, 255, 0.6)',
     fontSize: 14,
+  },
+  uploadOnlyContainer: {
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadStoryButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 152, 219, 0.35)',
+    backgroundColor: 'rgba(52, 152, 219, 0.10)',
+  },
+  uploadStoryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   noStoriesContainer: {
     paddingVertical: 20,
@@ -1737,30 +1777,45 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
+  quickActionsContainer: {
+    paddingVertical: 0,
+    marginVertical: 0,
+  },
+  quickActionsScrollView: {
+    paddingVertical: 0,
+    marginVertical: 0,
+  },
   quickActions: {
+    paddingHorizontal: 20,
+    paddingTop: 0,
+    paddingBottom: 0,
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
+    minHeight: 0,
   },
   quickAction: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
     gap: 6,
-    flex: 1,
+    flexGrow: 0,
+    flexShrink: 0,
   },
   quickActionText: {
     fontSize: 11,
     fontWeight: '700',
+    flexShrink: 1,
   },
   chatsList: {
     flex: 1,
   },
   chatsListContent: {
-    paddingTop: 8,
+    paddingTop: 4,
   },
   chatItemContainer: {
     paddingHorizontal: 20,

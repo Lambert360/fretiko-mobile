@@ -14,6 +14,8 @@ import {
   Dimensions,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -25,8 +27,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [needsMigration, setNeedsMigration] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const { signin, migrate } = useAuth();
 
@@ -110,7 +115,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
           <View style={styles.overlay} />
         </ImageBackground>
 
-        <View style={styles.content}>
+        <View style={[styles.content, { paddingBottom: 40 + (insets.bottom || 0) }]}>
           {/* Logo/Title */}
           <View style={styles.header}>
             <Text style={styles.title}>
@@ -141,30 +146,50 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
             {!needsMigration && (
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Password</Text>
-                <TextInput
-                  style={styles.input}
-                  value={password}
-                  onChangeText={setPassword}
-                  placeholder="Enter your password"
-                  placeholderTextColor="#666"
-                  secureTextEntry
-                  autoCapitalize="none"
-                />
+                <View style={styles.passwordInputContainer}>
+                  <TextInput
+                    style={[styles.input, styles.passwordInput]}
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder="Enter your password"
+                    placeholderTextColor="#666"
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                    style={styles.eyeButton}
+                    onPress={() => setShowPassword(prev => !prev)}
+                  >
+                    <Ionicons name={showPassword ? 'eye-off' : 'eye'} size={20} color="#666" />
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
 
             {needsMigration && (
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>New Password</Text>
-                <TextInput
-                  style={styles.input}
-                  value={newPassword}
-                  onChangeText={setNewPassword}
-                  placeholder="Enter a new password (min 6 characters)"
-                  placeholderTextColor="#666"
-                  secureTextEntry
-                  autoCapitalize="none"
-                />
+                <View style={styles.passwordInputContainer}>
+                  <TextInput
+                    style={[styles.input, styles.passwordInput]}
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                    placeholder="Enter a new password (min 6 characters)"
+                    placeholderTextColor="#666"
+                    secureTextEntry={!showNewPassword}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={showNewPassword ? 'Hide new password' : 'Show new password'}
+                    style={styles.eyeButton}
+                    onPress={() => setShowNewPassword(prev => !prev)}
+                  >
+                    <Ionicons name={showNewPassword ? 'eye-off' : 'eye'} size={20} color="#666" />
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
 
@@ -244,7 +269,22 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
     justifyContent: 'flex-end',
-    paddingBottom: 40,
+  },
+  passwordInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  passwordInput: {
+    flex: 1,
+    paddingRight: 44,
+  },
+  eyeButton: {
+    position: 'absolute',
+    right: 14,
+    height: 44,
+    width: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   header: {
     marginBottom: 40,

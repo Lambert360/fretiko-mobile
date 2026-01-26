@@ -112,6 +112,13 @@ const LiveStreamViewerScreen = () => {
   // Showcase state (for viewers)
   const [showcasedItem, setShowcasedItem] = useState<any>(null);
 
+  // Highlighted item (dynamic host card)
+  const [highlightedItem, setHighlightedItem] = useState<any>(null);
+
+  // Image viewer modal state
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+
   // Swipe gesture state
   const swipeTranslateX = useRef(new Animated.Value(0)).current;
   const swipeOpacity = useRef(new Animated.Value(1)).current;
@@ -414,6 +421,11 @@ const LiveStreamViewerScreen = () => {
         liveStreamSocket.on('viewer_count_update', handleViewerCountUpdate);
         liveStreamSocket.on('stream_status', handleStreamStatusUpdate);
         liveStreamSocket.on('showcase_item', handleShowcaseItem);
+        liveStreamSocket.on('highlight_item', (data: any) => {
+          if (data.streamId === streamId) {
+            setHighlightedItem(data.item);
+          }
+        });
 
         console.log('✅ Connected to live stream socket');
       } catch (error) {
@@ -1098,6 +1110,66 @@ const LiveStreamViewerScreen = () => {
         ))}
       </View>
 
+      {/* Dynamic Highlight Card - Always visible but transparent when not highlighted */}
+      <View style={[
+        styles.highlightCard,
+        highlightedItem ? styles.highlightCardVisible : styles.highlightCardTransparent
+      ]}>
+        {highlightedItem && (
+          <>
+            <TouchableOpacity
+              onPress={() => {
+                const imageUrl = 'product' in highlightedItem
+                  ? (highlightedItem as LiveStreamProduct).product.primary_image_url
+                  : 'images' in highlightedItem
+                  ? (highlightedItem as LivePortfolioService).images.find(img => img.is_primary)?.image_url || (highlightedItem as LivePortfolioService).images[0]?.image_url
+                  : null;
+                if (imageUrl) {
+                  setSelectedImageUrl(imageUrl);
+                  setImageViewerVisible(true);
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <Image
+                source={{
+                  uri: 'product' in highlightedItem
+                    ? (highlightedItem as LiveStreamProduct).product.primary_image_url || 'https://via.placeholder.com/80'
+                    : 'images' in highlightedItem
+                    ? (highlightedItem as LivePortfolioService).images.find(img => img.is_primary)?.image_url || (highlightedItem as LivePortfolioService).images[0]?.image_url || 'https://via.placeholder.com/80'
+                    : 'https://via.placeholder.com/80'
+                }}
+                style={styles.highlightCardImage}
+              />
+            </TouchableOpacity>
+            <View style={styles.highlightCardInfo}>
+              <Text style={styles.highlightCardTitle} numberOfLines={1}>
+                {'product' in highlightedItem
+                  ? (highlightedItem as LiveStreamProduct).product.name
+                  : 'title' in highlightedItem
+                  ? (highlightedItem as LivePortfolioService).title
+                  : (highlightedItem as LiveStreamService).service?.name}
+              </Text>
+              <Text style={styles.highlightCardPrice}>
+                ₣{'price' in highlightedItem
+                  ? (highlightedItem as LivePortfolioService).price
+                  : highlightedItem.live_price}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.highlightCardAddButton}
+              onPress={() => {
+                addToLiveCart(highlightedItem, 1);
+                Alert.alert('Added to Cart', 'Item added to your cart!');
+              }}
+            >
+              <Ionicons name="cart" size={18} color="white" />
+              <Text style={styles.highlightCardAddButtonText}>Add to Cart</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+
       {/* Showcase Overlay for Viewers */}
       {showcasedItem && (
         <View style={styles.showcaseOverlay}>
@@ -1286,6 +1358,7 @@ const LiveStreamViewerScreen = () => {
             cartItems={liveCartItems}
             onAddToCart={addToLiveCart}
             onOpenCart={() => setShowMiniCart(true)}
+            insetsBottom={insets.bottom || 0}
           />
       </Modal>
 
@@ -1309,6 +1382,7 @@ const LiveStreamViewerScreen = () => {
             onHeightChange={setMiniCartModalHeight}
             onUpdateQuantity={updateLiveCartQuantity}
             onRemoveItem={removeFromLiveCart}
+            insetsBottom={insets.bottom || 0}
             onCheckout={() => {
               setShowMiniCart(false);
               navigation.navigate('LiveCartCheckout', {
@@ -1340,6 +1414,7 @@ const LiveStreamViewerScreen = () => {
             loadingGifts={loadingGifts}
             modalHeight={giftModalHeight}
             onHeightChange={setGiftModalHeight}
+            insetsBottom={insets.bottom || 0}
             onSendGift={async (giftId: string, quantity: number, message?: string) => {
               try {
                 // Validate stream and user info
@@ -1421,12 +1496,36 @@ const LiveStreamViewerScreen = () => {
             onHeightChange={setShareModalHeight}
             selectedUsers={selectedUsers}
             onUserSelect={setSelectedUsers}
-            onShare={() => {
+            insetsBottom={insets.bottom || 0}
+            onShare={async (userIds: string[]) => {
               // TODO: Implement share functionality
-              console.log('Sharing with users:', selectedUsers);
-              setShowShareModal(false);
+              console.log('Sharing to users:', userIds);
             }}
           />
+      </Modal>
+
+      {/* Image Viewer Modal */}
+      <Modal
+        visible={imageViewerVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setImageViewerVisible(false)}
+      >
+        <View style={styles.imageViewerOverlay}>
+          <TouchableOpacity
+            style={styles.imageViewerCloseButton}
+            onPress={() => setImageViewerVisible(false)}
+          >
+            <Ionicons name="close" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
+          {selectedImageUrl && (
+            <Image
+              source={{ uri: selectedImageUrl }}
+              style={styles.imageViewerImage}
+              resizeMode="contain"
+            />
+          )}
+        </View>
       </Modal>
       </Animated.View>
     </PanGestureHandler>
@@ -2365,6 +2464,62 @@ const styles = StyleSheet.create({
     padding: 8,
     marginLeft: 8,
   },
+  // Highlight Card Styles
+  highlightCard: {
+    position: 'absolute',
+    top: 100,
+    left: 16,
+    right: 16,
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 10,
+    pointerEvents: 'auto',
+  },
+  highlightCardTransparent: {
+    backgroundColor: 'rgba(0,0,0,0)',
+    opacity: 0,
+  },
+  highlightCardVisible: {
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    opacity: 1,
+  },
+  highlightCardImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  highlightCardInfo: {
+    flex: 1,
+  },
+  highlightCardTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  highlightCardPrice: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  highlightCardAddButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#8E44AD',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  highlightCardAddButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginLeft: 6,
+  },
   // Booking Modal Styles
   bookingModalOverlay: {
     flex: 1,
@@ -2470,10 +2625,40 @@ const styles = StyleSheet.create({
     color: '#3498DB',
     marginLeft: 4,
   },
+  // Image Viewer Modal Styles
+  imageViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  imageViewerImage: {
+    width: '100%',
+    height: '100%',
+  },
+  imageViewerCloseButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
 });
 
 // Shop Modal Component
-const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHeightChange, cartItems, onAddToCart, onOpenCart }: any) => {
+const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHeightChange, cartItems, onAddToCart, onOpenCart, insetsBottom = 0 }: any) => {
   const panRef = useRef<any>(null);
   const baseHeight = useRef(modalHeight);
   const animatedHeight = useRef(new Animated.Value(modalHeight)).current;
@@ -2944,6 +3129,7 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
           <ScrollView 
             style={styles.modalContent} 
             showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 20 + (insetsBottom || 0) }}
             bounces={false}
             scrollEventThrottle={16}
           >
@@ -2992,7 +3178,7 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
 };
 
 // Gift Modal Component
-const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight, onHeightChange, onSendGift }: any) => {
+const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight, onHeightChange, onSendGift, insetsBottom = 0 }: any) => {
   const panRef = useRef<any>(null);
   const baseHeight = useRef(modalHeight);
   const animatedHeight = useRef(new Animated.Value(modalHeight)).current;
@@ -3085,7 +3271,7 @@ const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight
         failOffsetY={50}
       >
         <Animated.View 
-          style={[styles.modalContainer, { height: animatedHeight }]}
+          style={[styles.modalContainer, { height: animatedHeight, paddingBottom: 20 + (insetsBottom || 0) }]}
           pointerEvents="box-none"
         >
           <View style={styles.modalHandle} />
@@ -3115,7 +3301,7 @@ const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight
               showsVerticalScrollIndicator={false}
               numColumns={3}
               style={styles.modalContent}
-              contentContainerStyle={styles.giftGridContent}
+              contentContainerStyle={[styles.giftGridContent, { paddingBottom: 20 + (insetsBottom || 0) }]}
             />
           )}
         </Animated.View>
@@ -3125,7 +3311,7 @@ const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight
 };
 
 // Mini Cart Modal Component
-const MiniCartModal = ({ visible, onClose, cartItems, modalHeight, onHeightChange, onUpdateQuantity, onRemoveItem, onCheckout }: any) => {
+const MiniCartModal = ({ visible, onClose, cartItems, modalHeight, onHeightChange, onUpdateQuantity, onRemoveItem, onCheckout, insetsBottom = 0 }: any) => {
   const panRef = useRef<any>(null);
   const baseHeight = useRef(modalHeight);
   const animatedHeight = useRef(new Animated.Value(modalHeight)).current;
@@ -3276,7 +3462,7 @@ const MiniCartModal = ({ visible, onClose, cartItems, modalHeight, onHeightChang
         failOffsetY={50}
       >
         <Animated.View 
-          style={[styles.miniCartContainer, { height: animatedHeight }]}
+          style={[styles.miniCartContainer, { height: animatedHeight, paddingBottom: 20 + (insetsBottom || 0) }]}
           pointerEvents="box-none"
         >
           <View style={styles.modalHandle} />
@@ -3301,7 +3487,7 @@ const MiniCartModal = ({ visible, onClose, cartItems, modalHeight, onHeightChang
               keyExtractor={(item) => item.cartId}
               showsVerticalScrollIndicator={false}
               style={styles.miniCartList}
-              contentContainerStyle={{ paddingBottom: 10 }}
+              contentContainerStyle={{ paddingBottom: 10 + (insetsBottom || 0) }}
             />
 
             <View style={styles.miniCartFooter}>
@@ -3327,7 +3513,7 @@ const MiniCartModal = ({ visible, onClose, cartItems, modalHeight, onHeightChang
 };
 
 // Share Modal Component
-const ShareModal = ({ visible, onClose, modalHeight, onHeightChange, selectedUsers, onUserSelect, onShare }: any) => {
+const ShareModal = ({ visible, onClose, modalHeight, onHeightChange, selectedUsers, onUserSelect, onShare, insetsBottom = 0 }: any) => {
   const panRef = useRef<any>(null);
   const baseHeight = useRef(modalHeight);
   const animatedHeight = useRef(new Animated.Value(modalHeight)).current;
@@ -3447,7 +3633,7 @@ const ShareModal = ({ visible, onClose, modalHeight, onHeightChange, selectedUse
         failOffsetY={50}
       >
         <Animated.View 
-          style={[styles.shareModalContainer, { height: animatedHeight }]}
+          style={[styles.shareModalContainer, { height: animatedHeight, paddingBottom: 20 + (insetsBottom || 0) }]}
           pointerEvents="box-none"
         >
           <View style={styles.modalHandle} />
@@ -3467,7 +3653,7 @@ const ShareModal = ({ visible, onClose, modalHeight, onHeightChange, selectedUse
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
             style={styles.usersList}
-            contentContainerStyle={{ paddingBottom: 10 }}
+            contentContainerStyle={{ paddingBottom: 10 + (insetsBottom || 0) }}
           />
         </View>
 

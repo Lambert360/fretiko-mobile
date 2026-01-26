@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
-import { Alert, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
+import { Alert, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, ScrollView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { walletAPI, WalletTransaction, SaleTransaction } from '../services/walletAPI';
 import { ordersAPI } from '../services/ordersAPI';
@@ -326,8 +326,14 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
         if (t.transactionType === 'purchase_hold') acc.held += Math.abs(t.escrowDelta || 0) || Math.abs(t.availableDelta || 0);
         if (t.transactionType === 'escrow_release') acc.released += Math.abs(t.availableDelta || 0);
         if (t.transactionType === 'escrow_refund') acc.refunded += Math.abs(t.availableDelta || 0);
-        if (t.transactionType === 'vendor_sale') acc.vendorSales += Math.abs(t.availableDelta || 0);
-        if (t.transactionType === 'rider_delivery') acc.riderEarnings += Math.abs(t.availableDelta || 0);
+        // Only count vendor sales if user is a vendor (not a rider)
+        if (t.transactionType === 'vendor_sale' && profile?.isSeller && !profile?.isRider) {
+          acc.vendorSales += Math.abs(t.availableDelta || 0);
+        }
+        // Only count rider earnings if user is a rider (not a vendor)
+        if (t.transactionType === 'rider_delivery' && profile?.isRider && !profile?.isSeller) {
+          acc.riderEarnings += Math.abs(t.availableDelta || 0);
+        }
         return acc;
       },
       { held: 0, released: 0, refunded: 0, vendorSales: 0, riderEarnings: 0 }
@@ -352,21 +358,21 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
             <Text style={[styles.escrowPillText, { color: '#E74C3C' }]}>Refunded</Text>
             <Text style={[styles.escrowPillAmount, { color: '#E74C3C' }]}>{walletAPI.formatFreti(totals.refunded)}</Text>
           </View>
-          {isVendorOrRider && (
-            <>
-              <View style={[styles.escrowPill, { backgroundColor: 'rgba(243,156,18,0.15)', borderColor: 'rgba(243,156,18,0.35)' }]}>
-                <Ionicons name="cash" size={14} color="#F39C12" />
-                <Text style={[styles.escrowPillText, { color: '#F39C12' }]}>Sales</Text>
-                <Text style={[styles.escrowPillAmount, { color: '#F39C12' }]}>{walletAPI.formatFreti(totals.vendorSales)}</Text>
-              </View>
-              {profile?.isRider && (
-                <View style={[styles.escrowPill, { backgroundColor: 'rgba(155,89,182,0.15)', borderColor: 'rgba(155,89,182,0.35)' }]}>
-                  <Ionicons name="bicycle" size={14} color="#9B59B6" />
-                  <Text style={[styles.escrowPillText, { color: '#9B59B6' }]}>Delivery</Text>
-                  <Text style={[styles.escrowPillAmount, { color: '#9B59B6' }]}>{walletAPI.formatFreti(totals.riderEarnings)}</Text>
-                </View>
-              )}
-            </>
+          {/* Only show Sales card for vendors (not riders) */}
+          {profile?.isSeller && !profile?.isRider && (
+            <View style={[styles.escrowPill, { backgroundColor: 'rgba(243,156,18,0.15)', borderColor: 'rgba(243,156,18,0.35)' }]}>
+              <Ionicons name="cash" size={14} color="#F39C12" />
+              <Text style={[styles.escrowPillText, { color: '#F39C12' }]}>Sales</Text>
+              <Text style={[styles.escrowPillAmount, { color: '#F39C12' }]}>{walletAPI.formatFreti(totals.vendorSales)}</Text>
+            </View>
+          )}
+          {/* Only show Delivery card for riders (not vendors) */}
+          {profile?.isRider && !profile?.isSeller && (
+            <View style={[styles.escrowPill, { backgroundColor: 'rgba(155,89,182,0.15)', borderColor: 'rgba(155,89,182,0.35)' }]}>
+              <Ionicons name="bicycle" size={14} color="#9B59B6" />
+              <Text style={[styles.escrowPillText, { color: '#9B59B6' }]}>Delivery</Text>
+              <Text style={[styles.escrowPillAmount, { color: '#9B59B6' }]}>{walletAPI.formatFreti(totals.riderEarnings)}</Text>
+            </View>
           )}
         </View>
         <View style={styles.escrowLegend}>
@@ -383,19 +389,19 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
             <View style={[styles.escrowLegendDot, { backgroundColor: '#E74C3C' }]} />
             <Text style={styles.escrowLegendText}>Escrow Refund (back to buyer)</Text>
           </View>
-          {isVendorOrRider && (
-            <>
-              <View style={styles.escrowLegendItem}>
-                <View style={[styles.escrowLegendDot, { backgroundColor: '#F39C12' }]} />
-                <Text style={styles.escrowLegendText}>Vendor Sales (earnings)</Text>
-              </View>
-              {profile?.isRider && (
-                <View style={styles.escrowLegendItem}>
-                  <View style={[styles.escrowLegendDot, { backgroundColor: '#9B59B6' }]} />
-                  <Text style={styles.escrowLegendText}>Delivery Fees (earnings)</Text>
-                </View>
-              )}
-            </>
+          {/* Only show Sales legend for vendors (not riders) */}
+          {profile?.isSeller && !profile?.isRider && (
+            <View style={styles.escrowLegendItem}>
+              <View style={[styles.escrowLegendDot, { backgroundColor: '#F39C12' }]} />
+              <Text style={styles.escrowLegendText}>Vendor Sales (earnings)</Text>
+            </View>
+          )}
+          {/* Only show Delivery legend for riders (not vendors) */}
+          {profile?.isRider && !profile?.isSeller && (
+            <View style={styles.escrowLegendItem}>
+              <View style={[styles.escrowLegendDot, { backgroundColor: '#9B59B6' }]} />
+              <Text style={styles.escrowLegendText}>Delivery Fees (earnings)</Text>
+            </View>
           )}
         </View>
       </View>
@@ -689,12 +695,19 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
 
       {/* Tab Selector */}
       <View style={styles.tabsContainer}>
-        <FlatList
-          data={tabs}
+        <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          renderItem={({ item }) => (
+          style={{ flexGrow: 0 }}
+          contentContainerStyle={styles.tabsList}
+          scrollEnabled={true}
+          decelerationRate={Platform.OS === 'android' ? 0.85 : 'normal'}
+          overScrollMode={Platform.OS === 'android' ? 'always' : 'auto'}
+          scrollEventThrottle={16}
+        >
+          {tabs.map((item) => (
             <TouchableOpacity
+              key={item.key}
               style={[
                 styles.tab,
                 activeTab === item.key && styles.activeTab
@@ -713,35 +726,41 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
                 {item.label}
               </Text>
             </TouchableOpacity>
-          )}
-          keyExtractor={(item) => item.key}
-          contentContainerStyle={styles.tabsList}
-        />
+          ))}
+        </ScrollView>
       </View>
 
       {/* Filter Options (only show for 'all' tab or 'sales' tab) */}
       {activeTab === 'all' && (
         <View style={styles.filtersContainer}>
-          <FlatList
-            data={transactionFilterOptions}
+          <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            renderItem={({ item }) => renderFilterButton(item)}
-            keyExtractor={(item) => item.key}
+            style={{ flexGrow: 0 }}
             contentContainerStyle={styles.filtersList}
-          />
+            scrollEnabled={true}
+            decelerationRate={Platform.OS === 'android' ? 0.85 : 'normal'}
+            overScrollMode={Platform.OS === 'android' ? 'always' : 'auto'}
+            scrollEventThrottle={16}
+          >
+            {transactionFilterOptions.map((item) => renderFilterButton(item))}
+          </ScrollView>
         </View>
       )}
       {activeTab === 'sales' && (
         <View style={styles.filtersContainer}>
-          <FlatList
-            data={salesFilterOptions}
+          <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            renderItem={({ item }) => renderFilterButton(item)}
-            keyExtractor={(item) => item.key}
+            style={{ flexGrow: 0 }}
             contentContainerStyle={styles.filtersList}
-          />
+            scrollEnabled={true}
+            decelerationRate={Platform.OS === 'android' ? 0.85 : 'normal'}
+            overScrollMode={Platform.OS === 'android' ? 'always' : 'auto'}
+            scrollEventThrottle={16}
+          >
+            {salesFilterOptions.map((item) => renderFilterButton(item))}
+          </ScrollView>
         </View>
       )}
 
@@ -764,7 +783,7 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
             activeTab === 'escrow' ? renderEscrowTransaction :
             renderTransaction
           }
-          keyExtractor={(item, index) => item.id || `transaction-${index}`}
+          keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : `transaction-${index}`}
           style={styles.transactionsList}
           contentContainerStyle={[
             styles.transactionsContainer,

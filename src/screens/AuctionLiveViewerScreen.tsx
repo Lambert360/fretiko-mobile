@@ -249,6 +249,10 @@ const AuctionLiveViewerScreen = () => {
   const [reactions, setReactions] = useState<Array<{ id: string; reaction_type: string; user_id: string; timestamp: string }>>([]);
   const [reactionAnimations, setReactionAnimations] = useState<Array<{ id: string; reaction_type: string; x: number; y: number; scale: Animated.Value; opacity: Animated.Value; translateY: Animated.Value }>>([]);
 
+  // Image viewer modal state
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+
   // Agora RTC state - Direct streaming for low latency
   const [agoraConfig, setAgoraConfig] = useState<any>(null);
   const [agoraEngine, setAgoraEngine] = useState<IRtcEngine | null>(null);
@@ -1023,40 +1027,67 @@ const AuctionLiveViewerScreen = () => {
         </View>
 
         {/* Auction Info Card */}
-        <View style={styles.auctionInfoCard}>
-          {currentItem && (
-            <View style={styles.itemHeaderRow}>
-              <Text style={styles.itemNumber}>Item {currentItem.order_in_auction}</Text>
-            </View>
-          )}
-          <Text style={styles.auctionTitle} numberOfLines={1}>
-            {currentItem ? currentItem.title : auction.title}
-          </Text>
-          
-          <View style={styles.bidRow}>
-            <View>
-              <Text style={styles.label}>Current Bid</Text>
-              <Text style={styles.currentBid}>
-                ₣{(currentItem 
-                  ? (currentItem.current_bid || currentItem.starting_price)
-                  : auction.current_bid).toFixed(2)}
-              </Text>
-            </View>
+        <View style={[styles.auctionInfoCard, { top: (insets.top || 0) + 60 }]}>
+          <View style={styles.auctionInfoContent}>
+            {/* Item Image Thumbnail */}
+            {currentItem && currentItem.images && currentItem.images.length > 0 && (
+              <TouchableOpacity
+                style={styles.itemImageContainer}
+                onPress={() => {
+                  setSelectedImageUrl(currentItem.images[0]);
+                  setImageViewerVisible(true);
+                }}
+                activeOpacity={0.8}
+              >
+                <Image
+                  source={{ uri: currentItem.images[0] }}
+                  style={styles.itemImageThumbnail}
+                  resizeMode="cover"
+                />
+              </TouchableOpacity>
+            )}
             
-            <View>
-              <Text style={styles.label}>Time Left</Text>
-              <Text style={styles.timeLeft}>{formatTimeRemaining(timeRemaining || 0)}</Text>
-            </View>
+            <View style={styles.auctionInfoText}>
+              {currentItem && (
+                <View style={styles.itemHeaderRow}>
+                  <Text style={styles.itemNumber}>Item {currentItem.order_in_auction}</Text>
+                </View>
+              )}
+              <Text style={styles.auctionTitle} numberOfLines={1}>
+                {currentItem ? currentItem.title : auction.title}
+              </Text>
+              
+              <View style={styles.bidRow}>
+                <View>
+                  <Text style={styles.label}>Current Bid</Text>
+                  <Text style={styles.currentBid}>
+                    ₣{(currentItem 
+                      ? (currentItem.current_bid || currentItem.starting_price)
+                      : auction.current_bid).toFixed(2)}
+                  </Text>
+                </View>
+                
+                <View>
+                  <Text style={styles.label}>Time Left</Text>
+                  <Text style={styles.timeLeft}>{formatTimeRemaining(timeRemaining || 0)}</Text>
+                </View>
 
-            <View>
-              <Text style={styles.label}>Bids</Text>
-              <Text style={styles.bidCount}>{auction.total_bids || 0}</Text>
+                <View>
+                  <Text style={styles.label}>Bids</Text>
+                  <Text style={styles.bidCount}>{auction.total_bids || 0}</Text>
+                </View>
+              </View>
             </View>
           </View>
         </View>
 
         {/* Bottom Controls */}
-        <View style={styles.bottomControls}>
+        <View
+          style={[
+            styles.bottomControls,
+            { paddingBottom: Math.max(insets.bottom || 0, 12) + 12 },
+          ]}
+        >
           <TouchableOpacity
             style={styles.quickBidButton}
             onPress={() => handleQuickBid(1)}
@@ -1219,6 +1250,30 @@ const AuctionLiveViewerScreen = () => {
           }}
         />
       </Modal>
+
+      {/* Image Viewer Modal */}
+      <Modal
+        visible={imageViewerVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setImageViewerVisible(false)}
+      >
+        <View style={styles.imageViewerOverlay}>
+          <TouchableOpacity
+            style={styles.imageViewerCloseButton}
+            onPress={() => setImageViewerVisible(false)}
+          >
+            <Ionicons name="close" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
+          {selectedImageUrl && (
+            <Image
+              source={{ uri: selectedImageUrl }}
+              style={styles.imageViewerImage}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -1306,10 +1361,34 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   auctionInfoCard: {
+    position: 'absolute',
+    top: 60,
+    left: 16,
+    right: 16,
     backgroundColor: 'rgba(0,0,0,0.8)',
-    margin: 16,
     padding: 16,
     borderRadius: 12,
+    zIndex: 10,
+  },
+  auctionInfoContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  itemImageContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  itemImageThumbnail: {
+    width: '100%',
+    height: '100%',
+  },
+  auctionInfoText: {
+    flex: 1,
+    minWidth: 0,
   },
   auctionTitle: {
     color: 'white',
@@ -1666,6 +1745,35 @@ const modalStyles = StyleSheet.create({
     color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  imageViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  imageViewerImage: {
+    width: '100%',
+    height: '100%',
+  },
+  imageViewerCloseButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
   },
 });
 

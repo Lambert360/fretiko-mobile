@@ -310,7 +310,7 @@ const MyGiftsScreen = () => {
 
       {/* Action Buttons */}
       {gifts.length > 0 && (
-        <View style={styles.actionBar}>
+        <View style={[styles.actionBar, { paddingBottom: Math.max(insets.bottom || 0, 12) + 12 }]}>
           <TouchableOpacity
             style={[
               styles.convertButton,

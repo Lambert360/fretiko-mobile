@@ -39,7 +39,8 @@ interface UserProfile {
   dateOfBirth?: string;
   isSeller: boolean;
   isRider?: boolean;
-  backgroundImageUrl?: string;
+  bgPicUrl?: string; // Use bgPicUrl to match API response
+  backgroundImageUrl?: string; // Keep for backward compatibility
   createdAt: string;
   updatedAt: string;
 }
@@ -58,7 +59,13 @@ interface PublicStoreScreenProps {
 export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation, route }) => {
   const { user } = useAuth();
   const { userId, profile: initialProfile, isOwnStore = false } = route.params;
-  const [profile, setProfile] = useState<UserProfile | null>(initialProfile || null);
+  // Normalize initial profile: ensure bgPicUrl is available as backgroundImageUrl for compatibility
+  const normalizedInitialProfile = initialProfile ? {
+    ...initialProfile,
+    backgroundImageUrl: initialProfile.bgPicUrl || initialProfile.backgroundImageUrl,
+    bgPicUrl: initialProfile.bgPicUrl || initialProfile.backgroundImageUrl,
+  } : null;
+  const [profile, setProfile] = useState<UserProfile | null>(normalizedInitialProfile as UserProfile | null);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [loading, setLoading] = useState(!initialProfile);
   const [refreshing, setRefreshing] = useState(false);
@@ -71,6 +78,40 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
   const [isUploadModalVisible, setIsUploadModalVisible] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingBackground, setUploadingBackground] = useState(false);
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+
+  const openImageViewer = (url?: string | null) => {
+    if (!url) return;
+    setSelectedImageUrl(url);
+    setImageViewerVisible(true);
+  };
+
+  const renderImageViewer = () => (
+    <Modal
+      visible={imageViewerVisible}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={() => setImageViewerVisible(false)}
+    >
+      <View style={styles.imageViewerOverlay}>
+        <TouchableOpacity
+          style={styles.imageViewerCloseButton}
+          onPress={() => setImageViewerVisible(false)}
+        >
+          <Ionicons name="close" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
+
+        {selectedImageUrl && (
+          <Image
+            source={{ uri: selectedImageUrl }}
+            style={styles.imageViewerImage}
+            resizeMode="contain"
+          />
+        )}
+      </View>
+    </Modal>
+  );
 
   // Action modal state
   const [isActionModalVisible, setIsActionModalVisible] = useState(false);
@@ -102,7 +143,13 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
   const loadProfile = async () => {
     try {
       const profileData = await userAPI.getPublicProfile(userId);
-      setProfile(profileData as UserProfile);
+      // Normalize profile data: ensure bgPicUrl is available as backgroundImageUrl for compatibility
+      const normalizedProfile = {
+        ...profileData,
+        backgroundImageUrl: profileData.bgPicUrl || (profileData as any).backgroundImageUrl,
+        bgPicUrl: profileData.bgPicUrl || (profileData as any).backgroundImageUrl,
+      };
+      setProfile(normalizedProfile as UserProfile);
     } catch (error: any) {
       console.error('Error loading profile:', error);
       Alert.alert(
@@ -231,8 +278,8 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
           await userAPI.updateProfile({ avatarUrl: uploadedUrl });
           setProfile(prev => prev ? { ...prev, avatarUrl: uploadedUrl } : null);
         } else {
-          await userAPI.updateProfile({ backgroundImageUrl: uploadedUrl });
-          setProfile(prev => prev ? { ...prev, backgroundImageUrl: uploadedUrl } : null);
+          await userAPI.updateProfile({ bgPicUrl: uploadedUrl });
+          setProfile(prev => prev ? { ...prev, bgPicUrl: uploadedUrl, backgroundImageUrl: uploadedUrl } : null);
         }
 
         Alert.alert('Success', `${type === 'avatar' ? 'Profile picture' : 'Background image'} updated successfully!`);
@@ -370,7 +417,9 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
           {/* Avatar Section */}
           <View style={styles.whatsappAvatarSection}>
             {profile?.avatarUrl ? (
-              <Image source={{ uri: profile.avatarUrl }} style={styles.whatsappAvatar} />
+              <TouchableOpacity activeOpacity={0.85} onPress={() => openImageViewer(profile.avatarUrl)}>
+                <Image source={{ uri: profile.avatarUrl }} style={styles.whatsappAvatar} />
+              </TouchableOpacity>
             ) : (
               <View style={styles.whatsappDefaultAvatar}>
                 <Ionicons name="person" size={60} color="#B0B0B0" />
@@ -418,6 +467,7 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
             </Text>
           </View>
         </ScrollView>
+        {renderImageViewer()}
       </SafeAreaView>
     );
   }
@@ -440,16 +490,18 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
         {/* Hero Section with Background */}
         <View style={styles.heroSection}>
           <View style={styles.heroBackground}>
-            {profile?.backgroundImageUrl ? (
-              <Image
-                source={{ uri: profile.backgroundImageUrl }}
-                style={styles.backgroundImage}
-                blurRadius={0.5}
-              />
+            {(profile?.bgPicUrl || profile?.backgroundImageUrl) ? (
+              <TouchableOpacity activeOpacity={0.95} onPress={() => openImageViewer(profile?.bgPicUrl || profile?.backgroundImageUrl)}>
+                <Image 
+                  source={{ uri: profile?.bgPicUrl || profile?.backgroundImageUrl }} 
+                  style={styles.backgroundImage}
+                  blurRadius={0.5}
+                />
+              </TouchableOpacity>
             ) : (
               <View style={styles.defaultBackground} />
             )}
-            <View style={styles.heroOverlay} />
+            <View style={styles.heroOverlay} pointerEvents="none" />
 
             {/* Background Upload Button - Only for own store */}
             {isOwnStore && (
@@ -483,49 +535,43 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
 
           {/* User Info Overlay */}
           <View style={styles.userInfoOverlay}>
-            <View style={styles.avatarContainer}>
-              <View style={styles.avatarWrapper}>
-                {profile?.avatarUrl ? (
-                  <Image source={{ uri: profile.avatarUrl }} style={styles.avatar} />
-                ) : (
-                  <View style={styles.defaultAvatar}>
-                    <Text style={styles.avatarInitials}>
-                      {profile?.username?.[0]?.toUpperCase() || 'U'}
-                    </Text>
-                  </View>
-                )}
-
-                {/* Avatar Upload Button - Only for own store */}
-                {isOwnStore && (
-                  <TouchableOpacity
-                    style={styles.avatarUploadButton}
-                    onPress={() => handleImagePicker('avatar')}
-                    disabled={uploadingAvatar}
-                  >
-                    {uploadingAvatar ? (
-                      <ActivityIndicator size="small" color="white" />
-                    ) : (
-                      <Ionicons name="camera" size={16} color="white" />
-                    )}
-                  </TouchableOpacity>
-                )}
+            {/* Horizontal Layout: Avatar on left, Info on right */}
+            <View style={styles.userInfoRow}>
+              {/* Avatar on left */}
+              <View style={styles.avatarContainerLeft}>
+                <View style={styles.avatarWrapper}>
+                  {profile?.avatarUrl ? (
+                    <TouchableOpacity activeOpacity={0.85} onPress={() => openImageViewer(profile.avatarUrl)}>
+                      <Image source={{ uri: profile.avatarUrl }} style={styles.avatar} />
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.defaultAvatar}>
+                      <Text style={styles.avatarInitials}>
+                        {profile?.username?.[0]?.toUpperCase() || 'U'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
               </View>
 
-              <View style={styles.roleIndicator}>
-                <Text style={styles.roleText}>{getUserRole()}</Text>
+              {/* Name, Bio, Location on right */}
+              <View style={styles.userDetailsRight}>
+                <Text style={styles.displayName}>
+                  {profile?.username || 'Store'}
+                </Text>
+                {profile?.bio && (
+                  <Text style={styles.bioText} numberOfLines={3} ellipsizeMode="tail">
+                    {profile.bio}
+                  </Text>
+                )}
+                <Text style={styles.locationText}>
+                  📍 {profile?.location || 'Location not set'}
+                </Text>
+                {/* Vendor badge beneath biodata */}
+                <View style={[styles.roleIndicator, !isOwnStore && styles.roleIndicatorCompact]}>
+                  <Text style={styles.roleText}>{getUserRole()}</Text>
+                </View>
               </View>
-            </View>
-
-            <View style={styles.userDetails}>
-              <Text style={styles.displayName}>
-                {profile?.username || 'Store'}
-              </Text>
-              {profile?.bio && (
-                <Text style={styles.bioText}>{profile.bio}</Text>
-              )}
-              <Text style={styles.locationText}>
-                📍 {profile?.location || 'Location not set'}
-              </Text>
             </View>
 
             {/* Social Stats & Plug Button */}
@@ -730,6 +776,7 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
         onDelete={handleDeleteItem}
         itemType={selectedItem?.type || 'product'}
       />
+      {renderImageViewer()}
     </SafeAreaView>
   );
 };
@@ -843,6 +890,7 @@ const styles = StyleSheet.create({
   heroSection: {
     height: 400,
     position: 'relative',
+    overflow: 'hidden',
   },
   heroBackground: {
     position: 'absolute',
@@ -850,6 +898,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    width: '100%',
+    height: '100%',
   },
   backgroundImage: {
     width: '100%',
@@ -868,6 +918,31 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    zIndex: 0,
+  },
+
+  // Fullscreen image viewer
+  imageViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerCloseButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageViewerImage: {
+    width: '100%',
+    height: '80%',
   },
   header: {
     flexDirection: 'row',
@@ -875,7 +950,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: 16,
-    zIndex: 1,
+    position: 'relative',
+    zIndex: 2,
   },
   backButton: {
     width: 40,
@@ -900,7 +976,18 @@ const styles = StyleSheet.create({
     right: 0,
     paddingHorizontal: 20,
     paddingBottom: 20,
-    zIndex: 1,
+    paddingTop: 20,
+    zIndex: 2,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  userInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    gap: 16,
+  },
+  avatarContainerLeft: {
+    alignItems: 'center',
   },
   avatarContainer: {
     alignItems: 'center',
@@ -934,6 +1021,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
+    alignSelf: 'flex-start', // Don't span full width
+  },
+  roleIndicatorCompact: {
+    alignSelf: 'flex-start', // Ensure it only takes needed width when viewing others
   },
   roleText: {
     color: '#FFFFFF',
@@ -944,30 +1035,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
+  userDetailsRight: {
+    flex: 1,
+    justifyContent: 'flex-start',
+  },
   displayName: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#FFFFFF',
-    marginBottom: 4,
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    marginBottom: 6,
+    textAlign: 'left',
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    textShadowRadius: 4,
   },
   bioText: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#FFFFFF',
-    textAlign: 'center',
-    marginBottom: 8,
-    lineHeight: 22,
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textAlign: 'left',
+    marginBottom: 6,
+    lineHeight: 20,
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    textShadowRadius: 4,
   },
   locationText: {
-    fontSize: 14,
-    color: '#B0B0B0',
-    textAlign: 'center',
+    fontSize: 13,
+    color: '#E0E0E0',
+    textAlign: 'left',
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   socialStats: {
     flexDirection: 'row',

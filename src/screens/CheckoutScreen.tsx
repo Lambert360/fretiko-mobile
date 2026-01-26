@@ -868,7 +868,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
 
       <Animated.ScrollView
         style={[styles.scrollView, { opacity: fadeAnim }]}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 120 + (insets.bottom || 0) }}
         showsVerticalScrollIndicator={false}
       >
         {/* Delivery Address Section */}
@@ -1277,7 +1277,13 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       </Animated.ScrollView>
 
       {/* Bottom Action Bar */}
-      <Animated.View style={[styles.bottomBar, { transform: [{ scale: scaleAnim }] }]}>
+      <Animated.View
+        style={[
+          styles.bottomBar,
+          { transform: [{ scale: scaleAnim }] },
+          { paddingBottom: Math.max(insets.bottom || 0, 12) + 12 },
+        ]}
+      >
         <View style={styles.totalPreview}>
           <Text style={styles.totalPreviewLabel}>Total</Text>
           <Text style={styles.totalPreviewValue}>

@@ -1185,7 +1185,7 @@ const AuctionLiveBroadcastScreen = () => {
           presentationStyle="pageSheet"
           onRequestClose={() => setShowBidDashboard(false)}
         >
-          <View style={styles.modalContainer}>
+          <View style={[styles.modalContainer, { paddingBottom: (insets.bottom || 0) + 12 }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Bid History</Text>
               <TouchableOpacity
@@ -1200,6 +1200,7 @@ const AuctionLiveBroadcastScreen = () => {
               data={bidHistory}
               renderItem={renderBidItem}
               keyExtractor={(item) => item.id}
+              contentContainerStyle={{ paddingBottom: (insets.bottom || 0) + 16 }}
               ListEmptyComponent={
                 <View style={styles.emptyState}>
                   <Ionicons name="pricetag-outline" size={60} color="#666" />
@@ -1251,7 +1252,7 @@ const AuctionLiveBroadcastScreen = () => {
           onRequestClose={() => setShowAddItemModal(false)}
         >
           <KeyboardAvoidingView 
-            style={styles.modalContainer} 
+            style={[styles.modalContainer, { paddingBottom: (insets.bottom || 0) + 12 }]} 
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           >
             <View style={styles.modalHeader}>
@@ -1564,7 +1565,7 @@ const AuctionLiveBroadcastScreen = () => {
           presentationStyle="pageSheet"
           onRequestClose={() => setShowItemQueue(false)}
         >
-          <View style={styles.modalContainer}>
+          <View style={[styles.modalContainer, { paddingBottom: (insets.bottom || 0) + 12 }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Item to Auction</Text>
               <TouchableOpacity
@@ -1624,7 +1625,7 @@ const AuctionLiveBroadcastScreen = () => {
                   </TouchableOpacity>
                 )}
                 keyExtractor={(item) => item.id}
-                contentContainerStyle={{ padding: 16 }}
+                contentContainerStyle={{ padding: 16, paddingBottom: 16 + (insets.bottom || 0) }}
               />
             )}
           </View>
