@@ -10,6 +10,7 @@ import {
   Dimensions,
   Alert,
   Animated,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Modal,
@@ -25,6 +26,7 @@ import { liveSalesAPI, LiveStream, LiveStreamProduct, LiveStreamService, LivePor
 import { liveStreamSocket, LiveComment, LiveReaction, LiveGift, ViewerCountUpdate } from '../services/liveStreamSocket';
 import { giftAPI, VirtualGift } from '../services/giftAPI';
 import { useAuth } from '../contexts/AuthContext';
+import GiftAnimation from '../components/GiftAnimation';
 
 // Import Agora RTC SDK for direct streaming (industry standard)
 import {
@@ -67,6 +69,9 @@ const LiveStreamViewerScreen = () => {
   const [viewerCount, setViewerCount] = useState(initialStream?.viewer_count || 0);
   const [isStreamPaused, setIsStreamPaused] = useState(false);
 
+  const [isHostVideoMuted, setIsHostVideoMuted] = useState(false);
+  const [isHostAudioMuted, setIsHostAudioMuted] = useState(false);
+
   // Agora RTC state (for live viewing)
   const [agoraConfig, setAgoraConfig] = useState<any>(null);
   const [agoraEngine, setAgoraEngine] = useState<IRtcEngine | null>(null);
@@ -80,6 +85,7 @@ const LiveStreamViewerScreen = () => {
   const [commentText, setCommentText] = useState('');
   const [showComments, setShowComments] = useState(true);
   const [isCommentInputExpanded, setIsCommentInputExpanded] = useState(false);
+  const bottomPosition = useRef(new Animated.Value(0)).current;
   const commentsListRef = useRef<FlatList>(null);
 
   // Reactions
@@ -88,6 +94,13 @@ const LiveStreamViewerScreen = () => {
   // Like system
   const [likeCount, setLikeCount] = useState(0);
   const [heartAnimations, setHeartAnimations] = useState<any[]>([]);
+
+  // Gift animations
+  const [activeGiftAnimations, setActiveGiftAnimations] = useState<Array<{
+    id: string;
+    emoji: string;
+    quantity: number;
+  }>>([]);
 
   // Modals/Drawers
   const [showShopModal, setShowShopModal] = useState(false);
@@ -298,6 +311,8 @@ const LiveStreamViewerScreen = () => {
           channelId: connection?.channelId
         });
         setRemoteUid(uid);
+        setIsHostVideoMuted(false);
+        setIsHostAudioMuted(false);
         console.log('✅ remoteUid state set to:', uid);
       });
 
@@ -306,10 +321,26 @@ const LiveStreamViewerScreen = () => {
         setRemoteUid((prevUid) => {
           if (prevUid === uid) {
             console.log('🔇 Host disconnected, clearing remote UID');
+            setIsHostVideoMuted(false);
+            setIsHostAudioMuted(false);
             return null;
           }
           return prevUid;
         });
+      });
+
+      engine.addListener('onRemoteVideoStateChanged', (connection: any, uid: number, state: number, reason: number, elapsed: number) => {
+        // state: 0=stopped, 1=starting, 2=decoding, 3=failed
+        // reason: 0=user muted/unmuted, other values indicate non-user reasons
+        if (remoteUid && uid !== remoteUid) return;
+        const isMutedByHost = state === 0 && reason === 0;
+        setIsHostVideoMuted(isMutedByHost);
+      });
+
+      engine.addListener('onRemoteAudioStateChanged', (connection: any, uid: number, state: number, reason: number, elapsed: number) => {
+        // state: 0=stopped, 1=decoding, 2=starting
+        if (remoteUid && uid !== remoteUid) return;
+        setIsHostAudioMuted(state === 0);
       });
 
       engine.addListener('onError', (err: number, msg: string) => {
@@ -392,6 +423,27 @@ const LiveStreamViewerScreen = () => {
   useEffect(() => {
     if (!stream) return;
 
+    // Create stable handler references for cleanup
+    const highlightItemHandler = (data: any) => {
+      console.log('🌟 Viewer received highlight_item event:', data);
+      if (data.streamId === streamId) {
+        if (data.item === null || data.type === 'dismiss') {
+          console.log('❌ Dismissing highlighted item on viewer screen');
+          setHighlightedItem(null);
+        } else {
+          console.log('✅ Setting highlighted item on viewer screen:', data.item);
+          setHighlightedItem(data.item);
+        }
+      } else {
+        console.log('⚠️ Highlight event streamId mismatch:', data.streamId, 'vs', streamId);
+      }
+    };
+
+    // Register event listeners EARLY, before async setupSocket completes
+    // This ensures listeners are ready when events arrive
+    liveStreamSocket.on('viewer_count_update', handleViewerCountUpdate);
+    liveStreamSocket.on('highlight_item', highlightItemHandler);
+
     const setupSocket = async () => {
       try {
         await liveStreamSocket.connect();
@@ -414,18 +466,12 @@ const LiveStreamViewerScreen = () => {
           // Don't fail the whole setup - socket join is more important
         }
 
-        // Register event listeners
+        // Register remaining event listeners
         liveStreamSocket.on('comment', handleNewComment);
         liveStreamSocket.on('new_reaction', handleNewReaction);
         liveStreamSocket.on('new_gift', handleNewGift);
-        liveStreamSocket.on('viewer_count_update', handleViewerCountUpdate);
-        liveStreamSocket.on('stream_status', handleStreamStatusUpdate);
+        liveStreamSocket.on('stream_status_update', handleStreamStatusUpdate);
         liveStreamSocket.on('showcase_item', handleShowcaseItem);
-        liveStreamSocket.on('highlight_item', (data: any) => {
-          if (data.streamId === streamId) {
-            setHighlightedItem(data.item);
-          }
-        });
 
         console.log('✅ Connected to live stream socket');
       } catch (error) {
@@ -437,11 +483,19 @@ const LiveStreamViewerScreen = () => {
     setupSocket();
 
     return () => {
-      liveStreamSocket.clearListeners();
+      console.log('🧹 Cleaning up viewer screen socket listeners');
+      // Remove specific listeners using stored references
+      liveStreamSocket.off('viewer_count_update', handleViewerCountUpdate);
+      liveStreamSocket.off('highlight_item', highlightItemHandler);
+      liveStreamSocket.off('comment', handleNewComment);
+      liveStreamSocket.off('new_reaction', handleNewReaction);
+      liveStreamSocket.off('new_gift', handleNewGift);
+      liveStreamSocket.off('stream_status_update', handleStreamStatusUpdate);
+      liveStreamSocket.off('showcase_item', handleShowcaseItem);
       liveStreamSocket.leaveStream();
       liveSalesAPI.leaveStream(streamId).catch(console.error);
     };
-  }, [stream]);
+  }, [stream, streamId]);
 
   // Screen focus/unfocus handling
   useFocusEffect(
@@ -457,7 +511,25 @@ const LiveStreamViewerScreen = () => {
 
   // Socket event handlers
   const handleNewComment = (comment: LiveComment) => {
-    setComments(prev => [...prev, comment]);
+    // Prevent duplicate comments - check if comment ID already exists
+    setComments(prev => {
+      // Check if this comment already exists (by ID)
+      const exists = prev.some(c => c.id === comment.id);
+      if (exists) {
+        console.log('⚠️ Duplicate comment ignored:', comment.id);
+        return prev;
+      }
+      
+      // If this is our own comment (isOwn: true), replace the optimistic comment
+      if (comment.isOwn) {
+        console.log('✅ Replacing optimistic comment with server response:', comment.id);
+        // Remove temporary optimistic comment and add the real one
+        return prev.filter(c => !c.id.startsWith('temp-')).concat(comment);
+      }
+      
+      console.log('✅ Adding new comment from others:', comment.id);
+      return [...prev, comment];
+    });
     setTimeout(() => {
       commentsListRef.current?.scrollToEnd({ animated: true });
     }, 100);
@@ -471,14 +543,28 @@ const LiveStreamViewerScreen = () => {
     }, 3000);
   };
 
-  const handleNewGift = (gift: LiveGift) => {
-    // Show gift notification
-        Alert.alert(
-      '🎁 Gift Sent!',
-      `${gift.sender.username} sent ${gift.quantity}x ${gift.gift_type}!`,
-      [{ text: 'Nice!', style: 'cancel' }],
-      { cancelable: true }
-    );
+  const handleNewGift = (giftData: LiveGift | any) => {
+    console.log('🎁 Gift received on viewer screen:', giftData);
+    
+    // Handle both LiveGift format and backend format
+    const giftType = giftData.gift_type || giftData.giftType;
+    const quantity = giftData.quantity || 1;
+    
+    // Get emoji from gift data (backend now includes giftEmoji)
+    const emoji = giftData.giftEmoji || giftData.emoji || '🎁';
+    
+    // Add gift animation
+    const animationId = `gift-${Date.now()}-${Math.random()}`;
+    setActiveGiftAnimations(prev => [...prev, {
+      id: animationId,
+      emoji,
+      quantity,
+    }]);
+    
+    // Remove animation after it completes
+    setTimeout(() => {
+      setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animationId));
+    }, 5000);
   };
 
   const handleViewerCountUpdate = (data: ViewerCountUpdate | any) => {
@@ -538,7 +624,8 @@ const LiveStreamViewerScreen = () => {
         return product.primary_image_url || product.image_url || 'https://via.placeholder.com/200x200?text=Product';
       }
       // Check if it's a direct product item (from live_stream_products)
-      if (item.product_id && item.product) {
+      const productId = (item as any)?.product_id;
+      if (productId && item.product) {
         return item.product.primary_image_url || 'https://via.placeholder.com/200x200?text=Product';
       }
       // It's a service - return placeholder or null (we'll use icon instead)
@@ -562,7 +649,8 @@ const LiveStreamViewerScreen = () => {
         return product.name || 'Product';
       }
       // Check if it's a direct product item (from live_stream_products)
-      if (item.product_id && item.product) {
+      const productId = (item as any)?.product_id;
+      if (productId && item.product) {
         return item.product.name || 'Product';
       }
       // Check if it's a service
@@ -586,8 +674,35 @@ const LiveStreamViewerScreen = () => {
   const handleSendComment = () => {
     if (!commentText.trim()) return;
 
-    liveStreamSocket.sendComment(commentText.trim());
+    const messageText = commentText.trim();
+    
+    // Optimistic update: Add comment immediately to UI (will be replaced by server response)
+    const optimisticComment: LiveComment = {
+      id: `temp-${Date.now()}`,
+      user: {
+        id: user?.id || '',
+        username: user?.username || 'You',
+        avatar_url: user?.avatar_url,
+      },
+      message: messageText,
+      is_pinned: false,
+      created_at: new Date().toISOString(),
+      isOwn: true, // Mark as own comment for optimistic update
+    };
+    
+    setComments(prev => [...prev, optimisticComment]);
     setCommentText('');
+
+    setIsCommentInputExpanded(false);
+    Keyboard.dismiss();
+    
+    // Send to server
+    liveStreamSocket.sendComment(messageText);
+    
+    // Scroll to show new comment
+    setTimeout(() => {
+      commentsListRef.current?.scrollToEnd({ animated: true });
+    }, 100);
   };
 
   // Send reaction
@@ -603,6 +718,11 @@ const LiveStreamViewerScreen = () => {
 
   // Like system - tap to like
   const handleScreenTap = () => {
+    if (isCommentInputExpanded) {
+      setIsCommentInputExpanded(false);
+      Keyboard.dismiss();
+      return;
+    }
     setLikeCount(prev => prev + 1);
     // Send like to server
     liveStreamSocket.sendReaction('heart');
@@ -734,6 +854,36 @@ const LiveStreamViewerScreen = () => {
     setIsCommentInputExpanded(false);
   };
 
+  // Ensure the comment UI returns to the compact state when the keyboard closes
+  useEffect(() => {
+    const keyboardShowSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        Animated.timing(bottomPosition, {
+          toValue: e.endCoordinates.height,
+          duration: Platform.OS === 'ios' ? 250 : 200,
+          useNativeDriver: false,
+        }).start();
+      }
+    );
+    const keyboardHideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        Animated.timing(bottomPosition, {
+          toValue: 0,
+          duration: Platform.OS === 'ios' ? 250 : 200,
+          useNativeDriver: false,
+        }).start();
+        setIsCommentInputExpanded(false);
+      }
+    );
+
+    return () => {
+      keyboardShowSub.remove();
+      keyboardHideSub.remove();
+    };
+  }, [bottomPosition]);
+
   // Live Cart Functions
   const addToLiveCart = (item: LiveStreamProduct | LiveStreamService | LivePortfolioService, quantity: number = 1, bookingDate?: string, bookingTime?: string) => {
     setLiveCartItems(prev => {
@@ -756,17 +906,20 @@ const LiveStreamViewerScreen = () => {
           // Track analytics for portfolio items
           liveSalesAPI.trackPortfolioAddToCart(item.id).catch(console.error);
         }
+
+        const productId = 'product_id' in (item as any) ? (item as any).product_id : undefined;
+        const serviceId = 'service_id' in (item as any) ? (item as any).service_id : undefined;
         
         // Debug: Log what's being added to cart
         console.log('🛒 Adding item to cart:', {
           itemId: item.id,
-          productId: item.product_id,
-          serviceId: item.service_id,
+          productId,
+          serviceId,
           itemType,
           bookingDate,
           bookingTime,
-          hasProductId: !!item.product_id,
-          hasServiceId: !!item.service_id,
+          hasProductId: !!productId,
+          hasServiceId: !!serviceId,
           fullItem: item,
         });
         
@@ -774,7 +927,7 @@ const LiveStreamViewerScreen = () => {
           ...item,
           quantity,
           type: itemType,
-          cartId: Date.now() + Math.random(), // Unique cart ID
+          cartId: `${Date.now()}-${Math.random()}`, // Unique cart ID
           // Store booking date/time for portfolio services
           ...(bookingDate && bookingTime && {
             bookingDate,
@@ -1080,6 +1233,25 @@ const LiveStreamViewerScreen = () => {
         </Animated.View>
       )}
 
+      {(isHostVideoMuted || isHostAudioMuted) && stream.status === 'live' && !isStreamPaused && (
+        <View style={styles.hostMuteOverlay} pointerEvents="none">
+          <View style={styles.hostMuteOverlayContent}>
+            {isHostVideoMuted && (
+              <View style={styles.hostMuteRow}>
+                <Ionicons name="videocam-off" size={22} color="rgba(255,255,255,0.95)" />
+                <Text style={styles.hostMuteText}>Host turned off video</Text>
+              </View>
+            )}
+            {isHostAudioMuted && (
+              <View style={styles.hostMuteRow}>
+                <Ionicons name="mic-off" size={22} color="rgba(255,255,255,0.95)" />
+                <Text style={styles.hostMuteText}>Host muted microphone</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+
       {/* Heart Animations Overlay */}
       <View style={styles.heartsOverlay} pointerEvents="none">
         {heartAnimations.map((heart) => (
@@ -1110,65 +1282,60 @@ const LiveStreamViewerScreen = () => {
         ))}
       </View>
 
-      {/* Dynamic Highlight Card - Always visible but transparent when not highlighted */}
-      <View style={[
-        styles.highlightCard,
-        highlightedItem ? styles.highlightCardVisible : styles.highlightCardTransparent
-      ]}>
-        {highlightedItem && (
-          <>
-            <TouchableOpacity
-              onPress={() => {
-                const imageUrl = 'product' in highlightedItem
-                  ? (highlightedItem as LiveStreamProduct).product.primary_image_url
+      {/* Dynamic Highlight Card */}
+      {highlightedItem && (
+        <View style={styles.highlightCard}>
+          <TouchableOpacity
+            onPress={() => {
+              const imageUrl = 'product' in highlightedItem
+                ? (highlightedItem as LiveStreamProduct).product.primary_image_url
+                : 'images' in highlightedItem
+                ? (highlightedItem as LivePortfolioService).images.find(img => img.is_primary)?.image_url || (highlightedItem as LivePortfolioService).images[0]?.image_url
+                : null;
+              if (imageUrl) {
+                setSelectedImageUrl(imageUrl);
+                setImageViewerVisible(true);
+              }
+            }}
+            activeOpacity={0.8}
+          >
+            <Image
+              source={{
+                uri: 'product' in highlightedItem
+                  ? (highlightedItem as LiveStreamProduct).product.primary_image_url || 'https://via.placeholder.com/80'
                   : 'images' in highlightedItem
-                  ? (highlightedItem as LivePortfolioService).images.find(img => img.is_primary)?.image_url || (highlightedItem as LivePortfolioService).images[0]?.image_url
-                  : null;
-                if (imageUrl) {
-                  setSelectedImageUrl(imageUrl);
-                  setImageViewerVisible(true);
-                }
+                  ? (highlightedItem as LivePortfolioService).images.find(img => img.is_primary)?.image_url || (highlightedItem as LivePortfolioService).images[0]?.image_url || 'https://via.placeholder.com/80'
+                  : 'https://via.placeholder.com/80'
               }}
-              activeOpacity={0.8}
-            >
-              <Image
-                source={{
-                  uri: 'product' in highlightedItem
-                    ? (highlightedItem as LiveStreamProduct).product.primary_image_url || 'https://via.placeholder.com/80'
-                    : 'images' in highlightedItem
-                    ? (highlightedItem as LivePortfolioService).images.find(img => img.is_primary)?.image_url || (highlightedItem as LivePortfolioService).images[0]?.image_url || 'https://via.placeholder.com/80'
-                    : 'https://via.placeholder.com/80'
-                }}
-                style={styles.highlightCardImage}
-              />
-            </TouchableOpacity>
-            <View style={styles.highlightCardInfo}>
-              <Text style={styles.highlightCardTitle} numberOfLines={1}>
-                {'product' in highlightedItem
-                  ? (highlightedItem as LiveStreamProduct).product.name
-                  : 'title' in highlightedItem
-                  ? (highlightedItem as LivePortfolioService).title
-                  : (highlightedItem as LiveStreamService).service?.name}
-              </Text>
-              <Text style={styles.highlightCardPrice}>
-                ₣{'price' in highlightedItem
-                  ? (highlightedItem as LivePortfolioService).price
-                  : highlightedItem.live_price}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={styles.highlightCardAddButton}
-              onPress={() => {
-                addToLiveCart(highlightedItem, 1);
-                Alert.alert('Added to Cart', 'Item added to your cart!');
-              }}
-            >
-              <Ionicons name="cart" size={18} color="white" />
-              <Text style={styles.highlightCardAddButtonText}>Add to Cart</Text>
-            </TouchableOpacity>
-          </>
-        )}
-      </View>
+              style={styles.highlightCardImage}
+            />
+          </TouchableOpacity>
+          <View style={styles.highlightCardInfo}>
+            <Text style={styles.highlightCardTitle} numberOfLines={1}>
+              {'product' in highlightedItem
+                ? (highlightedItem as LiveStreamProduct).product.name
+                : 'title' in highlightedItem
+                ? (highlightedItem as LivePortfolioService).title
+                : (highlightedItem as LiveStreamService).service?.name}
+            </Text>
+            <Text style={styles.highlightCardPrice}>
+              ₣{'price' in highlightedItem
+                ? (highlightedItem as LivePortfolioService).price
+                : highlightedItem.live_price}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.highlightCardAddButton}
+            onPress={() => {
+              addToLiveCart(highlightedItem, 1);
+              Alert.alert('Added to Cart', 'Item added to your cart!');
+            }}
+          >
+            <Ionicons name="cart" size={18} color="white" />
+            <Text style={styles.highlightCardAddButtonText}>Add to Cart</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Showcase Overlay for Viewers */}
       {showcasedItem && (
@@ -1259,6 +1426,22 @@ const LiveStreamViewerScreen = () => {
         </>
       )}
 
+      {/* Gift Animations - Render above video */}
+      {activeGiftAnimations.length > 0 && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9998, pointerEvents: 'none' }}>
+          {activeGiftAnimations.map((animation) => (
+            <GiftAnimation
+              key={animation.id}
+              emoji={animation.emoji}
+              quantity={animation.quantity}
+              onComplete={() => {
+                setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animation.id));
+              }}
+            />
+          ))}
+        </View>
+      )}
+
       {/* Middle Comments */}
       {showComments && comments.length > 0 && (
         <View style={styles.middleComments}>
@@ -1269,15 +1452,30 @@ const LiveStreamViewerScreen = () => {
             keyExtractor={(item, index) => `${item.id}-${index}`}
             showsVerticalScrollIndicator={false}
             style={styles.commentsList}
+            inverted={false}
           />
         </View>
       )}
 
       {/* Bottom Controls */}
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={[styles.bottomControls, { paddingBottom: insets.bottom + 20 }]}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
+      {isCommentInputExpanded && (
+        <TouchableOpacity
+          style={StyleSheet.absoluteFillObject}
+          activeOpacity={1}
+          onPress={() => {
+            setIsCommentInputExpanded(false);
+            Keyboard.dismiss();
+          }}
+        />
+      )}
+      <Animated.View
+        style={[
+          styles.bottomControls,
+          {
+            bottom: bottomPosition,
+            paddingBottom: insets.bottom + 8,
+          },
+        ]}
       >
         {!isCommentInputExpanded ? (
           // Compact bottom bar
@@ -1334,7 +1532,7 @@ const LiveStreamViewerScreen = () => {
             </TouchableOpacity>
           </View>
         )}
-      </KeyboardAvoidingView>
+      </Animated.View>
 
       {/* Shop Modal */}
       <Modal
@@ -1390,6 +1588,7 @@ const LiveStreamViewerScreen = () => {
                 cartItems: liveCartItems,
                 streamTitle: stream.title,
                 vendorId: stream.vendor.id,
+                onCheckoutSuccess: clearLiveCart,
               });
             }}
           />
@@ -1446,17 +1645,8 @@ const LiveStreamViewerScreen = () => {
                   return;
                 }
                 
-                // Send gift via API (backend handles inventory deduction)
-                await giftAPI.sendGift({
-                  gift_id: giftId,
-                  quantity,
-                  recipient_id: stream.vendor.id,
-                  session_type: 'stream',
-                  session_id: streamId,
-                });
-
-                // Also send via WebSocket for real-time animation
-                liveStreamSocket.sendGift(giftId, quantity, message);
+                // Send via WebSocket (backend handles inventory deduction + broadcast)
+                liveStreamSocket.sendGift(gift.id, quantity, message);
 
                 // Reload gifts to update quantities after sending
                 await loadAvailableGifts();
@@ -1709,6 +1899,7 @@ const styles = StyleSheet.create({
   },
   commentInputCompact: {
     flex: 1,
+    maxWidth: screenWidth * 0.55,
     backgroundColor: 'rgba(255,255,255,0.1)',
     borderRadius: 25,
     paddingHorizontal: 15,
@@ -1736,7 +1927,6 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     paddingHorizontal: 15,
     paddingVertical: 10,
-    marginBottom: 10,
   },
   expandedCommentInput: {
     flex: 1,
@@ -2386,10 +2576,39 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
   pauseSubtitle: {
-    color: 'rgba(255, 255, 255, 0.85)',
+    color: 'rgba(255, 255, 255, 0.8)',
     fontSize: 16,
     textAlign: 'center',
-    fontWeight: '500',
+    marginTop: 8,
+  },
+  hostMuteOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9997,
+  },
+  hostMuteOverlayContent: {
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    minWidth: 220,
+  },
+  hostMuteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  hostMuteText: {
+    color: 'rgba(255,255,255,0.95)',
+    fontSize: 16,
+    fontWeight: '600',
   },
   pausePulse: {
     position: 'absolute',
@@ -2474,16 +2693,20 @@ const styles = StyleSheet.create({
     padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 10,
+    zIndex: 100,
+    elevation: 10,
     pointerEvents: 'auto',
   },
   highlightCardTransparent: {
     backgroundColor: 'rgba(0,0,0,0)',
     opacity: 0,
+    height: 0,
+    overflow: 'hidden',
   },
   highlightCardVisible: {
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    backgroundColor: 'rgba(0,0,0,0.85)',
     opacity: 1,
+    height: 'auto',
   },
   highlightCardImage: {
     width: 60,
@@ -3088,13 +3311,13 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
   };
 
   return (
-    <View style={styles.modalOverlay} pointerEvents="box-none">
-      {/* Backdrop - tap to close */}
-      <TouchableOpacity 
-        style={styles.modalBackdrop}
-        activeOpacity={1}
-        onPress={onClose}
-      />
+      <View style={styles.modalOverlay} pointerEvents="box-none">
+        {/* Backdrop - tap to close */}
+        <TouchableOpacity 
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={onClose}
+        />
       <PanGestureHandler
         ref={panRef}
         onGestureEvent={onPanGestureEvent}
@@ -3380,7 +3603,7 @@ const MiniCartModal = ({ visible, onClose, cartItems, modalHeight, onHeightChang
     }
   };
 
-  const renderCartItem = (item: any) => {
+  const renderCartItem = ({ item }: { item: any }) => {
     // Helper functions to extract item data
     const getItemImageUrl = () => {
       if (item.primary_image_url) return item.primary_image_url;
@@ -3484,7 +3707,7 @@ const MiniCartModal = ({ visible, onClose, cartItems, modalHeight, onHeightChang
             <FlatList
               data={cartItems}
               renderItem={renderCartItem}
-              keyExtractor={(item) => item.cartId}
+              keyExtractor={(item) => String(item.cartId)}
               showsVerticalScrollIndicator={false}
               style={styles.miniCartList}
               contentContainerStyle={{ paddingBottom: 10 + (insetsBottom || 0) }}

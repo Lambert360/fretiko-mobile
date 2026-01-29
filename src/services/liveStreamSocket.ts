@@ -38,6 +38,8 @@ export interface LiveComment {
   message: string;
   is_pinned: boolean;
   created_at: string;
+  isOwn?: boolean; // Indicates if this comment was sent by the current user
+  timestamp?: string; // Alternative timestamp field
 }
 
 export interface LiveReaction {
@@ -260,15 +262,19 @@ class LiveStreamSocketService {
     });
 
     // Stream events
-    this.socket.on('new_comment', (comment: LiveComment) => {
-      this.emit('comment', comment);
+    this.socket.on('new_comment', (comment: any) => {
+      console.log('📨 Socket service received new_comment:', comment.id, comment.isOwn ? '(own)' : '(from others)');
+      // Forward comment with isOwn flag preserved
+      this.emit('comment', comment as LiveComment);
     });
 
     this.socket.on('new_reaction', (reaction: LiveReaction) => {
-      this.emit('reaction', reaction);
+      this.emit('new_reaction', reaction);
     });
 
     this.socket.on('new_gift', (gift: LiveGift) => {
+      // Maintain compatibility with screens/components that listen on either name
+      this.emit('new_gift', gift);
       this.emit('gift', gift);
     });
 
@@ -276,12 +282,19 @@ class LiveStreamSocketService {
       this.emit('purchase', purchase);
     });
 
+    this.socket.on('analytics_update', (data: any) => {
+      this.emit('analytics_update', data);
+    });
+
     this.socket.on('viewer_count_update', (data: ViewerCountUpdate) => {
-      this.emit('viewer_count', data);
+      console.log('📊 Socket service received viewer_count_update:', data);
+      this.emit('viewer_count_update', data);
     });
 
     this.socket.on('stream_status_update', (data: StreamStatusUpdate) => {
+      // Maintain compatibility with screens/components that listen on either name
       this.emit('stream_status', data);
+      this.emit('stream_status_update', data);
     });
 
     this.socket.on('stream_ended', (data: { streamId: string; reason?: string; timestamp?: string }) => {
@@ -382,7 +395,7 @@ class LiveStreamSocketService {
       return;
     }
 
-    this.socket?.emit('post_comment', {
+    this.socket?.emit('send_comment', {
       streamId: this.currentStreamId,
       message,
     });
@@ -414,6 +427,8 @@ class LiveStreamSocketService {
 
     this.socket?.emit('send_gift', {
       streamId: this.currentStreamId,
+      // Backend gateway expects giftType, but keep gift_type for compatibility
+      giftType,
       gift_type: giftType,
       quantity,
       message,
@@ -439,15 +454,20 @@ class LiveStreamSocketService {
    * Emit highlight item event
    */
   emitHighlightItem(data: any): void {
+    console.log('📤 emitHighlightItem called with data:', data);
+    console.log('📤 currentStreamId:', this.currentStreamId);
     if (!this.currentStreamId) {
-      console.error('❌ Not in a stream');
+      console.error('❌ Not in a stream - cannot emit highlight_item');
       return;
     }
 
-    this.socket?.emit('highlight_item', {
+    const payload = {
       streamId: this.currentStreamId,
       ...data,
-    });
+    };
+    console.log('📤 Emitting highlight_item event to backend:', payload);
+    this.socket?.emit('highlight_item', payload);
+    console.log('✅ highlight_item event emitted successfully');
   }
 
   /**
@@ -472,7 +492,8 @@ class LiveStreamSocketService {
    */
   private emit(event: string, data: any): void {
     const callbacks = this.listeners.get(event);
-    if (callbacks) {
+    if (callbacks && callbacks.size > 0) {
+      console.log(`📤 Emitting ${event} to ${callbacks.size} listener(s):`, data);
       callbacks.forEach(callback => {
         try {
           callback(data);
@@ -480,6 +501,8 @@ class LiveStreamSocketService {
           console.error(`Error in listener for ${event}:`, error);
         }
       });
+    } else {
+      console.log(`⚠️ No listeners registered for event: ${event}`);
     }
   }
 

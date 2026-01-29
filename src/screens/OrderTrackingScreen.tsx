@@ -175,8 +175,10 @@ const OrderTrackingScreen: React.FC = () => {
         setOrder(prev => {
           if (prev?.buyerLocation) {
             const dist = riderLocationAPI.calculateDistance(
-              { latitude: data.latitude, longitude: data.longitude },
-              prev.buyerLocation
+              data.latitude,
+              data.longitude,
+              prev.buyerLocation.latitude,
+              prev.buyerLocation.longitude
             );
             setDistance(dist);
             
@@ -553,22 +555,23 @@ const OrderTrackingScreen: React.FC = () => {
       console.log(`✅ Order confirmed successfully!`);
       
       // Navigate directly to rating screen (don't wait for reload)
-      navigation.navigate('RateOrder', { orderId });
+      (navigation as any as { navigate: (screen: string, params: any) => void }).navigate('RateOrder', { orderId: orderId.toString() });
       
       // Try to reload order details in background (non-blocking)
       setTimeout(async () => {
         try {
           await loadOrderDetails();
-          console.log(`✅ Order details reloaded successfully`);
+// ... (rest of the code remains the same)
+          console.log(` Order details reloaded successfully`);
         } catch (reloadError) {
-          console.warn('⚠️ Failed to reload order details (non-critical):', reloadError);
+          console.warn(' Failed to reload order details (non-critical):', reloadError);
           // Update status manually if reload fails
-          setOrder(prev => prev ? { ...prev, status: 'completed' } : null);
+          setOrder(prev => prev ? { ...prev, status: 'delivered' } : null);
         }
       }, 500);
       
     } catch (error) {
-      console.error('❌ Error confirming order receipt:', error);
+      console.error(' Error confirming order receipt:', error);
       Alert.alert('Error', 'Failed to confirm order receipt. Please try again.');
     }
   };
@@ -612,7 +615,7 @@ const OrderTrackingScreen: React.FC = () => {
         },
         {
           text: 'Submit',
-          onPress: async (description) => {
+          onPress: async (description?: string) => {
             if (!description || description.trim() === '') {
               Alert.alert('Error', 'Please provide a description');
               return;
@@ -857,7 +860,7 @@ const OrderTrackingScreen: React.FC = () => {
     if (!locationPermission) {
       return (
         <View style={styles.modalMapPlaceholder}>
-          <Ionicons name="location-off" size={48} color="#888" />
+          <Ionicons name="location" size={48} color="#888" />
           <Text style={styles.modalMapPlaceholderText}>Location Permission Required</Text>
           <TouchableOpacity 
             style={styles.permissionButton}
@@ -869,7 +872,7 @@ const OrderTrackingScreen: React.FC = () => {
       );
     }
 
-    if (mapLoading || !order.riderLocation || !order.vendorLocation || !order.buyerLocation) {
+    if (mapLoading || !order?.riderLocation || !order?.vendorLocation || !order?.buyerLocation) {
       return (
         <View style={styles.modalMapPlaceholder}>
           <View style={styles.spinnerContainer}>
@@ -947,7 +950,7 @@ const OrderTrackingScreen: React.FC = () => {
     if (!locationPermission) {
       return (
         <View style={styles.mapPlaceholder}>
-          <Ionicons name="location-off" size={40} color="#888" />
+          <Ionicons name="location" size={40} color="#888" />
           <Text style={styles.mapPlaceholderText}>Location Permission Required</Text>
           <TouchableOpacity 
             style={styles.permissionButton}
@@ -960,7 +963,7 @@ const OrderTrackingScreen: React.FC = () => {
     }
 
     // ✨ Show loading spinner specifically for map while rest of screen is interactive
-    if (mapLoading || !order.riderLocation || !order.vendorLocation || !order.buyerLocation) {
+    if (mapLoading || !order?.riderLocation || !order?.vendorLocation || !order?.buyerLocation) {
       return (
         <View style={styles.mapPlaceholder}>
           <View style={styles.spinnerContainer}>
@@ -973,7 +976,7 @@ const OrderTrackingScreen: React.FC = () => {
       );
     }
 
-    const { riderLocation, vendorLocation, buyerLocation } = order;
+    const { riderLocation, vendorLocation, buyerLocation } = order || {};
     
     return (
       <View style={styles.map}>
@@ -1002,7 +1005,7 @@ const OrderTrackingScreen: React.FC = () => {
             </View>
             {order.riderLocation && (
               <Text style={styles.accuracyText}>
-                📶 Accuracy: {Math.round((order.riderLocation.accuracy || 10))}m
+                📶 GPS Signal Available
               </Text>
             )}
           </View>
@@ -1022,14 +1025,14 @@ const OrderTrackingScreen: React.FC = () => {
             <View style={styles.routePoint}>
               <Ionicons name="storefront" size={16} color="#3498DB" />
               <Text style={styles.routeText} numberOfLines={1}>
-                {vendorLocation.address}
+                {vendorLocation?.address || 'Vendor Location'}
               </Text>
             </View>
             <View style={styles.routeLine} />
             <View style={styles.routePoint}>
               <Ionicons name="home" size={16} color="#27AE60" />
               <Text style={styles.routeText} numberOfLines={1}>
-                {buyerLocation.address}
+                {buyerLocation?.address || 'Your Address'}
               </Text>
             </View>
           </View>
@@ -1090,12 +1093,50 @@ const OrderTrackingScreen: React.FC = () => {
     );
   };
 
+  // ✅ Cancel Order (only when pending)
+  const handleCancelOrder = async () => {
+    Alert.alert(
+      'Cancel Order',
+      'Are you sure you want to cancel this order? You will receive a full refund.',
+      [
+        {
+          text: 'No',
+          style: 'cancel',
+        },
+        {
+          text: 'Yes, Cancel Order',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const result = await ordersAPI.cancelOrder(orderId);
+              Alert.alert('Order Cancelled', 'Your order has been cancelled and you will receive a full refund.');
+              await loadOrderDetails();
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to cancel order');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   // ✅ Render buyer actions only
   const renderBuyerActions = () => {
     if (!order) return null;
 
     return (
       <View style={styles.buyerActionsSection}>
+        {/* Cancel Order Button - Show when order is pending */}
+        {order.status === 'pending' && (
+          <TouchableOpacity 
+            style={styles.cancelOrderButton}
+            onPress={handleCancelOrder}
+          >
+            <Ionicons name="close-circle" size={20} color="white" />
+            <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Confirm Receipt Button - Show when delivered */}
         {order.status === 'delivered' && order.currentPhase.phase === 'buyer' && (
           <TouchableOpacity 
@@ -1508,8 +1549,8 @@ const OrderTrackingScreen: React.FC = () => {
             <Text style={styles.pickupTitle}>Self-Pickup Order</Text>
             <Text style={styles.pickupSubtitle}>
               {order.status === 'pending' && 'Vendor is preparing your order'}
-              {order.status === 'accepted' && 'Order confirmed - being prepared'}
-              {order.status === 'ready_for_pickup' && '✅ Ready for Pickup!'}
+              {order.status === 'confirmed' && 'Order confirmed - being prepared'}
+              {order.status === 'processing' && '✅ Ready for Pickup!'}
               {order.status === 'delivered' && '✅ Order Completed'}
             </Text>
             
@@ -1536,10 +1577,10 @@ const OrderTrackingScreen: React.FC = () => {
                   {order.vendorLocation && (
                     <Text style={styles.vendorAddress}>{order.vendorLocation.address}</Text>
                   )}
-                  {order.vendorInfo.phone && (
+                  {order.vendorInfo?.phone && (
                     <TouchableOpacity 
                       style={styles.contactButton}
-                      onPress={() => Alert.alert('Call Vendor', `Call ${order.vendorInfo.phone}?`)}
+                      onPress={() => Alert.alert('Call Vendor', `Call ${order.vendorInfo?.phone}?`)}
                     >
                       <Ionicons name="call" size={16} color="#27AE60" />
                       <Text style={styles.contactText}>{order.vendorInfo.phone}</Text>
@@ -1598,10 +1639,10 @@ const OrderTrackingScreen: React.FC = () => {
                   {order.vendorLocation && (
                     <Text style={styles.vendorAddress}>{order.vendorLocation.address}</Text>
                   )}
-                  {order.vendorInfo.phone && (
+                  {order.vendorInfo?.phone && (
                     <TouchableOpacity 
                       style={styles.contactButton}
-                      onPress={() => Alert.alert('Call Vendor', `Call ${order.vendorInfo.phone}?`)}
+                      onPress={() => Alert.alert('Call Vendor', `Call ${order.vendorInfo?.phone}?`)}
                     >
                       <Ionicons name="call" size={16} color="#27AE60" />
                       <Text style={styles.contactText}>{order.vendorInfo.phone}</Text>
@@ -1697,7 +1738,7 @@ const OrderTrackingScreen: React.FC = () => {
 
         {/* 4. Compact Tracking Card - Shows ETA and opens modal */}
         {order.status !== 'delivered' && 
-         order.deliveryType !== 'pickup' && 
+         order.deliveryType === 'delivery' && 
          (order.status === 'out_for_delivery' || order.status === 'shipped' || order.currentPhase?.phase === 'rider') && (
           <View style={styles.section}>
             {showTracking ? (
@@ -2178,7 +2219,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 16,
   },
-  timerText: {
+  timerContainerText: {
     marginLeft: 8,
     fontSize: 14,
     color: '#FF9500',
@@ -2454,18 +2495,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#333',
     marginHorizontal: 4,
-  },
-  confirmButton: {
-    backgroundColor: '#27AE60',
-    borderRadius: 12,
-    padding: 16,
-    margin: 16,
-    alignItems: 'center',
-  },
-  confirmButtonText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: 'bold',
   },
   // ✅ Order Summary Styles
   orderSummarySection: {
@@ -2743,7 +2772,22 @@ const styles = StyleSheet.create({
   confirmReceiptButtonText: {
     color: 'white',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
+  },
+  cancelOrderButton: {
+    backgroundColor: '#E74C3C',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  cancelOrderButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
     marginLeft: 8,
   },
   // ✅ Additional Actions Styles

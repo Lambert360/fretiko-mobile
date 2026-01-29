@@ -28,6 +28,7 @@ interface LiveCartCheckoutScreenProps {
       cartItems: any[];
       streamTitle: string;
       vendorId: string;
+      onCheckoutSuccess?: () => void;
     };
   };
 }
@@ -38,7 +39,7 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { streamId, cartItems, streamTitle, vendorId } = route.params;
+  const { streamId, cartItems, streamTitle, vendorId, onCheckoutSuccess } = route.params;
 
   // Debug: Log cart items structure when screen loads
   useEffect(() => {
@@ -377,12 +378,14 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
             text: 'Continue Watching',
             onPress: () => {
               // Clear cart and return to stream
+              onCheckoutSuccess?.();
               navigation.goBack();
             },
           },
           {
             text: 'View Orders',
             onPress: () => {
+              onCheckoutSuccess?.();
               navigation.reset({
                 index: 0,
                 routes: [{ name: 'Main' }],

@@ -24,10 +24,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { liveSalesAPI, LiveStreamProduct, LiveStreamService, LivePortfolioService, PortfolioImage, PortfolioAnalytics } from '../services/liveSalesAPI';
-import { liveStreamSocket, LiveComment, LiveReaction } from '../services/liveStreamSocket';
+import { liveStreamSocket, LiveComment, LiveReaction, LiveGift } from '../services/liveStreamSocket';
 import { productsAPI, Product } from '../services/productsAPI';
+import { workspaceAPI, WorkspaceOrder } from '../services/workspaceAPI';
 import { useAuctionSounds } from '../services/auctionSoundService';
 import * as ImagePicker from 'expo-image-picker';
+import GiftAnimation from '../components/GiftAnimation';
 
 // Import basic Agora SDK
 import { createAgoraRtcEngine, ChannelProfileType, ClientRoleType, IRtcEngine, ChannelMediaOptions, RtcSurfaceView, RenderModeType, VideoCanvas } from 'react-native-agora';
@@ -91,6 +93,13 @@ const LiveStreamBroadcastScreen = () => {
   // Reactions
   const [reactions, setReactions] = useState<LiveReaction[]>([]);
 
+  // Gift animations
+  const [activeGiftAnimations, setActiveGiftAnimations] = useState<Array<{
+    id: string;
+    emoji: string;
+    quantity: number;
+  }>>([]);
+
   // Product/Service showcase
   const [showcasedItem, setShowcasedItem] = useState<LiveStreamProduct | LiveStreamService | LivePortfolioService | null>(null);
   const [showShowcaseControls, setShowShowcaseControls] = useState(false);
@@ -126,6 +135,17 @@ const LiveStreamBroadcastScreen = () => {
   // Analytics modal
   const [showAnalytics, setShowAnalytics] = useState(false);
 
+  const [showOrders, setShowOrders] = useState(false);
+  const [workspaceOrders, setWorkspaceOrders] = useState<WorkspaceOrder[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [selectedOrderDetails, setSelectedOrderDetails] = useState<any>(null);
+  const [orderDetailsLoading, setOrderDetailsLoading] = useState(false);
+  const [orderActionLoading, setOrderActionLoading] = useState(false);
+  const [orderPin, setOrderPin] = useState('');
+  const [orderPinError, setOrderPinError] = useState<string | null>(null);
+
   // Video view reference for setupLocalVideo
   const rtcSurfaceViewRef = useRef<any>(null);
 
@@ -135,6 +155,8 @@ const LiveStreamBroadcastScreen = () => {
     totalViewers: 0,
     comments: 0,
     reactions: 0,
+    gifts: 0,
+    giftValue: 0,
     sales: 0,
     revenue: 0,
   });
@@ -147,7 +169,7 @@ const LiveStreamBroadcastScreen = () => {
     return () => {
       // Cleanup on component unmount
       console.log('🏁 Component unmounting - cleaning up stream...');
-      cleanupStream().catch(error => {
+      cleanupStream().catch((error: any) => {
         console.error('❌ Cleanup on unmount failed:', error);
       });
 
@@ -229,25 +251,34 @@ const LiveStreamBroadcastScreen = () => {
 
       setAgoraConfig(connectionData);
 
+      // Register event listeners BEFORE connecting to ensure they're ready
+      // Register viewer_count_update listener early so it can receive updates immediately
+      liveStreamSocket.on('viewer_count_update', (viewerData: any) => {
+        console.log('📊 Host received viewer_count_update:', viewerData);
+        const newCount = viewerData.count || viewerData.current_viewers || 0;
+        console.log('📊 Setting viewer count to:', newCount);
+        setViewerCount(newCount);
+      });
+
       // Register event listener for joined_stream BEFORE connecting
       liveStreamSocket.on('joined_stream', (data: any) => {
         console.log('🔥 JOINED_STREAM EVENT RECEIVED:', data);
         if (data.success) {
+          // Set initial viewer count from joined_stream response
+          if (data.viewerCount !== undefined) {
+            console.log('📊 Setting initial viewer count from joined_stream:', data.viewerCount);
+            setViewerCount(data.viewerCount);
+          }
+          
           console.log('🚀 About to register event listeners and complete initialization');
 
           try {
             // Register remaining event listeners
             liveStreamSocket.on('comment', handleNewComment);
             liveStreamSocket.on('new_reaction', handleNewReaction);
-            liveStreamSocket.on('highlight_item', (data: any) => {
-              if (data.streamId === stream.id) {
-                setHighlightedItem(data.item);
-              }
-            });
-            liveStreamSocket.on('viewer_count_update', (viewerData: any) => {
-              console.log('📊 Viewer count update received:', viewerData);
-              setViewerCount(viewerData.count || viewerData.current_viewers || 0);
-            });
+            liveStreamSocket.on('new_gift', handleNewGift);
+            liveStreamSocket.on('analytics_update', handleAnalyticsUpdate);
+            // Note: Host doesn't need to listen for highlight_item - they're the ones sending it
             liveStreamSocket.on('stream_status_update', handleStreamStatusUpdate);
 
             console.log('📝 Event listeners registered');
@@ -270,51 +301,13 @@ const LiveStreamBroadcastScreen = () => {
       });
 
       // Connect to WebSocket for comments (industry standard: waits for authentication)
+      console.log('🔌 Connecting to LiveStream socket...');
       await liveStreamSocket.connect();
+      console.log('✅ LiveStream socket authenticated');
+
+      // Join the stream room so we receive joined_stream + viewer_count_update
+      console.log('🚪 Joining stream room as vendor...');
       await liveStreamSocket.joinStream(stream.id, 'vendor');
-    } catch (error: any) {
-      console.error('Error initializing stream:', error);
-      Alert.alert('Error', error.message || 'Failed to initialize live stream');
-      navigation.goBack();
-    }
-  };
-
-  const cleanupStream = async () => {
-    try {
-      console.log('🧹 Starting local resource cleanup...');
-
-      // Clear socket listeners and leave stream
-      liveStreamSocket.clearListeners();
-      liveStreamSocket.leaveStream();
-      console.log('✅ Socket cleanup completed');
-
-      // Cleanup Agora engine
-      if (agoraEngine) {
-        try {
-          console.log('🎥 Cleaning up Agora engine...');
-
-          // Remove all listeners
-          agoraEngine.removeAllListeners();
-
-          // Leave channel first, then release
-          await agoraEngine.leaveChannel();
-          await agoraEngine.release();
-
-          console.log('✅ Agora engine cleaned up');
-        } catch (cleanupError) {
-          console.warn('⚠️ Agora cleanup warning:', cleanupError);
-          // Don't throw here - we want to continue with state cleanup
-        } finally {
-          setAgoraEngine(null);
-          agoraEngineRef.current = null; // Clear ref as well
-          setIsJoined(false);
-          setIsPreviewStarted(false);
-          setIsAgoraInitialized(false); // Reset initialization flag
-          setAgoraConfig(null); // Clear config to prevent re-initialization
-        }
-      }
-
-      console.log('✅ Local cleanup completed successfully');
     } catch (error) {
       console.error('❌ Error during local cleanup:', error);
       // Still try to clean up state even if something failed
@@ -326,12 +319,193 @@ const LiveStreamBroadcastScreen = () => {
     }
   };
 
+  const cleanupStream = async () => {
+    console.log('🧹 Starting local resource cleanup...');
+
+    try {
+      // Clear socket listeners and leave stream
+      liveStreamSocket.clearListeners();
+      liveStreamSocket.leaveStream();
+      console.log('✅ Socket cleanup completed');
+    } catch (error: any) {
+      console.error('❌ Error during socket cleanup:', error);
+    }
+
+    // Cleanup Agora engine
+    if (agoraEngine) {
+      try {
+        console.log('🎥 Cleaning up Agora engine...');
+
+        // Remove all listeners
+        agoraEngine.removeAllListeners();
+
+        // Leave channel first, then release
+        await agoraEngine.leaveChannel();
+        await agoraEngine.release();
+
+        console.log('✅ Agora engine cleaned up');
+      } catch (cleanupError: any) {
+        console.warn('⚠️ Agora cleanup warning:', cleanupError);
+        // Don't throw here - we want to continue with state cleanup
+      } finally {
+        setAgoraEngine(null);
+        agoraEngineRef.current = null; // Clear ref as well
+        setIsJoined(false);
+        setIsPreviewStarted(false);
+        setIsAgoraInitialized(false); // Reset initialization flag
+        setAgoraConfig(null); // Clear config to prevent re-initialization
+      }
+    }
+
+    console.log('✅ Local cleanup completed successfully');
+  };
+
+  const formatDeliveryAddress = (address: any): string => {
+    if (!address) return 'No address provided';
+    if (typeof address === 'string') return address;
+
+    const parts = [address.address, address.city, address.state, address.postalCode].filter(Boolean);
+    return parts.length > 0 ? parts.join(', ') : 'No address provided';
+  };
+
+  const loadActiveOrders = async () => {
+    setOrdersLoading(true);
+    setOrdersError(null);
+
+    try {
+      const orders = await workspaceAPI.getActiveOrders();
+      setWorkspaceOrders(orders);
+    } catch (e: any) {
+      setOrdersError(e?.message || 'Failed to load orders');
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
+  const openOrdersModal = async () => {
+    setShowOrders(true);
+    setSelectedOrderId(null);
+    setSelectedOrderDetails(null);
+    setOrderPin('');
+    setOrderPinError(null);
+    await loadActiveOrders();
+  };
+
+  const closeOrdersModal = () => {
+    setShowOrders(false);
+    setSelectedOrderId(null);
+    setSelectedOrderDetails(null);
+    setOrderPin('');
+    setOrderPinError(null);
+    setOrdersError(null);
+  };
+
+  const openOrderDetails = async (orderId: string) => {
+    setSelectedOrderId(orderId);
+    setSelectedOrderDetails(null);
+    setOrderPin('');
+    setOrderPinError(null);
+    setOrderDetailsLoading(true);
+
+    try {
+      const details = await workspaceAPI.getOrderDetails(orderId);
+      setSelectedOrderDetails(details);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to load order details');
+      setSelectedOrderId(null);
+    } finally {
+      setOrderDetailsLoading(false);
+    }
+  };
+
+  const getQuickActionForOrder = (order: WorkspaceOrder | null) => {
+    if (!order) return null;
+    const isSelfPickup = order.deliveryType === 'pickup';
+
+    switch (order.status) {
+      case 'pending':
+        return { type: 'pending' as const };
+      case 'processing':
+        if (isSelfPickup) return { type: 'single' as const, action: 'ready_pickup', label: 'Mark Ready for Pickup', requiresPin: false };
+        return { type: 'single' as const, action: 'ready', label: 'Mark Ready', requiresPin: false };
+      case 'ready_for_pickup':
+        if (isSelfPickup) return { type: 'single' as const, action: 'confirm_pickup', label: 'Confirm Pickup', requiresPin: true };
+        return { type: 'single' as const, action: 'pickup', label: 'Rider Pickup', requiresPin: true };
+      case 'out_for_delivery':
+        return { type: 'single' as const, action: 'delivered', label: 'Mark Delivered', requiresPin: true };
+      default:
+        return null;
+    }
+  };
+
+  const runOrderAction = async (order: WorkspaceOrder | null, action: string) => {
+    if (!order) return;
+
+    setOrderActionLoading(true);
+    setOrderPinError(null);
+
+    try {
+      if (action === 'accept') {
+        await workspaceAPI.acceptOrder(order.id);
+      } else if (action === 'decline') {
+        await workspaceAPI.declineOrder(order.id, 'Vendor rejected order');
+      } else if (action === 'ready') {
+        await workspaceAPI.markOrderReady(order.id);
+      } else if (action === 'ready_pickup') {
+        await workspaceAPI.markOrderReadyForPickup(order.id);
+      } else if (action === 'pickup') {
+        if (!orderPin.trim()) throw new Error('PIN is required');
+        await workspaceAPI.confirmPickupWithPin(order.id, orderPin.trim());
+      } else if (action === 'confirm_pickup') {
+        if (!orderPin.trim()) throw new Error('PIN is required');
+        await workspaceAPI.confirmSelfPickupWithPin(order.id, orderPin.trim());
+      } else if (action === 'delivered') {
+        if (!orderPin.trim()) throw new Error('PIN is required');
+        await workspaceAPI.markDelivered(order.id, orderPin.trim());
+      }
+
+      await loadActiveOrders();
+      if (selectedOrderId) {
+        await openOrderDetails(selectedOrderId);
+      }
+    } catch (e: any) {
+      const message = e?.message || 'Failed to update order';
+      setOrderPinError(message);
+      Alert.alert('Error', message);
+    } finally {
+      setOrderActionLoading(false);
+    }
+  };
+
   const handleNewComment = (comment: LiveComment) => {
-    setComments(prev => [...prev, comment]);
-    // For inverted list, scroll to top (which shows newest comments)
+    // Prevent duplicate comments - check if comment ID already exists
+    setComments(prev => {
+      // Check if this comment already exists (by ID)
+      const exists = prev.some(c => c.id === comment.id);
+      if (exists) {
+        console.log('⚠️ Duplicate comment ignored on host screen:', comment.id);
+        return prev;
+      }
+      
+      // If this is our own comment (isOwn: true), replace any optimistic comment
+      if (comment.isOwn) {
+        console.log('✅ Replacing optimistic comment with server response on host:', comment.id);
+        // Remove temporary optimistic comment and add the real one
+        return prev.filter(c => !c.id.startsWith('temp-')).concat(comment);
+      }
+      
+      console.log('✅ Adding new comment from viewers on host:', comment.id);
+      return [...prev, comment];
+    });
+    // Scroll to end (bottom) to show newest comments
     setTimeout(() => {
-      commentsListRef.current?.scrollToOffset({ offset: 0, animated: true });
+      commentsListRef.current?.scrollToEnd({ animated: true });
     }, 100);
+    // Update analytics
+    setAnalytics(prev => ({
+      ...prev,
+      comments: prev.comments + 1,
+    }));
   };
 
   const handleNewReaction = (reaction: LiveReaction) => {
@@ -346,6 +520,54 @@ const LiveStreamBroadcastScreen = () => {
     setTimeout(() => {
       setReactions(prev => prev.slice(1));
     }, 3000);
+  };
+
+  const handleNewGift = (giftData: LiveGift | any) => {
+    console.log('🎁 Gift received on host screen:', giftData);
+
+    const emoji = giftData?.giftEmoji || giftData?.emoji || '🎁';
+    const quantity = giftData?.quantity || 1;
+    const amount = giftData?.amount || giftData?.total_value || giftData?.total_amount || 0;
+
+    const animationId = `gift-${Date.now()}-${Math.random()}`;
+    setActiveGiftAnimations(prev => [...prev, { id: animationId, emoji, quantity }]);
+
+    setTimeout(() => {
+      setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animationId));
+    }, 5000);
+
+    setAnalytics(prev => ({
+      ...prev,
+      gifts: prev.gifts + 1,
+      giftValue: prev.giftValue + (typeof amount === 'number' ? amount : 0),
+      revenue: prev.revenue + (typeof amount === 'number' ? amount : 0),
+    }));
+  };
+
+  const handleAnalyticsUpdate = (data: any) => {
+    if (!data) return;
+
+    setAnalytics(prev => {
+      const sales = typeof data.totalSales === 'number' ? Math.max(prev.sales, data.totalSales) : prev.sales;
+      const giftValue = typeof data.giftValue === 'number' ? Math.max(prev.giftValue, data.giftValue) : prev.giftValue;
+      const revenue = (typeof sales === 'number' ? sales : 0) + (typeof giftValue === 'number' ? giftValue : 0);
+
+      const comments = typeof data.commentCount === 'number' ? Math.max(prev.comments, data.commentCount) : prev.comments;
+      const reactions = typeof data.reactionCount === 'number' ? Math.max(prev.reactions, data.reactionCount) : prev.reactions;
+      const gifts = typeof data.giftCount === 'number' ? Math.max(prev.gifts, data.giftCount) : prev.gifts;
+
+      return {
+        ...prev,
+        viewers: data.viewerCount ?? prev.viewers,
+        totalViewers: data.totalViewers ?? prev.totalViewers,
+        comments,
+        reactions,
+        gifts,
+        giftValue,
+        sales,
+        revenue,
+      };
+    });
   };
 
   const handleStreamStatusUpdate = (statusUpdate: any) => {
@@ -522,24 +744,32 @@ const LiveStreamBroadcastScreen = () => {
 
   // Handle highlighting an item (billboard feature)
   const handleHighlightItem = (item: LiveStreamProduct | LiveStreamService | LivePortfolioService) => {
+    console.log('🌟 Host highlighting item:', item);
+    // Set locally first so host sees it immediately
     setHighlightedItem(item);
+    console.log('✅ Highlighted item set on host screen');
     // Broadcast to viewers via WebSocket
     liveStreamSocket.emitHighlightItem({
       item: item,
       highlightedBy: user?.id,
       type: 'product' in item ? 'product' : 'service' in item ? 'service' : 'portfolio',
     });
+    console.log('📡 Highlight event emitted to backend');
   };
 
   // Handle dismissing highlight card
   const handleDismissHighlight = () => {
+    console.log('❌ Host dismissing highlight');
+    // Clear locally first
     setHighlightedItem(null);
+    console.log('✅ Highlight cleared on host screen');
     // Broadcast dismissal to viewers
     liveStreamSocket.emitHighlightItem({
       item: null,
       highlightedBy: user?.id,
       type: 'dismiss',
     });
+    console.log('📡 Dismissal event emitted to backend');
   };
 
   // Save product configuration and add to stream
@@ -832,33 +1062,50 @@ const LiveStreamBroadcastScreen = () => {
     const newStatus = willPause ? 'paused' : 'live';
 
     try {
-
       console.log(`⏸️ ${action.charAt(0).toUpperCase() + action.slice(1)}ing stream...`);
 
-      // Update stream status on backend
-      await liveSalesAPI.updateStreamStatus(stream.id, newStatus);
-      console.log(`✅ Stream ${action}d on backend`);
-
-      // Update local state
+      // 1) Apply pause/resume LOCALLY first (so it works even if backend call fails)
+      // Preserve the user's explicit mic/video toggle states when resuming.
       setIsPaused(willPause);
 
-      // Handle Agora engine for pause/resume
       if (agoraEngine) {
-        if (willPause) {
-          // Pause: mute audio and video
-          await agoraEngine.muteLocalAudioStream(true);
-          await agoraEngine.muteLocalVideoStream(true);
-          console.log('🔇 Local audio/video muted for pause');
-        } else {
-          // Resume: unmute audio and video
-          await agoraEngine.muteLocalAudioStream(false);
-          await agoraEngine.muteLocalVideoStream(false);
-          console.log('🔊 Local audio/video unmuted for resume');
+        try {
+          const engineAny = agoraEngine as any;
+          const canUpdateMediaOptions = typeof engineAny.updateChannelMediaOptions === 'function';
+
+          if (canUpdateMediaOptions) {
+            // Stop publishing tracks on pause. On resume, publish based on the current mute toggles.
+            await engineAny.updateChannelMediaOptions({
+              publishCameraTrack: !willPause && !isVideoMuted,
+              publishMicrophoneTrack: !willPause && !isAudioMuted,
+            });
+          } else {
+            // Fallback for older SDK surface
+            await agoraEngine.muteLocalAudioStream(willPause || isAudioMuted);
+            await agoraEngine.muteLocalVideoStream(willPause || isVideoMuted);
+          }
+
+          // Optional: stop local preview while paused (prevents host camera from "moving" locally)
+          if (willPause && typeof engineAny.stopPreview === 'function') {
+            await engineAny.stopPreview();
+          }
+          if (!willPause && typeof engineAny.startPreview === 'function') {
+            await engineAny.startPreview();
+          }
+
+          console.log(`✅ Local stream ${action} applied`);
+        } catch (localError: any) {
+          console.error(`❌ Failed to ${action} locally:`, localError);
         }
       }
 
-      // TODO: Add socket notification for stream status update
-      // Note: emit method is private, need to add public method to LiveStreamSocketService
+      // 2) Best-effort backend update (do not block pause/resume)
+      try {
+        await liveSalesAPI.updateStreamStatus(stream.id, newStatus);
+        console.log(`✅ Stream ${action}d on backend`);
+      } catch (backendError: any) {
+        console.warn(`⚠️ Backend stream ${action} update failed (continuing locally):`, backendError?.message);
+      }
 
     } catch (error: any) {
       console.error(`❌ Error ${action}ing stream:`, error);
@@ -1049,6 +1296,17 @@ const LiveStreamBroadcastScreen = () => {
             </View>
           )}
 
+          <TouchableOpacity 
+            style={styles.controlIconButton}
+            onPress={handleToggleVideo}
+          >
+            <Ionicons 
+              name={isVideoMuted ? "videocam-off" : "videocam"}
+              size={20}
+              color={isVideoMuted ? "#E74C3C" : "white"}
+            />
+          </TouchableOpacity>
+
           <View style={styles.viewerCount}>
             <Ionicons name="eye" size={16} color="white" />
             <Text style={styles.viewerText}>{viewerCount}</Text>
@@ -1075,6 +1333,22 @@ const LiveStreamBroadcastScreen = () => {
               </View>
             );
           })}
+        </View>
+      )}
+
+      {/* Gift Animations - Render above video */}
+      {activeGiftAnimations.length > 0 && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9998, pointerEvents: 'none' }}>
+          {activeGiftAnimations.map((animation) => (
+            <GiftAnimation
+              key={animation.id}
+              emoji={animation.emoji}
+              quantity={animation.quantity}
+              onComplete={() => {
+                setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animation.id));
+              }}
+            />
+          ))}
         </View>
       )}
 
@@ -1205,12 +1479,8 @@ const LiveStreamBroadcastScreen = () => {
             {/* Products */}
             {stream.products?.map((product: LiveStreamProduct) => (
               <View key={product.id} style={styles.controlItemWrapper}>
-                <TouchableOpacity
-                  style={[
-                    styles.controlItem,
-                    showcasedItem?.id === product.id && styles.controlItemActive
-                  ]}
-                  onPress={() => setShowcasedItem(product)}
+                <View
+                  style={styles.controlItem}
                 >
                   <Image
                     source={{ uri: product.product.primary_image_url || 'https://via.placeholder.com/60' }}
@@ -1219,7 +1489,7 @@ const LiveStreamBroadcastScreen = () => {
                   <Text style={styles.controlItemText} numberOfLines={1}>
                     {product.product.name}
                   </Text>
-                </TouchableOpacity>
+                </View>
                 <TouchableOpacity
                   style={styles.highlightButton}
                   onPress={() => handleHighlightItem(product)}
@@ -1232,12 +1502,8 @@ const LiveStreamBroadcastScreen = () => {
             {/* Services */}
             {stream.services?.map((service: LiveStreamService) => (
               <View key={service.id} style={styles.controlItemWrapper}>
-                <TouchableOpacity
-                  style={[
-                    styles.controlItem,
-                    showcasedItem?.id === service.id && styles.controlItemActive
-                  ]}
-                  onPress={() => setShowcasedItem(service)}
+                <View
+                  style={styles.controlItem}
                 >
                   <View style={styles.serviceIcon}>
                     <Ionicons name="briefcase" size={24} color="#3498DB" />
@@ -1245,7 +1511,7 @@ const LiveStreamBroadcastScreen = () => {
                   <Text style={styles.controlItemText} numberOfLines={1}>
                     {service.service.name}
                   </Text>
-                </TouchableOpacity>
+                </View>
                 <TouchableOpacity
                   style={styles.highlightButton}
                   onPress={() => handleHighlightItem(service)}
@@ -1258,12 +1524,8 @@ const LiveStreamBroadcastScreen = () => {
             {/* Portfolio Services */}
             {portfolioServices.map((portfolio: LivePortfolioService) => (
               <View key={portfolio.id} style={styles.controlItemWrapper}>
-                <TouchableOpacity
-                  style={[
-                    styles.controlItem,
-                    showcasedItem?.id === portfolio.id && styles.controlItemActive
-                  ]}
-                  onPress={() => setShowcasedItem(portfolio)}
+                <View
+                  style={styles.controlItem}
                 >
                   <Image
                     source={{ uri: portfolio.images.find(img => img.is_primary)?.image_url || portfolio.images[0]?.image_url || 'https://via.placeholder.com/60' }}
@@ -1275,7 +1537,7 @@ const LiveStreamBroadcastScreen = () => {
                   <Text style={styles.controlItemText} numberOfLines={1}>
                     {portfolio.title}
                   </Text>
-                </TouchableOpacity>
+                </View>
                 <TouchableOpacity
                   style={styles.highlightButton}
                   onPress={() => handleHighlightItem(portfolio)}
@@ -1297,7 +1559,7 @@ const LiveStreamBroadcastScreen = () => {
 
       {/* Comments Chat - Right Side */}
       {comments.length > 0 && (
-        <View style={styles.commentsChat}>
+        <View style={[styles.commentsChat, { bottom: 155 + insets.bottom }]}>
           <FlatList
             ref={commentsListRef}
             data={comments}
@@ -1305,7 +1567,7 @@ const LiveStreamBroadcastScreen = () => {
             keyExtractor={(item, index) => `${item.id}-${index}`}
             showsVerticalScrollIndicator={false}
             style={styles.commentsList}
-            inverted={true}
+            inverted={false}
           />
         </View>
       )}
@@ -1363,18 +1625,6 @@ const LiveStreamBroadcastScreen = () => {
             <Ionicons name="camera-reverse" size={24} color="white" />
           </TouchableOpacity>
 
-          {/* Video On/Off Button */}
-          <TouchableOpacity 
-            style={styles.controlIconButton}
-            onPress={handleToggleVideo}
-          >
-            <Ionicons 
-              name={isVideoMuted ? "videocam-off" : "videocam"} 
-              size={24} 
-              color={isVideoMuted ? "#E74C3C" : "white"} 
-            />
-          </TouchableOpacity>
-
           {/* Pause/Resume Stream Button */}
           <TouchableOpacity 
             style={styles.controlIconButton}
@@ -1416,8 +1666,195 @@ const LiveStreamBroadcastScreen = () => {
           >
             <Ionicons name="bag-handle" size={24} color="white" />
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.controlIconButton}
+            onPress={openOrdersModal}
+          >
+            <Ionicons name="receipt" size={24} color="white" />
+          </TouchableOpacity>
         </View>
       </View>
+
+      <Modal
+        visible={showOrders}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={closeOrdersModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, { paddingBottom: 20 + (insets.bottom || 0) }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {selectedOrderId ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setSelectedOrderId(null);
+                      setSelectedOrderDetails(null);
+                      setOrderPin('');
+                      setOrderPinError(null);
+                    }}
+                  >
+                    <Ionicons name="chevron-back" size={24} color="white" />
+                  </TouchableOpacity>
+                ) : null}
+                <Text style={styles.modalTitle}>Orders</Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={closeOrdersModal}
+              >
+                <Ionicons name="close" size={24} color="white" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.analyticsContent}>
+              {ordersLoading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#3498DB" />
+                  <Text style={styles.loadingText}>Loading orders...</Text>
+                </View>
+              ) : ordersError ? (
+                <View style={styles.noComments}>
+                  <Ionicons name="alert-circle" size={60} color="#E74C3C" />
+                  <Text style={styles.noCommentsText}>{ordersError}</Text>
+                  <TouchableOpacity style={styles.retryButton} onPress={loadActiveOrders}>
+                    <Text style={styles.retryButtonText}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : selectedOrderId ? (
+                orderDetailsLoading ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#3498DB" />
+                    <Text style={styles.loadingText}>Loading order...</Text>
+                  </View>
+                ) : (
+                  <ScrollView>
+                    <View style={{ paddingHorizontal: 12, paddingTop: 6 }}>
+                      <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>
+                        #{selectedOrderDetails?.orderNumber || selectedOrderDetails?.order_number || selectedOrderId}
+                      </Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.8)', marginTop: 6 }}>
+                        {selectedOrderDetails?.customer?.name || selectedOrderDetails?.customerName || 'Customer'}
+                      </Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.8)', marginTop: 6 }}>
+                        {formatDeliveryAddress(selectedOrderDetails?.deliveryDetails?.address || selectedOrderDetails?.deliveryAddress)}
+                      </Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.9)', marginTop: 6, fontWeight: '600' }}>
+                        ₣{selectedOrderDetails?.total ?? selectedOrderDetails?.total_amount ?? 0}
+                      </Text>
+
+                      {(() => {
+                        const order = workspaceOrders.find(o => o.id === selectedOrderId) || null;
+                        const quickAction = getQuickActionForOrder(order);
+                        if (!quickAction) return null;
+
+                        if (quickAction.type === 'pending') {
+                          return (
+                            <View style={{ marginTop: 16, flexDirection: 'row', gap: 10 }}>
+                              <TouchableOpacity
+                                style={[styles.uploadButton, { flex: 1, opacity: orderActionLoading ? 0.6 : 1 }]}
+                                onPress={() => runOrderAction(order, 'accept')}
+                                disabled={orderActionLoading}
+                              >
+                                {orderActionLoading ? <ActivityIndicator color="white" /> : <Text style={styles.uploadButtonText}>Accept</Text>}
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={[styles.uploadButton, { flex: 1, backgroundColor: '#E74C3C', opacity: orderActionLoading ? 0.6 : 1 }]}
+                                onPress={() => {
+                                  Alert.alert(
+                                    'Reject Order',
+                                    'Are you sure you want to reject this order? The buyer will be refunded from escrow.',
+                                    [
+                                      { text: 'Cancel', style: 'cancel' },
+                                      { text: 'Reject', style: 'destructive', onPress: () => runOrderAction(order, 'decline') },
+                                    ],
+                                  );
+                                }}
+                                disabled={orderActionLoading}
+                              >
+                                {orderActionLoading ? <ActivityIndicator color="white" /> : <Text style={styles.uploadButtonText}>Reject</Text>}
+                              </TouchableOpacity>
+                            </View>
+                          );
+                        }
+
+                        return (
+                          <View style={{ marginTop: 16 }}>
+                            {quickAction.requiresPin ? (
+                              <View>
+                                <Text style={{ color: 'rgba(255,255,255,0.8)', marginBottom: 6 }}>PIN</Text>
+                                <TextInput
+                                  value={orderPin}
+                                  onChangeText={(t) => {
+                                    setOrderPin(t);
+                                    setOrderPinError(null);
+                                  }}
+                                  placeholder="Enter PIN"
+                                  placeholderTextColor="rgba(255,255,255,0.5)"
+                                  style={[styles.input, { marginBottom: 8 }]}
+                                  keyboardType="number-pad"
+                                />
+                                {orderPinError ? (
+                                  <Text style={{ color: '#E74C3C', marginBottom: 8 }}>{orderPinError}</Text>
+                                ) : null}
+                              </View>
+                            ) : null}
+
+                            <TouchableOpacity
+                              style={[styles.uploadButton, { opacity: orderActionLoading ? 0.6 : 1 }]}
+                              onPress={() => runOrderAction(order, quickAction.action)}
+                              disabled={orderActionLoading}
+                            >
+                              {orderActionLoading ? (
+                                <ActivityIndicator color="white" />
+                              ) : (
+                                <Text style={styles.uploadButtonText}>{quickAction.label}</Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      })()}
+                    </View>
+                  </ScrollView>
+                )
+              ) : (
+                <FlatList
+                  data={workspaceOrders}
+                  keyExtractor={(item) => item.id}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={{ paddingVertical: 12, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}
+                      onPress={() => openOrderDetails(item.id)}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={{ color: 'white', fontWeight: '700' }}>#{item.orderNumber}</Text>
+                        <Text style={{ color: 'rgba(255,255,255,0.8)' }}>{item.status.replace('_', ' ')}</Text>
+                      </View>
+                      <Text style={{ color: 'rgba(255,255,255,0.85)', marginTop: 6 }} numberOfLines={1}>
+                        {item.customerName}
+                      </Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4 }} numberOfLines={1}>
+                        {formatDeliveryAddress(item.deliveryAddress)}
+                      </Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.9)', marginTop: 6, fontWeight: '600' }}>
+                        ₣{item.total}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  ListEmptyComponent={
+                    <View style={styles.noComments}>
+                      <Ionicons name="receipt" size={60} color="#666" />
+                      <Text style={styles.noCommentsText}>No active orders</Text>
+                    </View>
+                  }
+                />
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Analytics Modal */}
       <Modal
@@ -1454,6 +1891,16 @@ const LiveStreamBroadcastScreen = () => {
                 <Ionicons name="chatbubble" size={24} color="#FFFC00" />
                 <Text style={styles.analyticsValue}>{analytics.comments}</Text>
                 <Text style={styles.analyticsTitle}>Comments</Text>
+              </View>
+              <View style={styles.analyticsCard}>
+                <Ionicons name="heart" size={24} color="#FF0050" />
+                <Text style={styles.analyticsValue}>{analytics.reactions}</Text>
+                <Text style={styles.analyticsTitle}>Reactions</Text>
+              </View>
+              <View style={styles.analyticsCard}>
+                <Ionicons name="gift" size={24} color="#FFD700" />
+                <Text style={styles.analyticsValue}>{analytics.gifts}</Text>
+                <Text style={styles.analyticsTitle}>Gifts</Text>
               </View>
               <View style={styles.analyticsCard}>
                 <Ionicons name="flash" size={24} color="#FF0050" />
@@ -1935,20 +2382,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     paddingVertical: 8,
     borderRadius: 20,
+    alignItems: 'center',
+    zIndex: 25,
   },
   streamTitle: {
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
+    textAlign: 'center',
   },
   // Comments Chat - Right Side
   commentsChat: {
     position: 'absolute',
     right: 20,
-    top: '50%',
-    bottom: 120,
+    top: '62%',
+    bottom: 200,
     width: 200,
-    zIndex: 5,
+    zIndex: 15,
   },
   commentsList: {
     flex: 1,
@@ -2049,12 +2499,12 @@ const styles = StyleSheet.create({
   },
 
   // Modal styles
-  modalContainer: {
+  analyticsModalContainer: {
     minHeight: '50%',
     maxHeight: '100%',
     backgroundColor: '#000',
   },
-  modalHeader: {
+  analyticsModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -2064,7 +2514,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#333',
   },
-  modalTitle: {
+  analyticsModalTitle: {
     color: 'white',
     fontSize: 24,
     fontWeight: 'bold',
@@ -2597,23 +3047,27 @@ const styles = StyleSheet.create({
   // Highlight Card Styles
   highlightCard: {
     position: 'absolute',
-    top: 100,
+    top: 140,
     left: 16,
     right: 16,
     borderRadius: 12,
     padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 10,
+    zIndex: 20,
+    elevation: 10,
     pointerEvents: 'auto',
   },
   highlightCardTransparent: {
     backgroundColor: 'rgba(0,0,0,0)',
     opacity: 0,
+    height: 0,
+    overflow: 'hidden',
   },
   highlightCardVisible: {
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    backgroundColor: 'rgba(0,0,0,0.85)',
     opacity: 1,
+    height: 'auto',
   },
   highlightCardImage: {
     width: 60,
