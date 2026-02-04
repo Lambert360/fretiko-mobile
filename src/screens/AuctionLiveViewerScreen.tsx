@@ -14,11 +14,14 @@ import {
   Platform,
   Image,
 } from 'react-native';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { PanGestureHandler, PanGestureHandlerGestureEvent, PanGestureHandlerStateChangeEvent, State } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
+import { useAuctionSounds } from '../services/auctionSoundService';
+import GiftAnimation from '../components/GiftAnimation';
 import { auctionsAPI, auctionSocket, AuctionWithDetails, AuctionItem } from '../services/auctionsAPI';
 
 // Import Agora RTC SDK for low-latency live streaming
@@ -215,6 +218,9 @@ const AuctionLiveViewerScreen = () => {
 
   const { auctionId } = route.params;
 
+  // Sound effects
+  const { playCheer, playClap, playLaugh } = useAuctionSounds();
+
   // State
   const [auction, setAuction] = useState<AuctionWithDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -236,22 +242,54 @@ const AuctionLiveViewerScreen = () => {
     thumbnail_url?: string;
     images?: string[];
   }>>([]);
+
+  // Winner announcement modal state
+  const [showWinnerModal, setShowWinnerModal] = useState(false);
+  const [winnerData, setWinnerData] = useState<{
+    winner_display_id: string;
+    winning_bid: number;
+    item_title: string;
+    user_participated: boolean;
+    is_winner: boolean;
+  } | null>(null);
+  const [userParticipated, setUserParticipated] = useState(false);
   const [showCartModal, setShowCartModal] = useState(false);
+  const [showBidDashboard, setShowBidDashboard] = useState(false);
+  const [viewerCount, setViewerCount] = useState(0);
 
   // Multi-item auction state
   const [currentItem, setCurrentItem] = useState<AuctionItem | null>(null);
   const [itemBiddingStatus, setItemBiddingStatus] = useState<'waiting' | 'countdown' | 'active' | 'ended' | 'sold' | 'passed'>('waiting');
   const [canBid, setCanBid] = useState(false);
-  const [countdownValue, setCountdownValue] = useState<number | null>(null);
-  const [itemTimeLeft, setItemTimeLeft] = useState<number | null>(null);
+  const [hasBids, setHasBids] = useState(false); // Track if any bids placed during current item
+
+  // Bid notification state
+  const [bidNotifications, setBidNotifications] = useState<Array<{
+    id: string;
+    bidder_display_id: string;
+    amount: number;
+    translateY: Animated.Value;
+    opacity: Animated.Value;
+  }>>([]);
+
+  // Reaction animations state
+  const [reactionAnimations, setReactionAnimations] = useState<Array<{
+    id: string;
+    reaction_type: string;
+    translateX: Animated.Value;
+    translateY: Animated.Value;
+    scale: Animated.Value;
+    opacity: Animated.Value;
+  }>>([]);
 
   // Reactions state
   const [reactions, setReactions] = useState<Array<{ id: string; reaction_type: string; user_id: string; timestamp: string }>>([]);
-  const [reactionAnimations, setReactionAnimations] = useState<Array<{ id: string; reaction_type: string; x: number; y: number; scale: Animated.Value; opacity: Animated.Value; translateY: Animated.Value }>>([]);
 
   // Image viewer modal state
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+  const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
+  const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
 
   // Agora RTC state - Direct streaming for low latency
   const [agoraConfig, setAgoraConfig] = useState<any>(null);
@@ -260,6 +298,29 @@ const AuctionLiveViewerScreen = () => {
   const [isAgoraJoined, setIsAgoraJoined] = useState(false);
   const [isAgoraInitialized, setIsAgoraInitialized] = useState(false);
   const agoraEngineRef = useRef<IRtcEngine | null>(null);
+
+  // Bid Notification Bubble Component
+  const BidNotificationBubble: React.FC<{
+    notification: {
+      id: string;
+      bidder_display_id: string;
+      amount: number;
+      translateY: Animated.Value;
+      opacity: Animated.Value;
+    };
+  }> = ({ notification }) => (
+    <Animated.View style={[
+      styles.bidNotificationBubble,
+      {
+        transform: [{ translateY: notification.translateY }],
+        opacity: notification.opacity,
+      }
+    ]}>
+      <Text style={styles.bidNotificationText}>
+        {notification.bidder_display_id} bids for ₣{notification.amount}
+      </Text>
+    </Animated.View>
+  );
 
   // Load existing wins from database
   const loadUserWins = async () => {
@@ -306,7 +367,7 @@ const AuctionLiveViewerScreen = () => {
           const now = Date.now();
           const elapsed = Math.floor((now - started) / 1000);
           const remaining = Math.max(0, currentItemData.bidding_duration - elapsed);
-          setItemTimeLeft(remaining);
+          // Time left calculation removed - no longer displayed to viewers
         }
 
         // Set initial bid amount from current item
@@ -532,6 +593,13 @@ const AuctionLiveViewerScreen = () => {
   useEffect(() => {
     auctionSocket.connect();
     auctionSocket.joinAuction(auctionId, user?.id);
+    
+    // Reset participation when joining auction
+    setUserParticipated(false);
+    
+    // Reset modal state when joining auction
+    setShowWinnerModal(false);
+    setWinnerData(null);
 
     // Handle real-time bid updates
     const handleNewBid = (data: any) => {
@@ -553,6 +621,54 @@ const AuctionLiveViewerScreen = () => {
           // Update bid amount input
           const nextBid = data.amount + (currentItem?.bid_increment || 1);
           setBidAmount(nextBid.toString());
+          
+          // Mark that bids have been received - this will stop the countdown timer
+          setHasBids(true);
+          console.log('💰 Viewer: Bid received - countdown timer stopped');
+
+          // NEW: Add bid notification (same as host)
+          const notificationId = Date.now().toString();
+          const newNotification = {
+            id: notificationId,
+            bidder_display_id: data.bidder_display_id || 'Bidder',
+            amount: data.amount,
+            translateY: new Animated.Value(100), // Start from bottom
+            opacity: new Animated.Value(0), // Start transparent
+          };
+          
+          // Clear existing notification (prevent clutter)
+          setBidNotifications([]);
+          
+          // Add new notification
+          setBidNotifications(prev => [...prev, newNotification]);
+          
+          // Animate: slide up (1.2s) → pause (2s) → fade out (0.8s) = ~5s total
+          Animated.sequence([
+            // Slide up from bottom to center
+            Animated.timing(newNotification.translateY, {
+              toValue: -200, // Move to center
+              duration: 1200,
+              useNativeDriver: true,
+            }),
+            // Pause at center (implicit - no animation for 2s)
+            Animated.delay(2000),
+            // Fade out with slight upward movement
+            Animated.parallel([
+              Animated.timing(newNotification.opacity, {
+                toValue: 0,
+                duration: 800,
+                useNativeDriver: true,
+              }),
+              Animated.timing(newNotification.translateY, {
+                toValue: -250,
+                duration: 800,
+                useNativeDriver: true,
+              }),
+            ]),
+          ]).start(() => {
+            // Remove notification after animation
+            setBidNotifications(prev => prev.filter(n => n.id !== notificationId));
+          });
         }
       }
     };
@@ -565,29 +681,27 @@ const AuctionLiveViewerScreen = () => {
             setCurrentItem(data);
             setItemBiddingStatus('waiting');
             setCanBid(false);
-            setCountdownValue(null);
-            setItemTimeLeft(null);
+            setHasBids(false); // Reset bid tracking for new item
+            setUserParticipated(false); // Reset participation tracking for new item
             setBidAmount((data.starting_price + data.bid_increment).toString());
             break;
           
           case 'start_countdown':
             setItemBiddingStatus('countdown');
             setCanBid(false);
-            setCountdownValue(3);
+            setHasBids(false); // Reset bid tracking when countdown starts
             break;
           
           case 'bidding_open':
             setItemBiddingStatus('active');
             setCanBid(true);
-            setCountdownValue(null);
-            setItemTimeLeft(data.duration || 120);
+            setHasBids(false); // Reset bid tracking when bidding opens
             setBidAmount((data.minimum_bid || data.starting_price + data.bid_increment).toString());
             break;
           
           case 'bidding_ended':
             setItemBiddingStatus('ended');
             setCanBid(false);
-            setItemTimeLeft(null);
             if (data.winner) {
               // Check if current user won
               if (data.winner.bidder_id === user?.id) {
@@ -621,14 +735,19 @@ const AuctionLiveViewerScreen = () => {
                   return [...prev, wonItem];
                 });
                 
-                Alert.alert(
-                  '🎉 You Won!',
-                  `${wonItem.title} for ₣${wonItem.winningBid.toFixed(2)}`,
-                  [
-                    { text: 'View Cart', onPress: () => setShowCartModal(true) },
-                    { text: 'Continue', style: 'cancel' }
-                  ]
-                );
+                // Show winner notification with modal for multi-item auction
+                try {
+                  setWinnerData({
+                    winner_display_id: user?.username || 'You',
+                    winning_bid: data.final_bid || 0,
+                    item_title: wonItem.title || 'Auction Item',
+                    user_participated: userParticipated,
+                    is_winner: true,
+                  });
+                  setShowWinnerModal(true);
+                } catch (error) {
+                  console.error('Error setting winner data:', error);
+                }
               }
             }
             break;
@@ -665,22 +784,33 @@ const AuctionLiveViewerScreen = () => {
               return [...prev, wonItem];
             });
             
-            // Show win notification
-            Alert.alert(
-              '🎉 Congratulations!',
-              `You won "${auction.title}" for ₣${(data.winning_bid || auction.current_bid).toFixed(2)}!`,
-              [
-                { text: 'View Cart', onPress: () => setShowCartModal(true) },
-                { text: 'Continue Watching', style: 'cancel' }
-              ]
-            );
+            // Show win notification with modal
+            try {
+              setWinnerData({
+                winner_display_id: user?.username || 'You',
+                winning_bid: data.winning_bid || auction?.current_bid || 0,
+                item_title: auction?.title || 'Auction Item',
+                user_participated: userParticipated,
+                is_winner: true,
+              });
+              setShowWinnerModal(true);
+            } catch (error) {
+              console.error('Error setting winner data:', error);
+            }
           } else if (data.new_status === 'ended' && data.winner_id !== user?.id) {
-            // User didn't win - just show ended message
-            Alert.alert(
-              'Auction Ended',
-              'Auction has ended',
-              [{ text: 'OK', onPress: () => navigation.goBack() }]
-            );
+            // User didn't win - show enhanced winner announcement modal
+            try {
+              setWinnerData({
+                winner_display_id: data.bidder_display_id || 'Winner',
+                winning_bid: data.winning_bid || auction?.current_bid || 0,
+                item_title: currentItem?.title || auction?.title || 'Auction Item',
+                user_participated: userParticipated,
+                is_winner: false,
+              });
+              setShowWinnerModal(true);
+            } catch (error) {
+              console.error('Error setting winner data:', error);
+            }
           }
         }
       }
@@ -721,10 +851,34 @@ const AuctionLiveViewerScreen = () => {
     auctionSocket.on('auction_won', handleAuctionWon);
     auctionSocket.on('item_event', handleItemEvent);
 
+    // Handle viewer count updates
+    const handleViewCountUpdate = (data: any) => {
+      if (data.auction_id === auctionId) {
+        setViewerCount(data.view_count || data.current_viewers || 0);
+      }
+    };
+    auctionSocket.on('view_count_update', handleViewCountUpdate);
+
     // Handle reactions
     const handleNewReaction = (reaction: any) => {
       if (reaction.auction_id === auctionId) {
-        setReactions(prev => [...prev, { ...reaction, id: Date.now() + Math.random().toString() }]);
+        setReactions((prev: Array<{ id: string; reaction_type: string; user_id: string; timestamp: string }>) => [...prev, { ...reaction, id: Date.now().toString() }]);
+
+        // Play sound effect based on reaction type
+        switch (reaction.reaction_type) {
+          case 'heart':
+            playCheer();
+            break;
+          case 'applause':
+            playClap();
+            break;
+          case 'thumbs_up':
+            playCheer();
+            break;
+          case 'fire':
+            playCheer();
+            break;
+        }
         
         // Create floating animation
         const reactionId = Date.now() + Math.random().toString();
@@ -732,11 +886,10 @@ const AuctionLiveViewerScreen = () => {
         const newReaction = {
           id: reactionId,
           reaction_type: reaction.reaction_type,
-          x: randomX,
-          y: screenHeight * 0.6,
+          translateX: new Animated.Value(randomX),
+          translateY: new Animated.Value(screenHeight * 0.6),
           scale: new Animated.Value(0),
           opacity: new Animated.Value(1),
-          translateY: new Animated.Value(0),
         };
 
         setReactionAnimations(prev => [...prev, newReaction]);
@@ -749,7 +902,7 @@ const AuctionLiveViewerScreen = () => {
             useNativeDriver: true,
           }),
           Animated.timing(newReaction.translateY, {
-            toValue: -200,
+            toValue: (screenHeight * 0.6) - 200,
             duration: 2000,
             useNativeDriver: true,
           }),
@@ -765,7 +918,7 @@ const AuctionLiveViewerScreen = () => {
 
         // Remove from reactions list after animation
         setTimeout(() => {
-          setReactions(prev => prev.filter(r => r.id !== reactionId));
+          setReactions((prev: Array<{ id: string; reaction_type: string; user_id: string; timestamp: string }>) => prev.filter((r: { id: string; reaction_type: string; user_id: string; timestamp: string }) => r.id !== reactionId));
         }, 3000);
       }
     };
@@ -777,30 +930,11 @@ const AuctionLiveViewerScreen = () => {
       auctionSocket.off('auction_status_changed', handleAuctionStatusChanged);
       auctionSocket.off('auction_won', handleAuctionWon);
       auctionSocket.off('item_event', handleItemEvent);
+      auctionSocket.off('view_count_update', handleViewCountUpdate);
       auctionSocket.off('new_reaction', handleNewReaction);
       auctionSocket.leaveAuction(auctionId);
     };
   }, [auctionId, currentItem, itemBiddingStatus]);
-
-  // Countdown timer (3-2-1)
-  useEffect(() => {
-    if (itemBiddingStatus === 'countdown' && countdownValue !== null && countdownValue > 0) {
-      const timer = setTimeout(() => {
-        setCountdownValue(countdownValue - 1);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [itemBiddingStatus, countdownValue]);
-
-  // Item bidding timer
-  useEffect(() => {
-    if (itemBiddingStatus === 'active' && itemTimeLeft !== null && itemTimeLeft > 0) {
-      const timer = setTimeout(() => {
-        setItemTimeLeft(itemTimeLeft - 1);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [itemBiddingStatus, itemTimeLeft]);
 
   // General auction countdown timer
   useEffect(() => {
@@ -840,6 +974,9 @@ const AuctionLiveViewerScreen = () => {
     }
 
     setPlacingBid(true);
+
+    // Mark user as participated in this auction
+    setUserParticipated(true);
 
     try {
       await auctionsAPI.placeBid({
@@ -888,6 +1025,22 @@ const AuctionLiveViewerScreen = () => {
   const handleSendReaction = (reactionType: 'heart' | 'thumbs_up' | 'applause' | 'fire') => {
     if (!auctionId || !user) return;
     
+    // Play sound effect for sender
+    switch (reactionType) {
+      case 'heart':
+        playCheer();
+        break;
+      case 'applause':
+        playClap();
+        break;
+      case 'thumbs_up':
+        playCheer();
+        break;
+      case 'fire':
+        playCheer();
+        break;
+    }
+    
     auctionSocket.sendReaction(auctionId, reactionType);
     
     // Optimistically add reaction animation
@@ -896,11 +1049,10 @@ const AuctionLiveViewerScreen = () => {
     const newReaction = {
       id: reactionId,
       reaction_type: reactionType,
-      x: randomX,
-      y: screenHeight * 0.6,
+      translateX: new Animated.Value(randomX),
+      translateY: new Animated.Value(screenHeight * 0.6),
       scale: new Animated.Value(0),
       opacity: new Animated.Value(1),
-      translateY: new Animated.Value(0),
     };
 
     setReactionAnimations(prev => [...prev, newReaction]);
@@ -913,7 +1065,7 @@ const AuctionLiveViewerScreen = () => {
         useNativeDriver: true,
       }),
       Animated.timing(newReaction.translateY, {
-        toValue: -200,
+        toValue: (screenHeight * 0.6) - 200,
         duration: 2000,
         useNativeDriver: true,
       }),
@@ -948,7 +1100,7 @@ const AuctionLiveViewerScreen = () => {
     );
   }
 
-  return (
+  const renderedContent = (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Agora RTC Video (for live auctions) */}
       {auction.auction_type === 'live' && (
@@ -983,37 +1135,34 @@ const AuctionLiveViewerScreen = () => {
             <Ionicons name="arrow-back" size={24} color="white" />
           </TouchableOpacity>
 
-          <View style={styles.liveBadge}>
-            <View style={styles.liveDot} />
-            <Text style={styles.liveText}>LIVE</Text>
+          <View style={styles.topBarCenter}>
+            <Text style={styles.topBarTitle}>{auction.title}</Text>
+            <View style={styles.viewerCountContainer}>
+              <Ionicons name="eye" size={16} color="#8E44AD" />
+              <Text style={styles.viewerCount}>{viewerCount}</Text>
+            </View>
           </View>
 
-          <View style={styles.viewerCount}>
-            <Ionicons name="eye" size={16} color="white" />
-            <Text style={styles.viewerText}>{auction.view_count || 0}</Text>
-          </View>
+          <TouchableOpacity
+            style={styles.controlIconButton}
+            onPress={() => setShowBidDashboard(true)}
+          >
+            <Ionicons name="stats-chart" size={24} color="white" />
+          </TouchableOpacity>
         </View>
 
-        {/* Countdown Display (3-2-1) */}
-        {itemBiddingStatus === 'countdown' && countdownValue !== null && countdownValue > 0 && (
-          <View style={styles.countdownOverlay}>
-            <Text style={styles.countdownText}>{countdownValue}</Text>
-          </View>
-        )}
-
-        {/* Reaction Animations Overlay */}
-        <View style={styles.reactionsOverlay} pointerEvents="none">
+        {/* Reactions Display */}
+        <View style={styles.reactionsContainer}>
           {reactionAnimations.map((reaction) => (
             <Animated.View
               key={reaction.id}
               style={[
                 styles.reactionAnimation,
                 {
-                  left: reaction.x,
-                  top: reaction.y,
                   transform: [
-                    { scale: reaction.scale },
+                    { translateX: reaction.translateX },
                     { translateY: reaction.translateY },
+                    { scale: reaction.scale },
                   ],
                   opacity: reaction.opacity,
                 },
@@ -1029,21 +1178,36 @@ const AuctionLiveViewerScreen = () => {
         {/* Auction Info Card */}
         <View style={[styles.auctionInfoCard, { top: (insets.top || 0) + 60 }]}>
           <View style={styles.auctionInfoContent}>
-            {/* Item Image Thumbnail */}
-            {currentItem && currentItem.images && currentItem.images.length > 0 && (
+            {/* Item Image/Video Thumbnail */}
+            {currentItem && (
               <TouchableOpacity
                 style={styles.itemImageContainer}
                 onPress={() => {
-                  setSelectedImageUrl(currentItem.images[0]);
-                  setImageViewerVisible(true);
+                  // Prioritize video if available, otherwise show first image
+                  if (currentItem.video_url) {
+                    setSelectedVideoUrl(currentItem.video_url);
+                    setMediaType('video');
+                    setImageViewerVisible(true);
+                  } else if (currentItem.images && currentItem.images.length > 0) {
+                    setSelectedImageUrl(currentItem.images[0]);
+                    setMediaType('image');
+                    setImageViewerVisible(true);
+                  }
                 }}
                 activeOpacity={0.8}
               >
-                <Image
-                  source={{ uri: currentItem.images[0] }}
-                  style={styles.itemImageThumbnail}
-                  resizeMode="cover"
-                />
+                {currentItem.video_url ? (
+                  <View style={[styles.itemImageThumbnail, styles.videoThumbnailContainer]}>
+                    <Ionicons name="play-circle" size={40} color="#FFFFFF" style={styles.videoPlayIcon} />
+                    <Text style={styles.videoThumbnailText}>Video</Text>
+                  </View>
+                ) : currentItem.images && currentItem.images.length > 0 ? (
+                  <Image
+                    source={{ uri: currentItem.images[0] }}
+                    style={styles.itemImageThumbnail}
+                    resizeMode="cover"
+                  />
+                ) : null}
               </TouchableOpacity>
             )}
             
@@ -1056,27 +1220,19 @@ const AuctionLiveViewerScreen = () => {
               <Text style={styles.auctionTitle} numberOfLines={1}>
                 {currentItem ? currentItem.title : auction.title}
               </Text>
-              
-              <View style={styles.bidRow}>
-                <View>
-                  <Text style={styles.label}>Current Bid</Text>
-                  <Text style={styles.currentBid}>
-                    ₣{(currentItem 
-                      ? (currentItem.current_bid || currentItem.starting_price)
-                      : auction.current_bid).toFixed(2)}
-                  </Text>
-                </View>
-                
-                <View>
-                  <Text style={styles.label}>Time Left</Text>
-                  <Text style={styles.timeLeft}>{formatTimeRemaining(timeRemaining || 0)}</Text>
-                </View>
-
-                <View>
-                  <Text style={styles.label}>Bids</Text>
-                  <Text style={styles.bidCount}>{auction.total_bids || 0}</Text>
-                </View>
+              <View style={styles.bidInfoRow}>
+                <Text style={styles.currentBidLabel}>Current bid:</Text>
+                <Text style={styles.currentBidAmount}>
+                  ₣{(currentItem 
+                    ? (currentItem.current_bid || currentItem.starting_price)
+                    : auction.current_bid).toFixed(2)}
+                </Text>
               </View>
+              <Text style={styles.modalInfo}>
+                Minimum bid: ₣{(currentItem 
+                  ? ((currentItem.current_bid || currentItem.starting_price) + currentItem.bid_increment)
+                  : auction.current_bid + auction.bid_increment).toFixed(2)}
+              </Text>
             </View>
           </View>
         </View>
@@ -1135,30 +1291,37 @@ const AuctionLiveViewerScreen = () => {
         {/* Reaction Buttons */}
         {auction.seller_id !== user?.id && (
           <View style={styles.reactionButtonsContainer}>
-            <TouchableOpacity
-              style={styles.reactionButton}
-              onPress={() => handleSendReaction('heart')}
-            >
-              <Text style={styles.reactionButtonEmoji}>❤️</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.reactionButton}
-              onPress={() => handleSendReaction('thumbs_up')}
-            >
-              <Text style={styles.reactionButtonEmoji}>👍</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.reactionButton}
-              onPress={() => handleSendReaction('applause')}
-            >
-              <Text style={styles.reactionButtonEmoji}>👏</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.reactionButton}
-              onPress={() => handleSendReaction('fire')}
-            >
-              <Text style={styles.reactionButtonEmoji}>🔥</Text>
-            </TouchableOpacity>
+            {[
+  { emoji: '❤️', type: 'heart' },
+  { emoji: '👏', type: 'applause' },
+  { emoji: '😮', type: 'thumbs_up' },
+  { emoji: '🔥', type: 'fire' }
+].map((reaction) => (
+  <TouchableOpacity
+    key={reaction.type}
+    style={styles.reactionButton}
+    onPress={() => handleSendReaction(reaction.type as any)}
+    activeOpacity={0.7}
+  >
+    <Text style={styles.reactionButtonEmoji}>{reaction.emoji}</Text>
+  </TouchableOpacity>
+))}
+          </View>
+        )}
+
+        {/* Bid Notifications */}
+        {bidNotifications.map((notification) => (
+          <BidNotificationBubble
+            key={notification.id}
+            notification={notification}
+          />
+        ))}
+
+        {/* Live Stream Indicator */}
+        {auction.auction_type === 'live' && (
+          <View style={styles.liveIndicator}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveText}>LIVE</Text>
           </View>
         )}
       </View>
@@ -1189,11 +1352,6 @@ const AuctionLiveViewerScreen = () => {
                 ? ((currentItem.current_bid || currentItem.starting_price) + currentItem.bid_increment)
                 : auction.current_bid + auction.bid_increment).toFixed(2)}
             </Text>
-            {itemTimeLeft !== null && itemBiddingStatus === 'active' && (
-              <Text style={styles.modalInfo}>
-                Time left: {formatTimeRemaining(itemTimeLeft)}
-              </Text>
-            )}
 
             <TextInput
               style={styles.bidInput}
@@ -1213,15 +1371,18 @@ const AuctionLiveViewerScreen = () => {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.confirmButton, placingBid && styles.disabledButton]}
+                style={[
+                  styles.placeBidButton,
+                  (!canBid || parseFloat(bidAmount) <= (currentItem 
+                    ? ((currentItem.current_bid || currentItem.starting_price) + currentItem.bid_increment)
+                    : auction.current_bid + auction.bid_increment)) && styles.disabledButton
+                ]}
                 onPress={handlePlaceBid}
-                disabled={placingBid}
+                disabled={!canBid || parseFloat(bidAmount) <= (currentItem 
+                  ? ((currentItem.current_bid || currentItem.starting_price) + currentItem.bid_increment)
+                  : auction.current_bid + auction.bid_increment)}
               >
-                {placingBid ? (
-                  <ActivityIndicator size="small" color="white" />
-                ) : (
-                  <Text style={styles.confirmButtonText}>Bid ₣{bidAmount}</Text>
-                )}
+                <Text style={styles.placeBidButtonText}>Place Bid</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1250,31 +1411,151 @@ const AuctionLiveViewerScreen = () => {
           }}
         />
       </Modal>
+    </View>
+  );
 
-      {/* Image Viewer Modal */}
+  // Media Viewer Modal - Rendered outside main view hierarchy for proper z-index
+  return (
+    <>
+      {renderedContent}
+      
+      {/* Winner Announcement Modal */}
+      {showWinnerModal && winnerData && (
+        <Modal
+          visible={showWinnerModal}
+          animationType="fade"
+          transparent={true}
+          onRequestClose={() => setShowWinnerModal(false)}
+        >
+          <View style={styles.winnerModalOverlay}>
+            <View style={styles.winnerModalContent}>
+              {winnerData.is_winner ? (
+                <>
+                  <Ionicons name="trophy" size={80} color="#FFD700" />
+                  <Text style={styles.winnerModalTitle}>🎉 Congratulations!</Text>
+                  <Text style={styles.winnerText}>You won "{winnerData.item_title}"</Text>
+                  <Text style={styles.winnerBid}>for ₣{winnerData.winning_bid.toFixed(2)}</Text>
+                  <View style={styles.winnerModalButtons}>
+                    <TouchableOpacity
+                      style={styles.winnerModalButtonPrimary}
+                      onPress={() => {
+                        setShowWinnerModal(false);
+                        setShowCartModal(true);
+                      }}
+                      accessible={true}
+                      accessibilityLabel="View Cart"
+                      accessibilityHint="View your won items and proceed to checkout"
+                    >
+                      <Text style={styles.winnerModalButtonText}>View Cart</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.winnerModalButtonSecondary}
+                      onPress={() => setShowWinnerModal(false)}
+                      accessible={true}
+                      accessibilityLabel="Continue Watching"
+                      accessibilityHint="Close this modal and continue watching the auction"
+                    >
+                      <Text style={styles.winnerModalButtonText}>Continue Watching</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : winnerData.user_participated ? (
+                <>
+                  <Ionicons name="heart" size={80} color="#E74C3C" />
+                  <Text style={styles.winnerModalTitle}>😔 Better Luck Next Time!</Text>
+                  <Text style={styles.winnerText}> "{winnerData.item_title}"</Text>
+                  <Text style={styles.winnerBid}>went to {winnerData.winner_display_id} for ₣{winnerData.winning_bid.toFixed(2)}</Text>
+                  <Text style={styles.winnerSubtext}>Thanks for participating!</Text>
+                  <TouchableOpacity
+                    style={styles.winnerModalButton}
+                    onPress={() => setShowWinnerModal(false)}
+                    accessible={true}
+                    accessibilityLabel="Continue Watching"
+                    accessibilityHint="Close this modal and continue watching the auction"
+                  >
+                    <Text style={styles.winnerModalButtonText}>Continue Watching</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="trophy" size={80} color="#FFD700" />
+                  <Text style={styles.winnerModalTitle}>🏆 Auction Complete!</Text>
+                  <Text style={styles.winnerText}>{winnerData.winner_display_id} won</Text>
+                  <Text style={styles.winnerBid}> "{winnerData.item_title}" for ₣{winnerData.winning_bid.toFixed(2)}</Text>
+                  <TouchableOpacity
+                    style={styles.winnerModalButton}
+                    onPress={() => setShowWinnerModal(false)}
+                    accessible={true}
+                    accessibilityLabel="Continue Watching"
+                    accessibilityHint="Close this modal and continue watching the auction"
+                  >
+                    <Text style={styles.winnerModalButtonText}>Continue Watching</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+      )}
+      
+      {/* Image/Video Viewer Modal */}
       <Modal
         visible={imageViewerVisible}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => setImageViewerVisible(false)}
+        onRequestClose={() => {
+          setImageViewerVisible(false);
+          setSelectedImageUrl(null);
+          setSelectedVideoUrl(null);
+          setMediaType('image');
+        }}
+        statusBarTranslucent={true}
       >
         <View style={styles.imageViewerOverlay}>
           <TouchableOpacity
             style={styles.imageViewerCloseButton}
-            onPress={() => setImageViewerVisible(false)}
+            onPress={() => {
+              setImageViewerVisible(false);
+              setSelectedImageUrl(null);
+              setSelectedVideoUrl(null);
+              setMediaType('image');
+            }}
           >
             <Ionicons name="close" size={28} color="#FFFFFF" />
           </TouchableOpacity>
-          {selectedImageUrl && (
+          
+          {mediaType === 'image' && selectedImageUrl && (
             <Image
               source={{ uri: selectedImageUrl }}
               style={styles.imageViewerImage}
               resizeMode="contain"
             />
           )}
+          
+          {mediaType === 'video' && selectedVideoUrl && (
+            <SimpleVideoViewer videoUri={selectedVideoUrl} />
+          )}
         </View>
       </Modal>
-    </View>
+    </>
+  );
+};
+
+// Simple Video Viewer Component
+const SimpleVideoViewer: React.FC<{ videoUri: string }> = ({ videoUri }) => {
+  const player = useVideoPlayer(videoUri, (player) => {
+    player.loop = false;
+    player.muted = false;
+  });
+
+  return (
+    <VideoView
+      player={player}
+      style={styles.imageViewerImage}
+      contentFit="contain"
+      nativeControls={true}
+      allowsFullscreen={false}
+    />
   );
 };
 
@@ -1282,6 +1563,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000',
+    // ... rest of the styles
   },
   loadingContainer: {
     flex: 1,
@@ -1360,6 +1642,81 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginLeft: 4,
   },
+  // Missing styles for top bar
+  topBarCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  topBarTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  viewerCountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 4,
+  },
+  controlIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reactionsContainer: {
+    position: 'absolute',
+    top: '50%',
+    left: 0,
+    right: 0,
+    height: 200,
+    pointerEvents: 'none',
+  },
+  bidInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  currentBidLabel: {
+    color: '#888',
+    fontSize: 14,
+    marginRight: 8,
+  },
+  currentBidAmount: {
+    color: '#8E44AD',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  liveIndicator: {
+    position: 'absolute',
+    top: 80,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E74C3C',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  placeBidButton: {
+    flex: 1,
+    backgroundColor: '#8E44AD',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    alignItems: 'center',
+  },
+  placeBidButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
   auctionInfoCard: {
     position: 'absolute',
     top: 60,
@@ -1385,6 +1742,19 @@ const styles = StyleSheet.create({
   itemImageThumbnail: {
     width: '100%',
     height: '100%',
+  },
+  videoThumbnailContainer: {
+    backgroundColor: 'rgba(142, 68, 173, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoPlayIcon: {
+    marginBottom: 4,
+  },
+  videoThumbnailText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   auctionInfoText: {
     flex: 1,
@@ -1498,7 +1868,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
   },
-  countdownOverlay: {
+  modalOverlay: {
     position: 'absolute',
     top: 0,
     left: 0,
@@ -1508,18 +1878,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1000,
-  },
-  countdownText: {
-    color: 'white',
-    fontSize: 120,
-    fontWeight: 'bold',
-    fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   modalContent: {
     backgroundColor: '#1a1a1a',
@@ -1619,6 +1977,128 @@ const styles = StyleSheet.create({
   },
   reactionButtonEmoji: {
     fontSize: 24,
+  },
+  // Bid Notification Styles
+  bidNotificationBubble: {
+    position: 'absolute',
+    bottom: 100, // Start position
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(142, 68, 173, 0.9)',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 1000, // Ensure it's above other elements
+  },
+  bidNotificationText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  // Image viewer styles
+  imageViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerCloseButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 20,
+    padding: 8,
+    zIndex: 1,
+  },
+  imageViewerImage: {
+    width: '90%',
+    height: '80%',
+    resizeMode: 'contain',
+  },
+  // Winner Modal Styles
+  winnerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  winnerModalContent: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 20,
+    padding: 32,
+    alignItems: 'center',
+    width: '85%',
+    maxWidth: 400,
+  },
+  winnerModalTitle: {
+    color: '#FFD700',
+    fontSize: 28,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  winnerText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  winnerBid: {
+    color: '#8E44AD',
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  winnerSubtext: {
+    color: '#888',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 24,
+    fontStyle: 'italic',
+  },
+  winnerModalButton: {
+    backgroundColor: '#3498DB',
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 8,
+    minWidth: 200,
+  },
+  winnerModalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  winnerModalButtonPrimary: {
+    backgroundColor: '#8E44AD',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    flex: 1,
+  },
+  winnerModalButtonSecondary: {
+    backgroundColor: '#555',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    flex: 1,
+  },
+  winnerModalButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
 });
 

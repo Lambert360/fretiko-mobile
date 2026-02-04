@@ -14,6 +14,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Image,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
@@ -82,6 +83,45 @@ const AuctionLiveBroadcastScreen = () => {
     applause: 0,
     fire: 0,
   });
+  const [reactionAnimations, setReactionAnimations] = useState<Array<{
+    id: string;
+    reaction_type: string;
+    x: number;
+    y: number;
+    scale: Animated.Value;
+    opacity: Animated.Value;
+    translateY: Animated.Value;
+  }>>([]);
+
+  // Enhanced auction analytics state (Live Stream pattern)
+  const [auctionAnalytics, setAuctionAnalytics] = useState({
+    currentViewers: 0,
+    totalViewers: 0,
+    peakViewers: 0, // New metric
+    activeBidders: 0,
+    totalBids: 0,
+    uniqueBidders: 0,
+    avgBidAmount: 0,
+    currentBid: 0,
+    totalValue: 0,
+    itemsSold: 0,
+    itemsRemaining: 0,
+    avgTimeToSell: 0,
+    engagementRate: 0,
+    bidVelocity: 0, // New metric: bids per minute
+  });
+
+  // Item performance tracking (Portfolio-style analytics)
+  const [itemPerformance, setItemPerformance] = useState<Array<{
+    itemId: string;
+    title: string;
+    bidCount: number;
+    finalPrice: number;
+    timeToSell: number;
+    status: 'sold' | 'passed' | 'active' | 'waiting' | 'countdown' | 'ended';
+    startingPrice: number;
+    reservePrice?: number;
+  }>>([]);
 
   // Audio/Video controls
   const [isAudioMuted, setIsAudioMuted] = useState(false);
@@ -106,17 +146,56 @@ const AuctionLiveBroadcastScreen = () => {
   const [newItemReservePrice, setNewItemReservePrice] = useState('');
   const [newItemBidIncrement, setNewItemBidIncrement] = useState('');
   const [newItemImages, setNewItemImages] = useState<string[]>([]);
+  const [newItemVideos, setNewItemVideos] = useState<string[]>([]);
   const [creatingItem, setCreatingItem] = useState(false);
+
+  // Bid Notification Bubble Component
+  const BidNotificationBubble: React.FC<{
+    notification: {
+      id: string;
+      bidder_display_id: string;
+      amount: number;
+      translateY: Animated.Value;
+      opacity: Animated.Value;
+    };
+  }> = ({ notification }) => (
+    <Animated.View style={[
+      styles.bidNotificationBubble,
+      {
+        transform: [{ translateY: notification.translateY }],
+        opacity: notification.opacity,
+      }
+    ]}>
+      <Text style={styles.bidNotificationText}>
+        {notification.bidder_display_id} bids for ₣{notification.amount}
+      </Text>
+    </Animated.View>
+  );
 
   // Multi-item auction state
   const [currentItem, setCurrentItem] = useState<AuctionItem | null>(null);
   const [itemBiddingStatus, setItemBiddingStatus] = useState<'waiting' | 'countdown' | 'active' | 'ended' | 'sold' | 'passed'>('waiting');
   const [countdownTimer, setCountdownTimer] = useState<number | null>(null);
   const [biddingTimeLeft, setBiddingTimeLeft] = useState<number | null>(null);
+  const [hasBids, setHasBids] = useState(false); // Track if any bids placed during current item
   const [itemTotalCount, setItemTotalCount] = useState<number>(0);
   const [itemQueue, setItemQueue] = useState<AuctionItem[]>([]);
   const [showItemQueue, setShowItemQueue] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
+  
+  // Bid notification state
+  const [bidNotifications, setBidNotifications] = useState<Array<{
+    id: string;
+    bidder_display_id: string;
+    amount: number;
+    translateY: Animated.Value;
+    opacity: Animated.Value;
+  }>>([]);
+  
+  // Previous auctioned items state
+  const [showPreviousItems, setShowPreviousItems] = useState(false);
+  const [previousAuctionedItems, setPreviousAuctionedItems] = useState<AuctionItem[]>([]);
+  const [previousItemsBidHistory, setPreviousItemsBidHistory] = useState<{ [itemId: string]: PublicBidHistoryItem[] }>({});
 
   // Video view reference
   const rtcSurfaceViewRef = useRef<any>(null);
@@ -174,6 +253,169 @@ const AuctionLiveBroadcastScreen = () => {
       setLoadingItems(false);
     }
   };
+
+  // Load previous auctioned items with their bid histories
+  const loadPreviousAuctionedItems = async () => {
+    try {
+      setLoadingItems(true);
+      
+      // Get all auction items and filter for those that have been auctioned (sold, passed, or ended)
+      const allItems = await auctionsAPI.getAuctionItems(auctionId);
+      const auctionedItems = allItems?.filter(item => 
+        item.bidding_status === 'sold' || 
+        item.bidding_status === 'passed' || 
+        item.bidding_status === 'ended'
+      ) || [];
+      
+      setPreviousAuctionedItems(auctionedItems);
+      
+      // Load bid history for each auctioned item
+      const bidHistoryMap: { [itemId: string]: PublicBidHistoryItem[] } = {};
+      
+      // Get all bids for the auction and organize by item timing
+      try {
+        const allBids = await auctionsAPI.getBidHistory(auctionId, 1000); // Get more bids to cover all items
+        
+        // For now, since bids don't have item_id, we'll show all bids for each item
+        // In a real implementation, bids should have item_id to properly track multi-item auctions
+        // For demo purposes, we'll distribute bids among items based on timing
+        for (const item of auctionedItems) {
+          // For now, show all auction bids for each item (this is a limitation of the current schema)
+          // TODO: Update backend to add item_id to auction_bids table for proper multi-item tracking
+          bidHistoryMap[item.id] = allBids.slice(0, 10); // Show top 10 bids per item
+        }
+      } catch (error) {
+        console.error('Error loading bid history:', error);
+        // If we can't load bid history, set empty arrays
+        for (const item of auctionedItems) {
+          bidHistoryMap[item.id] = [];
+        }
+      }
+      
+      setPreviousItemsBidHistory(bidHistoryMap);
+      
+    } catch (error: any) {
+      console.error('Error loading previous auctioned items:', error);
+      Alert.alert('Error', 'Failed to load previous auctioned items');
+    } finally {
+      setLoadingItems(false);
+    }
+  };
+
+  // Enhanced auction analytics update (Live Stream pattern)
+  const updateAuctionAnalytics = useCallback(() => {
+    // Calculate unique bidders
+    const uniqueBidderIds = new Set(bidHistory.map(bid => bid.bidder_display_id));
+    const uniqueBidderCount = uniqueBidderIds.size;
+    
+    // Calculate average bid amount
+    const avgBidAmount = bidHistory.length > 0 
+      ? bidHistory.reduce((sum, bid) => sum + bid.amount, 0) / bidHistory.length 
+      : 0;
+    
+    // Calculate engagement rate more accurately
+    // Engagement = (unique bidders + unique reactions) / total viewers * 100
+    const totalReactions = Object.values(reactionCounts).reduce((a, b) => a + b, 0);
+    const totalEngagement = uniqueBidderCount + totalReactions;
+    const engagementRate = viewerCount > 0 ? (totalEngagement / viewerCount) * 100 : 0;
+    
+    // Calculate bid velocity (bids per minute in the last 5 minutes)
+    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+    const recentBids = bidHistory.filter(bid => 
+      new Date(bid.created_at).getTime() > fiveMinutesAgo
+    );
+    const bidVelocity = recentBids.length / 5; // bids per minute
+    
+    // Calculate items sold and remaining
+    const itemsSold = itemQueue.filter(item => 
+      item.bidding_status === 'sold' || item.bidding_status === 'passed'
+    ).length;
+    const itemsRemaining = itemQueue.filter(item => 
+      item.bidding_status === 'waiting' || item.bidding_status === 'active'
+    ).length;
+    
+    // Calculate average time to sell for sold items
+    const soldItems = itemQueue.filter(item => item.bidding_status === 'sold');
+    const avgTimeToSell = soldItems.length > 0 
+      ? soldItems.reduce((sum, item) => {
+          if (item.bidding_started_at && item.bidding_ended_at) {
+            return sum + (new Date(item.bidding_ended_at).getTime() - new Date(item.bidding_started_at).getTime());
+          }
+          return sum;
+        }, 0) / soldItems.length / 1000 // Convert to seconds
+      : 0;
+    
+    // Update analytics state
+    setAuctionAnalytics(prev => ({
+      ...prev,
+      currentViewers: viewerCount,
+      totalViewers: Math.max(prev.totalViewers, viewerCount),
+      peakViewers: Math.max(prev.peakViewers, viewerCount), // Track peak viewers
+      activeBidders: uniqueBidderCount,
+      totalBids: bidHistory.length,
+      uniqueBidders: uniqueBidderCount,
+      avgBidAmount: avgBidAmount,
+      currentBid: currentItem?.current_bid || 0,
+      totalValue: bidHistory.reduce((sum, bid) => sum + bid.amount, 0),
+      itemsSold,
+      itemsRemaining,
+      avgTimeToSell: avgTimeToSell, // Updated calculation
+      engagementRate: engagementRate,
+      bidVelocity: bidVelocity, // New metric: bids per minute
+    }));
+  }, [viewerCount, bidHistory, reactionCounts, currentItem, itemQueue]);
+
+  // Update item performance tracking
+  const updateItemPerformance = useCallback(() => {
+    const performance = itemQueue.map(item => {
+      // Get bids specific to this item (more accurate than simplified approach)
+      const itemBids = bidHistory.filter(bid => bid.item_id === item.id);
+      const highestBid = itemBids.length > 0 ? Math.max(...itemBids.map(bid => bid.amount)) : 0;
+      
+      // Calculate time to sell more accurately
+      let timeToSell = 0;
+      if (item.bidding_started_at && item.bidding_ended_at) {
+        timeToSell = new Date(item.bidding_ended_at).getTime() - new Date(item.bidding_started_at).getTime();
+      } else if (item.bidding_started_at && item.bidding_status === 'sold') {
+        // If sold but no end time, use current time
+        timeToSell = Date.now() - new Date(item.bidding_started_at).getTime();
+      }
+      
+      // Determine status more accurately
+      let status: 'sold' | 'passed' | 'active' | 'waiting' | 'countdown' | 'ended' = item.bidding_status;
+      if (item.bidding_status === 'active' && itemBids.length === 0) {
+        status = 'waiting';
+      } else if (item.bidding_status === 'active' && itemBids.length > 0) {
+        status = 'active';
+      } else if (item.bidding_status === 'sold' && highestBid >= (item.reserve_price || 0)) {
+        status = 'sold';
+      } else if (item.bidding_status === 'sold' && highestBid < (item.reserve_price || 0)) {
+        status = 'passed';
+      }
+      
+      return {
+        itemId: item.id,
+        title: item.title,
+        bidCount: itemBids.length,
+        finalPrice: highestBid || item.current_bid || 0,
+        timeToSell: timeToSell / 1000, // Convert to seconds
+        status: status,
+        startingPrice: item.starting_price,
+        reservePrice: item.reserve_price,
+      };
+    });
+    
+    setItemPerformance(performance);
+  }, [itemQueue, bidHistory]);
+
+  // Auto-update analytics when data changes
+  useEffect(() => {
+    updateAuctionAnalytics();
+  }, [updateAuctionAnalytics]);
+
+  useEffect(() => {
+    updateItemPerformance();
+  }, [updateItemPerformance]);
 
   // Handle selecting item from queue (loads it as current item)
   const handleSelectItem = async (item: AuctionItem) => {
@@ -303,6 +545,12 @@ const AuctionLiveBroadcastScreen = () => {
           total_bids: (prev.total_bids || 0) + 1
         } : null);
 
+        // Update current item bid if this is a multi-item auction
+        setCurrentItem(prev => prev ? {
+          ...prev,
+          current_bid: data.amount
+        } : null);
+
         // Add to bid history
         setBidHistory(prev => [{
           id: data.bid_id || Date.now().toString(),
@@ -311,7 +559,56 @@ const AuctionLiveBroadcastScreen = () => {
           is_winning: true,
           created_at: new Date().toISOString(),
           bid_type: 'manual',
+          item_id: currentItem?.id, // Include item_id for accurate tracking (undefined if no current item)
         }, ...prev.slice(0, 49)]);
+
+        // Mark that bids have been received - this will stop the countdown timer
+        setHasBids(true);
+        console.log('💰 Bid received - countdown timer stopped');
+
+        // NEW: Add bid notification
+        const notificationId = Date.now().toString();
+        const newNotification = {
+          id: notificationId,
+          bidder_display_id: data.bidder_display_id || 'Bidder',
+          amount: data.amount,
+          translateY: new Animated.Value(100), // Start from bottom
+          opacity: new Animated.Value(0), // Start transparent
+        };
+        
+        // Clear existing notification (prevent clutter)
+        setBidNotifications([]);
+        
+        // Add new notification
+        setBidNotifications(prev => [...prev, newNotification]);
+        
+        // Animate: slide up (1.2s) → pause (2s) → fade out (0.8s) = ~5s total
+        Animated.sequence([
+          // Slide up from bottom to center
+          Animated.timing(newNotification.translateY, {
+            toValue: -200, // Move to center
+            duration: 1200,
+            useNativeDriver: true,
+          }),
+          // Pause at center (implicit - no animation for 2s)
+          Animated.delay(2000),
+          // Fade out with slight upward movement
+          Animated.parallel([
+            Animated.timing(newNotification.opacity, {
+              toValue: 0,
+              duration: 800,
+              useNativeDriver: true,
+            }),
+            Animated.timing(newNotification.translateY, {
+              toValue: -250,
+              duration: 800,
+              useNativeDriver: true,
+            }),
+          ]),
+        ]).start(() => {
+          // Remove notification after animation
+          setBidNotifications(prev => prev.filter(n => n.id !== notificationId));
+        });
       }
     };
     bidHandlerRef.current = handleNewBid;
@@ -326,6 +623,21 @@ const AuctionLiveBroadcastScreen = () => {
             bidder_display_id: data.bidder_display_id,
           });
           setShowWinnerModal(true);
+          
+          // When auction ends, clear current item to show SELECT ITEM and LOAD NEXT buttons
+          // Only clear current item for timed auctions or when live stream actually ends
+          if (data.new_status === 'ended') {
+            // For live auctions, only clear current item if the auction itself ended (not just an item)
+            // For timed auctions, keep existing behavior
+            if (auction?.auction_type === 'timed' || data.auction_ended === true) {
+              setCurrentItem(null);
+              setItemBiddingStatus('waiting');
+              setAuctionPhase('idle');
+              console.log('🏁 Auction ended - cleared current item');
+            } else {
+              console.log('🔄 Live auction item ended - keeping auction alive for next item');
+            }
+          }
         }
       }
     };
@@ -334,7 +646,7 @@ const AuctionLiveBroadcastScreen = () => {
     // Handle viewer count
     const handleViewCountUpdate = (data: any) => {
       if (data.auction_id === auctionId) {
-        setViewerCount(data.view_count || 0);
+        setViewerCount(data.view_count || data.current_viewers || 0);
       }
     };
     viewCountHandlerRef.current = handleViewCountUpdate;
@@ -353,7 +665,59 @@ const AuctionLiveBroadcastScreen = () => {
           [reaction.reaction_type]: (prev[reaction.reaction_type] || 0) + 1,
         }));
 
-        // Remove reaction after 3 seconds using the generated ID
+        // Play sound effect based on reaction type
+        switch (reaction.reaction_type) {
+          case 'heart':
+            playCheer();
+            break;
+          case 'applause':
+            playClap();
+            break;
+          case 'thumbs_up':
+            playCheer();
+            break;
+          case 'fire':
+            playCheer();
+            break;
+        }
+
+        // Create floating animation like the viewer screen
+        const randomX = Math.random() * (screenWidth - 100);
+        const newReaction = {
+          id: reactionId,
+          reaction_type: reaction.reaction_type,
+          x: randomX,
+          y: screenHeight * 0.6,
+          scale: new Animated.Value(0),
+          opacity: new Animated.Value(1),
+          translateY: new Animated.Value(0),
+        };
+
+        setReactionAnimations(prev => [...prev, newReaction]);
+
+        // Animate reaction
+        Animated.parallel([
+          Animated.timing(newReaction.scale, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(newReaction.translateY, {
+            toValue: -200,
+            duration: 2000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(newReaction.opacity, {
+            toValue: 0,
+            duration: 2000,
+            delay: 1000,
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          setReactionAnimations(prev => prev.filter(r => r.id !== reactionId));
+        });
+
+        // Remove from reactions list after animation
         setTimeout(() => {
           setReactions(prev => prev.filter(r => r.id !== reactionId));
         }, 3000);
@@ -379,6 +743,7 @@ const AuctionLiveBroadcastScreen = () => {
             setItemTotalCount(data.total_items || 0);
             setBiddingTimeLeft(null);
             setCountdownTimer(null);
+            setHasBids(false); // Reset bid tracking for new item
             // Reload item queue when item becomes ready
             loadItemQueue().catch(err => console.error('Error reloading queue:', err));
             break;
@@ -386,6 +751,7 @@ const AuctionLiveBroadcastScreen = () => {
           case 'start_countdown':
             setItemBiddingStatus('countdown');
             setCountdownTimer(3);
+            setHasBids(false); // Reset bid tracking when countdown starts
             // Start countdown animation
             break;
           
@@ -393,6 +759,7 @@ const AuctionLiveBroadcastScreen = () => {
             setItemBiddingStatus('active');
             setCountdownTimer(null);
             setBiddingTimeLeft(data.duration || 120);
+            setHasBids(false); // Reset bid tracking when bidding opens
             break;
           
           case 'bidding_ended':
@@ -423,7 +790,7 @@ const AuctionLiveBroadcastScreen = () => {
     auctionSocket.on('new_bid', handleNewBid);
     auctionSocket.on('bid_placed', handleNewBid);
     auctionSocket.on('auction_status_changed', handleStatusChanged);
-    auctionSocket.on('view_count_updated', handleViewCountUpdate);
+    auctionSocket.on('view_count_update', handleViewCountUpdate);
     auctionSocket.on('item_event', handleItemEvent);
     auctionSocket.on('new_reaction', handleNewReaction);
   };
@@ -453,7 +820,7 @@ const AuctionLiveBroadcastScreen = () => {
         statusHandlerRef.current = null;
       }
       if (viewCountHandlerRef.current) {
-        auctionSocket.off('view_count_updated', viewCountHandlerRef.current);
+        auctionSocket.off('view_count_update', viewCountHandlerRef.current);
         viewCountHandlerRef.current = null;
       }
       if (itemEventHandlerRef.current) {
@@ -626,15 +993,20 @@ const AuctionLiveBroadcastScreen = () => {
 
   // Bidding timer effect
   useEffect(() => {
-    if (itemBiddingStatus === 'active' && biddingTimeLeft !== null && biddingTimeLeft > 0) {
+    if (itemBiddingStatus === 'active' && biddingTimeLeft !== null && biddingTimeLeft > 0 && !hasBids) {
       const timer = setTimeout(() => {
         setBiddingTimeLeft(biddingTimeLeft - 1);
       }, 1000);
       return () => clearTimeout(timer);
     }
-    // Removed auto-end logic - only gavel button should end bidding
-    // Timer reaching zero does not automatically end the auction
-  }, [itemBiddingStatus, biddingTimeLeft]);
+    
+    // Timer completion handler - show cancel button only if no bids were placed
+    if (itemBiddingStatus === 'active' && biddingTimeLeft === 0 && !hasBids) {
+      console.log('⏰ Timer completed with no bids - showing cancel button option');
+      // Don't auto-end bidding - just let timer reach 0 so cancel button appears
+      // Host can choose to end with gavel or cancel button
+    }
+  }, [itemBiddingStatus, biddingTimeLeft, hasBids]);
 
   // Multi-item auction control handlers with sound sequencing
   const handleStartItemCountdown = async () => {
@@ -885,27 +1257,101 @@ const AuctionLiveBroadcastScreen = () => {
     }
   };
 
+  // Handle ending bidding without gavel sound (cancel button when timer expires)
+  const handleEndBiddingWithoutSound = async () => {
+    if (!currentItem) return;
+
+    // Capture values in closure to avoid stale references
+    const itemId = currentItem.id;
+    const totalBids = auction?.total_bids || 0;
+
+    console.log('🔕 Ending bidding without sound for item:', itemId, 'Total bids:', totalBids);
+
+    try {
+      // Stop crowd sound if playing
+      stopCrowd();
+
+      // End bidding (sets status to 'ended' and broadcasts bidding_ended event)
+      await auctionsAPI.endItemBidding(auctionId, itemId);
+      
+      console.log('✅ Bidding ended without gavel sound');
+      
+      // After ending bidding, either mark as sold (if bids) or skip item (if no bids)
+      // This ensures the next item loads automatically, same as gavel button behavior
+      if (totalBids > 0) {
+        console.log('✅ Bids received - marking item as sold');
+        await auctionsAPI.markItemSold(auctionId, itemId);
+      } else {
+        console.log('⚠️ No bids received - skipping item');
+        await auctionsAPI.skipItem(auctionId, itemId);
+      }
+      
+      // Reset phase to idle to prepare for next item
+      setAuctionPhase('idle');
+      
+      console.log('✅ Next item should load automatically via backend');
+    } catch (error: any) {
+      console.error('Error ending bidding without sound:', error);
+      Alert.alert('Error', error.message || 'Failed to end bidding');
+      setAuctionPhase('idle');
+    }
+  };
+
   // Add Item handlers
-  const handleAddImage = async () => {
-    if (newItemImages.length >= 10) {
-      Alert.alert('Maximum Images', 'You can upload up to 10 images per item.');
+  const handleAddMedia = async () => {
+    const totalMedia = newItemImages.length + newItemVideos.length;
+    if (totalMedia >= 10) {
+      Alert.alert('Maximum Media', 'You can upload up to 10 images and videos per item.');
       return;
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.8,
-    });
+    Alert.alert(
+      'Add Media',
+      'What would you like to add?',
+      [
+        {
+          text: 'Image',
+          onPress: async () => {
+            const result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsEditing: true,
+              aspect: [4, 3],
+              quality: 0.8,
+            });
 
-    if (!result.canceled && result.assets[0]) {
-      setNewItemImages(prev => [...prev, result.assets[0].uri]);
-    }
+            if (!result.canceled && result.assets[0]) {
+              setNewItemImages(prev => [...prev, result.assets[0].uri]);
+            }
+          },
+        },
+        {
+          text: 'Video',
+          onPress: async () => {
+            const result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+              allowsEditing: true,
+              quality: 0.8,
+            });
+
+            if (!result.canceled && result.assets[0]) {
+              setNewItemVideos(prev => [...prev, result.assets[0].uri]);
+            }
+          },
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ]
+    );
   };
 
   const handleRemoveImage = (index: number) => {
     setNewItemImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleRemoveVideo = (index: number) => {
+    setNewItemVideos(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleCreateItem = async () => {
@@ -931,7 +1377,9 @@ const AuctionLiveBroadcastScreen = () => {
         bid_increment: newItemBidIncrement.trim() ? parseFloat(newItemBidIncrement) : undefined,
       };
 
-      const newItem = await auctionsAPI.createAuctionItem(auctionId, itemData, newItemImages);
+      // Combine images and videos for upload
+      const allMedia = [...newItemImages, ...newItemVideos];
+      const newItem = await auctionsAPI.createAuctionItem(auctionId, itemData, allMedia);
 
       // Reset form
       setNewItemTitle('');
@@ -941,6 +1389,7 @@ const AuctionLiveBroadcastScreen = () => {
       setNewItemReservePrice('');
       setNewItemBidIncrement('');
       setNewItemImages([]);
+      setNewItemVideos([]);
       setShowAddItemModal(false);
 
       // Reload item queue
@@ -1019,6 +1468,65 @@ const AuctionLiveBroadcastScreen = () => {
     </View>
   );
 
+  // Render previous auctioned item with its bid history
+  const renderPreviousItem = ({ item }: { item: AuctionItem }) => {
+    const itemBidHistory = previousItemsBidHistory[item.id] || [];
+    const winningBid = itemBidHistory.find(bid => bid.is_winning);
+    
+    return (
+      <View style={styles.previousItemContainer}>
+        <View style={styles.previousItemHeader}>
+          <View style={styles.previousItemInfo}>
+            <Text style={styles.previousItemTitle}>{item.title}</Text>
+            <Text style={styles.previousItemPrice}>
+              Starting: ₣{item.starting_price?.toFixed(2)}
+            </Text>
+            <View style={styles.previousItemMeta}>
+              <Text style={styles.previousItemOrder}>Item #{item.order_in_auction}</Text>
+              <View style={[styles.statusBadge, { 
+                backgroundColor: item.bidding_status === 'sold' ? '#27AE60' : 
+                                item.bidding_status === 'passed' ? '#E74C3C' :
+                                item.bidding_status === 'ended' ? '#F39C12' : '#999'
+              }]}>
+                <Text style={styles.statusText}>
+                  {item.bidding_status?.toUpperCase()}
+                </Text>
+              </View>
+            </View>
+          </View>
+          {winningBid && (
+            <View style={styles.winningBidContainer}>
+              <Text style={styles.winningBidLabel}>Winning Bid</Text>
+              <Text style={styles.winningBidAmount}>₣{winningBid.amount.toFixed(2)}</Text>
+              <Text style={styles.winningBidder}>{winningBid.bidder_display_id}</Text>
+            </View>
+          )}
+        </View>
+        
+        <View style={styles.bidHistorySection}>
+          <Text style={styles.bidHistoryTitle}>Bid History ({itemBidHistory.length})</Text>
+          {itemBidHistory.length > 0 ? (
+            <FlatList
+              data={itemBidHistory}
+              renderItem={renderBidItem}
+              keyExtractor={(bid) => bid.id}
+              style={styles.itemBidHistoryList}
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyText}>No bids for this item</Text>
+                </View>
+              }
+            />
+          ) : (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No bids for this item</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -1087,21 +1595,40 @@ const AuctionLiveBroadcastScreen = () => {
         </View>
 
         {/* Reactions Display */}
-        {reactions.length > 0 && (
-          <View style={styles.reactionsContainer}>
-            {reactions.slice(-5).map((reaction, index) => {
-              const emoji = reaction.reaction_type === 'heart' ? '❤️' :
-                           reaction.reaction_type === 'thumbs_up' ? '👍' :
-                           reaction.reaction_type === 'applause' ? '👏' :
-                           reaction.reaction_type === 'fire' ? '🔥' : '👍';
-              return (
-                <View key={reaction.id} style={[styles.reactionBubble, { bottom: 60 + (index * 50) }]}>
-                  <Text style={styles.reactionBubbleEmoji}>{emoji}</Text>
-                </View>
-              );
-            })}
-          </View>
-        )}
+        {/* Reactions Overlay - Animated */}
+        {reactionAnimations.map((reaction) => {
+          const emoji = reaction.reaction_type === 'heart' ? '❤️' :
+                       reaction.reaction_type === 'thumbs_up' ? '👍' :
+                       reaction.reaction_type === 'applause' ? '👏' :
+                       reaction.reaction_type === 'fire' ? '🔥' : '👍';
+          return (
+            <Animated.View
+              key={reaction.id}
+              style={[
+                styles.reactionBubble,
+                {
+                  left: reaction.x,
+                  bottom: reaction.y,
+                  transform: [
+                    { scale: reaction.scale },
+                    { translateY: reaction.translateY }
+                  ],
+                  opacity: reaction.opacity,
+                }
+              ]}
+            >
+              <Text style={styles.reactionBubbleEmoji}>{emoji}</Text>
+            </Animated.View>
+          );
+        })}
+
+        {/* Bid Notifications */}
+        {bidNotifications.map((notification) => (
+          <BidNotificationBubble
+            key={notification.id}
+            notification={notification}
+          />
+        ))}
 
         {/* Reaction Counts Summary */}
         {(reactionCounts.heart > 0 || reactionCounts.thumbs_up > 0 || reactionCounts.applause > 0 || reactionCounts.fire > 0) && (
@@ -1146,7 +1673,7 @@ const AuctionLiveBroadcastScreen = () => {
               <Text style={styles.currentBidLabel}>Current Bid:</Text>
               <Text style={styles.currentBidAmount}>₣{(currentItem.current_bid || currentItem.starting_price).toFixed(2)}</Text>
             </View>
-            {biddingTimeLeft !== null && itemBiddingStatus === 'active' && (
+            {biddingTimeLeft !== null && itemBiddingStatus === 'active' && !hasBids && (
               <View style={styles.timeRow}>
                 <Ionicons name="time-outline" size={14} color="#FFA500" />
                 <Text style={styles.timeRemaining}>{formatTime(biddingTimeLeft)}</Text>
@@ -1177,7 +1704,7 @@ const AuctionLiveBroadcastScreen = () => {
         </View>
       )}
 
-      {/* Bid Dashboard Modal */}
+      {/* Auction Analytics Modal */}
       {showBidDashboard && (
         <Modal
           visible={showBidDashboard}
@@ -1187,7 +1714,7 @@ const AuctionLiveBroadcastScreen = () => {
         >
           <View style={[styles.modalContainer, { paddingBottom: (insets.bottom || 0) + 12 }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Bid History</Text>
+              <Text style={styles.modalTitle}>Live Auction Analytics</Text>
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={() => setShowBidDashboard(false)}
@@ -1196,18 +1723,307 @@ const AuctionLiveBroadcastScreen = () => {
               </TouchableOpacity>
             </View>
 
-            <FlatList
-              data={bidHistory}
-              renderItem={renderBidItem}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={{ paddingBottom: (insets.bottom || 0) + 16 }}
-              ListEmptyComponent={
-                <View style={styles.emptyState}>
-                  <Ionicons name="pricetag-outline" size={60} color="#666" />
-                  <Text style={styles.emptyText}>No bids yet</Text>
+            <ScrollView style={styles.analyticsContainer} showsVerticalScrollIndicator={false}>
+              {/* Real-time Metrics */}
+              <View style={styles.analyticsSection}>
+                <Text style={styles.sectionTitle}>📊 Real-time Metrics</Text>
+                <View style={styles.metricsGrid}>
+                  <View style={styles.metricCard}>
+                    <Ionicons name="eye" size={20} color="#007AFF" />
+                    <Text style={styles.metricValue}>{viewerCount}</Text>
+                    <Text style={styles.metricLabel}>Live Viewers</Text>
+                  </View>
+                  <View style={styles.metricCard}>
+                    <Ionicons name="pricetag" size={20} color="#34C759" />
+                    <Text style={styles.metricValue}>{bidHistory.length}</Text>
+                    <Text style={styles.metricLabel}>Total Bids</Text>
+                  </View>
+                  <View style={styles.metricCard}>
+                    <Ionicons name="cash" size={20} color="#FF9500" />
+                    <Text style={styles.metricValue}>₣{auction?.current_bid?.toFixed(2) || '0.00'}</Text>
+                    <Text style={styles.metricLabel}>Current Bid</Text>
+                  </View>
+                  <View style={styles.metricCard}>
+                    <Ionicons name="stats-chart" size={20} color="#AF52DE" />
+                    <Text style={styles.metricValue}>{auctionAnalytics.peakViewers}</Text>
+                    <Text style={styles.metricLabel}>Peak Viewers</Text>
+                  </View>
                 </View>
-              }
-            />
+              </View>
+
+              {/* Enhanced Analytics Grid (Live Stream pattern) */}
+              <View style={styles.analyticsSection}>
+                <Text style={styles.sectionTitle}>📊 Live Auction Analytics</Text>
+                <View style={styles.analyticsGrid}>
+                  <View style={styles.analyticsCard}>
+                    <Ionicons name="eye" size={24} color="#FF0050" />
+                    <Text style={styles.analyticsValue}>{auctionAnalytics.currentViewers}</Text>
+                    <Text style={styles.analyticsTitle}>Current Viewers</Text>
+                  </View>
+                  <View style={styles.analyticsCard}>
+                    <Ionicons name="people" size={24} color="#00F2EA" />
+                    <Text style={styles.analyticsValue}>{auctionAnalytics.uniqueBidders}</Text>
+                    <Text style={styles.analyticsTitle}>Active Bidders</Text>
+                  </View>
+                  <View style={styles.analyticsCard}>
+                    <Ionicons name="cash" size={24} color="#8E44AD" />
+                    <Text style={styles.analyticsValue}>₣{auctionAnalytics.currentBid}</Text>
+                    <Text style={styles.analyticsTitle}>Current Bid</Text>
+                  </View>
+                  <View style={styles.analyticsCard}>
+                    <Ionicons name="trending-up" size={24} color="#27AE60" />
+                    <Text style={styles.analyticsValue}>{auctionAnalytics.totalBids}</Text>
+                    <Text style={styles.analyticsTitle}>Total Bids</Text>
+                  </View>
+                  <View style={styles.analyticsCard}>
+                    <Ionicons name="cash" size={24} color="#FFD700" />
+                    <Text style={styles.analyticsValue}>₣{auctionAnalytics.totalValue}</Text>
+                    <Text style={styles.analyticsTitle}>Total Value</Text>
+                  </View>
+                  <View style={styles.analyticsCard}>
+                    <Ionicons name="speedometer" size={24} color="#FF6B35" />
+                    <Text style={styles.analyticsValue}>{auctionAnalytics.bidVelocity.toFixed(1)}</Text>
+                    <Text style={styles.analyticsTitle}>Bid Velocity</Text>
+                    <Text style={styles.analyticsSubtitle}>bids/min</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Engagement Analytics */}
+              <View style={styles.analyticsSection}>
+                <Text style={styles.sectionTitle}>🎯 Engagement Analytics</Text>
+                <View style={styles.engagementContainer}>
+                  <View style={styles.engagementRow}>
+                    <Text style={styles.engagementLabel}>Total Reactions</Text>
+                    <Text style={styles.engagementValue}>
+                      {Object.values(reactionCounts).reduce((a, b) => a + b, 0)}
+                    </Text>
+                  </View>
+                  <View style={styles.reactionBreakdown}>
+                    {reactionCounts.heart > 0 && (
+                      <View style={styles.reactionStat}>
+                        <Text style={styles.reactionEmoji}>❤️</Text>
+                        <Text style={styles.reactionCount}>{reactionCounts.heart}</Text>
+                      </View>
+                    )}
+                    {reactionCounts.thumbs_up > 0 && (
+                      <View style={styles.reactionStat}>
+                        <Text style={styles.reactionEmoji}>👍</Text>
+                        <Text style={styles.reactionCount}>{reactionCounts.thumbs_up}</Text>
+                      </View>
+                    )}
+                    {reactionCounts.applause > 0 && (
+                      <View style={styles.reactionStat}>
+                        <Text style={styles.reactionEmoji}>👏</Text>
+                        <Text style={styles.reactionCount}>{reactionCounts.applause}</Text>
+                      </View>
+                    )}
+                    {reactionCounts.fire > 0 && (
+                      <View style={styles.reactionStat}>
+                        <Text style={styles.reactionEmoji}>🔥</Text>
+                        <Text style={styles.reactionCount}>{reactionCounts.fire}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.engagementRow}>
+                    <Text style={styles.engagementLabel}>Engagement Rate</Text>
+                    <Text style={styles.engagementValue}>
+                      {auctionAnalytics.engagementRate.toFixed(1)}%
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Item Performance Tracking (Portfolio-style analytics) */}
+              {itemPerformance.length > 0 && (
+                <View style={styles.analyticsSection}>
+                  <Text style={styles.sectionTitle}>
+                    <Ionicons name="star" size={20} color="#FFD700" /> Item Performance
+                  </Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {itemPerformance.map((item) => (
+                      <View key={item.itemId} style={styles.itemPerformanceCard}>
+                        <Text style={styles.itemPerformanceTitle} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                        <View style={styles.itemPerformanceRow}>
+                          <View style={styles.itemPerformanceMetric}>
+                            <Ionicons name="cash-outline" size={16} color="#999" />
+                            <Text style={styles.itemPerformanceValue}>{item.bidCount}</Text>
+                            <Text style={styles.itemPerformanceLabel}>Bids</Text>
+                          </View>
+                          <View style={styles.itemPerformanceMetric}>
+                            <Ionicons name="pricetag-outline" size={16} color="#999" />
+                            <Text style={styles.itemPerformanceValue}>₣{item.finalPrice}</Text>
+                            <Text style={styles.itemPerformanceLabel}>Final</Text>
+                          </View>
+                        </View>
+                        <View style={styles.itemPerformanceRow}>
+                          <View style={styles.itemPerformanceMetric}>
+                            <Ionicons name="timer-outline" size={16} color="#999" />
+                            <Text style={styles.itemPerformanceValue}>
+                              {item.timeToSell > 0 
+                                ? item.timeToSell < 60 
+                                  ? `${item.timeToSell.toFixed(0)}s`
+                                  : item.timeToSell < 3600
+                                  ? `${(item.timeToSell / 60).toFixed(1)}m`
+                                  : `${(item.timeToSell / 3600).toFixed(1)}h`
+                                : 'N/A'
+                              }
+                            </Text>
+                            <Text style={styles.itemPerformanceLabel}>Time</Text>
+                          </View>
+                          <View style={styles.itemPerformanceMetric}>
+                            <Ionicons 
+                              name={item.status === 'sold' ? 'checkmark-circle' : 
+                                    item.status === 'passed' ? 'close-circle' : 
+                                    item.status === 'active' ? 'play-circle' : 'time-outline'} 
+                              size={16} 
+                              color={item.status === 'sold' ? '#27AE60' : 
+                                     item.status === 'passed' ? '#E74C3C' : 
+                                     item.status === 'active' ? '#3498DB' : '#999'} 
+                            />
+                            <Text style={styles.itemPerformanceValue}>
+                              {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                            </Text>
+                            <Text style={styles.itemPerformanceLabel}>Status</Text>
+                          </View>
+                        </View>
+                        <View style={styles.conversionRate}>
+                          <Text style={styles.conversionRateText}>
+                            {item.startingPrice > 0 && item.finalPrice > 0 
+                              ? ((item.finalPrice / item.startingPrice - 1) * 100).toFixed(0) 
+                              : item.finalPrice > 0 
+                                ? '100%'
+                                : '0%'
+                            } Increase
+                          </Text>
+                        </View>
+                      </View>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* Auction Performance */}
+              <View style={styles.analyticsSection}>
+                <Text style={styles.sectionTitle}>🚀 Auction Performance</Text>
+                <View style={styles.performanceContainer}>
+                  <View style={styles.performanceRow}>
+                    <Text style={styles.performanceLabel}>Items in Queue</Text>
+                    <Text style={styles.performanceValue}>{itemQueue.length}</Text>
+                  </View>
+                  <View style={styles.performanceRow}>
+                    <Text style={styles.performanceLabel}>Items Sold</Text>
+                    <Text style={styles.performanceValue}>{auctionAnalytics.itemsSold}</Text>
+                  </View>
+                  <View style={styles.performanceRow}>
+                    <Text style={styles.performanceLabel}>Current Item</Text>
+                    <Text style={styles.performanceValue}>{currentItem?.title || 'None'}</Text>
+                  </View>
+                  <View style={styles.performanceRow}>
+                    <Text style={styles.performanceLabel}>Bidding Status</Text>
+                    <Text style={[styles.performanceValue, styles.statusBadge]}>
+                      {itemBiddingStatus?.charAt(0).toUpperCase() + itemBiddingStatus?.slice(1) || 'Waiting'}
+                    </Text>
+                  </View>
+                  <View style={styles.performanceRow}>
+                    <Text style={styles.performanceLabel}>Avg Bid Amount</Text>
+                    <Text style={styles.performanceValue}>₣{auctionAnalytics.avgBidAmount.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.performanceRow}>
+                    <Text style={styles.performanceLabel}>Avg Time to Sell</Text>
+                    <Text style={styles.performanceValue}>
+                      {auctionAnalytics.avgTimeToSell > 0 
+                        ? auctionAnalytics.avgTimeToSell < 60 
+                          ? `${auctionAnalytics.avgTimeToSell.toFixed(0)}s`
+                          : auctionAnalytics.avgTimeToSell < 3600
+                          ? `${(auctionAnalytics.avgTimeToSell / 60).toFixed(1)}m`
+                          : `${(auctionAnalytics.avgTimeToSell / 3600).toFixed(1)}h`
+                        : 'N/A'
+                      }
+                    </Text>
+                  </View>
+                  {currentItem && (
+                    <View style={styles.performanceRow}>
+                      <Text style={styles.performanceLabel}>Item Starting Price</Text>
+                      <Text style={styles.performanceValue}>₣{currentItem.starting_price?.toFixed(2)}</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {/* Bid History */}
+              <View style={styles.analyticsSection}>
+                <Text style={styles.sectionTitle}>📜 Recent Bids</Text>
+                <View style={styles.bidHistoryList}>
+                  {bidHistory.slice(0, 10).length > 0 ? (
+                    bidHistory.slice(0, 10).map((bid) => renderBidItem({ item: bid }))
+                  ) : (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="pricetag-outline" size={60} color="#666" />
+                      <Text style={styles.emptyText}>No bids yet</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {/* Previous Auctioned Items Button */}
+              <View style={styles.analyticsSection}>
+                <TouchableOpacity 
+                  style={styles.previousItemsButton}
+                  onPress={() => {
+                    loadPreviousAuctionedItems();
+                    setShowPreviousItems(true);
+                  }}
+                >
+                  <Ionicons name="time-outline" size={20} color="white" />
+                  <Text style={styles.previousItemsButtonText}>View Previous Auctioned Items</Text>
+                  <Ionicons name="chevron-forward" size={20} color="white" />
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </Modal>
+      )}
+
+      {/* Previous Auctioned Items Modal */}
+      {showPreviousItems && (
+        <Modal
+          visible={showPreviousItems}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setShowPreviousItems(false)}
+        >
+          <View style={[styles.modalContainer, { paddingBottom: (insets.bottom || 0) + 12 }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Previous Auctioned Items</Text>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => setShowPreviousItems(false)}
+              >
+                <Ionicons name="close" size={24} color="white" />
+              </TouchableOpacity>
+            </View>
+
+            {loadingItems ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#8E44AD" />
+                <Text style={styles.loadingText}>Loading previous items...</Text>
+              </View>
+            ) : (
+              <View style={styles.previousItemsContainer}>
+                {previousAuctionedItems.length > 0 ? (
+                  previousAuctionedItems.map((item) => renderPreviousItem({ item }))
+                ) : (
+                  <View style={styles.emptyState}>
+                    <Ionicons name="time-outline" size={60} color="#666" />
+                    <Text style={styles.emptyText}>No previous auctioned items</Text>
+                    <Text style={styles.emptySubtext}>Items that have been sold, passed, or ended will appear here</Text>
+                  </View>
+                )}
+              </View>
+            )}
           </View>
         </Modal>
       )}
@@ -1338,29 +2154,61 @@ const AuctionLiveBroadcastScreen = () => {
               </View>
 
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Images ({newItemImages.length}/10)</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagesContainer}>
-                  {newItemImages.map((uri, index) => (
-                    <View key={index} style={styles.imagePreview}>
-                      <Image source={{ uri }} style={styles.previewImage} />
-                      <TouchableOpacity
-                        style={styles.removeImageButton}
-                        onPress={() => handleRemoveImage(index)}
-                      >
-                        <Ionicons name="close-circle" size={24} color="#E74C3C" />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                  {newItemImages.length < 10 && (
-                    <TouchableOpacity
-                      style={styles.addImageButton}
-                      onPress={handleAddImage}
-                    >
-                      <Ionicons name="camera" size={32} color="#3498DB" />
-                      <Text style={styles.addImageText}>Add Image</Text>
-                    </TouchableOpacity>
-                  )}
-                </ScrollView>
+                <Text style={styles.label}>Media ({newItemImages.length + newItemVideos.length}/10)</Text>
+                
+                {/* Images Section */}
+                {newItemImages.length > 0 && (
+                  <View style={styles.mediaSection}>
+                    <Text style={styles.mediaSectionTitle}>Images ({newItemImages.length})</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagesContainer}>
+                      {newItemImages.map((uri, index) => (
+                        <View key={`img-${index}`} style={styles.imagePreview}>
+                          <Image source={{ uri }} style={styles.previewImage} />
+                          <TouchableOpacity
+                            style={styles.removeImageButton}
+                            onPress={() => handleRemoveImage(index)}
+                          >
+                            <Ionicons name="close-circle" size={24} color="#E74C3C" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Videos Section */}
+                {newItemVideos.length > 0 && (
+                  <View style={styles.mediaSection}>
+                    <Text style={styles.mediaSectionTitle}>Videos ({newItemVideos.length})</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.videosContainer}>
+                      {newItemVideos.map((uri, index) => (
+                        <View key={`vid-${index}`} style={styles.videoPreview}>
+                          <View style={styles.videoThumbnail}>
+                            <Ionicons name="videocam" size={32} color="#3498DB" />
+                            <Text style={styles.videoDurationText}>Video</Text>
+                          </View>
+                          <TouchableOpacity
+                            style={styles.removeVideoButton}
+                            onPress={() => handleRemoveVideo(index)}
+                          >
+                            <Ionicons name="close-circle" size={24} color="#E74C3C" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Add Media Button */}
+                {(newItemImages.length + newItemVideos.length) < 10 && (
+                  <TouchableOpacity
+                    style={styles.addMediaButton}
+                    onPress={handleAddMedia}
+                  >
+                    <Ionicons name="add-circle" size={32} color="#3498DB" />
+                    <Text style={styles.addMediaText}>Add Image or Video</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
               <TouchableOpacity
@@ -1481,6 +2329,20 @@ const AuctionLiveBroadcastScreen = () => {
               >
                 <Ionicons name="hammer" size={20} color="white" style={{ marginRight: 8 }} />
                 <Text style={styles.auctionButtonText}>GAVEL</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Cancel Button - Visible only when timer reaches zero AND no bids were placed */}
+            {itemBiddingStatus === 'active' && 
+             biddingTimeLeft === 0 && 
+             !hasBids && 
+             auctionPhase === 'bidding_active' && (
+              <TouchableOpacity 
+                style={[styles.auctionButton, styles.cancelButton]} 
+                onPress={handleEndBiddingWithoutSound}
+              >
+                <Ionicons name="close-circle" size={20} color="white" style={{ marginRight: 8 }} />
+                <Text style={styles.auctionButtonText}>CANCEL</Text>
               </TouchableOpacity>
             )}
 
@@ -1749,11 +2611,11 @@ const styles = StyleSheet.create({
   },
   reactionBubble: {
     position: 'absolute',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
     borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 8,
+    padding: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reactionBubbleEmoji: {
     fontSize: 24,
@@ -1781,6 +2643,31 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 14,
     fontWeight: '600',
+  },
+  // Bid Notification Styles
+  bidNotificationBubble: {
+    position: 'absolute',
+    bottom: 100, // Start position
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(142, 68, 173, 0.9)',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 1000, // Ensure it's above other elements
+  },
+  bidNotificationText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
   auctionInfoOverlay: {
     position: 'absolute',
@@ -1931,6 +2818,12 @@ const styles = StyleSheet.create({
   },
   skipButton: {
     backgroundColor: 'rgba(149, 165, 166, 0.9)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButton: {
+    backgroundColor: 'rgba(231, 76, 60, 0.9)', // Red for cancel
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2138,6 +3031,61 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 4,
   },
+  // Video styles
+  mediaSection: {
+    marginBottom: 16,
+  },
+  mediaSectionTitle: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  videosContainer: {
+    flexDirection: 'row',
+  },
+  videoPreview: {
+    width: 80,
+    height: 80,
+    marginRight: 8,
+    position: 'relative',
+  },
+  videoThumbnail: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoDurationText: {
+    color: '#3498DB',
+    fontSize: 8,
+    marginTop: 2,
+  },
+  removeVideoButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: 'white',
+    borderRadius: 12,
+  },
+  addMediaButton: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 2,
+    borderColor: '#3498DB',
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addMediaText: {
+    color: '#3498DB',
+    fontSize: 10,
+    marginTop: 4,
+  },
   submitButton: {
     backgroundColor: '#3498DB',
     paddingVertical: 16,
@@ -2230,6 +3178,289 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 14,
     marginTop: 8,
+  },
+  // Analytics Modal Styles
+  analyticsContainer: {
+    flex: 1,
+    padding: 16,
+  },
+  analyticsSection: {
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  // Enhanced Analytics Grid (Live Stream pattern)
+  analyticsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  analyticsCard: {
+    width: '31%',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  analyticsValue: {
+    color: 'white',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  analyticsTitle: {
+    color: '#999',
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  analyticsSubtitle: {
+    color: '#666',
+    fontSize: 9,
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  // Item Performance Tracking (Portfolio-style)
+  itemPerformanceCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 12,
+    marginRight: 12,
+    width: 160,
+  },
+  itemPerformanceTitle: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  itemPerformanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  itemPerformanceMetric: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  itemPerformanceValue: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginTop: 2,
+  },
+  itemPerformanceLabel: {
+    color: '#999',
+    fontSize: 10,
+  },
+  conversionRate: {
+    backgroundColor: 'rgba(39, 174, 96, 0.2)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 4,
+  },
+  conversionRateText: {
+    color: '#27AE60',
+    fontSize: 10,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  metricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  metricCard: {
+    width: '48%',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  metricValue: {
+    color: 'white',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  metricLabel: {
+    color: '#999',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  engagementContainer: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+  },
+  engagementRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  engagementLabel: {
+    color: '#999',
+    fontSize: 14,
+  },
+  engagementValue: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  reactionBreakdown: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginVertical: 16,
+  },
+  reactionStat: {
+    alignItems: 'center',
+  },
+  reactionEmoji: {
+    fontSize: 24,
+    marginBottom: 4,
+  },
+  reactionCount: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  performanceContainer: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+  },
+  performanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  performanceLabel: {
+    color: '#999',
+    fontSize: 14,
+  },
+  performanceValue: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  statusBadge: {
+    backgroundColor: '#3498DB',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    fontSize: 12,
+  },
+  bidHistoryList: {
+    maxHeight: 200,
+  },
+  // Previous Items Styles
+  previousItemsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#3498DB',
+    borderRadius: 12,
+    padding: 16,
+    marginHorizontal: 16,
+  },
+  previousItemsButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'center',
+  },
+  previousItemsContainer: {
+    flex: 1,
+  },
+  previousItemContainer: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    margin: 8,
+    padding: 16,
+  },
+  previousItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  previousItemInfo: {
+    flex: 1,
+    marginRight: 16,
+  },
+  previousItemTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  previousItemPrice: {
+    color: '#FFD700',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  previousItemMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  previousItemOrder: {
+    color: '#888',
+    fontSize: 12,
+  },
+  statusText: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  winningBidContainer: {
+    alignItems: 'center',
+    backgroundColor: '#27AE60',
+    borderRadius: 8,
+    padding: 12,
+    minWidth: 100,
+  },
+  winningBidLabel: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  winningBidAmount: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  winningBidder: {
+    color: 'white',
+    fontSize: 12,
+  },
+  bidHistorySection: {
+    marginTop: 16,
+  },
+  bidHistoryTitle: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  itemBidHistoryList: {
+    maxHeight: 150,
   },
 });
 

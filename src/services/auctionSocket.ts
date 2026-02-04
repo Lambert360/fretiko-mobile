@@ -95,6 +95,18 @@ class AuctionSocketService {
   }
 
   /**
+   * Send a reaction through WebSocket
+   */
+  sendReaction(auctionId: string, reactionType: 'heart' | 'thumbs_up' | 'applause' | 'fire'): void {
+    if (this.socket && this.isConnected) {
+      this.socket.emit('send_reaction', {
+        auction_id: auctionId,
+        reaction_type: reactionType,
+      });
+    }
+  }
+
+  /**
    * Subscribe to auction events
    */
   on(event: string, callback: Function): void {
@@ -255,6 +267,21 @@ export interface AuctionSocketEvents {
     auction_id: string;
     timestamp: string;
   };
+
+  view_count_update: {
+    auction_id: string;
+    view_count: number;
+    current_viewers: number;
+    timestamp: string;
+  };
+
+  // Reaction events
+  new_reaction: {
+    auction_id: string;
+    user_id: string;
+    reaction_type: 'heart' | 'thumbs_up' | 'applause' | 'fire';
+    timestamp: string;
+  };
 }
 
 // Helper hook for React components
@@ -265,6 +292,7 @@ export const useAuctionSocket = () => {
     joinAuction: (auctionId: string, userId?: string) => auctionSocket.joinAuction(auctionId, userId),
     leaveAuction: (auctionId: string) => auctionSocket.leaveAuction(auctionId),
     placeBid: (auctionId: string, amount: number, bidType?: string) => auctionSocket.placeBid(auctionId, amount, bidType),
+    sendReaction: (auctionId: string, reactionType: 'heart' | 'thumbs_up' | 'applause' | 'fire') => auctionSocket.sendReaction(auctionId, reactionType),
     on: (event: string, callback: Function) => auctionSocket.on(event, callback),
     off: (event: string, callback?: Function) => auctionSocket.off(event, callback),
     isConnected: () => auctionSocket.getConnectionStatus(),

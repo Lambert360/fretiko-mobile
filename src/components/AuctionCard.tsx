@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { auctionsAPI, AuctionWithDetails } from '../services/auctionsAPI';
@@ -21,9 +21,48 @@ const formatCountdown = (seconds?: number) => {
 };
 
 export const AuctionCard: React.FC<AuctionCardProps> = ({ auction, onPress, variant = 'horizontal' }) => {
-  const imageUri = auction.thumbnail_url || auction.images?.[0] || 'https://via.placeholder.com/300';
+  const [currentItem, setCurrentItem] = useState<any>(null);
   const statusLabel = auction.time_status === 'active' ? 'Active' : auction.time_status === 'upcoming' ? 'Upcoming' : 'Ended';
   const statusColor = auctionsAPI.getStatusColor(auction.time_status);
+
+  // For live auctions, fetch current item to get images
+  useEffect(() => {
+    if (auction.auction_type === 'live' && auction.time_status === 'active') {
+      console.log('🎯 AuctionCard: Fetching current item for live auction:', auction.id, auction.title);
+      auctionsAPI.getCurrentItem(auction.id).then(item => {
+        console.log('🎯 AuctionCard: Received current item:', item);
+        console.log('🎯 AuctionCard: Current item images:', item?.images);
+        console.log('🎯 AuctionCard: Current item video_url:', item?.video_url);
+        setCurrentItem(item);
+      }).catch(err => {
+        console.error('Error fetching current item for auction card:', err);
+        setCurrentItem(null);
+      });
+    } else {
+      console.log('🎯 AuctionCard: Not fetching current item - auction type:', auction.auction_type, 'time_status:', auction.time_status);
+      setCurrentItem(null);
+    }
+  }, [auction.id, auction.auction_type, auction.time_status]);
+
+  // Get image URI based on auction type
+  const imageUri = useMemo(() => {
+    let uri;
+    if (auction.auction_type === 'live' && currentItem?.images?.length > 0) {
+      // Live auction: use current item's first image
+      uri = currentItem.images[0];
+      console.log('🎯 AuctionCard: Using current item image for live auction:', auction.id, uri);
+    } else if (auction.images?.length > 0) {
+      // Timed auction: use auction's first image
+      uri = auction.images[0];
+      console.log('🎯 AuctionCard: Using auction image for timed auction:', auction.id, uri);
+    } else {
+      // Fallback to thumbnail or placeholder
+      uri = auction.thumbnail_url || 'https://via.placeholder.com/300';
+      console.log('🎯 AuctionCard: Using fallback image:', auction.id, uri);
+    }
+    console.log('🎯 AuctionCard: Final imageUri:', uri, 'for auction:', auction.id, auction.title);
+    return uri;
+  }, [auction, currentItem]);
 
   const timeRemaining = useMemo(() => formatCountdown(auction.seconds_remaining), [auction.seconds_remaining]);
 

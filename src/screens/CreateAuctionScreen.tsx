@@ -8,11 +8,12 @@ import {
   TextInput,
   Image,
   Alert,
+  Platform,
   ActivityIndicator,
   Switch,
-  Platform,
   KeyboardAvoidingView,
   Dimensions,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,6 +34,224 @@ const { width: screenWidth } = Dimensions.get('window');
  * Blending Sotheby's prestige with eBay accessibility
  * Designed for Gen Z & Millennials (15-40)
  */
+// Simplified Live Auction Item Card for list view
+const LiveAuctionItemCard: React.FC<{
+  item: any;
+  onEdit: () => void;
+  onRemove: () => void;
+}> = ({ item, onEdit, onRemove }) => {
+  return (
+    <TouchableOpacity style={styles.liveItemCard} onPress={onEdit}>
+      <View style={styles.liveItemHeader}>
+        <View style={styles.liveItemInfo}>
+          <Text style={styles.liveItemTitle}>{item.title || 'Untitled Item'}</Text>
+          <Text style={styles.liveItemLotNumber}>{item.lotNumber}</Text>
+        </View>
+        <TouchableOpacity onPress={onRemove} style={styles.liveItemRemoveButton}>
+          <Ionicons name="close-circle" size={24} color="#E74C3C" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.liveItemSummary}>
+        <Text style={styles.liveItemPrice}>₣{item.startingPrice || '0.00'}</Text>
+        <Text style={styles.liveItemMediaCount}>
+          {item.images.length > 0 && `${item.images.length} photo${item.images.length !== 1 ? 's' : ''}`}
+          {item.images.length > 0 && item.videos.length > 0 && ', '}
+          {item.videos.length > 0 && `${item.videos.length} video${item.videos.length !== 1 ? 's' : ''}`}
+          {item.images.length === 0 && item.videos.length === 0 && 'No media'}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+// Live Auction Item Modal for editing
+const LiveAuctionItemModal: React.FC<{
+  visible: boolean;
+  item: any;
+  onUpdate: (field: string, value: any) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  onAddImage: (uri: string) => void;
+  onRemoveImage: (index: number) => void;
+  onAddVideo: (uri: string) => void;
+  onRemoveVideo: (index: number) => void;
+}> = ({ visible, item, onUpdate, onSave, onCancel, onAddImage, onRemoveImage, onAddVideo, onRemoveVideo }) => {
+  const [showImagePicker, setShowImagePicker] = useState(false);
+  const [showVideoPicker, setShowVideoPicker] = useState(false);
+  const insets = useSafeAreaInsets();
+
+  const pickImages = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets) {
+        result.assets.forEach(asset => {
+          if (asset.uri) onAddImage(asset.uri);
+        });
+      }
+    } catch (error) {
+      console.error('Error picking images:', error);
+      Alert.alert('Error', 'Failed to pick images');
+    }
+  };
+
+  const pickVideo = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        onAddVideo(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error picking video:', error);
+      Alert.alert('Error', 'Failed to pick video');
+    }
+  };
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onCancel}
+    >
+      <View style={[styles.modalContainer, { paddingBottom: (insets.bottom || 0) + 12 }]}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Edit Auction Item</Text>
+          <TouchableOpacity style={styles.closeButton} onPress={onCancel}>
+            <Ionicons name="close" size={24} color="white" />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+          {/* Essential Fields Only */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Item Title *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter item title"
+              placeholderTextColor="#666"
+              value={item.title}
+              onChangeText={(value) => onUpdate('title', value)}
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Lot Number</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g., LOT-001"
+              placeholderTextColor="#666"
+              value={item.lotNumber}
+              onChangeText={(value) => onUpdate('lotNumber', value)}
+            />
+          </View>
+
+          <View style={styles.inputRow}>
+            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
+              <Text style={styles.inputLabel}>Starting Price (₣) *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="0.00"
+                placeholderTextColor="#666"
+                value={item.startingPrice}
+                onChangeText={(value) => onUpdate('startingPrice', value)}
+                keyboardType="decimal-pad"
+              />
+            </View>
+            <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}>
+              <Text style={styles.inputLabel}>Reserve Price (₣)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Optional"
+                placeholderTextColor="#666"
+                value={item.reservePrice}
+                onChangeText={(value) => onUpdate('reservePrice', value)}
+                keyboardType="decimal-pad"
+              />
+            </View>
+          </View>
+
+          {/* Media Section */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Photos & Videos</Text>
+            
+            {/* Images */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+              {item.images.length < 5 && (
+                <TouchableOpacity
+                  style={styles.modalAddMediaButton}
+                  onPress={pickImages}
+                >
+                  <Ionicons name="camera" size={20} color="#8E44AD" />
+                  <Text style={styles.modalAddMediaText}>Add Photo</Text>
+                </TouchableOpacity>
+              )}
+              {item.images.map((uri: string, index: number) => (
+                <View key={`img-${index}`} style={styles.modalImagePreview}>
+                  <Image source={{ uri }} style={styles.modalItemImage} />
+                  <TouchableOpacity
+                    style={styles.modalRemoveMediaButton}
+                    onPress={() => onRemoveImage(index)}
+                  >
+                    <Ionicons name="close-circle" size={16} color="#E74C3C" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+
+            {/* Videos */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <TouchableOpacity
+                style={styles.modalAddMediaButton}
+                onPress={pickVideo}
+              >
+                <Ionicons name="videocam" size={16} color="#3498DB" />
+                <Text style={styles.modalAddMediaText}>Add Video</Text>
+              </TouchableOpacity>
+              {item.videos.map((uri: string, index: number) => (
+                <View key={`vid-${index}`} style={styles.modalVideoPreview}>
+                  <View style={styles.modalVideoThumbnail}>
+                    <Ionicons name="videocam" size={16} color="#3498DB" />
+                    <Text style={styles.modalVideoText}>Video</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.modalRemoveMediaButton}
+                    onPress={() => onRemoveVideo(index)}
+                  >
+                    <Ionicons name="close-circle" size={16} color="#E74C3C" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </ScrollView>
+
+        {/* Modal Actions */}
+        <View style={styles.modalActions}>
+          <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.saveButton} onPress={onSave}>
+            <Text style={styles.saveButtonText}>Save Item</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
 const CreateAuctionScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute<any>();
@@ -57,11 +276,24 @@ const CreateAuctionScreen: React.FC = () => {
   const [startTime, setStartTime] = useState(new Date(Date.now() + 60 * 60 * 1000)); // 1 hour from now
   const [endTime, setEndTime] = useState(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)); // 7 days from now
   const [images, setImages] = useState<string[]>([]);
-  const [video, setVideo] = useState<string | null>(null);
+  const [videos, setVideos] = useState<string[]>([]);
   const [softCloseEnabled, setSoftCloseEnabled] = useState(true);
   const [softCloseExtension, setSoftCloseExtension] = useState('5'); // minutes (will be converted to seconds)
   const [auctioneerEnabled, setAuctioneerEnabled] = useState(false);
   const [crowdSoundsEnabled, setCrowdSoundsEnabled] = useState(false);
+
+  // Multi-item state for live auctions
+  const [liveAuctionItems, setLiveAuctionItems] = useState<Array<{
+    id: string;
+    title: string;
+    description: string;
+    lotNumber: string;
+    startingPrice: string;
+    reservePrice: string;
+    bidIncrement: string;
+    images: string[];
+    videos: string[];
+  }>>([]);
 
   // UI State
   const [categories, setCategories] = useState<AuctionCategory[]>([]);
@@ -76,6 +308,60 @@ const CreateAuctionScreen: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  
+  // Live auction item modal state
+  const [showItemModal, setShowItemModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+
+  // File size validation constants
+  const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+  const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB per image
+  const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB for video
+
+  // File size validation functions
+  const validateImageFileSize = async (uri: string): Promise<boolean> => {
+    try {
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const fileSize = blob.size;
+      
+      if (fileSize > MAX_IMAGE_SIZE) {
+        const sizeMB = (fileSize / (1024 * 1024)).toFixed(1);
+        Alert.alert(
+          'Image Too Large',
+          `Image size is ${sizeMB}MB. Maximum allowed size is 10MB per image. Please choose a smaller image.`,
+          [{ text: 'OK' }]
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error('Error checking image file size:', error);
+      return true; // Allow upload if we can't check size
+    }
+  };
+
+  const validateVideoFileSize = async (uri: string): Promise<boolean> => {
+    try {
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const fileSize = blob.size;
+      
+      if (fileSize > MAX_VIDEO_SIZE) {
+        const sizeMB = (fileSize / (1024 * 1024)).toFixed(1);
+        Alert.alert(
+          'Video Too Large',
+          `Video size is ${sizeMB}MB. Maximum allowed size is 50MB. Please choose a smaller video or compress it.`,
+          [{ text: 'OK' }]
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error('Error checking video file size:', error);
+      return true; // Allow upload if we can't check size
+    }
+  };
 
   useEffect(() => {
     loadCategories();
@@ -121,7 +407,7 @@ const CreateAuctionScreen: React.FC = () => {
 
     // Set video if available
     if (data.video_url) {
-      setVideo(data.video_url);
+      setVideos([data.video_url]);
     }
 
     // Set category (will be matched after categories load)
@@ -166,15 +452,36 @@ const CreateAuctionScreen: React.FC = () => {
   const pickImages = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsMultipleSelection: true,
         quality: 0.8,
         selectionLimit: 10,
       });
 
       if (!result.canceled) {
-        const newImages = result.assets.map(asset => asset.uri);
-        setImages([...images, ...newImages].slice(0, 10)); // Max 10 images
+        // Validate file sizes before adding
+        const validImages: string[] = [];
+        
+        for (const asset of result.assets) {
+          const isValidSize = await validateImageFileSize(asset.uri);
+          if (isValidSize) {
+            validImages.push(asset.uri);
+          }
+        }
+        
+        if (validImages.length > 0) {
+          setImages([...images, ...validImages].slice(0, 10)); // Max 10 images
+          
+          // Alert if some images were rejected
+          if (validImages.length < result.assets.length) {
+            const rejectedCount = result.assets.length - validImages.length;
+            Alert.alert(
+              'Some Images Rejected',
+              `${rejectedCount} image(s) were too large and not added. Maximum size is 10MB per image.`,
+              [{ text: 'OK' }]
+            );
+          }
+        }
       }
     } catch (error) {
       console.error('Error picking images:', error);
@@ -189,15 +496,19 @@ const CreateAuctionScreen: React.FC = () => {
   const pickVideo = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        mediaTypes: ['videos'],
         allowsEditing: true,
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
         const asset = result.assets[0];
-        // Note: We'll let the backend handle size validation (50MB max)
-        setVideo(asset.uri);
+        
+        // Validate video file size before setting
+        const isValidSize = await validateVideoFileSize(asset.uri);
+        if (isValidSize) {
+          setVideos(prev => [asset.uri, ...prev]); // Add to beginning (newest first)
+        }
       }
     } catch (error) {
       console.error('Error picking video:', error);
@@ -205,8 +516,89 @@ const CreateAuctionScreen: React.FC = () => {
     }
   };
 
-  const removeVideo = () => {
-    setVideo(null);
+  const removeVideo = (index: number) => {
+    setVideos(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Multi-item management functions for live auctions
+  const addLiveAuctionItem = () => {
+    // Open modal with empty item for editing
+    const newItem = {
+      id: Date.now().toString(),
+      title: '',
+      description: description || '', // Inherit from main auction
+      lotNumber: `LOT-${String(liveAuctionItems.length + 1).padStart(3, '0')}`, // Auto-generate
+      startingPrice: startingPrice || '', // Inherit from main auction
+      reservePrice: reservePrice || '', // Inherit from main auction
+      bidIncrement: bidIncrement || '', // Inherit from main auction
+      images: [],
+      videos: [],
+    };
+    setEditingItem(newItem);
+    setShowItemModal(true);
+  };
+
+  const updateLiveAuctionItem = (id: string, field: string, value: any) => {
+    setLiveAuctionItems(prev => prev.map(item => 
+      item.id === id ? { ...item, [field]: value } : item
+    ));
+  };
+
+  const removeLiveAuctionItem = (id: string) => {
+    setLiveAuctionItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  // Modal functions
+  const openEditItemModal = (item: any) => {
+    setEditingItem(item);
+    setShowItemModal(true);
+  };
+
+  const saveItemFromModal = () => {
+    if (!editingItem) return;
+    
+    const existingIndex = liveAuctionItems.findIndex(item => item.id === editingItem.id);
+    if (existingIndex >= 0) {
+      // Update existing item
+      setLiveAuctionItems(prev => prev.map(item => 
+        item.id === editingItem.id ? editingItem : item
+      ));
+    } else {
+      // Add new item
+      setLiveAuctionItems(prev => [...prev, editingItem]);
+    }
+    
+    setShowItemModal(false);
+    setEditingItem(null);
+  };
+
+  const cancelItemModal = () => {
+    setShowItemModal(false);
+    setEditingItem(null);
+  };
+
+  const addImageToLiveItem = (itemId: string, imageUri: string) => {
+    setLiveAuctionItems(prev => prev.map(item => 
+      item.id === itemId ? { ...item, images: [...item.images, imageUri] } : item
+    ));
+  };
+
+  const removeImageFromLiveItem = (itemId: string, imageIndex: number) => {
+    setLiveAuctionItems(prev => prev.map(item => 
+      item.id === itemId ? { ...item, images: item.images.filter((_, i) => i !== imageIndex) } : item
+    ));
+  };
+
+  const addVideoToLiveItem = (itemId: string, videoUri: string) => {
+    setLiveAuctionItems(prev => prev.map(item => 
+      item.id === itemId ? { ...item, videos: [videoUri, ...item.videos] } : item // Add to beginning (newest first)
+    ));
+  };
+
+  const removeVideoFromLiveItem = (itemId: string, videoIndex: number) => {
+    setLiveAuctionItems(prev => prev.map(item => 
+      item.id === itemId ? { ...item, videos: item.videos.filter((_, i) => i !== videoIndex) } : item
+    ));
   };
 
   const validateForm = (): Promise<boolean> => {
@@ -229,16 +621,66 @@ const CreateAuctionScreen: React.FC = () => {
         return;
       }
 
-      if (!startingPrice || parseFloat(startingPrice) <= 0) {
-        Alert.alert('Invalid Starting Price', 'Please enter a valid starting price');
-        resolve(false);
-        return;
-      }
+      // Validate pricing based on auction type
+      if (auctionType === 'timed') {
+        // For timed auctions, validate single item pricing
+        if (!startingPrice || parseFloat(startingPrice) <= 0) {
+          Alert.alert('Invalid Starting Price', 'Please enter a valid starting price');
+          resolve(false);
+          return;
+        }
 
-      if (reservePrice && parseFloat(reservePrice) < parseFloat(startingPrice)) {
-        Alert.alert('Invalid Reserve Price', 'Reserve price must be higher than starting price');
-        resolve(false);
-        return;
+        if (reservePrice && parseFloat(reservePrice) < parseFloat(startingPrice)) {
+          Alert.alert('Invalid Reserve Price', 'Reserve price must be higher than starting price');
+          resolve(false);
+          return;
+        }
+      } else {
+        // For live auctions, validate primary item OR additional items
+        const hasPrimaryItem = startingPrice && parseFloat(startingPrice) > 0;
+        const hasAdditionalItems = liveAuctionItems.length > 0;
+        
+        if (!hasPrimaryItem && !hasAdditionalItems) {
+          Alert.alert('No Items Added', 'Please add a primary item or at least one additional item for the live auction');
+          resolve(false);
+          return;
+        }
+
+        // Validate primary item pricing if set
+        if (hasPrimaryItem) {
+          if (!startingPrice || parseFloat(startingPrice) <= 0) {
+            Alert.alert('Invalid Primary Item Price', 'Please enter a valid starting price for the primary item');
+            resolve(false);
+            return;
+          }
+
+          if (reservePrice && parseFloat(reservePrice) < parseFloat(startingPrice)) {
+            Alert.alert('Invalid Reserve Price', 'Reserve price must be higher than starting price');
+            resolve(false);
+            return;
+          }
+        }
+
+        // Validate additional items
+        for (const item of liveAuctionItems) {
+          if (!item.title.trim()) {
+            Alert.alert('Missing Item Title', 'All items must have a title');
+            resolve(false);
+            return;
+          }
+
+          if (!item.startingPrice || parseFloat(item.startingPrice) <= 0) {
+            Alert.alert('Invalid Item Price', 'All items must have a valid starting price');
+            resolve(false);
+            return;
+          }
+
+          if (item.reservePrice && parseFloat(item.reservePrice) < parseFloat(item.startingPrice)) {
+            Alert.alert('Invalid Reserve Price', 'Reserve price must be higher than starting price for all items');
+            resolve(false);
+            return;
+          }
+        }
       }
 
       // Validate that start time is in the future
@@ -267,7 +709,7 @@ const CreateAuctionScreen: React.FC = () => {
       // Images are recommended but not mandatory
       // Show warning if no images but allow continue
       if (images.length === 0) {
-        const message = video
+        const message = videos.length > 0
           ? 'Adding photos will help attract more bidders and make your auction stand out!\n\nA thumbnail will be generated from your video, but photos provide better visibility in listings.'
           : 'Adding photos will help attract more bidders and make your auction stand out!\n\nWe recommend adding at least one photo for better visibility.';
         
@@ -299,6 +741,34 @@ const CreateAuctionScreen: React.FC = () => {
     try {
       const isValid = await validateForm();
       if (!isValid) return;
+
+      // Final file size validation before upload
+      for (const video of videos) {
+        const isVideoValid = await validateVideoFileSize(video);
+        if (!isVideoValid) return; // Stop if any video is too large
+      }
+
+      // Validate all images one more time
+      const validImages: string[] = [];
+      for (const imageUri of images) {
+        const isImageValid = await validateImageFileSize(imageUri);
+        if (isImageValid) {
+          validImages.push(imageUri);
+        }
+      }
+      
+      if (validImages.length !== images.length) {
+        // Some images were too large, update the images array
+        setImages(validImages);
+        if (validImages.length === 0) {
+          Alert.alert(
+            'All Images Too Large',
+            'All selected images exceed the 10MB size limit. Please select smaller images.',
+            [{ text: 'OK' }]
+          );
+          return;
+        }
+      }
 
       setLoading(true);
 
@@ -350,31 +820,128 @@ const CreateAuctionScreen: React.FC = () => {
         formData.append('auctioneer_enabled', (auctionType === 'live' ? auctioneerEnabled : false).toString());
         formData.append('crowd_sounds_enabled', (auctionType === 'live' ? crowdSoundsEnabled : false).toString());
 
-        // Add images as files
-        for (let i = 0; i < images.length; i++) {
-          const uri = images[i];
-          const filename = `image-${i}.jpg`;
+        // Add files under 'files' field (backend interceptor expects this)
+        // For live auctions, associate images with specific items using filename prefixes
+        let allItems = [];
+        let fileIndex = 0;
 
-          formData.append('images', {
-            uri,
-            type: 'image/jpeg',
-            name: filename,
-          } as any);
-        }
+        if (auctionType === 'live') {
+          console.log('🔍 Debug - liveAuctionItems:', JSON.stringify(liveAuctionItems, null, 2));
+          console.log('🔍 Debug - liveAuctionItems length:', liveAuctionItems.length);
+          
+          // Primary item (index 0)
+          const primaryItem = {
+            title: title,
+            description: description,
+            starting_price: parseFloat(startingPrice),
+            reserve_price: reservePrice ? parseFloat(reservePrice) : undefined,
+            bid_increment: parseFloat(bidIncrement) || 1,
+            lot_number: lotNumber,
+          };
+          allItems.push(primaryItem);
+          console.log('🔍 Debug - Primary item created:', JSON.stringify(primaryItem, null, 2));
 
-        // Add video file if provided
-        if (video) {
-          const fileExtension = video.split('.').pop() || 'mp4';
-          const filename = `auction-video.${fileExtension}`;
-          formData.append('video', {
-            uri: video,
-            type: 'video/mp4',
-            name: filename,
-          } as any);
+          // Add primary item images with item-0 prefix in filename
+          images.forEach((uri, index) => {
+            const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
+            const fileName = `item-0-image-${index}.jpg`;
+            
+            const file = {
+              uri: Platform.OS === 'android' ? fileUri : fileUri.replace('file://', ''),
+              type: 'image/jpeg',
+              name: fileName,
+            };
+            formData.append('files', file as any);
+            console.log('📁 Adding primary item image to FormData:', { uri: file.uri, name: file.name });
+          });
+
+          // Add primary item videos with item-0 prefix in filename
+          videos.forEach((uri, index) => {
+            const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
+            const fileExtension = uri.split('.').pop() || 'mp4';
+            const fileName = `item-0-video-${index}.${fileExtension}`;
+            
+            const file = {
+              uri: Platform.OS === 'android' ? fileUri : fileUri.replace('file://', ''),
+              type: 'video/mp4',
+              name: fileName,
+            };
+            formData.append('files', file as any);
+            console.log('📁 Adding primary item video to FormData:', { uri: file.uri, name: file.name });
+          });
+
+          // Add additional items with their images (indices 1, 2, 3...)
+          liveAuctionItems.forEach((item, itemIndex) => {
+            console.log(`🔍 Debug - Processing additional item ${itemIndex}:`, JSON.stringify(item, null, 2));
+            
+            const additionalItem = {
+              title: item.title,
+              description: item.description,
+              starting_price: parseFloat(item.startingPrice),
+              reserve_price: item.reservePrice ? parseFloat(item.reservePrice) : undefined,
+              bid_increment: parseFloat(item.bidIncrement) || 1,
+              lot_number: item.lotNumber,
+            };
+            console.log(`🔍 Debug - Additional item ${itemIndex} created:`, JSON.stringify(additionalItem, null, 2));
+            allItems.push(additionalItem);
+
+            // Add additional item images with proper indexing in filename
+            item.images.forEach((uri, imgIndex) => {
+              const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
+              const fileName = `item-${itemIndex + 1}-image-${imgIndex}.jpg`;
+              
+              const file = {
+                uri: Platform.OS === 'android' ? fileUri : fileUri.replace('file://', ''),
+                type: 'image/jpeg',
+                name: fileName,
+              };
+              formData.append('files', file as any);
+              console.log('📁 Adding additional item image to FormData:', { 
+                uri: file.uri, 
+                name: file.name,
+                itemIndex: itemIndex + 1,
+                imgIndex: imgIndex
+              });
+            });
+          });
+
+          // Add all items to FormData
+          console.log('🔍 Debug - Final allItems array before FormData:', JSON.stringify(allItems, null, 2));
+          formData.append('items', JSON.stringify(allItems));
+          console.log('📦 Adding all items to FormData for live auction:', allItems.length, 'items');
+
+        } else {
+          // Timed auctions - use simple naming
+          images.forEach((uri, index) => {
+            const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
+            const fileName = `image-${index}.jpg`;
+            
+            const file = {
+              uri: Platform.OS === 'android' ? fileUri : fileUri.replace('file://', ''),
+              type: 'image/jpeg',
+              name: fileName,
+            };
+            formData.append('files', file as any);
+            console.log('📁 Adding timed auction image to FormData:', { uri: file.uri, name: file.name, type: file.type });
+          });
+
+          videos.forEach((uri, index) => {
+            const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
+            const fileExtension = uri.split('.').pop() || 'mp4';
+            const fileName = `video-${index}.${fileExtension}`;
+            
+            const file = {
+              uri: Platform.OS === 'android' ? fileUri : fileUri.replace('file://', ''),
+              type: 'video/mp4',
+              name: fileName,
+            };
+            formData.append('files', file as any);
+            console.log('📁 Adding timed auction video to FormData:', { uri: file.uri, name: file.name, type: file.type });
+          });
         }
 
         const action = isRelistMode ? 'Relisting' : 'Creating';
-        console.log(`🔨 ${action} auction with`, images.length, 'images', video ? 'and 1 video' : '');
+        console.log(`🔨 ${action} auction with`, images.length, 'images', videos.length, 'videos', liveAuctionItems.length, 'additional items');
 
         successAuction = await auctionsAPI.createAuctionWithImages(formData);
 
@@ -639,81 +1206,271 @@ const CreateAuctionScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* Pricing Section */}
+        {/* Dynamic Item Details Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Ionicons name="cash" size={20} color="#8E44AD" />
-            <Text style={styles.sectionTitle}>Pricing</Text>
+            <Ionicons name={auctionType === 'timed' ? 'pricetag' : 'list'} size={20} color="#8E44AD" />
+            <Text style={styles.sectionTitle}>
+              {auctionType === 'timed' ? 'Item Details' : 'Auction Items'}
+            </Text>
           </View>
 
-          {/* Starting Price */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Starting Price (₣) *</Text>
-            <View style={styles.priceInputContainer}>
-              <Text style={styles.currencySymbol}>₣</Text>
-              <TextInput
-                style={styles.priceInput}
-                placeholder="0.00"
-                placeholderTextColor="#666"
-                value={startingPrice}
-                onChangeText={setStartingPrice}
-                keyboardType="decimal-pad"
-              />
-            </View>
-          </View>
-
-          {/* Reserve Price */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Reserve Price (₣) - Optional</Text>
-            <Text style={styles.inputHint}>Minimum price you'll accept. Hidden from bidders.</Text>
-            <View style={styles.priceInputContainer}>
-              <Text style={styles.currencySymbol}>₣</Text>
-              <TextInput
-                style={styles.priceInput}
-                placeholder="0.00"
-                placeholderTextColor="#666"
-                value={reservePrice}
-                onChangeText={setReservePrice}
-                keyboardType="decimal-pad"
-              />
-            </View>
-          </View>
-
-          {/* Bid Increment */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Bid Increment (₣) - Optional</Text>
-            <Text style={styles.inputHint}>Minimum amount each bid must increase by.</Text>
-            <View style={styles.priceInputContainer}>
-              <Text style={styles.currencySymbol}>₣</Text>
-              <TextInput
-                style={styles.priceInput}
-                placeholder="Auto-calculated"
-                placeholderTextColor="#666"
-                value={bidIncrement}
-                onChangeText={setBidIncrement}
-                keyboardType="decimal-pad"
-              />
-            </View>
-          </View>
-
-          {/* Fee Preview */}
-          {startingPrice && parseFloat(startingPrice) > 0 && (
-            <View style={styles.feePreview}>
-              <View style={styles.feeRow}>
-                <Text style={styles.feeLabel}>Listing Fee (2%)</Text>
-                <Text style={styles.feeValue}>₣{calculateListingFee().toFixed(2)}</Text>
+          {auctionType === 'timed' ? (
+            // Timed Auction - Single Item
+            <>
+              {/* Lot Number (Optional) */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Lot Number (Optional)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g., LOT-2025-001"
+                  placeholderTextColor="#666"
+                  value={lotNumber}
+                  onChangeText={setLotNumber}
+                  maxLength={50}
+                />
               </View>
-              <View style={styles.feeRow}>
-                <Text style={styles.feeLabel}>Commission on Sale (10%)</Text>
-                <Text style={styles.feeValue}>₣{calculateCommission().toFixed(2)}</Text>
+
+              {/* Starting Price */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Starting Price (₣) *</Text>
+                <View style={styles.priceInputContainer}>
+                  <Text style={styles.currencySymbol}>₣</Text>
+                  <TextInput
+                    style={styles.priceInput}
+                    placeholder="0.00"
+                    placeholderTextColor="#666"
+                    value={startingPrice}
+                    onChangeText={setStartingPrice}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
               </View>
-              <View style={[styles.feeRow, styles.feeRowTotal]}>
-                <Text style={styles.feeLabelTotal}>Total Fees</Text>
-                <Text style={styles.feeValueTotal}>
-                  ₣{(calculateListingFee() + calculateCommission()).toFixed(2)}
+
+              {/* Reserve Price */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Reserve Price (₣) - Optional</Text>
+                <Text style={styles.inputHint}>Minimum price you'll accept. Hidden from bidders.</Text>
+                <View style={styles.priceInputContainer}>
+                  <Text style={styles.currencySymbol}>₣</Text>
+                  <TextInput
+                    style={styles.priceInput}
+                    placeholder="0.00"
+                    placeholderTextColor="#666"
+                    value={reservePrice}
+                    onChangeText={setReservePrice}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              </View>
+
+              {/* Bid Increment */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Bid Increment (₣) - Optional</Text>
+                <Text style={styles.inputHint}>Minimum amount each bid must increase by.</Text>
+                <View style={styles.priceInputContainer}>
+                  <Text style={styles.currencySymbol}>₣</Text>
+                  <TextInput
+                    style={styles.priceInput}
+                    placeholder="Auto-calculated"
+                    placeholderTextColor="#666"
+                    value={bidIncrement}
+                    onChangeText={setBidIncrement}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              </View>
+
+              {/* Fee Preview */}
+              {startingPrice && parseFloat(startingPrice) > 0 && (
+                <View style={styles.feePreview}>
+                  <View style={styles.feeRow}>
+                    <Text style={styles.feeLabel}>Listing Fee (2%)</Text>
+                    <Text style={styles.feeValue}>₣{calculateListingFee().toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.feeRow}>
+                    <Text style={styles.feeLabel}>Commission on Sale (10%)</Text>
+                    <Text style={styles.feeValue}>₣{calculateCommission().toFixed(2)}</Text>
+                  </View>
+                  <View style={[styles.feeRow, styles.feeRowTotal]}>
+                    <Text style={styles.feeLabelTotal}>Total Fees</Text>
+                    <Text style={styles.feeValueTotal}>
+                      ₣{(calculateListingFee() + calculateCommission()).toFixed(2)}
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </>
+          ) : (
+            // Live Auction - Primary Item + Multiple Additional Items
+            <>
+              <Text style={styles.liveAuctionDescription}>
+                Set up your primary auction item and add additional items for the live auction.
+              </Text>
+
+              {/* Primary Auction Item (Original Flow) */}
+              <View style={styles.primaryItemSection}>
+                <Text style={styles.sectionTitle}>Primary Auction Item</Text>
+                <Text style={styles.sectionSubtitle}>
+                  This will be the main item displayed on the auction card and details screen.
                 </Text>
+
+                {/* Primary Item Images */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Photos & Videos</Text>
+                  
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                    {images.map((uri, index) => (
+                      <View key={`img-${index}`} style={styles.imagePreview}>
+                        <Image source={{ uri }} style={styles.previewImage} />
+                        <TouchableOpacity
+                          style={styles.removeImageButton}
+                          onPress={() => removeImage(index)}
+                        >
+                          <Ionicons name="close-circle" size={16} color="#E74C3C" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    
+                    {videos.map((uri, index) => (
+                      <View key={`vid-${index}`} style={styles.imagePreview}>
+                        <View style={styles.videoPreview}>
+                          <Ionicons name="play-circle" size={32} color="#8E44AD" />
+                          <Text style={styles.videoText}>Video</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.removeImageButton}
+                          onPress={() => removeVideo(index)}
+                        >
+                          <Ionicons name="close-circle" size={16} color="#E74C3C" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    
+                    <TouchableOpacity style={styles.addMediaButton} onPress={pickImages}>
+                      <Ionicons name="camera" size={20} color="#8E44AD" />
+                      <Text style={styles.addMediaText}>Add Photo</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity style={styles.addMediaButton} onPress={pickVideo}>
+                      <Ionicons name="videocam" size={20} color="#8E44AD" />
+                      <Text style={styles.addMediaText}>Add Video</Text>
+                    </TouchableOpacity>
+                  </ScrollView>
+                </View>
+
+                {/* Primary Item Pricing */}
+                <View style={styles.inputRow}>
+                  <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
+                    <Text style={styles.inputLabel}>Starting Price (₣) *</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="0.00"
+                      placeholderTextColor="#666"
+                      value={startingPrice}
+                      onChangeText={setStartingPrice}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                  <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}>
+                    <Text style={styles.inputLabel}>Reserve Price (₣)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Optional"
+                      placeholderTextColor="#666"
+                      value={reservePrice}
+                      onChangeText={setReservePrice}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Bid Increment (₣)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g., 5.00"
+                    placeholderTextColor="#666"
+                    value={bidIncrement}
+                    onChangeText={setBidIncrement}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
               </View>
-            </View>
+
+              {/* Additional Items Section */}
+              <View style={styles.additionalItemsSection}>
+                <View style={styles.additionalItemsHeader}>
+                  <Text style={styles.sectionTitle}>Additional Items</Text>
+                  <Text style={styles.sectionSubtitle}>
+                    Add more items to sell during your live auction
+                  </Text>
+                </View>
+
+                {/* Live Auction Items List - Simplified Cards */}
+                <View style={styles.liveItemsList}>
+                  {liveAuctionItems.map((item) => (
+                    <LiveAuctionItemCard
+                      key={item.id}
+                      item={item}
+                      onEdit={() => openEditItemModal(item)}
+                      onRemove={() => removeLiveAuctionItem(item.id)}
+                    />
+                  ))}
+                </View>
+
+                {/* Add Another Item Button */}
+                <TouchableOpacity
+                  style={styles.addLiveItemButton}
+                  onPress={addLiveAuctionItem}
+                >
+                  <Ionicons name="add-circle" size={24} color="#8E44AD" />
+                  <Text style={styles.addLiveItemText}>Add Another Item</Text>
+                </TouchableOpacity>
+
+                {/* Items Summary */}
+                {liveAuctionItems.length > 0 && (
+                  <View style={styles.liveItemsSummary}>
+                    <Text style={styles.liveItemsSummaryText}>
+                      {liveAuctionItems.length} additional item{liveAuctionItems.length !== 1 ? 's' : ''} added
+                    </Text>
+                    <Text style={styles.liveItemsTotalValue}>
+                      Total Additional Value: ₣{liveAuctionItems.reduce((sum, item) => 
+                        sum + (parseFloat(item.startingPrice) || 0), 0).toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Live Auction Item Modal */}
+              <LiveAuctionItemModal
+                visible={showItemModal}
+                item={editingItem || {}}
+                onUpdate={(field, value) => setEditingItem((prev: any) => prev ? {...prev, [field]: value} : null)}
+                onSave={saveItemFromModal}
+                onCancel={cancelItemModal}
+                onAddImage={(uri) => {
+                  if (editingItem) {
+                    setEditingItem((prev: any) => prev ? {...prev, images: [...prev.images, uri]} : null);
+                  }
+                }}
+                onRemoveImage={(index) => {
+                  if (editingItem) {
+                    setEditingItem((prev: any) => prev ? {...prev, images: prev.images.filter((_: any, i: any) => i !== index)} : null);
+                  }
+                }}
+                onAddVideo={(uri) => {
+                  if (editingItem) {
+                    setEditingItem((prev: any) => prev ? {...prev, videos: [uri, ...prev.videos]} : null);
+                  }
+                }}
+                onRemoveVideo={(index) => {
+                  if (editingItem) {
+                    setEditingItem((prev: any) => prev ? {...prev, videos: prev.videos.filter((_: any, i: any) => i !== index)} : null);
+                  }
+                }}
+              />
+            </>
           )}
         </View>
 
@@ -891,73 +1648,86 @@ const CreateAuctionScreen: React.FC = () => {
           )}
         </View>
 
-        {/* Media Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Ionicons name="images" size={20} color="#8E44AD" />
-            <Text style={styles.sectionTitle}>Auction Media</Text>
-          </View>
+        {/* Media Section - Only for Timed Auctions */}
+        {auctionType === 'timed' && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="images" size={20} color="#8E44AD" />
+              <Text style={styles.sectionTitle}>Auction Media</Text>
+            </View>
 
-          {/* Video Section */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Video (Optional)</Text>
-            <Text style={styles.inputHint}>
-              Add a video showcase for your auction lot (Max 50MB)
-            </Text>
-            {!video ? (
-              <TouchableOpacity style={styles.videoPickerButton} onPress={pickVideo}>
-                <Ionicons name="videocam" size={32} color="#8E44AD" />
-                <Text style={styles.videoPickerButtonText}>Add Video</Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.videoPreviewContainer}>
-                <View style={styles.videoPreview}>
-                  <Ionicons name="play-circle" size={48} color="#FFF" />
-                  <Text style={styles.videoPreviewText}>Video Selected</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.videoRemoveButton}
-                  onPress={removeVideo}
-                >
-                  <Ionicons name="close-circle" size={24} color="#E74C3C" />
+            {/* Video Section */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Videos (Optional)</Text>
+              <Text style={styles.inputHint}>
+                Add video showcases for your auction lot (Max 50MB each)
+              </Text>
+              
+              {/* Video Grid */}
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                style={styles.videoGrid}
+                contentContainerStyle={styles.videoGridContent}
+              >
+                {/* Add Video Button - Always visible and fixed at start */}
+                <TouchableOpacity style={styles.addVideoButton} onPress={pickVideo}>
+                  <Ionicons name="videocam" size={24} color="#8E44AD" />
+                  <Text style={styles.addVideoButtonText}>Add Video</Text>
                 </TouchableOpacity>
-              </View>
-            )}
-          </View>
-
-          {/* Images Section */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Photos *</Text>
-            <Text style={styles.inputHint}>
-              Add high-quality images (Max 10). At least one image is required.
-            </Text>
-            <TouchableOpacity style={styles.imagePickerButton} onPress={pickImages}>
-              <Ionicons name="camera" size={32} color="#8E44AD" />
-              <Text style={styles.imagePickerButtonText}>Add Photos (Max 10)</Text>
-            </TouchableOpacity>
-
-            {images.length > 0 && (
-              <View style={styles.imageGrid}>
-                {images.map((uri, index) => (
-                  <View key={index} style={styles.imagePreviewContainer}>
-                    <Image source={{ uri }} style={styles.imagePreview} />
+                
+                {/* Videos - Newest first (index 0 is newest) */}
+                {videos.map((uri, index) => (
+                  <View key={index} style={styles.videoPreviewContainer}>
+                    <View style={styles.videoPreview}>
+                      <Ionicons name="play-circle" size={24} color="#FFF" />
+                      <Text style={styles.videoPreviewText}>Video</Text>
+                    </View>
                     <TouchableOpacity
-                      style={styles.imageRemoveButton}
-                      onPress={() => removeImage(index)}
+                      style={styles.videoRemoveButton}
+                      onPress={() => removeVideo(index)}
                     >
-                      <Ionicons name="close-circle" size={24} color="#E74C3C" />
+                      <Ionicons name="close-circle" size={20} color="#E74C3C" />
                     </TouchableOpacity>
-                    {index === 0 && (
-                      <View style={styles.primaryImageBadge}>
-                        <Text style={styles.primaryImageBadgeText}>Primary</Text>
-                      </View>
-                    )}
                   </View>
                 ))}
-              </View>
-            )}
+              </ScrollView>
+            </View>
+
+            {/* Images Section */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Photos *</Text>
+              <Text style={styles.inputHint}>
+                Add high-quality images (Max 10). At least one image is required.
+              </Text>
+              <TouchableOpacity style={styles.imagePickerButton} onPress={pickImages}>
+                <Ionicons name="camera" size={32} color="#8E44AD" />
+                <Text style={styles.imagePickerButtonText}>Add Photos (Max 10)</Text>
+              </TouchableOpacity>
+
+              {images.length > 0 && (
+                <View style={styles.imageGrid}>
+                  {images.map((uri, index) => (
+                    <View key={index} style={styles.imagePreviewContainer}>
+                      <Image source={{ uri }} style={styles.imagePreview} />
+                      <TouchableOpacity
+                        style={styles.imageRemoveButton}
+                        onPress={() => removeImage(index)}
+                      >
+                        <Ionicons name="close-circle" size={24} color="#E74C3C" />
+                      </TouchableOpacity>
+                      {index === 0 && (
+                        <View style={styles.primaryImageBadge}>
+                          <Text style={styles.primaryImageBadgeText}>Primary</Text>
+                        </View>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
           </View>
-        </View>
+        )}
 
         {/* Advanced Settings Section */}
         <View style={styles.section}>
@@ -1335,48 +2105,207 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
   },
-  videoPickerButton: {
-    backgroundColor: '#1a1a1a',
-    borderWidth: 2,
-    borderColor: '#8E44AD',
-    borderStyle: 'dashed',
-    borderRadius: 12,
-    padding: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
+  // Video grid styles
+  videoGrid: {
+    marginTop: 16,
   },
-  videoPickerButtonText: {
-    color: '#8E44AD',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginTop: 8,
+  videoGridContent: {
+    flexDirection: 'row',
+    gap: 12,
   },
   videoPreviewContainer: {
-    marginTop: 8,
+    width: (screenWidth - 72) / 3,
+    height: (screenWidth - 72) / 3,
     position: 'relative',
   },
   videoPreview: {
     width: '100%',
-    height: 200,
+    height: '100%',
     backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#333',
-    alignItems: 'center',
+    borderRadius: 8,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   videoPreviewText: {
     color: '#FFF',
-    fontSize: 14,
-    marginTop: 8,
+    fontSize: 10,
+    marginTop: 4,
   },
   videoRemoveButton: {
     position: 'absolute',
     top: -8,
     right: -8,
-    backgroundColor: '#000',
+    backgroundColor: 'white',
     borderRadius: 12,
+  },
+  addVideoButton: {
+    width: (screenWidth - 72) / 3,
+    height: (screenWidth - 72) / 3,
+    backgroundColor: 'rgba(142, 68, 173, 0.1)',
+    borderWidth: 2,
+    borderColor: '#8E44AD',
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addVideoButtonText: {
+    color: '#8E44AD',
+    fontSize: 10,
+    fontWeight: 'bold',
+    marginTop: 4,
+  },
+  // Live auction multi-item styles
+  liveAuctionDescription: {
+    color: '#888',
+    fontSize: 14,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  liveItemsList: {
+    maxHeight: 400,
+    marginBottom: 16,
+  },
+  liveItemCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  liveItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  liveItemTitle: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  liveItemRemoveButton: {
+    padding: 4,
+  },
+  liveItemContent: {
+    padding: 16,
+  },
+  liveItemRow: {
+    marginBottom: 16,
+  },
+  liveItemField: {
+    flex: 1,
+  },
+  liveItemLabel: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  liveItemInput: {
+    backgroundColor: '#2a2a2a',
+    color: '#FFF',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: '#444',
+  },
+  liveItemTextArea: {
+    height: 60,
+    textAlignVertical: 'top',
+  },
+  liveItemMediaContainer: {
+    marginTop: 8,
+  },
+  liveItemImagePreview: {
+    width: 60,
+    height: 60,
+    marginRight: 8,
+    position: 'relative',
+  },
+  liveItemImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 6,
+  },
+  liveItemVideoPreview: {
+    width: 60,
+    height: 60,
+    marginRight: 8,
+    position: 'relative',
+  },
+  liveItemVideoThumbnail: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#2a2a2a',
+    borderRadius: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  liveItemVideoText: {
+    color: '#3498DB',
+    fontSize: 8,
+    marginTop: 2,
+  },
+  liveItemRemoveMediaButton: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: 'white',
+    borderRadius: 10,
+  },
+  liveItemAddMediaButton: {
+    width: 60,
+    height: 60,
+    backgroundColor: 'rgba(142, 68, 173, 0.1)',
+    borderWidth: 1,
+    borderColor: '#8E44AD',
+    borderStyle: 'dashed',
+    borderRadius: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  liveItemAddMediaText: {
+    color: '#8E44AD',
+    fontSize: 8,
+    marginTop: 2,
+  },
+  addLiveItemButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(142, 68, 173, 0.1)',
+    borderWidth: 2,
+    borderColor: '#8E44AD',
+    borderStyle: 'dashed',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  addLiveItemText: {
+    color: '#8E44AD',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  liveItemsSummary: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 8,
+    padding: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  liveItemsSummaryText: {
+    color: '#888',
+    fontSize: 14,
+  },
+  liveItemsTotalValue: {
+    color: '#8E44AD',
+    fontSize: 16,
+    fontWeight: '600',
   },
   imageGrid: {
     flexDirection: 'row',
@@ -1459,6 +2388,212 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     letterSpacing: 0.5,
+  },
+  // Updated live auction styles
+  liveItemInfo: {
+    flex: 1,
+  },
+  liveItemSummary: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  liveItemPrice: {
+    color: '#8E44AD',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  liveItemLotNumber: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  liveItemMediaCount: {
+    color: '#888',
+    fontSize: 12,
+  },
+  input: {
+    backgroundColor: '#1a1a1a',
+    color: '#FFF',
+    fontSize: 16,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  // Modal styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
+  },
+  modalTitle: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  modalContent: {
+    flex: 1,
+    padding: 16,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#222',
+    gap: 12,
+  },
+  cancelButton: {
+    flex: 1,
+    padding: 12,
+    backgroundColor: '#333',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  saveButton: {
+    flex: 1,
+    padding: 12,
+    backgroundColor: '#8E44AD',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  inputRow: {
+    flexDirection: 'row',
+  },
+  // Modal media styles
+  modalImagePreview: {
+    width: 80,
+    height: 80,
+    position: 'relative',
+    marginRight: 8,
+  },
+  modalItemImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 8,
+  },
+  modalRemoveMediaButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: '#000',
+    borderRadius: 12,
+  },
+  modalAddMediaButton: {
+    width: 80,
+    height: 80,
+    backgroundColor: 'rgba(142, 68, 173, 0.1)',
+    borderWidth: 2,
+    borderColor: '#8E44AD',
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  modalAddMediaText: {
+    color: '#8E44AD',
+    fontSize: 10,
+    fontWeight: 'bold',
+    marginTop: 4,
+  },
+  modalVideoPreview: {
+    width: 80,
+    height: 80,
+    position: 'relative',
+    marginRight: 8,
+  },
+  modalVideoThumbnail: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalVideoText: {
+    color: '#FFF',
+    fontSize: 10,
+    marginTop: 4,
+  },
+  previewImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#000',
+    borderRadius: 12,
+  },
+  addMediaButton: {
+    width: 80,
+    height: 80,
+    backgroundColor: '#1a1a1a',
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  addMediaText: {
+    color: '#8E44AD',
+    fontSize: 10,
+    fontWeight: 'bold',
+    marginTop: 4,
+  },
+  // New styles for enhanced live auction UI
+  primaryItemSection: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 2,
+    borderColor: '#8E44AD',
+  },
+  additionalItemsSection: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  additionalItemsHeader: {
+    marginBottom: 16,
+  },
+  sectionSubtitle: {
+    color: '#888',
+    fontSize: 14,
+    marginBottom: 12,
+  },
+  videoText: {
+    color: '#8E44AD',
+    fontSize: 10,
+    marginTop: 4,
+    textAlign: 'center',
   },
 });
 

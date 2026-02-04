@@ -117,6 +117,7 @@ const AuctionDetailsScreen = () => {
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [auctionOrder, setAuctionOrder] = useState<Order | null>(null);
   const [checkingOrder, setCheckingOrder] = useState(false);
+  const [currentItem, setCurrentItem] = useState<any>(null);
 
   // Refs
   const timeUpdateInterval = useRef<NodeJS.Timeout | null>(null);
@@ -178,6 +179,20 @@ const AuctionDetailsScreen = () => {
       // Set initial bid amount to next increment
       const nextBid = auctionData.current_bid + auctionData.bid_increment;
       setBidAmount(nextBid.toString());
+
+      // For ended live auctions where user is the winner, fetch the winning item
+      if (auctionData.auction_type === 'live' && auctionData.status === 'sold' && auctionData.winner_id === user?.id) {
+        try {
+          const winningItem = await auctionsAPI.getCurrentItem(auctionId);
+          setCurrentItem(winningItem);
+          console.log(`✅ Loaded winning item for ended live auction ${auctionId}:`, winningItem?.title);
+        } catch (error) {
+          console.error('Error loading winning item:', error);
+          setCurrentItem(null);
+        }
+      } else {
+        setCurrentItem(null);
+      }
 
       // Load bid history
       await loadBidHistory();
@@ -574,16 +589,32 @@ const AuctionDetailsScreen = () => {
     
     const items: Array<{ type: 'image' | 'video'; uri: string }> = [];
     
-    // Add all images
-    if (auction.images && auction.images.length > 0) {
-      auction.images.forEach(imageUri => {
-        items.push({ type: 'image', uri: imageUri });
-      });
-    }
-    
-    // Add video if exists
-    if (auction.video_url) {
-      items.push({ type: 'video', uri: auction.video_url });
+    // For ended live auctions where user is the winner, prioritize winning item media
+    if (auction.auction_type === 'live' && auction.status === 'sold' && auction.winner_id === user?.id && currentItem) {
+      // Add winning item images first
+      if (currentItem.images && currentItem.images.length > 0) {
+        currentItem.images.forEach((imageUri: string) => {
+          items.push({ type: 'image', uri: imageUri });
+        });
+      }
+      
+      // Add winning item video if exists
+      if (currentItem.video_url) {
+        items.push({ type: 'video', uri: currentItem.video_url });
+      }
+    } else {
+      // For timed auctions or live auctions without winning item, use auction media
+      // Add all images
+      if (auction.images && auction.images.length > 0) {
+        auction.images.forEach(imageUri => {
+          items.push({ type: 'image', uri: imageUri });
+        });
+      }
+      
+      // Add video if exists
+      if (auction.video_url) {
+        items.push({ type: 'video', uri: auction.video_url });
+      }
     }
     
     // Fallback to thumbnail if no images or video
@@ -699,7 +730,14 @@ const AuctionDetailsScreen = () => {
           <TouchableOpacity
             activeOpacity={0.9}
             onPress={() => {
+              console.log('🔍 Debug - Main image pressed');
+              console.log('🔍 Debug - Auction images:', auction.images);
+              console.log('🔍 Debug - Selected index:', selectedImageIndex);
+              console.log('🔍 Debug - Thumbnail URL:', auction.thumbnail_url);
+              
               const mediaItems = getAllMediaItems();
+              console.log('🔍 Debug - Media items:', mediaItems);
+              
               // Find the current item index
               let currentIndex = 0;
               if (auction.images.length > 0 && selectedImageIndex < auction.images.length) {
@@ -711,6 +749,7 @@ const AuctionDetailsScreen = () => {
                 // If video exists and we're past images, video is last
                 currentIndex = mediaItems.length - 1;
               }
+              console.log('🔍 Debug - Calculated index:', currentIndex);
               setViewerImageIndex(currentIndex);
               setImageViewerVisible(true);
             }}
@@ -739,14 +778,13 @@ const AuctionDetailsScreen = () => {
                 resizeMode="cover"
               />
             )}
+            {/* Status Badge */}
+            <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(auction.time_status) }]}>
+              <Text style={styles.statusText}>
+                {auction.time_status === 'active' ? 'LIVE AUCTION' : auction.time_status.toUpperCase()}
+              </Text>
+            </View>
           </TouchableOpacity>
-
-          {/* Status Badge */}
-          <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(auction.time_status) }]}>
-            <Text style={styles.statusText}>
-              {auction.time_status === 'active' ? 'LIVE AUCTION' : auction.time_status.toUpperCase()}
-            </Text>
-          </View>
 
           {/* Media Navigation (Images + Video indicator) */}
           {(auction.images.length > 1 || auction.video_url) && (
@@ -854,9 +892,9 @@ const AuctionDetailsScreen = () => {
               </Text>
               <Text style={[
                 styles.timeRemaining,
-                timeRemaining && timeRemaining < 3600 && styles.timeUrgent,
-                auction.time_status === 'upcoming' && styles.timeUpcoming
-              ]}>
+                timeRemaining && timeRemaining < 3600 ? styles.timeUrgent : undefined,
+                auction.time_status === 'upcoming' ? styles.timeUpcoming : undefined
+              ].filter(Boolean as any)}>
                 {auction.time_status === 'upcoming'
                   ? formatStartDateTime(auction.start_time)
                   : auction.time_status === 'active'

@@ -127,6 +127,7 @@ export interface PublicBidHistoryItem {
   is_winning: boolean;
   created_at: string;
   bid_type: 'manual' | 'proxy' | 'auto';
+  item_id?: string; // TODO: Add to backend for proper multi-item auction tracking
 }
 
 export interface AuctionFilters {
@@ -840,22 +841,25 @@ export const auctionsAPI = {
         formData.append('bidding_duration', itemData.bidding_duration.toString());
       }
 
-      // Add images as files
+      // Add images as files under single 'files' field for React Native compatibility
       if (imageUris && imageUris.length > 0) {
         for (let i = 0; i < imageUris.length; i++) {
           const uri = imageUris[i];
           const filename = `image-${i}.jpg`;
-          formData.append('images', {
-            uri,
+          
+          // React Native file upload format
+          const file = {
+            uri: uri.startsWith('file://') ? uri : `file://${uri}`,
             type: 'image/jpeg',
             name: filename,
-          } as any);
+          };
+          
+          formData.append('files', file as any);
         }
       }
 
       const response = await api.post(`/auctions/${auctionId}/items`, formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
           Authorization: `Bearer ${token}`,
         },
       });

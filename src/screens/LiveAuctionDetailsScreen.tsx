@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useAuth } from '../contexts/AuthContext';
-import { auctionsAPI, auctionSocket, AuctionWithDetails, PublicBidHistoryItem } from '../services/auctionsAPI';
+import { auctionsAPI, auctionSocket, AuctionWithDetails, AuctionItem, PublicBidHistoryItem } from '../services/auctionsAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -95,6 +95,7 @@ const LiveAuctionDetailsScreen = () => {
 
   // State
   const [auction, setAuction] = useState<AuctionWithDetails | null>(null);
+  const [auctionItems, setAuctionItems] = useState<AuctionItem[]>([]);
   const [bidHistory, setBidHistory] = useState<PublicBidHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -107,6 +108,7 @@ const LiveAuctionDetailsScreen = () => {
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [auctionOrder, setAuctionOrder] = useState<Order | null>(null);
   const [checkingOrder, setCheckingOrder] = useState(false);
+  const [currentItem, setCurrentItem] = useState<AuctionItem | null>(null);
   const [userWonItems, setUserWonItems] = useState<Array<{
     id?: string;
     auctionId: string;
@@ -204,6 +206,30 @@ const LiveAuctionDetailsScreen = () => {
 
       setAuction(auctionData);
       auctionRef.current = auctionData; // Keep ref in sync
+      
+      // Load additional items for live auctions
+      try {
+        const items = await auctionsAPI.getAuctionItems(auctionId);
+        setAuctionItems(items);
+        console.log(`✅ Loaded ${items.length} additional items for auction ${auctionId}`);
+      } catch (error) {
+        console.error('Error loading auction items:', error);
+        setAuctionItems([]); // Set empty array on error
+      }
+
+      // For active live auctions, fetch the current item
+      if (auctionData.status === 'active' && auctionData.auction_type === 'live') {
+        try {
+          const currentItemData = await auctionsAPI.getCurrentItem(auctionId);
+          setCurrentItem(currentItemData);
+          console.log(`✅ Loaded current item for active auction ${auctionId}:`, currentItemData?.title);
+        } catch (error) {
+          console.error('Error loading current item:', error);
+          setCurrentItem(null);
+        }
+      } else {
+        setCurrentItem(null);
+      }
       
       // Calculate time remaining - for upcoming auctions, calculate from start_time
       if (auctionData.time_status === 'upcoming' && auctionData.start_time) {
@@ -588,24 +614,67 @@ const LiveAuctionDetailsScreen = () => {
     }
   };
 
-  // Helper function to get all media items (images + video)
+  // Helper function to get all media items (images + video) from main auction and additional items
   const getAllMediaItems = () => {
     if (!auction) return [];
     
-    const items: Array<{ type: 'image' | 'video'; uri: string }> = [];
+    const items: Array<{ type: 'image' | 'video'; uri: string; title?: string; price?: string }> = [];
     
-    if (auction.images && auction.images.length > 0) {
-      auction.images.forEach(imageUri => {
-        items.push({ type: 'image', uri: imageUri });
+    // For active live auctions with a current item, prioritize current item media
+    if (auction.time_status === 'active' && auction.auction_type === 'live' && currentItem) {
+      // Add current item images first
+      if (currentItem.images && currentItem.images.length > 0) {
+        currentItem.images.forEach(imageUri => {
+          items.push({ 
+            type: 'image', 
+            uri: imageUri, 
+            title: currentItem.title,
+            price: `Current Bid: ₣${auction.current_bid}`
+          });
+        });
+      }
+      
+      // Add current item video if exists
+      if (currentItem.video_url) {
+        items.push({ 
+          type: 'video', 
+          uri: currentItem.video_url, 
+          title: currentItem.title,
+          price: `Current Bid: ₣${auction.current_bid}`
+        });
+      }
+    } else {
+      // For non-active auctions or auctions without current item, show main auction media
+      // Add main auction images first
+      if (auction.images && auction.images.length > 0) {
+        auction.images.forEach(imageUri => {
+          items.push({ type: 'image', uri: imageUri, title: auction.title, price: `Starting: ₣${auction.starting_price}` });
+        });
+      }
+      
+      // Add main auction video if exists
+      if (auction.video_url) {
+        items.push({ type: 'video', uri: auction.video_url, title: auction.title, price: `Starting: ₣${auction.starting_price}` });
+      }
+      
+      // Add additional items' images
+      auctionItems.forEach(item => {
+        if (item.images && item.images.length > 0) {
+          item.images.forEach(imageUri => {
+            items.push({ 
+              type: 'image', 
+              uri: imageUri, 
+              title: item.title,
+              price: `Starting: ₣${item.starting_price}`
+            });
+          });
+        }
       });
     }
     
-    if (auction.video_url) {
-      items.push({ type: 'video', uri: auction.video_url });
-    }
-    
+    // Fallback to thumbnail if no images
     if (items.length === 0 && auction.thumbnail_url) {
-      items.push({ type: 'image', uri: auction.thumbnail_url });
+      items.push({ type: 'image', uri: auction.thumbnail_url, title: auction.title, price: `Starting: ₣${auction.starting_price}` });
     }
     
     return items;
@@ -703,20 +772,26 @@ const LiveAuctionDetailsScreen = () => {
           <TouchableOpacity
             activeOpacity={0.9}
             onPress={() => {
+              console.log('🔍 Debug - Live main image pressed');
+              console.log('🔍 Debug - Auction images:', auction.images);
+              console.log('🔍 Debug - Selected index:', selectedImageIndex);
+              console.log('🔍 Debug - Thumbnail URL:', auction.thumbnail_url);
+              
               const mediaItems = getAllMediaItems();
+              console.log('🔍 Debug - Media items:', mediaItems);
+              
               let currentIndex = 0;
-              if (auction.images.length > 0 && selectedImageIndex < auction.images.length) {
+              if (mediaItems.length > 0 && selectedImageIndex < mediaItems.length) {
                 currentIndex = selectedImageIndex;
-              } else if (auction.video_url && auction.images.length === 0) {
-                currentIndex = 0;
-              } else if (auction.video_url && selectedImageIndex >= auction.images.length) {
-                currentIndex = mediaItems.length - 1;
               }
+              console.log('🔍 Debug - Calculated index:', currentIndex);
               setViewerImageIndex(currentIndex);
               setImageViewerVisible(true);
             }}
           >
+            {/* Main Image/Video Display */}
             {auction.video_url && auction.images.length === 0 ? (
+              // Show video thumbnail if only video exists (no images)
               <View style={styles.mainImageContainer}>
                 <Image
                   source={{
@@ -730,6 +805,7 @@ const LiveAuctionDetailsScreen = () => {
                 </View>
               </View>
             ) : (
+              // Show image (existing behavior)
               <Image
                 source={{
                   uri: auction.images[selectedImageIndex] || auction.thumbnail_url || 'https://via.placeholder.com/400x300'
@@ -738,14 +814,14 @@ const LiveAuctionDetailsScreen = () => {
                 resizeMode="cover"
               />
             )}
-          </TouchableOpacity>
 
-          {/* Status Badge */}
-          <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(auction.time_status) }]}>
-            <Text style={styles.statusText}>
-              {auction.time_status === 'active' ? 'LIVE AUCTION' : auction.time_status.toUpperCase()}
-            </Text>
-          </View>
+            {/* Status Badge */}
+            <View style={[styles.statusBadge, { backgroundColor: auctionsAPI.getStatusColor(auction.time_status) }]}>
+              <Text style={styles.statusText}>
+                {auction.time_status === 'active' ? 'LIVE AUCTION' : auction.time_status.toUpperCase()}
+              </Text>
+            </View>
+          </TouchableOpacity>
 
           {/* Media Navigation */}
           {(auction.images.length > 1 || auction.video_url) && (
@@ -853,7 +929,7 @@ const LiveAuctionDetailsScreen = () => {
               </Text>
               <Text style={[
                 styles.timeRemaining,
-                timeRemaining && timeRemaining < 3600 && styles.timeUrgent,
+                timeRemaining !== null && timeRemaining < 3600 && styles.timeUrgent,
                 auction.time_status === 'upcoming' && styles.timeUpcoming
               ]}>
                 {auction.time_status === 'upcoming'
@@ -891,6 +967,78 @@ const LiveAuctionDetailsScreen = () => {
               <Text style={styles.statLabel}>Starting Bid</Text>
             </View>
           </View>
+
+          {/* Auction Items - Show all items available in this live auction */}
+          {auctionItems.length > 0 && (
+            <View style={styles.itemsSection}>
+              <Text style={styles.sectionTitle}>Available Items ({auctionItems.length + 1})</Text>
+              <Text style={styles.sectionSubtitle}>
+                All items that will be available during this live auction
+              </Text>
+              
+              {/* Primary Auction Item */}
+              <View style={styles.auctionItemCard}>
+                <View style={styles.itemHeader}>
+                  <View style={styles.itemInfo}>
+                    <Text style={styles.itemTitle}>{auction.title}</Text>
+                    <Text style={styles.itemLotNumber}>Primary Item</Text>
+                  </View>
+                  <View style={styles.itemPricing}>
+                    <Text style={styles.itemPrice}>{auctionsAPI.formatPrice(auction.starting_price)}</Text>
+                    {auction.reserve_price && (
+                      <Text style={styles.itemReserve}>Reserve: {auctionsAPI.formatPrice(auction.reserve_price)}</Text>
+                    )}
+                  </View>
+                </View>
+                
+                {/* Primary Item Images Preview */}
+                {(auction.images && auction.images.length > 0) && (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.itemImagesPreview}>
+                    {auction.images.slice(0, 3).map((imageUri, index) => (
+                      <Image key={`primary-${index}`} source={{ uri: imageUri }} style={styles.itemThumbnail} />
+                    ))}
+                    {auction.images.length > 3 && (
+                      <View style={styles.moreImagesIndicator}>
+                        <Text style={styles.moreImagesText}>+{auction.images.length - 3}</Text>
+                      </View>
+                    )}
+                  </ScrollView>
+                )}
+              </View>
+
+              {/* Additional Items */}
+              {auctionItems.map((item) => (
+                <View key={item.id} style={styles.auctionItemCard}>
+                  <View style={styles.itemHeader}>
+                    <View style={styles.itemInfo}>
+                      <Text style={styles.itemTitle}>{item.title}</Text>
+                      <Text style={styles.itemLotNumber}>{item.lot_number || `LOT-${item.id.slice(-4)}`}</Text>
+                    </View>
+                    <View style={styles.itemPricing}>
+                      <Text style={styles.itemPrice}>{auctionsAPI.formatPrice(item.starting_price)}</Text>
+                      {item.reserve_price && (
+                        <Text style={styles.itemReserve}>Reserve: {auctionsAPI.formatPrice(item.reserve_price)}</Text>
+                      )}
+                    </View>
+                  </View>
+                  
+                  {/* Additional Item Images Preview */}
+                  {item.images && item.images.length > 0 && (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.itemImagesPreview}>
+                      {item.images.slice(0, 3).map((imageUri, index) => (
+                        <Image key={`${item.id}-${index}`} source={{ uri: imageUri }} style={styles.itemThumbnail} />
+                      ))}
+                      {item.images.length > 3 && (
+                        <View style={styles.moreImagesIndicator}>
+                          <Text style={styles.moreImagesText}>+{item.images.length - 3}</Text>
+                        </View>
+                      )}
+                    </ScrollView>
+                  )}
+                </View>
+              ))}
+            </View>
+          )}
 
           {/* Seller Info */}
           <View style={styles.sellerSection}>
@@ -1195,6 +1343,18 @@ const LiveAuctionDetailsScreen = () => {
                     style={styles.imageViewerImage}
                     resizeMode="contain"
                   />
+                )}
+                
+                {/* Item Title and Price Overlay */}
+                {(item.title || item.price) && (
+                  <View style={styles.imageViewerItemInfo}>
+                    {item.title && (
+                      <Text style={styles.imageViewerItemTitle}>{item.title}</Text>
+                    )}
+                    {item.price && (
+                      <Text style={styles.imageViewerItemPrice}>{item.price}</Text>
+                    )}
+                  </View>
                 )}
               </View>
             )}
@@ -1850,6 +2010,101 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+  },
+  // New styles for enhanced image viewer
+  imageViewerItemInfo: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    padding: 16,
+    paddingBottom: 32,
+  },
+  imageViewerItemTitle: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  imageViewerItemPrice: {
+    color: '#8E44AD',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // New styles for auction items section
+  itemsSection: {
+    marginBottom: 24,
+  },
+  sectionSubtitle: {
+    color: '#888',
+    fontSize: 14,
+    marginBottom: 16,
+    fontStyle: 'italic',
+  },
+  auctionItemCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  itemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  itemInfo: {
+    flex: 1,
+    marginRight: 16,
+  },
+  itemTitle: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  itemLotNumber: {
+    color: '#888',
+    fontSize: 12,
+  },
+  itemPricing: {
+    alignItems: 'flex-end',
+  },
+  itemPrice: {
+    color: '#8E44AD',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  itemReserve: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  itemImagesPreview: {
+    marginTop: 8,
+  },
+  itemThumbnail: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 8,
+  },
+  moreImagesIndicator: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    backgroundColor: '#333',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  moreImagesText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
 });
 
