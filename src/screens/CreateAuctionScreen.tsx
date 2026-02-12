@@ -856,7 +856,7 @@ const CreateAuctionScreen: React.FC = () => {
           });
 
           // Add primary item videos with item-0 prefix in filename
-          videos.forEach((uri, index) => {
+          for (const [index, uri] of videos.entries()) {
             const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
             const fileExtension = uri.split('.').pop() || 'mp4';
             const fileName = `item-0-video-${index}.${fileExtension}`;
@@ -866,9 +866,13 @@ const CreateAuctionScreen: React.FC = () => {
               type: 'video/mp4',
               name: fileName,
             };
+            
             formData.append('files', file as any);
             console.log('📁 Adding primary item video to FormData:', { uri: file.uri, name: file.name });
-          });
+          }
+
+          console.log('🔍 Debug - Total files being sent to FormData:', formData.getAll('files').length);
+          console.log('🔍 Debug - All files in FormData:', formData.getAll('files').map((f: any) => f.name));
 
           // Add additional items with their images (indices 1, 2, 3...)
           liveAuctionItems.forEach((item, itemIndex) => {
@@ -903,7 +907,32 @@ const CreateAuctionScreen: React.FC = () => {
                 imgIndex: imgIndex
               });
             });
+
+            // Add additional item videos with proper indexing in filename
+            if (item.videos && item.videos.length > 0) {
+              for (const [vidIndex, uri] of item.videos.entries()) {
+                const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
+                const fileName = `item-${itemIndex + 1}-video-${vidIndex}.mp4`;
+                
+                const file = {
+                  uri: Platform.OS === 'android' ? fileUri : fileUri.replace('file://', ''),
+                  type: 'video/mp4',
+                  name: fileName,
+                };
+                
+                formData.append('files', file as any);
+                console.log('📁 Adding additional item video to FormData:', { 
+                  uri: file.uri, 
+                  name: file.name,
+                  itemIndex: itemIndex + 1,
+                  vidIndex: vidIndex
+                });
+              }
+            }
           });
+
+          console.log('🔍 Debug - Final FormData files count:', formData.getAll('files').length);
+          console.log('🔍 Debug - Final FormData files:', formData.getAll('files').map((f: any) => f.name));
 
           // Add all items to FormData
           console.log('🔍 Debug - Final allItems array before FormData:', JSON.stringify(allItems, null, 2));

@@ -252,9 +252,9 @@ const LiveStreamBroadcastScreen = () => {
       setAgoraConfig(connectionData);
 
       // Register event listeners BEFORE connecting to ensure they're ready
-      // Register viewer_count_update listener early so it can receive updates immediately
-      liveStreamSocket.on('viewer_count_update', (viewerData: any) => {
-        console.log('📊 Host received viewer_count_update:', viewerData);
+      // Register view_count_updated listener early so it can receive updates immediately
+      liveStreamSocket.on('view_count_updated', (viewerData: any) => {
+        console.log('📊 Host received view_count_updated:', viewerData);
         const newCount = viewerData.count || viewerData.current_viewers || 0;
         console.log('📊 Setting viewer count to:', newCount);
         setViewerCount(newCount);
@@ -305,7 +305,7 @@ const LiveStreamBroadcastScreen = () => {
       await liveStreamSocket.connect();
       console.log('✅ LiveStream socket authenticated');
 
-      // Join the stream room so we receive joined_stream + viewer_count_update
+      // Join the stream room so we receive joined_stream + view_count_update
       console.log('🚪 Joining stream room as vendor...');
       await liveStreamSocket.joinStream(stream.id, 'vendor');
     } catch (error) {

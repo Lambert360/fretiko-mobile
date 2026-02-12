@@ -525,7 +525,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
       </Text>
       <TouchableOpacity
         style={styles.shopButton}
-        onPress={() => navigation.navigate('Home' as never)}
+        onPress={() => navigation.navigate('Main', { screen: 'Home' })}
       >
         <Text style={styles.shopButtonText}>Start Shopping</Text>
       </TouchableOpacity>

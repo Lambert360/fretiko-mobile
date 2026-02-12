@@ -9,7 +9,10 @@ import {
   ScrollView,
   TextInput,
   Dimensions,
+  Alert,
+  Platform,
 } from 'react-native';
+import * as Location from 'expo-location';
 
 const { width } = Dimensions.get('window');
 
@@ -25,6 +28,37 @@ interface LocationSelectorProps {
   onLocationSelect: (location: string) => void;
   onClose: () => void;
 }
+
+// Function to get location name from coordinates
+const getLocationName = async (latitude: number, longitude: number): Promise<string> => {
+  try {
+    // In a real app, you would use a geocoding service like Google Maps API
+    // For now, we'll return a generic location based on coordinates
+    // This is a simplified reverse geocoding
+    
+    // Nigeria approximate coordinates bounds
+    if (latitude >= 4 && latitude <= 14 && longitude >= 2 && longitude <= 14) {
+      // Approximate Nigerian states based on coordinates
+      if (latitude >= 6.4 && latitude <= 6.7 && longitude >= 3.3 && longitude <= 3.6) {
+        return 'Lagos, Nigeria';
+      } else if (latitude >= 8.8 && latitude <= 9.2 && longitude >= 7.2 && longitude <= 7.6) {
+        return 'Abuja, Nigeria';
+      } else if (latitude >= 4.7 && latitude <= 5.2 && longitude >= 6.9 && longitude <= 7.2) {
+        return 'Port Harcourt, Nigeria';
+      } else if (latitude >= 11.8 && latitude <= 12.2 && longitude >= 8.3 && longitude <= 8.6) {
+        return 'Kano, Nigeria';
+      } else {
+        return 'Lagos, Nigeria'; // Default to Lagos for other Nigerian coordinates
+      }
+    }
+    
+    // Default fallback
+    return 'Lagos, Nigeria';
+  } catch (error) {
+    console.error('Error getting location name:', error);
+    return 'Lagos, Nigeria';
+  }
+};
 
 // Sample locations data - in production, this would come from backend
 const LOCATIONS: Location[] = [
@@ -86,6 +120,7 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredLocations, setFilteredLocations] = useState<Location[]>(LOCATIONS);
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
 
@@ -148,6 +183,59 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
     const locationString = `${location.state}, ${location.country}`;
     onLocationSelect(locationString);
     onClose();
+  };
+
+  const handleCurrentLocation = async () => {
+    try {
+      setIsGettingLocation(true);
+      
+      // Check if location services are enabled
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Denied',
+          'Location permission is required to use your current location. Please enable it in your device settings.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      // Check if location services are enabled
+      let locationServicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!locationServicesEnabled) {
+        Alert.alert(
+          'Location Services Disabled',
+          'Please enable location services on your device to use your current location.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      // Get current location
+      let location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      const { latitude, longitude } = location.coords;
+      console.log('Current location:', { latitude, longitude });
+
+      // Get location name from coordinates
+      const locationName = await getLocationName(latitude, longitude);
+      
+      // Update the selected location
+      onLocationSelect(locationName);
+      onClose();
+      
+    } catch (error) {
+      console.error('Error getting location:', error);
+      Alert.alert(
+        'Location Error',
+        'Unable to get your current location. Please try again or select a location manually.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsGettingLocation(false);
+    }
   };
 
   if (!visible) return null;
@@ -258,10 +346,24 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
         </ScrollView>
 
         {/* Current Location Option */}
-        <TouchableOpacity style={styles.currentLocationButton}>
-          <Ionicons name="location" size={18} color="#27AE60" />
-          <Text style={styles.currentLocationText}>Use Current Location</Text>
-          <Ionicons name="chevron-forward" size={16} color="#888" />
+        <TouchableOpacity 
+          style={styles.currentLocationButton}
+          onPress={handleCurrentLocation}
+          disabled={isGettingLocation}
+        >
+          {isGettingLocation ? (
+            <>
+              <Ionicons name="location" size={18} color="#888" />
+              <Text style={[styles.currentLocationText, { color: '#888' }]}>Getting location...</Text>
+              <View style={{ width: 16 }} />
+            </>
+          ) : (
+            <>
+              <Ionicons name="location" size={18} color="#27AE60" />
+              <Text style={styles.currentLocationText}>Use Current Location</Text>
+              <Ionicons name="chevron-forward" size={16} color="#888" />
+            </>
+          )}
         </TouchableOpacity>
       </Animated.View>
     </>

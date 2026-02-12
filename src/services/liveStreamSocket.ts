@@ -286,9 +286,9 @@ class LiveStreamSocketService {
       this.emit('analytics_update', data);
     });
 
-    this.socket.on('viewer_count_update', (data: ViewerCountUpdate) => {
-      console.log('📊 Socket service received viewer_count_update:', data);
-      this.emit('viewer_count_update', data);
+    this.socket.on('view_count_updated', (data: ViewerCountUpdate) => {
+      console.log('📊 Socket service received view_count_updated:', data);
+      this.emit('view_count_updated', data);
     });
 
     this.socket.on('stream_status_update', (data: StreamStatusUpdate) => {

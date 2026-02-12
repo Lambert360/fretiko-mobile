@@ -37,7 +37,9 @@ interface Comment {
 }
 
 interface WonAuctionItem {
+  id?: string; // Win ID from database
   auctionId: string;
+  itemId?: string | null; // For multi-item auctions
   title: string;
   winningBid: number;
   wonAt: string; // Always set, never null (fallback to current date if missing)
@@ -67,6 +69,17 @@ const MiniAuctionCartModal = ({
   const panRef = useRef<any>(null);
   const translateY = useRef(new Animated.Value(0)).current;
   const baseHeight = useRef(screenHeight * 0.75).current;
+
+  // Debug: Log won items and their keys
+  useEffect(() => {
+    if (visible) {
+      console.log('🛒 Cart modal opened with wonItems:', wonItems.length, 'items');
+      wonItems.forEach((item, index) => {
+        const key = item.itemId ? `${item.auctionId}-${item.itemId}` : `${item.auctionId}-${index}`;
+        console.log(`🛒 Item ${index}:`, { key: key, auctionId: item.auctionId, itemId: item.itemId, title: item.title });
+      });
+    }
+  }, [visible, wonItems]);
 
   // Reset animation when modal becomes visible
   useEffect(() => {
@@ -152,7 +165,14 @@ const MiniAuctionCartModal = ({
           <>
             <FlatList
               data={wonItems}
-              keyExtractor={(item) => item.auctionId}
+              keyExtractor={(item, index) => {
+                // Create unique key using auctionId + itemId (for multi-item auctions) or auctionId + index (fallback)
+                if (item.itemId) {
+                  return `${item.auctionId}-${item.itemId}`;
+                }
+                // For single-item auctions or when itemId is missing, use auctionId + index to ensure uniqueness
+                return `${item.auctionId}-${index}`;
+              }}
               renderItem={({ item }) => (
                 <View style={modalStyles.cartItem}>
                   <Image
@@ -167,12 +187,6 @@ const MiniAuctionCartModal = ({
                       Winning Bid: ₣{item.winningBid.toFixed(2)}
                     </Text>
                   </View>
-                  <TouchableOpacity
-                    style={modalStyles.removeButton}
-                    onPress={() => onRemoveItem(item.auctionId)}
-                  >
-                    <Ionicons name="trash-outline" size={20} color="#FF4757" />
-                  </TouchableOpacity>
                 </View>
               )}
               style={modalStyles.list}
@@ -218,8 +232,8 @@ const AuctionLiveViewerScreen = () => {
 
   const { auctionId } = route.params;
 
-  // Sound effects
-  const { playCheer, playClap, playLaugh } = useAuctionSounds();
+  // Sound effects - removed for reactions (only for auction events)
+  const { playCheer, playClap, playLaugh, playTimer, startCrowd, stopCrowd, playGavel, playWinner } = useAuctionSounds();
 
   // State
   const [auction, setAuction] = useState<AuctionWithDetails | null>(null);
@@ -260,6 +274,7 @@ const AuctionLiveViewerScreen = () => {
   // Multi-item auction state
   const [currentItem, setCurrentItem] = useState<AuctionItem | null>(null);
   const [itemBiddingStatus, setItemBiddingStatus] = useState<'waiting' | 'countdown' | 'active' | 'ended' | 'sold' | 'passed'>('waiting');
+  const [countdownTimer, setCountdownTimer] = useState<number | null>(null);
   const [canBid, setCanBid] = useState(false);
   const [hasBids, setHasBids] = useState(false); // Track if any bids placed during current item
 
@@ -285,6 +300,14 @@ const AuctionLiveViewerScreen = () => {
   // Reactions state
   const [reactions, setReactions] = useState<Array<{ id: string; reaction_type: string; user_id: string; timestamp: string }>>([]);
 
+  // Note: Viewer count for live auction is managed independently via WebSocket events
+  // Not tied to auction.view_count to ensure accurate live stream counting
+
+  // Debug viewer count changes
+  useEffect(() => {
+    console.log('👁️ Viewer count state changed:', viewerCount);
+  }, [viewerCount]);
+
   // Image viewer modal state
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
@@ -298,6 +321,14 @@ const AuctionLiveViewerScreen = () => {
   const [isAgoraJoined, setIsAgoraJoined] = useState(false);
   const [isAgoraInitialized, setIsAgoraInitialized] = useState(false);
   const agoraEngineRef = useRef<IRtcEngine | null>(null);
+
+  // WebSocket listener refs for proper cleanup
+  const bidHandlerRef = useRef<((data: any) => void) | null>(null);
+  const statusHandlerRef = useRef<((data: any) => void) | null>(null);
+  const wonHandlerRef = useRef<((data: any) => void) | null>(null);
+  const itemEventHandlerRef = useRef<((data: any) => void) | null>(null);
+  const viewCountHandlerRef = useRef<((data: any) => void) | null>(null);
+  const reactionHandlerRef = useRef<((data: any) => void) | null>(null);
 
   // Bid Notification Bubble Component
   const BidNotificationBubble: React.FC<{
@@ -354,6 +385,9 @@ const AuctionLiveViewerScreen = () => {
       const auctionData = await auctionsAPI.getAuction(auctionId);
       setAuction(auctionData);
       setTimeRemaining(auctionData.seconds_remaining || 0);
+      
+      // Viewer count will be updated via WebSocket events, not from auction data
+      console.log('👁️ Viewer screen loaded - will get real viewer count from WebSocket');
 
       // Load current auction item (if multi-item auction)
       const currentItemData = await auctionsAPI.getCurrentItem(auctionId);
@@ -371,7 +405,9 @@ const AuctionLiveViewerScreen = () => {
         }
 
         // Set initial bid amount from current item
-        const nextBid = (currentItemData.current_bid || currentItemData.starting_price) + currentItemData.bid_increment;
+        const nextBid = (hasBids && currentItemData.current_bid) 
+          ? currentItemData.current_bid + currentItemData.bid_increment
+          : currentItemData.starting_price + currentItemData.bid_increment;
         setBidAmount(nextBid.toString());
       } else {
         // Single-item auction - use auction data
@@ -564,6 +600,15 @@ const AuctionLiveViewerScreen = () => {
     useCallback(() => {
       console.log('🔄 Screen focused - reloading user wins to clear checked out items');
       loadUserWins();
+      
+      // Check if we're returning from checkout and clear cart if needed
+      const state = navigation.getState();
+      if (state.routes[state.routes.length - 1]?.params?.checkoutCompleted) {
+        console.log('🛒 Checkout completed - clearing cart');
+        setWonItems([]);
+        // Clear the checkout flag
+        navigation.setParams({ checkoutCompleted: undefined });
+      }
     }, [auctionId])
   );
 
@@ -591,350 +636,500 @@ const AuctionLiveViewerScreen = () => {
 
   // Connect to WebSocket
   useEffect(() => {
-    auctionSocket.connect();
+    const setupWebSocketListeners = () => {
+      // Handle real-time bid updates
+      const handleNewBid = (data: any) => {
+        if (data.auction_id === auctionId) {
+          // Skip own bids to prevent duplicate notifications (optimistic already shown)
+          if (data.user_id === user?.id) {
+            console.log('💰 Skipping own bid from WebSocket (optimistic already shown)');
+            // Still update the auction state though
+            setAuction(prev => prev ? {
+              ...prev,
+              current_bid: data.amount,
+              total_bids: (prev.total_bids || 0) + 1
+            } : null);
+
+            // Update current item bid (for multi-item auctions)
+            if (currentItem && itemBiddingStatus === 'active') {
+              setCurrentItem(prev => prev ? {
+                ...prev,
+                current_bid: data.amount,
+              } : null);
+              
+              // Update bid amount input
+              const nextBid = data.amount + (currentItem?.bid_increment || 1);
+              setBidAmount(nextBid.toString());
+              
+              // Mark that bids have been received - this will stop the countdown timer
+              setHasBids(true);
+              console.log('💰 Viewer: Own bid received - countdown timer stopped');
+            }
+            return;
+          }
+          // Update auction bid (for single-item auctions)
+          setAuction(prev => prev ? {
+            ...prev,
+            current_bid: data.amount,
+            total_bids: (prev.total_bids || 0) + 1
+          } : null);
+
+          // Update current item bid (for multi-item auctions)
+          console.log('🔍 Checking currentItem bid update conditions:', {
+            hasCurrentItem: !!currentItem,
+            itemBiddingStatus,
+            currentItemTitle: currentItem?.title,
+            bidAmount: data.amount
+          });
+          if (currentItem) {
+            // Only update if this bid is for the current item (multi-item auction safety)
+            if (!data.item_id || data.item_id === currentItem.id) {
+              setCurrentItem(prev => prev ? {
+                ...prev,
+                current_bid: data.amount,
+              } : null);
+              
+              // Update bid amount input
+              const nextBid = data.amount + (currentItem?.bid_increment || 1);
+              setBidAmount(nextBid.toString());
+              
+              // Mark that bids have been received - this will stop the countdown timer
+              setHasBids(true);
+              console.log('💰 Viewer: Bid received - countdown timer stopped');
+            } else {
+              console.log('🔄 Ignoring bid for different item:', data.item_id, 'current item:', currentItem.id);
+            }
+
+            // NEW: Add bid notification (same as host)
+            const notificationId = Date.now().toString();
+            const newNotification = {
+              id: notificationId,
+              bidder_display_id: data.bidder_display_id || 'Bidder',
+              amount: data.amount,
+              translateY: new Animated.Value(0), // Start at base position (bottom: 100)
+              opacity: new Animated.Value(0), // Start transparent
+            };
+            
+            // Add new notification (don't clear existing ones immediately)
+            setBidNotifications(prev => [...prev, newNotification]);
+            
+            // Animate: fade in (0.5s) → slide up to center (1.5s) → pause (5s) → fade out (1s) = ~8s total
+            Animated.sequence([
+              // Fade in quickly
+              Animated.timing(newNotification.opacity, {
+                toValue: 1,
+                duration: 500,
+                useNativeDriver: true,
+              }),
+              // Slide up from bottom to center
+              Animated.timing(newNotification.translateY, {
+                toValue: -200, // Move up to center position
+                duration: 1500,
+                useNativeDriver: true,
+              }),
+              // Pause at center for longer
+              Animated.delay(5000),
+              // Fade out with slight upward movement
+              Animated.parallel([
+                Animated.timing(newNotification.opacity, {
+                  toValue: 0,
+                  duration: 1000,
+                  useNativeDriver: true,
+                }),
+                Animated.timing(newNotification.translateY, {
+                  toValue: -250, // Slight upward movement during fade
+                  duration: 1000,
+                  useNativeDriver: true,
+                }),
+              ]),
+            ]).start(() => {
+              // Remove notification after animation
+              setBidNotifications(prev => prev.filter(n => n.id !== notificationId));
+            });
+          }
+        }
+      };
+
+      // Handle auction item events (multi-item auctions)
+      const handleItemEvent = (data: any) => {
+        if (data.auction_id === auctionId) {
+          switch (data.event_type) {
+            case 'item_ready':
+              // Map item_title to title for consistency
+              const itemReadyData = {
+                ...data,
+                title: data.item_title || data.title,
+              };
+              setCurrentItem(itemReadyData);
+              setItemBiddingStatus('waiting');
+              setCanBid(false);
+              setHasBids(false); // Reset bid tracking for new item
+              setUserParticipated(false); // Reset participation tracking for new item
+              setBidAmount((data.starting_price + data.bid_increment).toString());
+              break;
+            
+            case 'start_countdown':
+              setItemBiddingStatus('countdown');
+              setCountdownTimer(3);
+              setCanBid(false);
+              setHasBids(false); // Reset bid tracking when countdown starts
+              break;
+            
+            case 'bidding_open':
+              console.log('🔓 Bidding open event received:', data);
+              // Map item_title to title for consistency
+              const itemData = {
+                ...data,
+                title: data.item_title || data.title,
+              };
+              setCurrentItem(itemData); // Update current item with fresh data from backend
+              setItemBiddingStatus('active');
+              setCountdownTimer(null);
+              setCanBid(true);
+              setHasBids(false); // Reset bid tracking when bidding opens
+              // For new bidding sessions, always start from starting_price + bid_increment
+              // Ignore any current_bid value as this is a fresh start for this item
+              const startingBid = data.starting_price + data.bid_increment;
+              setBidAmount(startingBid.toString());
+              console.log('🎯 Bidding opened - starting from:', startingBid, '(starting_price:', data.starting_price, '+ increment:', data.bid_increment, ')');
+              console.log('📦 Current item data after bidding_open:', data);
+              break;
+            
+            case 'bidding_ended':
+              console.log('🏁 Viewer received bidding_ended event:', data);
+              setItemBiddingStatus('ended');
+              setCanBid(false);
+              if (data.winner) {
+                console.log('🏆 Winner data found:', data.winner);
+                console.log('👤 Current user ID:', user?.id);
+                console.log('🏆 Winner ID:', data.winner.bidder_id);
+                console.log('🎯 Is current user winner?', data.winner.bidder_id === user?.id);
+                
+                // Check if current user won
+                if (data.winner.bidder_id === user?.id) {
+                  const wonItem = {
+                    auctionId: auctionId,
+                    itemId: data.item_id || null,
+                    title: data.item_title || currentItem?.title || 'Auction Item',
+                    winningBid: data.final_bid,
+                    wonAt: new Date().toISOString(),
+                    thumbnail_url: currentItem?.images?.[0],
+                    images: currentItem?.images,
+                  };
+                  
+                  // Save win to database (backend handles duplicate prevention)
+                  try {
+                    // Win is automatically saved by backend when markItemSold is called
+                    // But we still add it to local state for immediate UI update
+                  } catch (error) {
+                    console.error('Error saving auction win:', error);
+                  }
+                  
+                  setWonItems(prev => {
+                    // Check if item already exists (by auctionId + itemId combination)
+                    const exists = prev.find(item => 
+                      item.auctionId === auctionId && 
+                      (item.itemId === wonItem.itemId || (!item.itemId && !wonItem.itemId))
+                    );
+                    if (exists) {
+                      return prev;
+                    }
+                    return [...prev, wonItem];
+                  });
+                  
+                  // Show winner notification with modal for multi-item auction
+                  try {
+                    console.log('🎉 Setting winner modal for WINNER');
+                    setWinnerData({
+                      winner_display_id: user?.username || 'You',
+                      winning_bid: data.final_bid || 0,
+                      item_title: wonItem.title || 'Auction Item',
+                      user_participated: userParticipated,
+                      is_winner: true,
+                    });
+                    setShowWinnerModal(true);
+                    
+                    // Play winner sound when modal shows (synchronized)
+                    if (data.final_bid > 0) {
+                      playWinner(data.final_bid);
+                    }
+                    
+                    console.log('✅ Winner modal should now be visible for winner');
+                  } catch (error) {
+                    console.error('Error setting winner data:', error);
+                  }
+                } else {
+                  // Show winner modal for non-winners too (so everyone sees who won)
+                  try {
+                    setWinnerData({
+                      winner_display_id: data.winner.bidder_display_id || 'Winner',
+                      winning_bid: data.final_bid || 0,
+                      item_title: data.item_title || currentItem?.title || 'Auction Item',
+                      user_participated: userParticipated,
+                      is_winner: false,
+                    });
+                    setShowWinnerModal(true);
+                    
+                    // Play winner sound when modal shows (synchronized)
+                    if (data.final_bid > 0) {
+                      playWinner(data.final_bid);
+                    }
+                    
+                    console.log('🏆 Showing winner modal to non-winner:', data.winner.bidder_display_id);
+                  } catch (error) {
+                    console.error('Error setting winner data for non-winner:', error);
+                  }
+                }
+              } else {
+                // No winner (item passed/not sold), but still show modal to indicate bidding ended
+                try {
+                  setWinnerData({
+                    winner_display_id: 'No Winner',
+                    winning_bid: 0,
+                    item_title: data.item_title || currentItem?.title || 'Auction Item',
+                    user_participated: userParticipated,
+                    is_winner: false,
+                  });
+                  setShowWinnerModal(true);
+                  console.log('🏆 Showing no-winner modal to viewers');
+                } catch (error) {
+                  console.error('Error setting no-winner data:', error);
+                }
+              }
+              break;
+            
+            case 'item_sold':
+              setItemBiddingStatus('sold');
+              setCanBid(false);
+              break;
+          }
+        }
+      };
+
+      const handleAuctionStatusChanged = (data: any) => {
+        if (data.auction_id === auctionId) {
+          loadAuctionData();
+          if (data.new_status === 'sold' || data.new_status === 'ended') {
+            // Check if user won this auction
+            if (data.winner_id === user?.id && data.new_status === 'sold' && auction) {
+              // Add won item to cart
+              const wonItem = {
+                auctionId: auction.id,
+                title: auction.title,
+                winningBid: data.winning_bid || auction.current_bid,
+                wonAt: new Date().toISOString(),
+                thumbnail_url: auction.thumbnail_url,
+                images: auction.images,
+              };
+              
+              setWonItems(prev => {
+                // Check if already in cart (prevent duplicates)
+                if (prev.find(item => item.auctionId === auction.id)) {
+                  return prev;
+                }
+                return [...prev, wonItem];
+              });
+              
+              // Show win notification with modal
+              try {
+                setWinnerData({
+                  winner_display_id: user?.username || 'You',
+                  winning_bid: data.winning_bid || auction?.current_bid || 0,
+                  item_title: auction?.title || 'Auction Item',
+                  user_participated: userParticipated,
+                  is_winner: true,
+                });
+                setShowWinnerModal(true);
+              } catch (error) {
+                console.error('Error setting winner data:', error);
+              }
+            } else if (data.new_status === 'ended' && data.winner_id !== user?.id) {
+              // User didn't win - show enhanced winner announcement modal
+              try {
+                setWinnerData({
+                  winner_display_id: data.bidder_display_id || 'Winner',
+                  winning_bid: data.winning_bid || auction?.current_bid || 0,
+                  item_title: currentItem?.title || auction?.title || 'Auction Item',
+                  user_participated: userParticipated,
+                  is_winner: false,
+                });
+                setShowWinnerModal(true);
+              } catch (error) {
+                console.error('Error setting winner data:', error);
+              }
+            }
+          }
+        }
+      };
+
+      // Handle auction won event (direct win notification)
+      const handleAuctionWon = (data: any) => {
+        if (data.auction_id && data.winner_id === user?.id && auction) {
+          const wonItem = {
+            auctionId: data.auction_id || auction.id,
+            title: data.title || auction.title,
+            winningBid: data.winning_bid || auction.current_bid,
+            wonAt: new Date().toISOString(),
+            thumbnail_url: auction.thumbnail_url,
+            images: auction.images,
+          };
+          
+          setWonItems(prev => {
+            if (prev.find(item => item.auctionId === wonItem.auctionId)) {
+              return prev;
+            }
+            return [...prev, wonItem];
+          });
+          
+          Alert.alert(
+            '🎉 You Won!',
+            `${wonItem.title} for ₣${wonItem.winningBid.toFixed(2)}`,
+            [
+              { text: 'View Cart', onPress: () => setShowCartModal(true) },
+              { text: 'Continue', style: 'cancel' }
+            ]
+          );
+        }
+      };
+
+      // Handle viewer count updates
+      const handleViewCountUpdate = (data: any) => {
+        console.log('👁️ Viewer screen received viewer count update:', data);
+        console.log('👁️ Expected auction ID:', auctionId, 'Received auction ID:', data.auction_id);
+        console.log('👁️ Current viewer count:', viewerCount, 'New count:', data.view_count || data.current_viewers || 0);
+        
+        if (data.auction_id === auctionId) {
+          const newCount = data.view_count || data.current_viewers || 0;
+          console.log('👁️ ✓ Auction ID matches - setting viewer count to:', newCount, 'previous:', viewerCount);
+          setViewerCount(newCount);
+        } else {
+          console.log('👁️ ✗ Ignoring viewer count update for different auction:', data.auction_id, 'expected:', auctionId);
+        }
+      };
+
+      // Handle reactions
+      const handleNewReaction = (reaction: any) => {
+        if (reaction.auction_id === auctionId) {
+          // Filter out own reactions to prevent duplicates (optimistic update already shown)
+          if (reaction.user_id === user?.id) {
+            return; // Skip own reaction from backend
+          }
+          
+          console.log('🎯 Viewer received reaction:', reaction);
+          
+          // Add to reactions list for display
+          setReactions(prev => [...prev, {
+            id: reaction.id || Date.now().toString(),
+            reaction_type: reaction.reaction_type,
+            user_id: reaction.user_id,
+            timestamp: reaction.timestamp || new Date().toISOString(),
+          }]);
+          
+          // Create new reaction animation
+          const reactionId = reaction.id || Date.now().toString();
+          const randomX = Math.random() * (screenWidth - 100);
+          const newReaction = {
+            id: reactionId,
+            reaction_type: reaction.reaction_type,
+            translateX: new Animated.Value(randomX), // Use translateX instead of x
+            scale: new Animated.Value(0.1), // Start small but not zero
+            opacity: new Animated.Value(1),
+            translateY: new Animated.Value(screenHeight * 0.6), // Start from bottom like viewer
+          };
+
+          // Add to animations state
+          setReactionAnimations(prev => [...prev, newReaction]);
+
+          // Start animation after a small delay to ensure rendering
+          setTimeout(() => {
+            console.log('🎬 Starting animation for reaction:', reactionId);
+            
+            // Animate scale first
+            Animated.timing(newReaction.scale, {
+              toValue: 1,
+              duration: 300,
+              useNativeDriver: true,
+            }).start(() => {
+              
+              // Then animate movement and fade
+              Animated.parallel([
+                Animated.timing(newReaction.translateY, {
+                  toValue: (screenHeight * 0.6) - 200, // Move up like viewer
+                  duration: 2000,
+                  useNativeDriver: true,
+                }),
+                Animated.timing(newReaction.opacity, {
+                  toValue: 0,
+                  duration: 2000,
+                  delay: 1000,
+                  useNativeDriver: true,
+                }),
+              ]).start(() => {
+                console.log('🎬 Movement and fade animation completed for reaction:', reactionId);
+                // Add delay before removing animation to ensure it's visible
+                setTimeout(() => {
+                  console.log('🗑️ Removing reaction animation:', reactionId);
+                  setReactionAnimations(prev => prev.filter(r => r.id !== reactionId));
+                }, 100);
+              });
+            });
+          }, 50); // Start animation after 50ms delay
+
+          // Remove from reactions list after animation
+          setTimeout(() => {
+            setReactions((prev: Array<{ id: string; reaction_type: string; user_id: string; timestamp: string }>) => prev.filter((r: { id: string; reaction_type: string; user_id: string; timestamp: string }) => r.id !== reactionId));
+          }, 3000);
+        }
+      };
+
+      auctionSocket.on('new_bid', handleNewBid);
+      auctionSocket.on('auction_status_changed', handleAuctionStatusChanged);
+      auctionSocket.on('auction_won', handleAuctionWon);
+      auctionSocket.on('item_event', handleItemEvent);
+      auctionSocket.on('view_count_updated', handleViewCountUpdate); // Fixed event name
+      auctionSocket.on('new_reaction', handleNewReaction);
+
+      // Store refs for cleanup
+      bidHandlerRef.current = handleNewBid;
+      statusHandlerRef.current = handleAuctionStatusChanged;
+      wonHandlerRef.current = handleAuctionWon;
+      itemEventHandlerRef.current = handleItemEvent;
+      viewCountHandlerRef.current = handleViewCountUpdate;
+      reactionHandlerRef.current = handleNewReaction;
+    };
+
+    auctionSocket.connect('viewer-screen');
+    setupWebSocketListeners();
     auctionSocket.joinAuction(auctionId, user?.id);
+    
+    // Track auction view for viewer count
+    console.log('👁️ Tracking auction view for viewer count...');
+    auctionsAPI.trackAuctionView(auctionId).catch(error => {
+      console.error('Error tracking auction view:', error);
+    });
     
     // Reset participation when joining auction
     setUserParticipated(false);
-    
+
+    return () => {
+      if (bidHandlerRef.current) auctionSocket.off('new_bid', bidHandlerRef.current);
+      if (statusHandlerRef.current) auctionSocket.off('auction_status_changed', statusHandlerRef.current);
+      if (wonHandlerRef.current) auctionSocket.off('auction_won', wonHandlerRef.current);
+      if (itemEventHandlerRef.current) auctionSocket.off('item_event', itemEventHandlerRef.current);
+      if (viewCountHandlerRef.current) auctionSocket.off('view_count_updated', viewCountHandlerRef.current); // Fixed event name
+      if (reactionHandlerRef.current) auctionSocket.off('new_reaction', reactionHandlerRef.current);
+      auctionSocket.leaveAuction(auctionId);
+      auctionSocket.disconnect('viewer-screen');
+    };
+  }, [auctionId]); // Only depend on auctionId, not on currentItem or itemBiddingStatus
+
+  // Separate useEffect to reset modal state when joining a new auction
+  useEffect(() => {
+    console.log('🔄 New auction detected, resetting modal state');
     // Reset modal state when joining auction
     setShowWinnerModal(false);
     setWinnerData(null);
-
-    // Handle real-time bid updates
-    const handleNewBid = (data: any) => {
-      if (data.auction_id === auctionId) {
-        // Update auction bid (for single-item auctions)
-        setAuction(prev => prev ? {
-          ...prev,
-          current_bid: data.amount,
-          total_bids: (prev.total_bids || 0) + 1
-        } : null);
-
-        // Update current item bid (for multi-item auctions)
-        if (currentItem && itemBiddingStatus === 'active') {
-          setCurrentItem(prev => prev ? {
-            ...prev,
-            current_bid: data.amount,
-          } : null);
-          
-          // Update bid amount input
-          const nextBid = data.amount + (currentItem?.bid_increment || 1);
-          setBidAmount(nextBid.toString());
-          
-          // Mark that bids have been received - this will stop the countdown timer
-          setHasBids(true);
-          console.log('💰 Viewer: Bid received - countdown timer stopped');
-
-          // NEW: Add bid notification (same as host)
-          const notificationId = Date.now().toString();
-          const newNotification = {
-            id: notificationId,
-            bidder_display_id: data.bidder_display_id || 'Bidder',
-            amount: data.amount,
-            translateY: new Animated.Value(100), // Start from bottom
-            opacity: new Animated.Value(0), // Start transparent
-          };
-          
-          // Clear existing notification (prevent clutter)
-          setBidNotifications([]);
-          
-          // Add new notification
-          setBidNotifications(prev => [...prev, newNotification]);
-          
-          // Animate: slide up (1.2s) → pause (2s) → fade out (0.8s) = ~5s total
-          Animated.sequence([
-            // Slide up from bottom to center
-            Animated.timing(newNotification.translateY, {
-              toValue: -200, // Move to center
-              duration: 1200,
-              useNativeDriver: true,
-            }),
-            // Pause at center (implicit - no animation for 2s)
-            Animated.delay(2000),
-            // Fade out with slight upward movement
-            Animated.parallel([
-              Animated.timing(newNotification.opacity, {
-                toValue: 0,
-                duration: 800,
-                useNativeDriver: true,
-              }),
-              Animated.timing(newNotification.translateY, {
-                toValue: -250,
-                duration: 800,
-                useNativeDriver: true,
-              }),
-            ]),
-          ]).start(() => {
-            // Remove notification after animation
-            setBidNotifications(prev => prev.filter(n => n.id !== notificationId));
-          });
-        }
-      }
-    };
-
-    // Handle auction item events (multi-item auctions)
-    const handleItemEvent = (data: any) => {
-      if (data.auction_id === auctionId) {
-        switch (data.event_type) {
-          case 'item_ready':
-            setCurrentItem(data);
-            setItemBiddingStatus('waiting');
-            setCanBid(false);
-            setHasBids(false); // Reset bid tracking for new item
-            setUserParticipated(false); // Reset participation tracking for new item
-            setBidAmount((data.starting_price + data.bid_increment).toString());
-            break;
-          
-          case 'start_countdown':
-            setItemBiddingStatus('countdown');
-            setCanBid(false);
-            setHasBids(false); // Reset bid tracking when countdown starts
-            break;
-          
-          case 'bidding_open':
-            setItemBiddingStatus('active');
-            setCanBid(true);
-            setHasBids(false); // Reset bid tracking when bidding opens
-            setBidAmount((data.minimum_bid || data.starting_price + data.bid_increment).toString());
-            break;
-          
-          case 'bidding_ended':
-            setItemBiddingStatus('ended');
-            setCanBid(false);
-            if (data.winner) {
-              // Check if current user won
-              if (data.winner.bidder_id === user?.id) {
-                const wonItem = {
-                  auctionId: auctionId,
-                  itemId: data.item_id || null,
-                  title: data.item_title || currentItem?.title || 'Auction Item',
-                  winningBid: data.final_bid,
-                  wonAt: new Date().toISOString(),
-                  thumbnail_url: currentItem?.images?.[0],
-                  images: currentItem?.images,
-                };
-                
-                // Save win to database (backend handles duplicate prevention)
-                try {
-                  // Win is automatically saved by backend when markItemSold is called
-                  // But we still add it to local state for immediate UI update
-                } catch (error) {
-                  console.error('Error saving auction win:', error);
-                }
-                
-                setWonItems(prev => {
-                  // Check if item already exists (by auctionId + itemId combination)
-                  const exists = prev.find(item => 
-                    item.auctionId === auctionId && 
-                    (item.itemId === wonItem.itemId || (!item.itemId && !wonItem.itemId))
-                  );
-                  if (exists) {
-                    return prev;
-                  }
-                  return [...prev, wonItem];
-                });
-                
-                // Show winner notification with modal for multi-item auction
-                try {
-                  setWinnerData({
-                    winner_display_id: user?.username || 'You',
-                    winning_bid: data.final_bid || 0,
-                    item_title: wonItem.title || 'Auction Item',
-                    user_participated: userParticipated,
-                    is_winner: true,
-                  });
-                  setShowWinnerModal(true);
-                } catch (error) {
-                  console.error('Error setting winner data:', error);
-                }
-              }
-            }
-            break;
-          
-          case 'item_sold':
-            setItemBiddingStatus('sold');
-            setCanBid(false);
-            break;
-        }
-      }
-    };
-
-    const handleAuctionStatusChanged = (data: any) => {
-      if (data.auction_id === auctionId) {
-        loadAuctionData();
-        if (data.new_status === 'sold' || data.new_status === 'ended') {
-          // Check if user won this auction
-          if (data.winner_id === user?.id && data.new_status === 'sold' && auction) {
-            // Add won item to cart
-            const wonItem = {
-              auctionId: auction.id,
-              title: auction.title,
-              winningBid: data.winning_bid || auction.current_bid,
-              wonAt: new Date().toISOString(),
-              thumbnail_url: auction.thumbnail_url,
-              images: auction.images,
-            };
-            
-            setWonItems(prev => {
-              // Check if already in cart (prevent duplicates)
-              if (prev.find(item => item.auctionId === auction.id)) {
-                return prev;
-              }
-              return [...prev, wonItem];
-            });
-            
-            // Show win notification with modal
-            try {
-              setWinnerData({
-                winner_display_id: user?.username || 'You',
-                winning_bid: data.winning_bid || auction?.current_bid || 0,
-                item_title: auction?.title || 'Auction Item',
-                user_participated: userParticipated,
-                is_winner: true,
-              });
-              setShowWinnerModal(true);
-            } catch (error) {
-              console.error('Error setting winner data:', error);
-            }
-          } else if (data.new_status === 'ended' && data.winner_id !== user?.id) {
-            // User didn't win - show enhanced winner announcement modal
-            try {
-              setWinnerData({
-                winner_display_id: data.bidder_display_id || 'Winner',
-                winning_bid: data.winning_bid || auction?.current_bid || 0,
-                item_title: currentItem?.title || auction?.title || 'Auction Item',
-                user_participated: userParticipated,
-                is_winner: false,
-              });
-              setShowWinnerModal(true);
-            } catch (error) {
-              console.error('Error setting winner data:', error);
-            }
-          }
-        }
-      }
-    };
-
-    // Handle auction won event (direct win notification)
-    const handleAuctionWon = (data: any) => {
-      if (data.auction_id && data.winner_id === user?.id && auction) {
-        const wonItem = {
-          auctionId: data.auction_id || auction.id,
-          title: data.title || auction.title,
-          winningBid: data.winning_bid || auction.current_bid,
-          wonAt: new Date().toISOString(),
-          thumbnail_url: auction.thumbnail_url,
-          images: auction.images,
-        };
-        
-        setWonItems(prev => {
-          if (prev.find(item => item.auctionId === wonItem.auctionId)) {
-            return prev;
-          }
-          return [...prev, wonItem];
-        });
-        
-        Alert.alert(
-          '🎉 You Won!',
-          `${wonItem.title} for ₣${wonItem.winningBid.toFixed(2)}`,
-          [
-            { text: 'View Cart', onPress: () => setShowCartModal(true) },
-            { text: 'Continue', style: 'cancel' }
-          ]
-        );
-      }
-    };
-
-    auctionSocket.on('new_bid', handleNewBid);
-    auctionSocket.on('auction_status_changed', handleAuctionStatusChanged);
-    auctionSocket.on('auction_won', handleAuctionWon);
-    auctionSocket.on('item_event', handleItemEvent);
-
-    // Handle viewer count updates
-    const handleViewCountUpdate = (data: any) => {
-      if (data.auction_id === auctionId) {
-        setViewerCount(data.view_count || data.current_viewers || 0);
-      }
-    };
-    auctionSocket.on('view_count_update', handleViewCountUpdate);
-
-    // Handle reactions
-    const handleNewReaction = (reaction: any) => {
-      if (reaction.auction_id === auctionId) {
-        setReactions((prev: Array<{ id: string; reaction_type: string; user_id: string; timestamp: string }>) => [...prev, { ...reaction, id: Date.now().toString() }]);
-
-        // Play sound effect based on reaction type
-        switch (reaction.reaction_type) {
-          case 'heart':
-            playCheer();
-            break;
-          case 'applause':
-            playClap();
-            break;
-          case 'thumbs_up':
-            playCheer();
-            break;
-          case 'fire':
-            playCheer();
-            break;
-        }
-        
-        // Create floating animation
-        const reactionId = Date.now() + Math.random().toString();
-        const randomX = Math.random() * (screenWidth - 100);
-        const newReaction = {
-          id: reactionId,
-          reaction_type: reaction.reaction_type,
-          translateX: new Animated.Value(randomX),
-          translateY: new Animated.Value(screenHeight * 0.6),
-          scale: new Animated.Value(0),
-          opacity: new Animated.Value(1),
-        };
-
-        setReactionAnimations(prev => [...prev, newReaction]);
-
-        // Animate reaction
-        Animated.parallel([
-          Animated.timing(newReaction.scale, {
-            toValue: 1,
-            duration: 300,
-            useNativeDriver: true,
-          }),
-          Animated.timing(newReaction.translateY, {
-            toValue: (screenHeight * 0.6) - 200,
-            duration: 2000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(newReaction.opacity, {
-            toValue: 0,
-            duration: 2000,
-            delay: 1000,
-            useNativeDriver: true,
-          }),
-        ]).start(() => {
-          setReactionAnimations(prev => prev.filter(r => r.id !== reactionId));
-        });
-
-        // Remove from reactions list after animation
-        setTimeout(() => {
-          setReactions((prev: Array<{ id: string; reaction_type: string; user_id: string; timestamp: string }>) => prev.filter((r: { id: string; reaction_type: string; user_id: string; timestamp: string }) => r.id !== reactionId));
-        }, 3000);
-      }
-    };
-
-    auctionSocket.on('new_reaction', handleNewReaction);
-
-    return () => {
-      auctionSocket.off('new_bid', handleNewBid);
-      auctionSocket.off('auction_status_changed', handleAuctionStatusChanged);
-      auctionSocket.off('auction_won', handleAuctionWon);
-      auctionSocket.off('item_event', handleItemEvent);
-      auctionSocket.off('view_count_update', handleViewCountUpdate);
-      auctionSocket.off('new_reaction', handleNewReaction);
-      auctionSocket.leaveAuction(auctionId);
-    };
-  }, [auctionId, currentItem, itemBiddingStatus]);
+  }, [auctionId]); // Only run when auctionId changes
 
   // General auction countdown timer
   useEffect(() => {
@@ -945,6 +1140,16 @@ const AuctionLiveViewerScreen = () => {
       return () => clearInterval(timer);
     }
   }, [timeRemaining]);
+
+  // Countdown timer effect (3-2-1)
+  useEffect(() => {
+    if (itemBiddingStatus === 'countdown' && countdownTimer !== null && countdownTimer > 0) {
+      const timer = setTimeout(() => {
+        setCountdownTimer(countdownTimer - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [itemBiddingStatus, countdownTimer]);
 
   // Handle bid placement
   const handlePlaceBid = async () => {
@@ -964,8 +1169,16 @@ const AuctionLiveViewerScreen = () => {
     }
 
     const amount = parseFloat(bidAmount);
+    // For multi-item auctions, always use current item pricing
+    // For single-item auctions, use auction-level pricing
+    // If currentItem is null during item transition, don't allow bidding until item is ready
+    if (!currentItem && canBid) {
+      Alert.alert('Item Not Ready', 'Please wait for the next item to start bidding.');
+      return;
+    }
+    
     const minimumBid = currentItem 
-      ? (currentItem.current_bid || currentItem.starting_price) + currentItem.bid_increment
+      ? ((currentItem.current_bid || currentItem.starting_price) + currentItem.bid_increment)
       : auction.current_bid + auction.bid_increment;
 
     if (isNaN(amount) || amount < minimumBid) {
@@ -977,6 +1190,53 @@ const AuctionLiveViewerScreen = () => {
 
     // Mark user as participated in this auction
     setUserParticipated(true);
+
+    // Add optimistic bid notification immediately
+    const notificationId = `optimistic-${Date.now()}`;
+    const optimisticNotification = {
+      id: notificationId,
+      bidder_display_id: user?.username || 'You',
+      amount: amount,
+      translateY: new Animated.Value(0), // Start at base position (bottom: 100)
+      opacity: new Animated.Value(0), // Start transparent
+    };
+    
+    // Add optimistic notification
+    setBidNotifications(prev => [...prev, optimisticNotification]);
+    
+    // Animate optimistic notification
+    Animated.sequence([
+      // Fade in quickly
+      Animated.timing(optimisticNotification.opacity, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+      }),
+      // Slide up from bottom to center
+      Animated.timing(optimisticNotification.translateY, {
+        toValue: -200, // Move up to center position
+        duration: 1500,
+        useNativeDriver: true,
+      }),
+      // Pause at center for longer
+      Animated.delay(5000),
+      // Fade out with slight upward movement
+      Animated.parallel([
+        Animated.timing(optimisticNotification.opacity, {
+          toValue: 0,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(optimisticNotification.translateY, {
+          toValue: -250, // Slight upward movement during fade
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start(() => {
+      // Remove optimistic notification after animation
+      setBidNotifications(prev => prev.filter(n => n.id !== notificationId));
+    });
 
     try {
       await auctionsAPI.placeBid({
@@ -1025,21 +1285,7 @@ const AuctionLiveViewerScreen = () => {
   const handleSendReaction = (reactionType: 'heart' | 'thumbs_up' | 'applause' | 'fire') => {
     if (!auctionId || !user) return;
     
-    // Play sound effect for sender
-    switch (reactionType) {
-      case 'heart':
-        playCheer();
-        break;
-      case 'applause':
-        playClap();
-        break;
-      case 'thumbs_up':
-        playCheer();
-        break;
-      case 'fire':
-        playCheer();
-        break;
-    }
+    // Removed sound effects for reactions - visual only
     
     auctionSocket.sendReaction(auctionId, reactionType);
     
@@ -1137,43 +1383,55 @@ const AuctionLiveViewerScreen = () => {
 
           <View style={styles.topBarCenter}>
             <Text style={styles.topBarTitle}>{auction.title}</Text>
-            <View style={styles.viewerCountContainer}>
-              <Ionicons name="eye" size={16} color="#8E44AD" />
-              <Text style={styles.viewerCount}>{viewerCount}</Text>
-            </View>
           </View>
 
-          <TouchableOpacity
-            style={styles.controlIconButton}
-            onPress={() => setShowBidDashboard(true)}
-          >
-            <Ionicons name="stats-chart" size={24} color="white" />
-          </TouchableOpacity>
+          <View style={styles.topBarRight}>
+            {/* Live Badge and Viewer Count */}
+            {auction.auction_type === 'live' && (
+              <View style={styles.liveBadge}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveText}>LIVE</Text>
+              </View>
+            )}
+            <View style={styles.viewerCountContainer}>
+              <Ionicons name="eye" size={16} color="#8E44AD" />
+              <Text style={styles.viewerText}>
+                {(() => {
+                  console.log('🏷️ Rendering viewer count:', viewerCount);
+                  return viewerCount.toString();
+                })()}
+              </Text>
+            </View>
+          </View>
         </View>
 
         {/* Reactions Display */}
-        <View style={styles.reactionsContainer}>
-          {reactionAnimations.map((reaction) => (
-            <Animated.View
-              key={reaction.id}
-              style={[
-                styles.reactionAnimation,
-                {
-                  transform: [
-                    { translateX: reaction.translateX },
-                    { translateY: reaction.translateY },
-                    { scale: reaction.scale },
-                  ],
-                  opacity: reaction.opacity,
-                },
-              ]}
-            >
-              <Text style={styles.reactionEmoji}>
-                {getReactionEmoji(reaction.reaction_type)}
-              </Text>
-            </Animated.View>
-          ))}
-        </View>
+        {/* Reactions Overlay - Animated */}
+        {reactionAnimations.length > 0 && (
+          <View style={styles.reactionsOverlay} pointerEvents="none">
+            {reactionAnimations.map((reaction) => (
+              <Animated.View
+                key={reaction.id}
+                style={[
+                  styles.reactionAnimation,
+                  {
+                    transform: [
+                      { translateX: reaction.translateX },
+                      { translateY: reaction.translateY },
+                      { scale: reaction.scale },
+                    ],
+                    opacity: reaction.opacity,
+                  },
+                ]}
+              >
+                <Text style={styles.reactionEmoji}>
+                  {getReactionEmoji(reaction.reaction_type)}
+                </Text>
+              </Animated.View>
+            ))}
+          </View>
+        )}
+
 
         {/* Auction Info Card */}
         <View style={[styles.auctionInfoCard, { top: (insets.top || 0) + 60 }]}>
@@ -1223,9 +1481,20 @@ const AuctionLiveViewerScreen = () => {
               <View style={styles.bidInfoRow}>
                 <Text style={styles.currentBidLabel}>Current bid:</Text>
                 <Text style={styles.currentBidAmount}>
-                  ₣{(currentItem 
-                    ? (currentItem.current_bid || currentItem.starting_price)
-                    : auction.current_bid).toFixed(2)}
+                  ₣{(() => {
+                    const bidValue = currentItem 
+                      ? (currentItem.current_bid || currentItem.starting_price)
+                      : auction.current_bid;
+                    console.log('🏷️ Info card displaying bid:', {
+                      hasCurrentItem: !!currentItem,
+                      currentItemTitle: currentItem?.title,
+                      currentItemBid: currentItem?.current_bid,
+                      currentItemStarting: currentItem?.starting_price,
+                      auctionBid: auction?.current_bid,
+                      finalValue: bidValue
+                    });
+                    return bidValue.toFixed(2);
+                  })()}
                 </Text>
               </View>
               <Text style={styles.modalInfo}>
@@ -1317,11 +1586,10 @@ const AuctionLiveViewerScreen = () => {
           />
         ))}
 
-        {/* Live Stream Indicator */}
-        {auction.auction_type === 'live' && (
-          <View style={styles.liveIndicator}>
-            <View style={styles.liveDot} />
-            <Text style={styles.liveText}>LIVE</Text>
+        {/* Countdown Display (3-2-1) */}
+        {itemBiddingStatus === 'countdown' && countdownTimer !== null && countdownTimer > 0 && (
+          <View style={styles.countdownOverlay}>
+            <Text style={styles.countdownText}>{countdownTimer}</Text>
           </View>
         )}
       </View>
@@ -1400,13 +1668,18 @@ const AuctionLiveViewerScreen = () => {
           visible={showCartModal}
           onClose={() => setShowCartModal(false)}
           wonItems={wonItems}
-          onRemoveItem={(auctionId) => {
-            setWonItems(prev => prev.filter(item => item.auctionId !== auctionId));
+          onRemoveItem={() => {
+            // No-op function - won items cannot be removed from cart
+            // This maintains commitment to purchase after winning
           }}
           onCheckout={() => {
             setShowCartModal(false);
             navigation.navigate('LiveAuctionCartCheckout', {
               wonItems: wonItems,
+              onCheckoutComplete: () => {
+                // Clear cart after successful checkout
+                setWonItems([]);
+              }
             });
           }}
         />
@@ -1419,55 +1692,31 @@ const AuctionLiveViewerScreen = () => {
     <>
       {renderedContent}
       
-      {/* Winner Announcement Modal */}
+      {/* Winner Announcement Modal - Rendered outside for proper z-index */}
       {showWinnerModal && winnerData && (
-        <Modal
-          visible={showWinnerModal}
-          animationType="fade"
-          transparent={true}
-          onRequestClose={() => setShowWinnerModal(false)}
-        >
-          <View style={styles.winnerModalOverlay}>
-            <View style={styles.winnerModalContent}>
-              {winnerData.is_winner ? (
-                <>
-                  <Ionicons name="trophy" size={80} color="#FFD700" />
-                  <Text style={styles.winnerModalTitle}>🎉 Congratulations!</Text>
-                  <Text style={styles.winnerText}>You won "{winnerData.item_title}"</Text>
-                  <Text style={styles.winnerBid}>for ₣{winnerData.winning_bid.toFixed(2)}</Text>
-                  <View style={styles.winnerModalButtons}>
-                    <TouchableOpacity
-                      style={styles.winnerModalButtonPrimary}
-                      onPress={() => {
-                        setShowWinnerModal(false);
-                        setShowCartModal(true);
-                      }}
-                      accessible={true}
-                      accessibilityLabel="View Cart"
-                      accessibilityHint="View your won items and proceed to checkout"
-                    >
-                      <Text style={styles.winnerModalButtonText}>View Cart</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.winnerModalButtonSecondary}
-                      onPress={() => setShowWinnerModal(false)}
-                      accessible={true}
-                      accessibilityLabel="Continue Watching"
-                      accessibilityHint="Close this modal and continue watching the auction"
-                    >
-                      <Text style={styles.winnerModalButtonText}>Continue Watching</Text>
-                    </TouchableOpacity>
-                  </View>
-                </>
-              ) : winnerData.user_participated ? (
-                <>
-                  <Ionicons name="heart" size={80} color="#E74C3C" />
-                  <Text style={styles.winnerModalTitle}>😔 Better Luck Next Time!</Text>
-                  <Text style={styles.winnerText}> "{winnerData.item_title}"</Text>
-                  <Text style={styles.winnerBid}>went to {winnerData.winner_display_id} for ₣{winnerData.winning_bid.toFixed(2)}</Text>
-                  <Text style={styles.winnerSubtext}>Thanks for participating!</Text>
+        <View style={[StyleSheet.absoluteFillObject, styles.winnerModalOverlay]}>
+          <View style={styles.winnerModalContent}>
+            {winnerData.is_winner ? (
+              <>
+                <Ionicons name="trophy" size={80} color="#FFD700" />
+                <Text style={styles.winnerModalTitle}>🎉 Congratulations!</Text>
+                <Text style={styles.winnerText}>You won "{winnerData.item_title}"</Text>
+                <Text style={styles.winnerBid}>for ₣{winnerData.winning_bid.toFixed(2)}</Text>
+                <View style={styles.winnerModalButtons}>
                   <TouchableOpacity
-                    style={styles.winnerModalButton}
+                    style={styles.winnerModalButtonPrimary}
+                    onPress={() => {
+                      setShowWinnerModal(false);
+                      setShowCartModal(true);
+                    }}
+                    accessible={true}
+                    accessibilityLabel="View Cart"
+                    accessibilityHint="View your won items and proceed to checkout"
+                  >
+                    <Text style={styles.winnerModalButtonText}>View Cart</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.winnerModalButtonSecondary}
                     onPress={() => setShowWinnerModal(false)}
                     accessible={true}
                     accessibilityLabel="Continue Watching"
@@ -1475,27 +1724,61 @@ const AuctionLiveViewerScreen = () => {
                   >
                     <Text style={styles.winnerModalButtonText}>Continue Watching</Text>
                   </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <Ionicons name="trophy" size={80} color="#FFD700" />
-                  <Text style={styles.winnerModalTitle}>🏆 Auction Complete!</Text>
-                  <Text style={styles.winnerText}>{winnerData.winner_display_id} won</Text>
-                  <Text style={styles.winnerBid}> "{winnerData.item_title}" for ₣{winnerData.winning_bid.toFixed(2)}</Text>
-                  <TouchableOpacity
-                    style={styles.winnerModalButton}
-                    onPress={() => setShowWinnerModal(false)}
-                    accessible={true}
-                    accessibilityLabel="Continue Watching"
-                    accessibilityHint="Close this modal and continue watching the auction"
-                  >
-                    <Text style={styles.winnerModalButtonText}>Continue Watching</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
+                </View>
+              </>
+            ) : winnerData.user_participated ? (
+              <>
+                <Ionicons name="heart" size={80} color="#E74C3C" />
+                <Text style={styles.winnerModalTitle}>😔 Better Luck Next Time!</Text>
+                <Text style={styles.winnerText}> "{winnerData.item_title}"</Text>
+                <Text style={styles.winnerBid}>went to {winnerData.winner_display_id} for ₣{winnerData.winning_bid.toFixed(2)}</Text>
+                <Text style={styles.winnerSubtext}>Thanks for participating!</Text>
+                <TouchableOpacity
+                  style={styles.winnerModalButton}
+                  onPress={() => setShowWinnerModal(false)}
+                  accessible={true}
+                  accessibilityLabel="Continue Watching"
+                  accessibilityHint="Close this modal and continue watching the auction"
+                >
+                  <Text style={styles.winnerModalButtonText}>Continue Watching</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Ionicons name="trophy" size={80} color="#FFD700" />
+                <Text style={styles.winnerModalTitle}>🏆 Auction Complete!</Text>
+                <Text style={styles.winnerText}>{winnerData.winner_display_id} won</Text>
+                <Text style={styles.winnerBid}> "{winnerData.item_title}" for ₣{winnerData.winning_bid.toFixed(2)}</Text>
+                <TouchableOpacity
+                  style={styles.winnerModalButton}
+                  onPress={() => setShowWinnerModal(false)}
+                  accessible={true}
+                  accessibilityLabel="Continue Watching"
+                  accessibilityHint="Close this modal and continue watching the auction"
+                >
+                  <Text style={styles.winnerModalButtonText}>Continue Watching</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            {winnerData.winner_display_id === 'No Winner' && (
+              <>
+                <Ionicons name="close-circle" size={80} color="#95A5A6" />
+                <Text style={styles.winnerModalTitle}>🤷 Item Not Sold</Text>
+                <Text style={styles.winnerText}> "{winnerData.item_title}"</Text>
+                <Text style={styles.winnerBid}>No bids met the reserve price</Text>
+                <TouchableOpacity
+                  style={styles.winnerModalButton}
+                  onPress={() => setShowWinnerModal(false)}
+                  accessible={true}
+                  accessibilityLabel="Continue Watching"
+                  accessibilityHint="Close this modal and continue watching the auction"
+                >
+                  <Text style={styles.winnerModalButtonText}>Continue Watching</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
-        </Modal>
+        </View>
       )}
       
       {/* Image/Video Viewer Modal */}
@@ -1641,11 +1924,19 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 12,
     marginLeft: 4,
+    fontWeight: 'bold',
+    minWidth: 20, // Ensure minimum width for visibility
+    textAlign: 'center',
   },
   // Missing styles for top bar
   topBarCenter: {
     flex: 1,
     alignItems: 'center',
+  },
+  topBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   topBarTitle: {
     color: 'white',
@@ -1670,13 +1961,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  reactionsContainer: {
+  reactionsOverlay: {
     position: 'absolute',
-    top: '50%',
+    top: 0,
     left: 0,
     right: 0,
-    height: 200,
+    bottom: 0,
     pointerEvents: 'none',
+    zIndex: 5,
   },
   bidInfoRow: {
     flexDirection: 'row',
@@ -1944,14 +2236,6 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   // Reaction styles
-  reactionsOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    pointerEvents: 'none',
-  },
   reactionAnimation: {
     position: 'absolute',
   },
@@ -2099,6 +2383,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  countdownOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  countdownText: {
+    color: 'white',
+    fontSize: 120,
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 4,
   },
 });
 

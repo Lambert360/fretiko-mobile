@@ -20,6 +20,7 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ProductCard from '../components/ProductCard';
 import VideoCard from '../components/VideoCard';
@@ -57,6 +58,15 @@ import { liveSalesAPI, LiveStream, LiveStreamProduct, LiveStreamService } from '
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
+// Function to get appropriate image for product type
+const getProductImage = (productName: string, imageType: 'product' | 'avatar' = 'product') => {
+  // Use reliable placeholder URLs that work on mobile
+  if (imageType === 'avatar') {
+    return 'https://picsum.photos/50/50?random=' + Math.abs(productName.charCodeAt(0));
+  }
+  return 'https://picsum.photos/400/400?random=' + Math.abs(productName.charCodeAt(0));
+};
+
 // ========== MOCK DATA FOR TESTING ==========
 const createMockProduct = (overrides: Partial<Product>): Product => ({
   id: '',
@@ -82,34 +92,407 @@ const createMockProduct = (overrides: Partial<Product>): Product => ({
 
 const MOCK_PRODUCTS: Product[] = [
   // Trending products (created recently with high engagement)
-  createMockProduct({ id: '1', name: 'Premium Wireless Headphones', description: 'High-quality wireless headphones with noise cancellation', price: 299.99, category_id: 'electronics', user_id: 'user1', vendor_username: 'TechStore', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Headphones', images: ['https://via.placeholder.com/400x400?text=Headphones'], quantity: 50, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.8, view_count: 1200, like_count: 150, media_type: 'image', is_featured: true, tags: ['trending', 'electronics', 'audio'], created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() }), // 24 hours ago
-  createMockProduct({ id: '2', name: 'Designer Leather Jacket', description: 'Premium leather jacket with modern design', price: 450.00, category_id: 'fashion', user_id: 'user2', vendor_username: 'FashionHub', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Jacket', images: ['https://via.placeholder.com/400x400?text=Jacket'], quantity: 25, condition: 'new', location: 'Abuja, Nigeria', average_rating: 4.6, view_count: 850, like_count: 95, media_type: 'image', is_featured: true, tags: ['trending', 'fashion', 'winter'], created_at: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString() }), // 12 hours ago
-  createMockProduct({ id: '3', name: 'Smart Home Security System', description: 'Complete home security with cameras and sensors', price: 599.99, category_id: 'electronics', user_id: 'user3', vendor_username: 'SmartHome', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Security', images: ['https://via.placeholder.com/400x400?text=Security'], quantity: 30, condition: 'new', location: 'Port Harcourt, Nigeria', average_rating: 4.9, view_count: 2100, like_count: 280, media_type: 'image', is_featured: false, tags: ['trending', 'smart', 'security'], created_at: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString() }), // 36 hours ago
+  createMockProduct({ 
+    id: '1', 
+    name: 'Premium Wireless Headphones', 
+    description: 'High-quality wireless headphones with noise cancellation', 
+    price: 299.99, 
+    category_id: 'electronics', 
+    user_id: 'user1', 
+    vendor_username: 'TechStore', 
+    vendor_avatar: getProductImage('TechStore', 'avatar'), 
+    primary_image_url: getProductImage('Premium Wireless Headphones'), 
+    images: [getProductImage('Premium Wireless Headphones')], 
+    quantity: 50, 
+    condition: 'new', 
+    location: 'Lagos, Nigeria', 
+    average_rating: 4.8, 
+    view_count: 1200, 
+    like_count: 150, 
+    media_type: 'image', 
+    is_featured: true, 
+    tags: ['trending', 'electronics', 'audio'], 
+    created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() 
+  }), // 24 hours ago
+  createMockProduct({ 
+    id: '2', 
+    name: 'Designer Leather Jacket', 
+    description: 'Premium leather jacket with modern design', 
+    price: 450.00, 
+    category_id: 'fashion', 
+    user_id: 'user2', 
+    vendor_username: 'FashionHub', 
+    vendor_avatar: getProductImage('FashionHub', 'avatar'), 
+    primary_image_url: getProductImage('Designer Leather Jacket'), 
+    images: [getProductImage('Designer Leather Jacket')], 
+    quantity: 25, 
+    condition: 'new', 
+    location: 'Abuja, Nigeria', 
+    average_rating: 4.6, 
+    view_count: 850, 
+    like_count: 95, 
+    media_type: 'image', 
+    is_featured: true, 
+    tags: ['trending', 'fashion', 'winter'], 
+    created_at: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString() 
+  }), // 12 hours ago
+  createMockProduct({ 
+    id: '3', 
+    name: 'Smart Home Security System', 
+    description: 'Complete home security with cameras and sensors', 
+    price: 599.99, 
+    category_id: 'electronics', 
+    user_id: 'user3', 
+    vendor_username: 'SmartHome', 
+    vendor_avatar: getProductImage('SmartHome', 'avatar'), 
+    primary_image_url: getProductImage('Smart Home Security System'), 
+    images: [getProductImage('Smart Home Security System')], 
+    quantity: 30, 
+    condition: 'new', 
+    location: 'Port Harcourt, Nigeria', 
+    average_rating: 4.9, 
+    view_count: 2100, 
+    like_count: 280, 
+    media_type: 'image', 
+    is_featured: false, 
+    tags: ['trending', 'smart', 'security'], 
+    created_at: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString() 
+  }), // 36 hours ago
   
   // Hot Picks (featured products)
-  createMockProduct({ id: '4', name: 'Vintage Watch Collection', description: 'Rare vintage watches from the 1970s', price: 1200.00, category_id: 'fashion', user_id: 'user4', vendor_username: 'TimePiece', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Watch', images: ['https://via.placeholder.com/400x400?text=Watch'], quantity: 10, condition: 'used', location: 'Lagos, Nigeria', average_rating: 4.7, view_count: 1500, like_count: 120, media_type: 'image', is_featured: true, tags: ['vintage', 'luxury'] }),
-  createMockProduct({ id: '7', name: 'Gaming Laptop', description: 'High-performance gaming laptop with RTX graphics', price: 1299.99, category_id: 'electronics', user_id: 'user7', vendor_username: 'GameZone', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Laptop', images: ['https://via.placeholder.com/400x400?text=Laptop'], quantity: 15, condition: 'new', location: 'Abuja, Nigeria', average_rating: 4.9, view_count: 3200, like_count: 400, media_type: 'image', is_featured: true, tags: ['gaming', 'tech'] }),
-  createMockProduct({ id: '9', name: 'iPhone 15 Pro Max Review', description: 'Detailed review of the latest iPhone', price: 1299.99, category_id: 'electronics', user_id: 'user9', vendor_username: 'TechReview', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x600?text=iPhone', primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', images: ['https://via.placeholder.com/400x600?text=iPhone'], videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'], quantity: 20, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.8, view_count: 5000, like_count: 600, media_type: 'video', is_featured: true, tags: ['review', 'tech'] }),
-  createMockProduct({ id: '12', name: 'Cooking Tutorial', description: 'Learn to cook amazing dishes', price: 0, category_id: 'foods', user_id: 'user12', vendor_username: 'ChefMaster', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x600?text=Cooking', primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', images: ['https://via.placeholder.com/400x600?text=Cooking'], videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4'], quantity: 0, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.6, view_count: 1800, like_count: 200, media_type: 'video', is_featured: true, tags: ['tutorial', 'food'] }),
+  createMockProduct({ 
+    id: '4', 
+    name: 'Vintage Watch Collection', 
+    description: 'Rare vintage watches from the 1970s', 
+    price: 1200.00, 
+    category_id: 'fashion', 
+    user_id: 'user4', 
+    vendor_username: 'TimePiece', 
+    vendor_avatar: getProductImage('TimePiece', 'avatar'), 
+    primary_image_url: getProductImage('Vintage Watch Collection'), 
+    images: [getProductImage('Vintage Watch Collection')], 
+    quantity: 10, 
+    condition: 'used', 
+    location: 'Lagos, Nigeria', 
+    average_rating: 4.7, 
+    view_count: 1500, 
+    like_count: 120, 
+    media_type: 'image', 
+    is_featured: true, 
+    tags: ['vintage', 'luxury'] 
+  }),
+  createMockProduct({ 
+    id: '7', 
+    name: 'Gaming Laptop', 
+    description: 'High-performance gaming laptop with RTX graphics', 
+    price: 1299.99, 
+    category_id: 'electronics', 
+    user_id: 'user7', 
+    vendor_username: 'GameZone', 
+    vendor_avatar: getProductImage('GameZone', 'avatar'), 
+    primary_image_url: getProductImage('Gaming Laptop'), 
+    images: [getProductImage('Gaming Laptop')], 
+    quantity: 15, 
+    condition: 'new', 
+    location: 'Abuja, Nigeria', 
+    average_rating: 4.9, 
+    view_count: 3200, 
+    like_count: 400, 
+    media_type: 'image', 
+    is_featured: true, 
+    tags: ['gaming', 'tech'] 
+  }),
+  createMockProduct({ 
+    id: '9', 
+    name: 'iPhone 15 Pro Max Review', 
+    description: 'Detailed review of the latest iPhone', 
+    price: 1299.99, 
+    category_id: 'electronics', 
+    user_id: 'user9', 
+    vendor_username: 'TechReview', 
+    vendor_avatar: getProductImage('TechReview', 'avatar'), 
+    primary_image_url: getProductImage('iPhone 15 Pro Max Review'), 
+    primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', 
+    images: [getProductImage('iPhone 15 Pro Max Review')], 
+    videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'], 
+    quantity: 20, 
+    condition: 'new', 
+    location: 'Lagos, Nigeria', 
+    average_rating: 4.8, 
+    view_count: 5000, 
+    like_count: 600, 
+    media_type: 'video', 
+    is_featured: true, 
+    tags: ['review', 'tech'] 
+  }),
+  createMockProduct({ 
+    id: '12', 
+    name: 'Cooking Tutorial', 
+    description: 'Learn to cook amazing dishes', 
+    price: 0, 
+    category_id: 'foods', 
+    user_id: 'user12', 
+    vendor_username: 'ChefMaster', 
+    vendor_avatar: getProductImage('ChefMaster', 'avatar'), 
+    primary_image_url: getProductImage('Cooking Tutorial'), 
+    primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', 
+    images: [getProductImage('Cooking Tutorial')], 
+    videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4'], 
+    quantity: 0, 
+    condition: 'new', 
+    location: 'Lagos, Nigeria', 
+    average_rating: 4.6, 
+    view_count: 1800, 
+    like_count: 200, 
+    media_type: 'video', 
+    is_featured: true, 
+    tags: ['tutorial', 'food'] 
+  }),
   
   // Seasonal Rave products
-  createMockProduct({ id: '5', name: 'Organic Coffee Beans', description: 'Premium organic coffee beans from Ethiopia', price: 35.99, category_id: 'foods', user_id: 'user5', vendor_username: 'CoffeeLovers', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Coffee', images: ['https://via.placeholder.com/400x400?text=Coffee'], quantity: 100, condition: 'new', location: 'Ibadan, Nigeria', average_rating: 4.5, view_count: 600, like_count: 50, media_type: 'image', is_featured: false, tags: ['seasonal', 'winter', 'holiday'] }),
-  createMockProduct({ id: '6', name: 'Yoga Mat Premium', description: 'Non-slip premium yoga mat', price: 45.00, category_id: 'sports', user_id: 'user6', vendor_username: 'FitLife', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=YogaMat', images: ['https://via.placeholder.com/400x400?text=YogaMat'], quantity: 75, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.4, view_count: 400, like_count: 30, media_type: 'image', is_featured: false, tags: ['seasonal', 'summer', 'fitness'] }),
-  createMockProduct({ id: '11', name: 'Home Decor Tour', description: 'Beautiful home decoration ideas', price: 0, category_id: 'home', user_id: 'user11', vendor_username: 'HomeDesign', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x600?text=Home', primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', images: ['https://via.placeholder.com/400x600?text=Home'], videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'], quantity: 0, condition: 'new', location: 'Port Harcourt, Nigeria', average_rating: 4.5, view_count: 1200, like_count: 100, media_type: 'video', is_featured: false, tags: ['seasonal', 'christmas', 'holiday'] }),
+  createMockProduct({ 
+    id: '5', 
+    name: 'Organic Coffee Beans', 
+    description: 'Premium organic coffee beans from Ethiopia', 
+    price: 35.99, 
+    category_id: 'foods', 
+    user_id: 'user5', 
+    vendor_username: 'CoffeeLovers', 
+    vendor_avatar: getProductImage('CoffeeLovers', 'avatar'), 
+    primary_image_url: getProductImage('Organic Coffee Beans'), 
+    images: [getProductImage('Organic Coffee Beans')], 
+    quantity: 100, 
+    condition: 'new', 
+    location: 'Ibadan, Nigeria', 
+    average_rating: 4.5, 
+    view_count: 600, 
+    like_count: 50, 
+    media_type: 'image', 
+    is_featured: false, 
+    tags: ['seasonal', 'winter', 'holiday'] 
+  }),
+  createMockProduct({ 
+    id: '6', 
+    name: 'Yoga Mat Premium', 
+    description: 'Non-slip premium yoga mat', 
+    price: 45.00, 
+    category_id: 'sports', 
+    user_id: 'user6', 
+    vendor_username: 'FitLife', 
+    vendor_avatar: getProductImage('FitLife', 'avatar'), 
+    primary_image_url: getProductImage('Yoga Mat Premium'), 
+    images: [getProductImage('Yoga Mat Premium')], 
+    quantity: 75, 
+    condition: 'new', 
+    location: 'Lagos, Nigeria', 
+    average_rating: 4.4, 
+    view_count: 400, 
+    like_count: 30, 
+    media_type: 'image', 
+    is_featured: false, 
+    tags: ['seasonal', 'summer', 'fitness'] 
+  }),
+  createMockProduct({ 
+    id: '11', 
+    name: 'Home Decor Tour', 
+    description: 'Beautiful home decoration ideas', 
+    price: 0, 
+    category_id: 'home', 
+    user_id: 'user11', 
+    vendor_username: 'HomeDesign', 
+    vendor_avatar: getProductImage('HomeDesign', 'avatar'), 
+    primary_image_url: getProductImage('Home Decor Tour'), 
+    primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', 
+    images: [getProductImage('Home Decor Tour')], 
+    videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'], 
+    quantity: 0, 
+    condition: 'new', 
+    location: 'Port Harcourt, Nigeria', 
+    average_rating: 4.5, 
+    view_count: 1200, 
+    like_count: 100, 
+    media_type: 'video', 
+    is_featured: false, 
+    tags: ['seasonal', 'christmas', 'holiday'] 
+  }),
   
   // Combo Deals
-  createMockProduct({ id: '8', name: 'Skincare Set', description: 'Complete skincare routine set', price: 89.99, category_id: 'beauty', user_id: 'user8', vendor_username: 'BeautyBox', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Skincare', images: ['https://via.placeholder.com/400x400?text=Skincare'], quantity: 60, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.6, view_count: 950, like_count: 80, media_type: 'image', is_featured: false, tags: ['combo', 'bundle', 'set'] }),
-  createMockProduct({ id: '14', name: 'Tech Bundle Package', description: 'Phone, charger, and case combo', price: 399.99, category_id: 'electronics', user_id: 'user14', vendor_username: 'TechBundle', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Bundle', images: ['https://via.placeholder.com/400x400?text=Bundle'], quantity: 40, condition: 'new', location: 'Abuja, Nigeria', average_rating: 4.7, view_count: 1100, like_count: 130, media_type: 'image', is_featured: false, tags: ['combo', 'package', 'bundle'] }),
-  createMockProduct({ id: '15', name: 'Fitness Equipment Set', description: 'Complete home gym package', price: 599.99, category_id: 'sports', user_id: 'user15', vendor_username: 'FitPackage', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=FitnessSet', images: ['https://via.placeholder.com/400x400?text=FitnessSet'], quantity: 20, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.8, view_count: 800, like_count: 90, media_type: 'image', is_featured: false, tags: ['combo', 'set', 'package'] }),
+  createMockProduct({ 
+    id: '8', 
+    name: 'Skincare Set', 
+    description: 'Complete skincare routine set', 
+    price: 89.99, 
+    category_id: 'beauty', 
+    user_id: 'user8', 
+    vendor_username: 'BeautyBox', 
+    vendor_avatar: getProductImage('BeautyBox', 'avatar'), 
+    primary_image_url: getProductImage('Skincare Set'), 
+    images: [getProductImage('Skincare Set')], 
+    quantity: 60, 
+    condition: 'new', 
+    location: 'Lagos, Nigeria', 
+    average_rating: 4.6, 
+    view_count: 950, 
+    like_count: 80, 
+    media_type: 'image', 
+    is_featured: false, 
+    tags: ['combo', 'bundle', 'set'] 
+  }),
+  createMockProduct({ 
+    id: '14', 
+    name: 'Tech Bundle Package', 
+    description: 'Phone, charger, and case combo', 
+    price: 399.99, 
+    category_id: 'electronics', 
+    user_id: 'user14', 
+    vendor_username: 'TechBundle', 
+    vendor_avatar: getProductImage('TechBundle', 'avatar'), 
+    primary_image_url: getProductImage('Tech Bundle Package'), 
+    images: [getProductImage('Tech Bundle Package')], 
+    quantity: 40, 
+    condition: 'new', 
+    location: 'Abuja, Nigeria', 
+    average_rating: 4.7, 
+    view_count: 1100, 
+    like_count: 130, 
+    media_type: 'image', 
+    is_featured: false, 
+    tags: ['combo', 'package', 'bundle'] 
+  }),
+  createMockProduct({ 
+    id: '15', 
+    name: 'Fitness Equipment Set', 
+    description: 'Complete home gym package', 
+    price: 599.99, 
+    category_id: 'sports', 
+    user_id: 'user15', 
+    vendor_username: 'FitPackage', 
+    vendor_avatar: getProductImage('FitPackage', 'avatar'), 
+    primary_image_url: getProductImage('Fitness Equipment Set'), 
+    images: [getProductImage('Fitness Equipment Set')], 
+    quantity: 20, 
+    condition: 'new', 
+    location: 'Lagos, Nigeria', 
+    average_rating: 4.8, 
+    view_count: 800, 
+    like_count: 90, 
+    media_type: 'image', 
+    is_featured: false, 
+    tags: ['combo', 'set', 'package'] 
+  }),
   
   // Flash Sales
-  createMockProduct({ id: '16', name: 'Flash Sale: Designer Shoes', description: 'Limited time offer on designer shoes', price: 199.99, category_id: 'fashion', user_id: 'user16', vendor_username: 'ShoeDeal', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Shoes', images: ['https://via.placeholder.com/400x400?text=Shoes'], quantity: 30, condition: 'new', location: 'Lagos, Nigeria', average_rating: 4.5, view_count: 700, like_count: 60, media_type: 'image', is_featured: false, tags: ['flash', 'sale', 'deal'] }),
-  createMockProduct({ id: '17', name: 'Flash Sale: Smart Watch', description: 'Limited time discount on smart watch', price: 249.99, category_id: 'electronics', user_id: 'user17', vendor_username: 'WatchDeal', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=SmartWatch', images: ['https://via.placeholder.com/400x400?text=SmartWatch'], quantity: 25, condition: 'new', location: 'Abuja, Nigeria', average_rating: 4.6, view_count: 900, like_count: 75, media_type: 'image', is_featured: false, tags: ['flash', 'sale', 'discount'] }),
-  createMockProduct({ id: '18', name: 'Flash Deal: Beauty Products', description: 'Limited time beauty product sale', price: 49.99, category_id: 'beauty', user_id: 'user18', vendor_username: 'BeautyDeal', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x400?text=Beauty', images: ['https://via.placeholder.com/400x400?text=Beauty'], quantity: 50, condition: 'new', location: 'Port Harcourt, Nigeria', average_rating: 4.4, view_count: 550, like_count: 45, media_type: 'image', is_featured: false, tags: ['flash', 'deal', 'sale'] }),
+  createMockProduct({ 
+    id: '16', 
+    name: 'Flash Sale: Designer Shoes', 
+    description: 'Limited time offer on designer shoes', 
+    price: 199.99, 
+    category_id: 'fashion', 
+    user_id: 'user16', 
+    vendor_username: 'ShoeDeal', 
+    vendor_avatar: getProductImage('ShoeDeal', 'avatar'), 
+    primary_image_url: getProductImage('Flash Sale: Designer Shoes'), 
+    images: [getProductImage('Flash Sale: Designer Shoes')], 
+    quantity: 30, 
+    condition: 'new', 
+    location: 'Lagos, Nigeria', 
+    average_rating: 4.5, 
+    view_count: 700, 
+    like_count: 60, 
+    media_type: 'image', 
+    is_featured: false, 
+    tags: ['flash', 'sale', 'deal'] 
+  }),
+  createMockProduct({ 
+    id: '17', 
+    name: 'Flash Sale: Smart Watch', 
+    description: 'Limited time discount on smart watch', 
+    price: 249.99, 
+    category_id: 'electronics', 
+    user_id: 'user17', 
+    vendor_username: 'WatchDeal', 
+    vendor_avatar: getProductImage('WatchDeal', 'avatar'), 
+    primary_image_url: getProductImage('Flash Sale: Smart Watch'), 
+    images: [getProductImage('Flash Sale: Smart Watch')], 
+    quantity: 25, 
+    condition: 'new', 
+    location: 'Abuja, Nigeria', 
+    average_rating: 4.6, 
+    view_count: 900, 
+    like_count: 75, 
+    media_type: 'image', 
+    is_featured: false, 
+    tags: ['flash', 'sale', 'discount'] 
+  }),
+  createMockProduct({ 
+    id: '18', 
+    name: 'Flash Deal: Beauty Products', 
+    description: 'Limited time beauty product sale', 
+    price: 49.99, 
+    category_id: 'beauty', 
+    user_id: 'user18', 
+    vendor_username: 'BeautyDeal', 
+    vendor_avatar: getProductImage('BeautyDeal', 'avatar'), 
+    primary_image_url: getProductImage('Flash Deal: Beauty Products'), 
+    images: [getProductImage('Flash Deal: Beauty Products')], 
+    quantity: 50, 
+    condition: 'new', 
+    location: 'Port Harcourt, Nigeria', 
+    average_rating: 4.4, 
+    view_count: 550, 
+    like_count: 45, 
+    media_type: 'image', 
+    is_featured: false, 
+    tags: ['flash', 'deal', 'sale'] 
+  }),
   
   // Regular products for For You section
-  createMockProduct({ id: '10', name: 'Fashion Haul Video', description: 'Latest fashion trends and styles', price: 0, category_id: 'fashion', user_id: 'user10', vendor_username: 'StyleVlog', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x600?text=Fashion', primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', images: ['https://via.placeholder.com/400x600?text=Fashion'], videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'], quantity: 0, condition: 'new', location: 'Abuja, Nigeria', average_rating: 4.7, view_count: 2800, like_count: 250, media_type: 'video', is_featured: false, tags: ['fashion', 'vlog'] }),
-  createMockProduct({ id: '13', name: 'Fitness Workout', description: 'Intense workout session', price: 0, category_id: 'sports', user_id: 'user13', vendor_username: 'FitCoach', vendor_avatar: 'https://via.placeholder.com/50', primary_image_url: 'https://via.placeholder.com/400x600?text=Fitness', primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', images: ['https://via.placeholder.com/400x600?text=Fitness'], videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4'], quantity: 0, condition: 'new', location: 'Ibadan, Nigeria', average_rating: 4.4, view_count: 900, like_count: 70, media_type: 'video', is_featured: false, tags: ['fitness', 'workout'] }),
+  createMockProduct({ 
+    id: '10', 
+    name: 'Fashion Haul Video', 
+    description: 'Latest fashion trends and styles', 
+    price: 0, 
+    category_id: 'fashion', 
+    user_id: 'user10', 
+    vendor_username: 'StyleVlog', 
+    vendor_avatar: getProductImage('StyleVlog', 'avatar'), 
+    primary_image_url: getProductImage('Fashion Haul Video'), 
+    primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', 
+    images: [getProductImage('Fashion Haul Video')], 
+    videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'], 
+    quantity: 0, 
+    condition: 'new', 
+    location: 'Abuja, Nigeria', 
+    average_rating: 4.7, 
+    view_count: 2800, 
+    like_count: 250, 
+    media_type: 'video', 
+    is_featured: false, 
+    tags: ['fashion', 'vlog'] 
+  }),
+  createMockProduct({ 
+    id: '13', 
+    name: 'Fitness Workout', 
+    description: 'Intense workout session', 
+    price: 0, 
+    category_id: 'sports', 
+    user_id: 'user13', 
+    vendor_username: 'FitCoach', 
+    vendor_avatar: getProductImage('FitCoach', 'avatar'), 
+    primary_image_url: getProductImage('Fitness Workout'), 
+    primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', 
+    images: [getProductImage('Fitness Workout')], 
+    videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4'], 
+    quantity: 0, 
+    condition: 'new', 
+    location: 'Ibadan, Nigeria', 
+    average_rating: 4.4, 
+    view_count: 900, 
+    like_count: 70, 
+    media_type: 'video', 
+    is_featured: false, 
+    tags: ['fitness', 'workout'] 
+  }),
 ];
 
 const MOCK_CATEGORIES: ProductCategory[] = [
@@ -122,20 +505,108 @@ const MOCK_CATEGORIES: ProductCategory[] = [
 ];
 
 const MOCK_ACTIVE_AUCTIONS: any[] = [
-  { id: 'auction1', title: 'Vintage Rolex Watch', description: 'Rare 1970s Rolex', starting_price: 5000, current_bid: 7500, end_time: new Date(Date.now() + 86400000).toISOString(), status: 'active', category_id: 'fashion', images: ['https://via.placeholder.com/400x400?text=Rolex'], created_at: new Date().toISOString(), bids_count: 12, highest_bidder: 'bidder1', seller_id: 'seller1', seller_username: 'WatchCollector', seller: { id: 'seller1', username: 'WatchCollector', is_verified: true }, category: { id: 'fashion', name: 'Fashion', icon_name: 'shirt-outline', color: '#3498DB', slug: 'fashion' }, current_winning_bid: { id: 'bid1', bidder_display_id: 'bidder1', amount: 7500, created_at: new Date().toISOString() } },
-  { id: 'auction2', title: 'Antique Painting', description: '19th Century Artwork', starting_price: 2000, current_bid: 3200, end_time: new Date(Date.now() + 172800000).toISOString(), status: 'active', category_id: 'home', images: ['https://via.placeholder.com/400x400?text=Painting'], created_at: new Date().toISOString(), bids_count: 8, highest_bidder: 'bidder2', seller_id: 'seller2', seller_username: 'ArtGallery', seller: { id: 'seller2', username: 'ArtGallery', is_verified: true }, category: { id: 'home', name: 'Home & Garden', icon_name: 'home-outline', color: '#27AE60', slug: 'home' }, current_winning_bid: { id: 'bid2', bidder_display_id: 'bidder2', amount: 3200, created_at: new Date().toISOString() } },
-  { id: 'auction3', title: 'Classic Car', description: '1965 Mustang', starting_price: 15000, current_bid: 22000, end_time: new Date(Date.now() + 259200000).toISOString(), status: 'active', category_id: 'automotive', images: ['https://via.placeholder.com/400x400?text=Car'], created_at: new Date().toISOString(), bids_count: 25, highest_bidder: 'bidder3', seller_id: 'seller3', seller_username: 'CarDealer', seller: { id: 'seller3', username: 'CarDealer', is_verified: true }, category: { id: 'automotive', name: 'Automotive', icon_name: 'car-outline', color: '#E67E22', slug: 'automotive' }, current_winning_bid: { id: 'bid3', bidder_display_id: 'bidder3', amount: 22000, created_at: new Date().toISOString() } },
+  { 
+    id: 'auction1', 
+    title: 'Vintage Rolex Watch', 
+    description: 'Rare 1970s Rolex', 
+    starting_price: 5000, 
+    current_bid: 7500, 
+    end_time: new Date(Date.now() + 86400000).toISOString(), 
+    status: 'active', 
+    category_id: 'fashion', 
+    images: [getProductImage('Vintage Watch Collection')], 
+    created_at: new Date().toISOString(), 
+    bids_count: 12, 
+    highest_bidder: 'bidder1', 
+    seller_id: 'seller1', 
+    seller_username: 'WatchCollector', 
+    seller: { id: 'seller1', username: 'WatchCollector', is_verified: true }, 
+    category: { id: 'fashion', name: 'Fashion', icon_name: 'shirt-outline', color: '#3498DB', slug: 'fashion' }, 
+    current_winning_bid: { id: 'bid1', bidder_display_id: 'bidder1', amount: 7500, created_at: new Date().toISOString() } 
+  },
+  { 
+    id: 'auction2', 
+    title: 'Antique Painting', 
+    description: '19th Century Artwork', 
+    starting_price: 2000, 
+    current_bid: 3200, 
+    end_time: new Date(Date.now() + 172800000).toISOString(), 
+    status: 'active', 
+    category_id: 'home', 
+    images: [getProductImage('Home Decor Tour')], 
+    created_at: new Date().toISOString(), 
+    bids_count: 8, 
+    highest_bidder: 'bidder2', 
+    seller_id: 'seller2', 
+    seller_username: 'ArtGallery', 
+    seller: { id: 'seller2', username: 'ArtGallery', is_verified: true }, 
+    category: { id: 'home', name: 'Home & Garden', icon_name: 'home-outline', color: '#27AE60', slug: 'home' }, 
+    current_winning_bid: { id: 'bid2', bidder_display_id: 'bidder2', amount: 3200, created_at: new Date().toISOString() } 
+  },
+  { 
+    id: 'auction3', 
+    title: 'Classic Car', 
+    description: '1965 Mustang', 
+    starting_price: 15000, 
+    current_bid: 22000, 
+    end_time: new Date(Date.now() + 259200000).toISOString(), 
+    status: 'active', 
+    category_id: 'automotive', 
+    images: [getProductImage('Gaming Laptop')], 
+    created_at: new Date().toISOString(), 
+    bids_count: 25, 
+    highest_bidder: 'bidder3', 
+    seller_id: 'seller3', 
+    seller_username: 'CarDealer', 
+    seller: { id: 'seller3', username: 'CarDealer', is_verified: true }, 
+    category: { id: 'automotive', name: 'Automotive', icon_name: 'car-outline', color: '#E67E22', slug: 'automotive' }, 
+    current_winning_bid: { id: 'bid3', bidder_display_id: 'bidder3', amount: 22000, created_at: new Date().toISOString() } 
+  },
 ];
 
 const MOCK_UPCOMING_AUCTIONS: any[] = [
-  { id: 'auction4', title: 'Diamond Ring', description: '2 Carat Diamond', starting_price: 8000, current_bid: 8000, end_time: new Date(Date.now() + 604800000).toISOString(), status: 'scheduled', category_id: 'fashion', images: ['https://via.placeholder.com/400x400?text=Diamond'], created_at: new Date().toISOString(), bids_count: 0, highest_bidder: null, seller_id: 'seller4', seller_username: 'JewelryStore', seller: { id: 'seller4', username: 'JewelryStore', is_verified: true }, category: { id: 'fashion', name: 'Fashion', icon_name: 'shirt-outline', color: '#3498DB', slug: 'fashion' } },
-  { id: 'auction5', title: 'Rare Book Collection', description: 'First Edition Books', starting_price: 3000, current_bid: 3000, end_time: new Date(Date.now() + 518400000).toISOString(), status: 'scheduled', category_id: 'books', images: ['https://via.placeholder.com/400x400?text=Books'], created_at: new Date().toISOString(), bids_count: 0, highest_bidder: null, seller_id: 'seller5', seller_username: 'BookStore', seller: { id: 'seller5', username: 'BookStore', is_verified: true }, category: { id: 'books', name: 'Books', icon_name: 'library-outline', color: '#9B59B6', slug: 'books' } },
+  { 
+    id: 'auction4', 
+    title: 'Diamond Ring', 
+    description: '2 Carat Diamond', 
+    starting_price: 8000, 
+    current_bid: 8000, 
+    end_time: new Date(Date.now() + 604800000).toISOString(), 
+    status: 'scheduled', 
+    category_id: 'fashion', 
+    images: [getProductImage('Vintage Watch Collection')], 
+    created_at: new Date().toISOString(), 
+    bids_count: 0, 
+    highest_bidder: null, 
+    seller_id: 'seller4', 
+    seller_username: 'JewelryStore', 
+    seller: { id: 'seller4', username: 'JewelryStore', is_verified: true }, 
+    category: { id: 'fashion', name: 'Fashion', icon_name: 'shirt-outline', color: '#3498DB', slug: 'fashion' } 
+  },
+  { 
+    id: 'auction5', 
+    title: 'Rare Book Collection', 
+    description: 'First Edition Books', 
+    starting_price: 3000, 
+    current_bid: 3000, 
+    end_time: new Date(Date.now() + 518400000).toISOString(), 
+    status: 'scheduled', 
+    category_id: 'books', 
+    images: [getProductImage('Skincare Set')], 
+    created_at: new Date().toISOString(), 
+    bids_count: 0, 
+    highest_bidder: null, 
+    seller_id: 'seller5', 
+    seller_username: 'BookStore', 
+    seller: { id: 'seller5', username: 'BookStore', is_verified: true }, 
+    category: { id: 'books', name: 'Books', icon_name: 'library-outline', color: '#9B59B6', slug: 'books' } 
+  },
 ];
 
 const MOCK_LIVE_PRODUCTS = [
-  { streamId: 'live1', productId: 'prod1', title: 'Live: iPhone 15 Unboxing', price: 1299.99, image: 'https://via.placeholder.com/400x250?text=Live+iPhone' },
-  { streamId: 'live2', productId: 'prod2', title: 'Live: Fashion Show', price: 299.99, image: 'https://via.placeholder.com/400x250?text=Live+Fashion' },
-  { streamId: 'live3', productId: 'prod3', title: 'Live: Tech Review', price: 599.99, image: 'https://via.placeholder.com/400x250?text=Live+Tech' },
+  { streamId: 'live1', productId: 'prod1', title: 'Live: iPhone 15 Unboxing', price: 1299.99, image: getProductImage('iPhone 15 Pro Max Review') },
+  { streamId: 'live2', productId: 'prod2', title: 'Live: Fashion Show', price: 299.99, image: getProductImage('Fashion Haul Video') },
+  { streamId: 'live3', productId: 'prod3', title: 'Live: Tech Review', price: 599.99, image: getProductImage('Gaming Laptop') },
 ];
 
 const MOCK_LIVE_SERVICES = [
@@ -145,11 +616,106 @@ const MOCK_LIVE_SERVICES = [
 ];
 
 const MOCK_VIDEO_FEED: VideoFeedItem[] = [
-  { id: 'video1', title: 'Professional Photography Service', description: 'High-quality photos for your events', videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', thumbnail: 'https://via.placeholder.com/600x900?text=Photography', userId: 'user1', username: 'PhotoPro', userAvatar: 'https://via.placeholder.com/40x40', price: 150.00, rating: 4.9, likes: '1250', comments: '89', shares: '45', location: 'Lagos, Nigeria', serviceProvider: 'PhotoPro', completedJobs: '250', isLiked: false, isBookmarked: false },
-  { id: 'video2', title: 'Graphic Design Services', description: 'Logo design and branding', videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', thumbnail: 'https://via.placeholder.com/600x900?text=Design', userId: 'user2', username: 'DesignStudio', userAvatar: 'https://via.placeholder.com/40x40', price: 200.00, rating: 4.8, likes: '980', comments: '67', shares: '32', location: 'Abuja, Nigeria', serviceProvider: 'DesignStudio', completedJobs: '180', isLiked: false, isBookmarked: false },
-  { id: 'video3', title: 'Music Production', description: 'Professional music mixing and mastering', videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', thumbnail: 'https://via.placeholder.com/600x900?text=Music', userId: 'user3', username: 'MusicLab', userAvatar: 'https://via.placeholder.com/40x40', price: 300.00, rating: 4.7, likes: '750', comments: '54', shares: '28', location: 'Port Harcourt, Nigeria', serviceProvider: 'MusicLab', completedJobs: '120', isLiked: false, isBookmarked: false },
-  { id: 'video4', title: 'Video Editing Service', description: 'Professional video editing for your content', videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', thumbnail: 'https://via.placeholder.com/600x900?text=Editing', userId: 'user4', username: 'EditMaster', userAvatar: 'https://via.placeholder.com/40x40', price: 180.00, rating: 4.6, likes: '620', comments: '43', shares: '21', location: 'Lagos, Nigeria', serviceProvider: 'EditMaster', completedJobs: '95', isLiked: false, isBookmarked: false },
-  { id: 'video5', title: 'Web Development', description: 'Custom websites and web apps', videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', thumbnail: 'https://via.placeholder.com/600x900?text=WebDev', userId: 'user5', username: 'WebDevPro', userAvatar: 'https://via.placeholder.com/40x40', price: 500.00, rating: 4.9, likes: '1100', comments: '78', shares: '38', location: 'Ibadan, Nigeria', serviceProvider: 'WebDevPro', completedJobs: '200', isLiked: false, isBookmarked: false },
+  { 
+    id: 'video1', 
+    title: 'Professional Photography Service', 
+    description: 'High-quality photos for your events', 
+    videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', 
+    thumbnail: getProductImage('Premium Wireless Headphones'), 
+    userId: 'user1', 
+    username: 'PhotoPro', 
+    userAvatar: getProductImage('PhotoPro', 'avatar'), 
+    price: 150.00, 
+    rating: 4.9, 
+    likes: '1250', 
+    comments: '89', 
+    shares: '45', 
+    location: 'Lagos, Nigeria', 
+    serviceProvider: 'PhotoPro', 
+    completedJobs: '250', 
+    isLiked: false, 
+    isBookmarked: false 
+  },
+  { 
+    id: 'video2', 
+    title: 'Graphic Design Services', 
+    description: 'Logo design and branding', 
+    videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', 
+    thumbnail: getProductImage('Designer Leather Jacket'), 
+    userId: 'user2', 
+    username: 'DesignStudio', 
+    userAvatar: getProductImage('DesignStudio', 'avatar'), 
+    price: 200.00, 
+    rating: 4.8, 
+    likes: '980', 
+    comments: '67', 
+    shares: '32', 
+    location: 'Abuja, Nigeria', 
+    serviceProvider: 'DesignStudio', 
+    completedJobs: '180', 
+    isLiked: false, 
+    isBookmarked: false 
+  },
+  { 
+    id: 'video3', 
+    title: 'Music Production', 
+    description: 'Professional music mixing and mastering', 
+    videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', 
+    thumbnail: getProductImage('Smart Home Security System'), 
+    userId: 'user3', 
+    username: 'MusicLab', 
+    userAvatar: getProductImage('MusicLab', 'avatar'), 
+    price: 300.00, 
+    rating: 4.7, 
+    likes: '750', 
+    comments: '54', 
+    shares: '28', 
+    location: 'Port Harcourt, Nigeria', 
+    serviceProvider: 'MusicLab', 
+    completedJobs: '120', 
+    isLiked: false, 
+    isBookmarked: false 
+  },
+  { 
+    id: 'video4', 
+    title: 'Video Editing Service', 
+    description: 'Professional video editing for your content', 
+    videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', 
+    thumbnail: getProductImage('Vintage Watch Collection'), 
+    userId: 'user4', 
+    username: 'EditMaster', 
+    userAvatar: getProductImage('EditMaster', 'avatar'), 
+    price: 180.00, 
+    rating: 4.6, 
+    likes: '620', 
+    comments: '43', 
+    shares: '21', 
+    location: 'Lagos, Nigeria', 
+    serviceProvider: 'EditMaster', 
+    completedJobs: '95', 
+    isLiked: false, 
+    isBookmarked: false 
+  },
+  { 
+    id: 'video5', 
+    title: 'Web Development', 
+    description: 'Custom websites and web apps', 
+    videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', 
+    thumbnail: getProductImage('Gaming Laptop'), 
+    userId: 'user5', 
+    username: 'WebDevPro', 
+    userAvatar: getProductImage('WebDevPro', 'avatar'), 
+    price: 500.00, 
+    rating: 4.9, 
+    likes: '1100', 
+    comments: '78', 
+    shares: '38', 
+    location: 'Ibadan, Nigeria', 
+    serviceProvider: 'WebDevPro', 
+    completedJobs: '200', 
+    isLiked: false, 
+    isBookmarked: false 
+  },
 ];
 // ========== END MOCK DATA ==========
 
@@ -499,6 +1065,77 @@ const HomeScreen = () => {
     }
   }, [activeTab, isPlaying, videoFeedData.length, isScreenFocused]);
 
+  // Check which video products are currently in viewport
+  const checkVideoVisibility = useCallback(() => {
+    // Only check visibility if we're on products tab and screen is focused
+    if (activeTab !== 'products' || !isScreenFocused) {
+      setVisibleVideoProducts(new Set());
+      return;
+    }
+
+    const scrollY = currentScrollY.current;
+    const screenHeight = Dimensions.get('window').height;
+    const screenCenter = screenHeight / 2;
+    const visibleThreshold = 0.6; // Increased to 60% for better focus control
+    
+    let mostCenteredVideo: { id: string; distance: number; percentage: number } | null = null;
+    
+    for (const [productId, position] of videoProductPositions.current.entries()) {
+      const { absoluteY, height } = position;
+      
+      // Calculate where the video appears on screen
+      const videoTop = absoluteY - scrollY;
+      const videoBottom = videoTop + height;
+      
+      // Check if video intersects with screen viewport
+      const isTopVisible = videoTop >= 0 && videoTop < screenHeight;
+      const isBottomVisible = videoBottom > 0 && videoBottom <= screenHeight;
+      const coversScreen = videoTop < 0 && videoBottom > screenHeight;
+      
+      if (isTopVisible || isBottomVisible || coversScreen) {
+        // Calculate visible height
+        const visibleTop = Math.max(0, videoTop);
+        const visibleBottom = Math.min(screenHeight, videoBottom);
+        const visibleHeight = visibleBottom - visibleTop;
+        const visiblePercentage = visibleHeight / height;
+        
+        // Only consider videos that meet the visibility threshold
+        if (visiblePercentage >= visibleThreshold) {
+          // Calculate distance from screen center
+          const videoCenter = videoTop + (height / 2);
+          const distanceFromCenter = Math.abs(videoCenter - screenCenter);
+          
+          // Track the most centered video
+          if (!mostCenteredVideo || distanceFromCenter < mostCenteredVideo.distance) {
+            mostCenteredVideo = { 
+              id: productId, 
+              distance: distanceFromCenter,
+              percentage: visiblePercentage 
+            };
+          }
+        }
+      }
+    }
+    
+    // Create a set with only the most centered video (if any)
+    const newVisibleVideos = new Set<string>();
+    if (mostCenteredVideo) {
+      newVisibleVideos.add(mostCenteredVideo.id);
+    }
+    
+    // Only update if there's a change to avoid unnecessary re-renders
+    setVisibleVideoProducts(prev => {
+      const prevArray = Array.from(prev).sort();
+      const newArray = Array.from(newVisibleVideos).sort();
+      
+      if (prevArray.length !== newArray.length || 
+          !prevArray.every((val, idx) => val === newArray[idx])) {
+        return newVisibleVideos;
+      }
+      return prev;
+    });
+  }, [activeTab, isScreenFocused]);
+
   // Handle screen focus changes for video playback and cleanup
   useFocusEffect(
     React.useCallback(() => {
@@ -510,11 +1147,13 @@ const HomeScreen = () => {
         setIsPlaying(true);
       }
 
-      // Restore visible video products when screen refocuses (for products tab)
-      if (activeTab === 'products' && products.length > 0) {
-        const videoProducts = products.filter(p => p.media_type === 'video' && p.primary_video_url);
-        const firstTwo = videoProducts.slice(0, 2).map(p => p.id);
-        setVisibleVideoProducts(new Set(firstTwo));
+      // For products tab: clear visible videos initially and let scroll determine visibility
+      if (activeTab === 'products') {
+        setVisibleVideoProducts(new Set());
+        // Check visibility after a short delay to allow layout to settle
+        setTimeout(() => {
+          checkVideoVisibility();
+        }, 100);
       }
 
       return () => {
@@ -533,7 +1172,7 @@ const HomeScreen = () => {
           servicesUITimer.current = null;
         }
       };
-    }, [activeTab, products]) // Added products to dependencies
+    }, [activeTab, products, checkVideoVisibility]) // Added checkVideoVisibility dependency
   );
 
   // Countdown timer effect - ONLY runs when screen is focused
@@ -927,11 +1566,19 @@ const HomeScreen = () => {
   }, [upcomingAuctions, selectedCategory]);
 
   const handleTabPress = (tab: 'products' | 'services') => {
+    // Add haptic feedback for tab switch
+    if (Platform.OS === 'ios') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     const targetPage = tab === 'products' ? 0 : 1;
     mainPagerRef.current?.setPage(targetPage);
   };
 
   const toggleSidebar = () => {
+    // Add haptic feedback for sidebar toggle
+    if (Platform.OS === 'ios') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     const toValue = isSidebarVisible ? -screenWidth * 0.75 : 0;
     setSidebarVisible(!isSidebarVisible);
     Animated.timing(sidebarTranslateX, { toValue, duration: 300, useNativeDriver: true }).start();
@@ -1016,6 +1663,10 @@ const HomeScreen = () => {
   // Handler for add to cart button press
   const handleCartPress = useCallback(async (productId: string) => {
     try {
+      // Add haptic feedback
+      if (Platform.OS === 'ios') {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
       await addToCart(productId, 1);
     } catch (error) {
       console.error('Error adding to cart:', error);
@@ -1025,6 +1676,10 @@ const HomeScreen = () => {
   // Handler for bargain/negotiation button press
   const handleBargainPress = useCallback(async (productId: string) => {
     try {
+      // Add haptic feedback for bargain action
+      if (Platform.OS === 'ios') {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
 
       // Find the product in our products list
       const product = products.find(p => p.id === productId);
@@ -1962,6 +2617,11 @@ const HomeScreen = () => {
       );
     }
 
+    // Show loading skeleton while loading
+    if (loading) {
+      return renderLoadingSkeleton();
+    }
+
     return (
       <View style={{ flex: 1 }}>
         {/* Error Banner */}
@@ -2072,15 +2732,31 @@ const HomeScreen = () => {
             mixedContent.map((item, index) => {
               switch (item.type) {
                 case 'hero':
-                  return renderPeriodicHero(item.data, index);
+                  return (
+                    <View key={`hero-${index}`}>
+                      {renderPeriodicHero(item.data, index)}
+                    </View>
+                  );
                 case 'section':
                   // Render curated sections as horizontal strips
-                  return renderHorizontalProductSection(item.data.title, item.data.subtitle, item.data.products);
+                  return (
+                    <View key={`section-${item.data.title}-${index}`}>
+                      {renderHorizontalProductSection(item.data.title, item.data.subtitle, item.data.products)}
+                    </View>
+                  );
                 case 'banner':
-                  return renderPeriodicBanner(item.data.title, item.data.subtitle, index);
+                  return (
+                    <View key={`banner-${item.data.title}-${index}`}>
+                      {renderPeriodicBanner(item.data.title, item.data.subtitle, index)}
+                    </View>
+                  );
                 case 'for-you':
                   // For You section with mixed content (products, videos, auctions, live sales)
-                  return renderForYouSection(item.data.title, item.data.subtitle, item.data.items, index);
+                  return (
+                    <View key={`for-you-${index}`}>
+                      {renderForYouSection(item.data.title, item.data.subtitle, item.data.items, index)}
+                    </View>
+                  );
                 default:
                   return null;
               }
@@ -2090,8 +2766,8 @@ const HomeScreen = () => {
             <>
               <View style={{ paddingHorizontal: 16, marginBottom: 16, marginTop: 8 }}>
                 <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#FFFFFF', marginBottom: 2 }}>
-                  {categories.find(c => c.id === selectedCategory)?.name ||
-                    selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1)} Products
+                  {(categories.find(c => c.id === selectedCategory)?.name ||
+                    selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1)) + ' Products'}
                 </Text>
                 <Text style={{ fontSize: 13, color: '#888', marginBottom: 2 }}>
                   {filteredProducts.length} products found
@@ -2533,82 +3209,152 @@ const HomeScreen = () => {
     );
   };
 
-  // Check which video products are currently in viewport
-  const checkVideoVisibility = useCallback(() => {
-    const scrollY = currentScrollY.current;
-    const screenHeight = Dimensions.get('window').height;
-    const screenCenter = screenHeight / 2;
-    const visibleThreshold = 0.5; // Video must be 50% visible to be considered
-    
-    let mostCenteredVideo: { id: string; distance: number; percentage: number } | null = null;
-    
-    videoProductPositions.current.forEach((position, productId) => {
-      const { absoluteY, height } = position;
-      
-      // Calculate where the video appears on screen
-      const videoTop = absoluteY - scrollY;
-      const videoBottom = videoTop + height;
-      
-      // Check if video intersects with screen viewport
-      const isTopVisible = videoTop >= 0 && videoTop < screenHeight;
-      const isBottomVisible = videoBottom > 0 && videoBottom <= screenHeight;
-      const coversScreen = videoTop < 0 && videoBottom > screenHeight;
-      
-      if (isTopVisible || isBottomVisible || coversScreen) {
-        // Calculate visible height
-        const visibleTop = Math.max(0, videoTop);
-        const visibleBottom = Math.min(screenHeight, videoBottom);
-        const visibleHeight = visibleBottom - visibleTop;
-        const visiblePercentage = visibleHeight / height;
-        
-        // Only consider videos that meet the visibility threshold
-        if (visiblePercentage >= visibleThreshold) {
-          // Calculate distance from screen center
-          const videoCenter = videoTop + (height / 2);
-          const distanceFromCenter = Math.abs(videoCenter - screenCenter);
-          
-          console.log(`🎬 Video ${productId}: visible=${(visiblePercentage * 100).toFixed(0)}%, distanceFromCenter=${distanceFromCenter.toFixed(0)}px`);
-          
-          // Track the most centered video
-          if (!mostCenteredVideo || distanceFromCenter < mostCenteredVideo.distance) {
-            mostCenteredVideo = { 
-              id: productId, 
-              distance: distanceFromCenter,
-              percentage: visiblePercentage 
-            };
-          }
-        }
-      }
-    });
-    
-    // Create a set with only the most centered video (if any)
-    const newVisibleVideos = new Set<string>();
-    if (mostCenteredVideo) {
-      newVisibleVideos.add(mostCenteredVideo.id);
-    }
-    
-    // Only update if there's a change to avoid unnecessary re-renders
-    setVisibleVideoProducts(prev => {
-      const prevArray = Array.from(prev).sort();
-      const newArray = Array.from(newVisibleVideos).sort();
-      
-      if (prevArray.length !== newArray.length || 
-          !prevArray.every((val, idx) => val === newArray[idx])) {
-        console.log('✅ Playing most centered video:', newArray[0] || 'none', 
-                    mostCenteredVideo ? `(${(mostCenteredVideo.percentage * 100).toFixed(0)}% visible, ${mostCenteredVideo.distance.toFixed(0)}px from center)` : '');
-        return newVisibleVideos;
-      }
-      return prev;
-    });
-  }, []);
-
   // Handle scroll events to update video visibility
   const handleForYouScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     currentScrollY.current = event.nativeEvent.contentOffset.y;
-    checkVideoVisibility();
-  }, [checkVideoVisibility]);
+    // Only check visibility if on products tab and screen is focused
+    if (activeTab === 'products' && isScreenFocused) {
+      checkVideoVisibility();
+    }
+  }, [checkVideoVisibility, activeTab, isScreenFocused]);
 
-  // Render video product card (full width) with lazy loading
+  // Loading skeleton component
+  const renderLoadingSkeleton = () => (
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
+      {/* Header skeleton */}
+      <View style={{ 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        paddingHorizontal: 12,
+        paddingVertical: 16,
+        backgroundColor: '#000'
+      }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ 
+            width: 24, 
+            height: 24, 
+            backgroundColor: '#333', 
+            borderRadius: 12, 
+            marginRight: 12 
+          }} />
+          <View style={{ 
+            width: 90, 
+            height: 22, 
+            backgroundColor: '#333', 
+            borderRadius: 4 
+          }} />
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ 
+            width: 80, 
+            height: 16, 
+            backgroundColor: '#333', 
+            borderRadius: 8 
+          }} />
+          <View style={{ 
+            width: 32, 
+            height: 32, 
+            backgroundColor: '#333', 
+            borderRadius: 16 
+          }} />
+        </View>
+      </View>
+      
+      {/* Category chips skeleton */}
+      <View style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {[1, 2, 3, 4, 5].map((index) => (
+            <View
+              key={index}
+              style={{
+                backgroundColor: '#1a1a1a',
+                paddingHorizontal: 16,
+                paddingVertical: 8,
+                borderRadius: 16,
+                marginRight: 8,
+                width: 80,
+                height: 32,
+              }}
+            />
+          ))}
+        </ScrollView>
+      </View>
+      
+      {/* Product cards skeleton */}
+      <View style={{ paddingHorizontal: 12, marginTop: 16 }}>
+        <View style={{ marginBottom: 20 }}>
+          <View style={{ 
+            width: 150, 
+            height: 24, 
+            backgroundColor: '#333', 
+            borderRadius: 4, 
+            marginBottom: 12 
+          }} />
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            {[1, 2].map((index) => (
+              <View key={index} style={{ flex: 1 }}>
+                <View style={{ 
+                  width: '100%', 
+                  height: 200, 
+                  backgroundColor: '#1a1a1a', 
+                  borderRadius: 12, 
+                  marginBottom: 12 
+                }} />
+                <View style={{ 
+                  width: '80%', 
+                  height: 16, 
+                  backgroundColor: '#333', 
+                  borderRadius: 4, 
+                  marginBottom: 8 
+                }} />
+                <View style={{ 
+                  width: '60%', 
+                  height: 14, 
+                  backgroundColor: '#333', 
+                  borderRadius: 4, 
+                  marginBottom: 8 
+                }} />
+                <View style={{ 
+                  width: 100, 
+                  height: 20, 
+                  backgroundColor: '#333', 
+                  borderRadius: 4 
+                }} />
+              </View>
+            ))}
+          </View>
+        </View>
+        
+        {/* More sections */}
+        {[1, 2, 3].map((sectionIndex) => (
+          <View key={sectionIndex} style={{ marginBottom: 20 }}>
+            <View style={{ 
+              width: 120, 
+              height: 20, 
+              backgroundColor: '#333', 
+              borderRadius: 4, 
+              marginBottom: 12 
+            }} />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {[1, 2, 3, 4].map((index) => (
+                <View
+                  key={index}
+                  style={{
+                    width: screenWidth * 0.45,
+                    height: 220,
+                    backgroundColor: '#1a1a1a',
+                    borderRadius: 12,
+                    marginRight: 12,
+                  }}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
   const renderVideoProductCard = useCallback((item: Product) => {
     // Check if this video is in viewport (visible)
     const isInViewport = visibleVideoProducts.has(item.id);
@@ -2844,8 +3590,8 @@ const HomeScreen = () => {
 
   // Auto-hide UI for services tab
   const startServicesUIHideTimer = () => {
-    if (servicesUITimer.current) clearTimeout(servicesUITimer.current);
-    servicesUITimer.current = setTimeout(() => hideServicesUI(), 3000); // Industry standard 3 seconds
+    if (servicesUITimer.current) clearTimeout(servicesUITimer.current as any);
+    servicesUITimer.current = setTimeout(() => hideServicesUI(), 3000) as any; // Industry standard 3 seconds
   };
 
   const showServicesUI = () => {
@@ -3581,11 +4327,16 @@ const HomeScreen = () => {
               setCurrentVideoIndex(0);
               setFocusedVideoId(videoFeedData[0]?.id);
             } else {
+              // Switching to products - stop services playback and clear for products
               setIsPlaying(false);
-              // Re-initialize visible video products (first 2)
-              const videoProducts = products.filter(p => p.media_type === 'video' && p.primary_video_url);
-              const firstTwo = videoProducts.slice(0, 2).map(p => p.id);
-              setVisibleVideoProducts(new Set(firstTwo));
+              // Clear visible videos and let scroll determine which one to play
+              setVisibleVideoProducts(new Set());
+              // Check visibility after a short delay to allow layout to settle
+              setTimeout(() => {
+                if (isScreenFocused) {
+                  checkVideoVisibility();
+                }
+              }, 100);
             }
           }
         }}

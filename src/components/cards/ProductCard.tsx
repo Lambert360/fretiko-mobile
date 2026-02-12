@@ -253,8 +253,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                   onCartPress(product);
                 }}
               >
-                <Ionicons name="cart-outline" size={16} color="#FFFFFF" />
-                <Text style={styles.cartButtonText}>Add to Cart</Text>
+                <Ionicons name="cart-outline" size={18} color="#FFFFFF" />
               </TouchableOpacity>
             )}
 
@@ -505,20 +504,20 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   cartButton: {
-    flex: 1,
-    flexDirection: 'row',
+    backgroundColor: '#4CAF50',
+    width: 48,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#4CAF50',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-  },
-  cartButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
+    borderRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
   bargainButton: {
     flex: 1,
@@ -530,6 +529,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
   bargainButtonText: {
     color: '#FFFFFF',

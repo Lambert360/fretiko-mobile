@@ -141,13 +141,13 @@ const ProductCard: React.FC<ProductCardProps> = ({
           {/* Action Buttons - Better Spacing */}
           <View style={styles.buttonContainer}>
             <TouchableOpacity 
-              style={styles.actionButton} 
+              style={styles.cartButton} 
               onPress={(e) => {
                 e.stopPropagation();
                 onCartPress?.();
               }}
             >
-              <Ionicons name="cart-outline" size={16} color="white" />
+              <Ionicons name="cart-outline" size={18} color="white" />
             </TouchableOpacity>
             
             <TouchableOpacity 
@@ -157,7 +157,8 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 onBargainPress?.();
               }}
             >
-              <Ionicons name="chatbubble-ellipses-outline" size={16} color="white" />
+              <Ionicons name="chatbubble-ellipses-outline" size={14} color="white" />
+              <Text style={styles.bargainButtonText}>Bargain</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -312,23 +313,48 @@ const styles = StyleSheet.create({
   buttonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 10, // Increased gap between buttons
+    gap: 8, // Gap between buttons
   },
-  actionButton: {
+  cartButton: {
     backgroundColor: '#3498DB',
-    flex: 1,
+    width: 48, // Fixed width for icon-only button
+    height: 48, // Square button
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12, // Increased button height
-    borderRadius: 20,
+    borderRadius: 24, // Circular button
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
   bargainButton: {
     backgroundColor: '#E67E22',
     flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12, // Increased button height
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 20,
+    gap: 6, // Gap between icon and text
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  bargainButtonText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
 });
 

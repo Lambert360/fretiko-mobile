@@ -340,13 +340,61 @@ export const auctionsAPI = {
         throw new Error('Authentication required');
       }
 
-      const response = await api.post('/auctions', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          Authorization: `Bearer ${token}`,
-        },
+      // For React Native video uploads, use a different approach
+      const files = formData.getAll('files');
+      console.log('🔍 Debug - All files in FormData:', files.map((f: any) => ({ name: f.name, type: f.type })));
+      console.log('🔍 Debug - FormData files raw:', files);
+      
+      const hasVideoFiles = files.some((file: any) => {
+        console.log('🔍 Checking file:', file);
+        const isVideo = file.name && file.name.includes('video') && file.type && file.type.startsWith('video');
+        console.log('🔍 Is video?', isVideo, 'name:', file.name, 'type:', file.type);
+        return isVideo;
       });
-      return response.data;
+
+      console.log('🔍 Debug - hasVideoFiles:', hasVideoFiles);
+      console.log('🔍 Debug - files.length:', files.length);
+
+      if (hasVideoFiles) {
+        console.log('🎥 Video files detected, using XMLHttpRequest for Android compatibility');
+        console.log('🎥 Video files:', files.filter((f: any) => f.name.includes('video')));
+        
+        // Use XMLHttpRequest for video files to avoid Android FormData issues
+        return new Promise<Auction>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `${API_URL}/auctions`);
+          xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+          
+          xhr.onload = () => {
+            if (xhr.status === 201) {
+              try {
+                const response = JSON.parse(xhr.responseText);
+                resolve(response);
+              } catch (error) {
+                reject(new Error('Invalid response format'));
+              }
+            } else {
+              reject(new Error(`HTTP error! status: ${xhr.status}, message: ${xhr.responseText}`));
+            }
+          };
+          
+          xhr.onerror = () => {
+            reject(new Error('Network error during upload'));
+          };
+          
+          xhr.send(formData);
+        });
+      } else {
+        console.log('📸 No video files detected, using axios');
+        // Use axios for image-only uploads
+        const response = await api.post('/auctions', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        return response.data;
+      }
     } catch (error) {
       console.error('Error creating auction with images:', error);
       throw error;
@@ -701,6 +749,29 @@ export const auctionsAPI = {
   },
 
   /**
+   * Track auction view (increment viewer count)
+   */
+  async trackAuctionView(auctionId: string): Promise<void> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        console.log('No token for view tracking, skipping...');
+        return;
+      }
+      console.log('📊 Tracking auction view:', auctionId);
+      await api.post(`/auctions/${auctionId}/view`, {}, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      console.log('✅ Auction view tracked successfully');
+    } catch (error: any) {
+      console.error('Error tracking auction view:', error);
+      // Don't throw error for view tracking failures
+    }
+  },
+
+  /**
    * Start countdown for auction item (3-2-1 countdown)
    */
   async startItemCountdown(auctionId: string, itemId: string): Promise<void> {
@@ -843,6 +914,7 @@ export const auctionsAPI = {
 
       // Add images as files under single 'files' field for React Native compatibility
       if (imageUris && imageUris.length > 0) {
+        console.log('📸 Adding images to FormData:', imageUris.length, 'images');
         for (let i = 0; i < imageUris.length; i++) {
           const uri = imageUris[i];
           const filename = `image-${i}.jpg`;
@@ -854,12 +926,33 @@ export const auctionsAPI = {
             name: filename,
           };
           
+          console.log(`📁 Adding file ${i} to FormData:`, { uri: file.uri, name: file.name, type: file.type });
           formData.append('files', file as any);
         }
+      } else {
+        console.log('📸 No images to add to FormData');
+      }
+
+      // Debug: Log FormData contents (this won't show files but will show text fields)
+      console.log('📦 FormData text fields:');
+      try {
+        // FormData doesn't have a direct way to inspect contents in React Native
+        // We'll log what we can from our construction
+        console.log('  title:', itemData.title);
+        console.log('  starting_price:', itemData.starting_price);
+        if (itemData.description) console.log('  description:', itemData.description);
+        if (itemData.lot_number) console.log('  lot_number:', itemData.lot_number);
+        if (itemData.reserve_price) console.log('  reserve_price:', itemData.reserve_price);
+        if (itemData.bid_increment) console.log('  bid_increment:', itemData.bid_increment);
+        if (itemData.bidding_duration) console.log('  bidding_duration:', itemData.bidding_duration);
+        console.log('  files:', imageUris?.length || 0, 'files attached');
+      } catch (error) {
+        console.log('  (Could not log FormData details)');
       }
 
       const response = await api.post(`/auctions/${auctionId}/items`, formData, {
         headers: {
+          'Content-Type': 'multipart/form-data',
           Authorization: `Bearer ${token}`,
         },
       });
@@ -934,15 +1027,44 @@ class AuctionSocketManager {
   private socket: Socket | null = null;
   private listeners: Map<string, Set<Function>> = new Map();
   private currentAuctionId: string | null = null;
+  private connectionPromise: Promise<void> | null = null;
+  private connectedClients: Set<string> = new Set(); // Track connected clients
 
   /**
    * Connect to auction WebSocket
    */
-  async connect(): Promise<void> {
+  async connect(clientId?: string): Promise<void> {
+    // Add client to tracking
+    if (clientId) {
+      this.connectedClients.add(clientId);
+    }
+
+    // If already connecting, return the existing promise
+    if (this.connectionPromise) {
+      console.log('WebSocket connection already in progress...');
+      return this.connectionPromise;
+    }
+
+    // If already connected, just return
     if (this.socket?.connected) {
       console.log('Already connected to auction WebSocket');
       return;
     }
+
+    // Create connection promise
+    this.connectionPromise = this._performConnection();
+
+    try {
+      await this.connectionPromise;
+    } finally {
+      this.connectionPromise = null;
+    }
+  }
+
+  /**
+   * Perform the actual WebSocket connection
+   */
+  private async _performConnection(): Promise<void> {
 
     try {
       const token = await SecureStore.getItemAsync('accessToken');
@@ -959,10 +1081,17 @@ class AuctionSocketManager {
 
       this.socket.on('connect', () => {
         console.log('✅ Connected to auction WebSocket');
+        // Request current viewer count for all joined auctions on reconnect
+        this.requestViewerCounts();
       });
 
       this.socket.on('disconnect', () => {
         console.log('❌ Disconnected from auction WebSocket');
+      });
+
+      this.socket.on('reconnect', () => {
+        console.log('🔄 Reconnected to auction WebSocket - requesting viewer counts');
+        this.requestViewerCounts();
       });
 
       this.socket.on('connect_error', (error: any) => {
@@ -1062,6 +1191,18 @@ class AuctionSocketManager {
       this.emit('view_count_updated', data);
     });
 
+    // Stream URL updates (when host starts/stops broadcasting)
+    this.socket.on('stream_url_updated', (data: any) => {
+      console.log('📺 Stream URL updated:', data);
+      this.emit('stream_url_updated', data);
+    });
+
+    // Broadcast started event (when host goes live)
+    this.socket.on('broadcast_started', (data: any) => {
+      console.log('🎥 Broadcast started:', data);
+      this.emit('broadcast_started', data);
+    });
+
     // User notifications
     this.socket.on('user_notification', (data: any) => {
       console.log('User notification:', data);
@@ -1077,10 +1218,12 @@ class AuctionSocketManager {
 
     // Viewer events
     this.socket.on('viewer_joined', (data: any) => {
+      console.log('👥 Viewer joined event received:', data);
       this.emit('viewer_joined', data);
     });
 
     this.socket.on('viewer_left', (data: any) => {
+      console.log('👋 Viewer left event received:', data);
       this.emit('viewer_left', data);
     });
 
@@ -1088,6 +1231,12 @@ class AuctionSocketManager {
     this.socket.on('item_event', (data: any) => {
       console.log('Auction item event:', data);
       this.emit('item_event', data);
+    });
+
+    // Reaction events
+    this.socket.on('new_reaction', (data: any) => {
+      console.log('New reaction received:', data);
+      this.emit('new_reaction', data);
     });
 
     // Auction won events
@@ -1101,16 +1250,20 @@ class AuctionSocketManager {
    * Join an auction room
    */
   async joinAuction(auctionId: string, userId?: string): Promise<void> {
+    console.log('🚪 Joining auction:', auctionId, 'user:', userId);
     if (!this.socket?.connected) {
+      console.log('🔌 Socket not connected, connecting first...');
       await this.connect();
     }
 
     this.currentAuctionId = auctionId;
 
+    console.log('📤 Emitting join_auction event:', { auction_id: auctionId, user_id: userId });
     this.socket?.emit('join_auction', {
       auction_id: auctionId,
       user_id: userId,
     });
+    console.log('✅ join_auction event sent');
   }
 
   /**
@@ -1121,13 +1274,17 @@ class AuctionSocketManager {
 
     if (!targetAuctionId) return;
 
+    console.log('🚪 Leaving auction:', targetAuctionId);
+
     if (this.currentAuctionId === targetAuctionId) {
       this.currentAuctionId = null;
     }
 
+    console.log('📤 Emitting leave_auction event:', { auction_id: targetAuctionId });
     this.socket?.emit('leave_auction', {
       auction_id: targetAuctionId,
     });
+    console.log('✅ leave_auction event sent');
   }
 
   /**
@@ -1222,14 +1379,33 @@ class AuctionSocketManager {
   /**
    * Disconnect from WebSocket
    */
-  disconnect(): void {
-    if (this.currentAuctionId) {
-      this.leaveAuction(this.currentAuctionId);
+  disconnect(clientId?: string): void {
+    // Remove client from tracking
+    if (clientId) {
+      this.connectedClients.delete(clientId);
     }
-    this.socket?.disconnect();
-    this.socket = null;
-    this.listeners.clear();
-    console.log('Disconnected from auction WebSocket');
+
+    // Only disconnect if no more clients are connected
+    if (this.connectedClients.size === 0) {
+      if (this.currentAuctionId) {
+        this.leaveAuction(this.currentAuctionId);
+      }
+      this.socket?.disconnect();
+      this.socket = null;
+      this.listeners.clear();
+      this.connectionPromise = null;
+      console.log('Disconnected from auction WebSocket - no more active clients');
+    } else {
+      console.log(`WebSocket kept alive - ${this.connectedClients.size} clients still connected`);
+    }
+  }
+
+  /**
+   * Force disconnect regardless of client count
+   */
+  forceDisconnect(): void {
+    this.connectedClients.clear();
+    this.disconnect();
   }
 
   /**
@@ -1244,6 +1420,17 @@ class AuctionSocketManager {
    */
   getCurrentAuctionId(): string | null {
     return this.currentAuctionId;
+  }
+
+  /**
+   * Request current viewer counts for all joined auctions
+   * Called on reconnect to refresh viewer counts
+   */
+  requestViewerCounts(): void {
+    if (this.currentAuctionId && this.socket?.connected) {
+      console.log('📊 Requesting viewer count for auction:', this.currentAuctionId);
+      this.socket.emit('get_viewer_count', { auction_id: this.currentAuctionId });
+    }
   }
 }
 

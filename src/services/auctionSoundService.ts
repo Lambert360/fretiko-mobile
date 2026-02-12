@@ -36,33 +36,49 @@ export const useAuctionSounds = () => {
     winner2?: string;
   }>({});
 
-  // Load assets on mount
+  // Load assets on mount - use lazy loading for better performance
   React.useEffect(() => {
     const loadAssets = async () => {
       try {
-        const assets = await Asset.loadAsync([
-          CHEER_SOUND_MODULE,
-          CLAPPING_SOUND_MODULE,
-          LAUGH_SOUND_MODULE,
+        // Load essential sounds first (timer, gavel, winner)
+        const essentialAssets = await Asset.loadAsync([
           TIMER_SOUND_MODULE,
           GAVEL_SOUND_MODULE,
-          CROWD_SOUND_MODULE,
           WINNER1_SOUND_MODULE,
           WINNER2_SOUND_MODULE,
         ]);
 
         setSoundUris({
-          cheer: assets[0]?.localUri || assets[0]?.uri,
-          clap: assets[1]?.localUri || assets[1]?.uri,
-          laugh: assets[2]?.localUri || assets[2]?.uri,
-          timer: assets[3]?.localUri || assets[3]?.uri,
-          gavel: assets[4]?.localUri || assets[4]?.uri,
-          crowd: assets[5]?.localUri || assets[5]?.uri,
-          winner1: assets[6]?.localUri || assets[6]?.uri,
-          winner2: assets[7]?.localUri || assets[7]?.uri,
+          timer: essentialAssets[0]?.localUri || essentialAssets[0]?.uri,
+          gavel: essentialAssets[1]?.localUri || essentialAssets[1]?.uri,
+          winner1: essentialAssets[2]?.localUri || essentialAssets[2]?.uri,
+          winner2: essentialAssets[3]?.localUri || essentialAssets[3]?.uri,
         });
+
+        // Load non-essential sounds in background
+        setTimeout(async () => {
+          try {
+            const nonEssentialAssets = await Asset.loadAsync([
+              CHEER_SOUND_MODULE,
+              CLAPPING_SOUND_MODULE,
+              LAUGH_SOUND_MODULE,
+              CROWD_SOUND_MODULE,
+            ]);
+
+            setSoundUris(prev => ({
+              ...prev,
+              cheer: nonEssentialAssets[0]?.localUri || nonEssentialAssets[0]?.uri,
+              clap: nonEssentialAssets[1]?.localUri || nonEssentialAssets[1]?.uri,
+              laugh: nonEssentialAssets[2]?.localUri || nonEssentialAssets[2]?.uri,
+              crowd: nonEssentialAssets[3]?.localUri || nonEssentialAssets[3]?.uri,
+            }));
+          } catch (error) {
+            console.warn('Error loading non-essential sound assets:', error);
+          }
+        }, 1000); // Load after 1 second delay
+
       } catch (error) {
-        console.error('Error loading sound assets:', error);
+        console.error('Error loading essential sound assets:', error);
       }
     };
 
@@ -115,7 +131,7 @@ export const useAuctionSounds = () => {
     winner2Player.volume = 0.8;
     winner2Player.loop = false;
 
-    // Use polling to check for completion since statusChange events aren't reliable
+    // Use polling to check for completion but with reduced frequency
     const checkInterval = setInterval(() => {
       // Check timer
       if (timerPlayer.playing === false && timerWasPlayingRef.current && timerCompleteCallbackRef.current) {
@@ -160,7 +176,7 @@ export const useAuctionSounds = () => {
       } else if (winner2Player.playing) {
         winnerWasPlayingRef.current = true;
       }
-    }, 100); // Check every 100ms
+    }, 250); // Reduced from 100ms to 250ms (4 times per second instead of 10)
 
     return () => {
       console.log('🔇 Clearing auction sound polling');
@@ -173,6 +189,12 @@ export const useAuctionSounds = () => {
    */
   const playCheer = async () => {
     try {
+      // Check if player is ready and has valid URI
+      if (!cheerPlayer || !soundUris.cheer) {
+        console.warn('Cheer sound not loaded yet');
+        return;
+      }
+      
       // Always seek to start and play to ensure sound can be replayed
       cheerPlayer.seekTo(0);
       cheerPlayer.play();
@@ -186,6 +208,12 @@ export const useAuctionSounds = () => {
    */
   const playClap = async () => {
     try {
+      // Check if player is ready and has valid URI
+      if (!clapPlayer || !soundUris.clap) {
+        console.warn('Clap sound not loaded yet');
+        return;
+      }
+      
       // Always seek to start and play to ensure sound can be replayed
       clapPlayer.seekTo(0);
       clapPlayer.play();
@@ -199,6 +227,12 @@ export const useAuctionSounds = () => {
    */
   const playLaugh = async () => {
     try {
+      // Check if player is ready and has valid URI
+      if (!laughPlayer || !soundUris.laugh) {
+        console.warn('Laugh sound not loaded yet');
+        return;
+      }
+      
       // Always seek to start and play to ensure sound can be replayed
       laughPlayer.seekTo(0);
       laughPlayer.play();
@@ -295,6 +329,14 @@ export const useAuctionSounds = () => {
     try {
       const useWinner2 = finalBidAmount > 100;
       const player = useWinner2 ? winner2Player : winner1Player;
+      const soundName = useWinner2 ? 'winner2' : 'winner1';
+
+      // Check if sound is loaded
+      if (!soundUris[soundName]) {
+        console.warn(`Winner sound ${soundName} not loaded yet`);
+        if (onComplete) onComplete();
+        return;
+      }
 
       if (winnerCompleteCallbackRef.current) {
         winnerCompleteCallbackRef.current = null;
@@ -303,10 +345,21 @@ export const useAuctionSounds = () => {
         winnerCompleteCallbackRef.current = onComplete;
       }
 
-      if (player.playing) {
-        player.seekTo(0);
-      } else {
-        player.play();
+      // Add safety check for player state
+      try {
+        if (player && typeof player.seekTo === 'function' && typeof player.play === 'function') {
+          if (player.playing) {
+            player.seekTo(0);
+          } else {
+            player.play();
+          }
+        } else {
+          console.warn(`Winner player ${soundName} is not properly initialized`);
+          if (onComplete) onComplete();
+        }
+      } catch (playerError) {
+        console.error(`Error with winner player ${soundName}:`, playerError);
+        if (onComplete) onComplete();
       }
     } catch (error) {
       console.error('Error playing winner sound:', error);

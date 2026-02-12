@@ -441,7 +441,7 @@ const LiveStreamViewerScreen = () => {
 
     // Register event listeners EARLY, before async setupSocket completes
     // This ensures listeners are ready when events arrive
-    liveStreamSocket.on('viewer_count_update', handleViewerCountUpdate);
+    liveStreamSocket.on('view_count_updated', handleViewerCountUpdate);
     liveStreamSocket.on('highlight_item', highlightItemHandler);
 
     const setupSocket = async () => {
@@ -485,7 +485,7 @@ const LiveStreamViewerScreen = () => {
     return () => {
       console.log('🧹 Cleaning up viewer screen socket listeners');
       // Remove specific listeners using stored references
-      liveStreamSocket.off('viewer_count_update', handleViewerCountUpdate);
+      liveStreamSocket.off('view_count_updated', handleViewerCountUpdate);
       liveStreamSocket.off('highlight_item', highlightItemHandler);
       liveStreamSocket.off('comment', handleNewComment);
       liveStreamSocket.off('new_reaction', handleNewReaction);

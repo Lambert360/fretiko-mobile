@@ -125,6 +125,7 @@ const LiveAuctionDetailsScreen = () => {
   const timeUpdateInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const imageViewerFlatListRef = useRef<FlatList>(null);
   const auctionRef = useRef<AuctionWithDetails | null>(null);
+  const streamCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load bid history
   const loadBidHistory = async () => {
@@ -385,8 +386,13 @@ const LiveAuctionDetailsScreen = () => {
     loadAuctionData();
 
     // Connect to WebSocket for real-time updates
-    auctionSocket.connect();
+    auctionSocket.connect('details-screen');
     auctionSocket.joinAuction(auctionId, user?.id);
+
+    // Track auction view for viewer count
+    auctionsAPI.trackAuctionView(auctionId).catch(error => {
+      console.error('Error tracking auction view:', error);
+    });
 
     // Listen for real-time bid updates
     const handleNewBid = (data: any) => {
@@ -418,14 +424,14 @@ const LiveAuctionDetailsScreen = () => {
       }
     };
 
-    // Listen for stream URL updates (when host starts broadcasting)
+    // Listen for stream URL updates (when host starts/stops broadcasting)
     const handleStreamUrlUpdate = (data: any) => {
-      if (data.auction_id === auctionId && data.stream_url) {
+      if (data.auction_id === auctionId) {
         console.log('📺 Stream URL update received:', data.stream_url);
         setAuction(prev => {
           const updated = prev ? {
             ...prev,
-            stream_url: data.stream_url,
+            stream_url: data.stream_url, // Handle both start (string) and stop (null)
           } : null;
           auctionRef.current = updated;
           return updated;
@@ -481,31 +487,46 @@ const LiveAuctionDetailsScreen = () => {
     auctionSocket.on('auction_status_changed', handleAuctionStatusChanged);
     auctionSocket.on('auction_extended', handleAuctionExtended);
     auctionSocket.on('watch_count_updated', handleWatchCountUpdate);
-    auctionSocket.on('view_count_updated', handleViewCountUpdate);
+    auctionSocket.on('view_count_updated', handleViewCountUpdate); // Fixed event name
     auctionSocket.on('stream_url_updated', handleStreamUrlUpdate);
     auctionSocket.on('broadcast_started', handleBroadcastStarted);
 
     // Poll for stream_url updates (fallback if WebSocket doesn't send it)
-    // Poll more frequently when auction is active but not broadcasting yet
-    const streamCheckInterval = setInterval(() => {
-      // Only poll if auction is active and we don't have stream_url yet
-      const currentAuction = auctionRef.current;
-      if (currentAuction?.time_status === 'active' && !currentAuction?.stream_url) {
-        console.log('🔄 Polling for stream_url update...');
-        loadAuctionData();
-      }
-    }, 2000); // Check every 2 seconds when waiting for stream
+    // Poll less frequently and stop when stream_url is available or auction is not active
+
+    // Start polling if needed
+    if (auction?.time_status === 'active' && !auction?.stream_url && !streamCheckIntervalRef.current) {
+      console.log('🔄 Starting stream_url polling...');
+      streamCheckIntervalRef.current = setInterval(() => {
+        const currentAuction = auctionRef.current;
+        if (currentAuction?.time_status === 'active' && !currentAuction?.stream_url) {
+          console.log('🔄 Polling for stream_url update...');
+          loadAuctionData();
+        } else {
+          // Stop polling if we have stream_url or auction is not active
+          console.log('✅ Stopping stream_url polling - stream available or auction not active');
+          if (streamCheckIntervalRef.current) {
+            clearInterval(streamCheckIntervalRef.current);
+            streamCheckIntervalRef.current = null;
+          }
+        }
+      }, 5000); // Poll every 5 seconds
+    }
 
     return () => {
       auctionSocket.off('new_bid', handleNewBid);
       auctionSocket.off('auction_status_changed', handleAuctionStatusChanged);
       auctionSocket.off('auction_extended', handleAuctionExtended);
       auctionSocket.off('watch_count_updated', handleWatchCountUpdate);
-      auctionSocket.off('view_count_updated', handleViewCountUpdate);
+      auctionSocket.off('view_count_updated', handleViewCountUpdate); // Fixed event name
       auctionSocket.off('stream_url_updated', handleStreamUrlUpdate);
       auctionSocket.off('broadcast_started', handleBroadcastStarted);
       auctionSocket.leaveAuction(auctionId);
-      clearInterval(streamCheckInterval);
+      auctionSocket.disconnect('details-screen');
+      if (streamCheckIntervalRef.current) {
+        clearInterval(streamCheckIntervalRef.current);
+        streamCheckIntervalRef.current = null;
+      }
     };
   }, [auctionId]);
 
@@ -667,6 +688,18 @@ const LiveAuctionDetailsScreen = () => {
               title: item.title,
               price: `Starting: ₣${item.starting_price}`
             });
+          });
+        }
+      });
+      
+      // Add additional items' videos
+      auctionItems.forEach(item => {
+        if (item.video_url) {
+          items.push({ 
+            type: 'video', 
+            uri: item.video_url, 
+            title: item.title,
+            price: `Starting: ₣${item.starting_price}`
           });
         }
       });

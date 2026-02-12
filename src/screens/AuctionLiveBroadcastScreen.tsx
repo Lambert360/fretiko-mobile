@@ -87,7 +87,6 @@ const AuctionLiveBroadcastScreen = () => {
     id: string;
     reaction_type: string;
     x: number;
-    y: number;
     scale: Animated.Value;
     opacity: Animated.Value;
     translateY: Animated.Value;
@@ -158,19 +157,22 @@ const AuctionLiveBroadcastScreen = () => {
       translateY: Animated.Value;
       opacity: Animated.Value;
     };
-  }> = ({ notification }) => (
-    <Animated.View style={[
-      styles.bidNotificationBubble,
-      {
-        transform: [{ translateY: notification.translateY }],
-        opacity: notification.opacity,
-      }
-    ]}>
-      <Text style={styles.bidNotificationText}>
-        {notification.bidder_display_id} bids for ₣{notification.amount}
-      </Text>
-    </Animated.View>
-  );
+  }> = ({ notification }) => {
+    console.log('🫧 Rendering bid notification bubble:', notification.id);
+    return (
+      <Animated.View style={[
+        styles.bidNotificationBubble,
+        {
+          transform: [{ translateY: notification.translateY }],
+          opacity: notification.opacity,
+        }
+      ]}>
+        <Text style={styles.bidNotificationText}>
+          {notification.bidder_display_id} bids for ₣{notification.amount}
+        </Text>
+      </Animated.View>
+    );
+  };
 
   // Multi-item auction state
   const [currentItem, setCurrentItem] = useState<AuctionItem | null>(null);
@@ -206,6 +208,19 @@ const AuctionLiveBroadcastScreen = () => {
   const viewCountHandlerRef = useRef<((data: any) => void) | null>(null);
   const itemEventHandlerRef = useRef<((data: any) => void) | null>(null);
   const reactionHandlerRef = useRef<((data: any) => void) | null>(null);
+
+  // Debug: Log reaction animations changes
+  useEffect(() => {
+    console.log('🎨 Host screen rendering reactions:', reactionAnimations.length, 'animations');
+  }, [reactionAnimations]);
+
+  // Debug: Log bid notifications changes
+  useEffect(() => {
+    console.log('📊 Bid notifications state changed:', bidNotifications.length, 'notifications');
+  }, [bidNotifications]);
+
+  // Note: Viewer count for broadcast is managed independently via WebSocket events
+  // Not tied to auction.view_count to ensure accurate live stream counting
 
   // Initialize auction and stream
   useEffect(() => {
@@ -462,6 +477,9 @@ const AuctionLiveBroadcastScreen = () => {
       const auctionData = await auctionsAPI.getAuction(auctionId);
       setAuction(auctionData);
       setTimeRemaining(auctionData.seconds_remaining || 0);
+      
+      // Don't set viewer count from auction data - broadcast starts with 0 viewers
+      console.log('👁️ Broadcast screen loaded - viewer count starts at 0');
 
       // Verify auction is live type and user is seller
       if (auctionData.auction_type !== 'live') {
@@ -505,11 +523,9 @@ const AuctionLiveBroadcastScreen = () => {
       }
 
       // Connect to WebSocket
-      await auctionSocket.connect();
-      await auctionSocket.joinAuction(auctionId, user?.id);
-
-      // Setup WebSocket listeners
+      await auctionSocket.connect('broadcast-screen');
       setupWebSocketListeners();
+      await auctionSocket.joinAuction(auctionId, user?.id);
 
       // Load item queue
       await loadItemQueue();
@@ -567,48 +583,46 @@ const AuctionLiveBroadcastScreen = () => {
         console.log('💰 Bid received - countdown timer stopped');
 
         // NEW: Add bid notification
+        console.log('🎯 Creating bid notification for:', data.bidder_display_id, 'amount:', data.amount);
         const notificationId = Date.now().toString();
         const newNotification = {
           id: notificationId,
           bidder_display_id: data.bidder_display_id || 'Bidder',
           amount: data.amount,
-          translateY: new Animated.Value(100), // Start from bottom
-          opacity: new Animated.Value(0), // Start transparent
+          translateY: new Animated.Value(screenHeight * 0.6), // Start from screen bottom (like reactions)
+          opacity: new Animated.Value(1), // Start VISIBLE (like reactions)
         };
         
-        // Clear existing notification (prevent clutter)
-        setBidNotifications([]);
-        
-        // Add new notification
-        setBidNotifications(prev => [...prev, newNotification]);
-        
-        // Animate: slide up (1.2s) → pause (2s) → fade out (0.8s) = ~5s total
-        Animated.sequence([
-          // Slide up from bottom to center
-          Animated.timing(newNotification.translateY, {
-            toValue: -200, // Move to center
-            duration: 1200,
-            useNativeDriver: true,
-          }),
-          // Pause at center (implicit - no animation for 2s)
-          Animated.delay(2000),
-          // Fade out with slight upward movement
-          Animated.parallel([
-            Animated.timing(newNotification.opacity, {
-              toValue: 0,
-              duration: 800,
-              useNativeDriver: true,
-            }),
-            Animated.timing(newNotification.translateY, {
-              toValue: -250,
-              duration: 800,
-              useNativeDriver: true,
-            }),
-          ]),
-        ]).start(() => {
-          // Remove notification after animation
-          setBidNotifications(prev => prev.filter(n => n.id !== notificationId));
+        console.log('📝 Adding notification to state:', notificationId);
+        // Add new notification (don't clear existing ones immediately)
+        setBidNotifications(prev => {
+          console.log('📊 Current notifications count:', prev.length);
+          return [...prev, newNotification];
         });
+        
+        // Start animation after a small delay to ensure rendering (like reactions)
+        setTimeout(() => {
+          console.log('🎬 Starting bid notification animation:', notificationId);
+          
+          // Simple parallel animation (like reactions)
+          Animated.parallel([
+            Animated.timing(newNotification.translateY, {
+              toValue: (screenHeight * 0.6) - 200, // Move up from bottom (like reactions)
+              duration: 2000,
+              useNativeDriver: true,
+            }),
+            Animated.timing(newNotification.opacity, {
+              toValue: 0, // Fade out (like reactions)
+              duration: 2000,
+              delay: 1000, // Wait 1 second before fading (like reactions)
+              useNativeDriver: true,
+            }),
+          ]).start(() => {
+            console.log('🗑️ Removing bid notification:', notificationId);
+            // Remove notification after animation
+            setBidNotifications(prev => prev.filter(n => n.id !== notificationId));
+          });
+        }, 50);
       }
     };
     bidHandlerRef.current = handleNewBid;
@@ -622,8 +636,31 @@ const AuctionLiveBroadcastScreen = () => {
             winning_bid: data.winning_bid,
             bidder_display_id: data.bidder_display_id,
           });
+          
+          // Show winner modal and play winner sound simultaneously
           setShowWinnerModal(true);
           
+          // Play winner sound when modal shows (synchronized)
+          if (data.new_status === 'sold' && data.winning_bid > 0) {
+            playWinner(data.winning_bid, async () => {
+              console.log('✅ Winner sound completed');
+              
+              // Reset phase after winner sound completes
+              setAuctionPhase('complete');
+              
+              // Reset to idle after a short delay
+              setTimeout(() => {
+                setAuctionPhase('idle');
+              }, 500);
+            });
+          } else {
+            // For ended status without winner, reset phase immediately
+            setAuctionPhase('complete');
+            setTimeout(() => {
+              setAuctionPhase('idle');
+            }, 500);
+          }
+
           // When auction ends, clear current item to show SELECT ITEM and LOAD NEXT buttons
           // Only clear current item for timed auctions or when live stream actually ends
           if (data.new_status === 'ended') {
@@ -632,7 +669,6 @@ const AuctionLiveBroadcastScreen = () => {
             if (auction?.auction_type === 'timed' || data.auction_ended === true) {
               setCurrentItem(null);
               setItemBiddingStatus('waiting');
-              setAuctionPhase('idle');
               console.log('🏁 Auction ended - cleared current item');
             } else {
               console.log('🔄 Live auction item ended - keeping auction alive for next item');
@@ -645,15 +681,23 @@ const AuctionLiveBroadcastScreen = () => {
 
     // Handle viewer count
     const handleViewCountUpdate = (data: any) => {
+      console.log('👁️ Host screen received viewer count update:', data);
       if (data.auction_id === auctionId) {
-        setViewerCount(data.view_count || data.current_viewers || 0);
+        const newCount = data.view_count || data.current_viewers || 0;
+        console.log('👁️ Setting viewer count to:', newCount, 'previous:', viewerCount);
+        setViewerCount(newCount);
+      } else {
+        console.log('👁️ Ignoring viewer count update for different auction:', data.auction_id, 'expected:', auctionId);
       }
     };
     viewCountHandlerRef.current = handleViewCountUpdate;
 
     // Handle reactions
     const handleNewReaction = (reaction: any) => {
+      console.log('🎯 Host screen received reaction:', reaction);
+      
       if (reaction.auction_id === auctionId) {
+        console.log('✅ Host screen processing reaction for this auction');
         // Generate unique ID for this reaction instance
         const reactionId = Date.now() + Math.random().toString();
         
@@ -665,62 +709,64 @@ const AuctionLiveBroadcastScreen = () => {
           [reaction.reaction_type]: (prev[reaction.reaction_type] || 0) + 1,
         }));
 
-        // Play sound effect based on reaction type
-        switch (reaction.reaction_type) {
-          case 'heart':
-            playCheer();
-            break;
-          case 'applause':
-            playClap();
-            break;
-          case 'thumbs_up':
-            playCheer();
-            break;
-          case 'fire':
-            playCheer();
-            break;
-        }
+        // Removed sound effects for reactions - visual only
 
-        // Create floating animation like the viewer screen
+        // Create new reaction animation
         const randomX = Math.random() * (screenWidth - 100);
         const newReaction = {
           id: reactionId,
           reaction_type: reaction.reaction_type,
           x: randomX,
-          y: screenHeight * 0.6,
-          scale: new Animated.Value(0),
+          scale: new Animated.Value(0.1), // Start small but not zero
           opacity: new Animated.Value(1),
-          translateY: new Animated.Value(0),
+          translateY: new Animated.Value(screenHeight * 0.6), // Start from bottom like viewer
         };
 
+        // Add to animations state
         setReactionAnimations(prev => [...prev, newReaction]);
 
-        // Animate reaction
-        Animated.parallel([
+        // Start animation after a small delay to ensure rendering
+        setTimeout(() => {
+          console.log('🎬 Starting animation for reaction:', reactionId);
+          
+          // Animate scale first
           Animated.timing(newReaction.scale, {
             toValue: 1,
             duration: 300,
             useNativeDriver: true,
-          }),
-          Animated.timing(newReaction.translateY, {
-            toValue: -200,
-            duration: 2000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(newReaction.opacity, {
-            toValue: 0,
-            duration: 2000,
-            delay: 1000,
-            useNativeDriver: true,
-          }),
-        ]).start(() => {
-          setReactionAnimations(prev => prev.filter(r => r.id !== reactionId));
-        });
+          }).start(() => {
+            console.log('🎬 Scale animation completed for reaction:', reactionId);
+            
+            // Then animate movement and fade
+            Animated.parallel([
+              Animated.timing(newReaction.translateY, {
+                toValue: (screenHeight * 0.6) - 200, // Move up like viewer
+                duration: 2000,
+                useNativeDriver: true,
+              }),
+              Animated.timing(newReaction.opacity, {
+                toValue: 0,
+                duration: 2000,
+                delay: 1000,
+                useNativeDriver: true,
+              }),
+            ]).start(() => {
+              console.log('🎬 Movement and fade animation completed for reaction:', reactionId);
+              // Add delay before removing animation to ensure it's visible
+              setTimeout(() => {
+                console.log('🗑️ Removing reaction animation:', reactionId);
+                setReactionAnimations(prev => prev.filter(r => r.id !== reactionId));
+              }, 100);
+            });
+          });
+        }, 50); // Start animation after 50ms delay
 
         // Remove from reactions list after animation
         setTimeout(() => {
           setReactions(prev => prev.filter(r => r.id !== reactionId));
         }, 3000);
+      } else {
+        console.log('❌ Host screen ignoring reaction for different auction:', reaction.auction_id, 'vs', auctionId);
       }
     };
     reactionHandlerRef.current = handleNewReaction;
@@ -790,7 +836,7 @@ const AuctionLiveBroadcastScreen = () => {
     auctionSocket.on('new_bid', handleNewBid);
     auctionSocket.on('bid_placed', handleNewBid);
     auctionSocket.on('auction_status_changed', handleStatusChanged);
-    auctionSocket.on('view_count_update', handleViewCountUpdate);
+    auctionSocket.on('view_count_updated', handleViewCountUpdate); // Fixed event name
     auctionSocket.on('item_event', handleItemEvent);
     auctionSocket.on('new_reaction', handleNewReaction);
   };
@@ -820,7 +866,7 @@ const AuctionLiveBroadcastScreen = () => {
         statusHandlerRef.current = null;
       }
       if (viewCountHandlerRef.current) {
-        auctionSocket.off('view_count_update', viewCountHandlerRef.current);
+        auctionSocket.off('view_count_updated', viewCountHandlerRef.current); // Fixed event name
         viewCountHandlerRef.current = null;
       }
       if (itemEventHandlerRef.current) {
@@ -834,6 +880,9 @@ const AuctionLiveBroadcastScreen = () => {
 
       // Leave auction room
       auctionSocket.leaveAuction(auctionId);
+      
+      // Disconnect WebSocket with client ID
+      auctionSocket.disconnect('broadcast-screen');
 
       // Cleanup Agora engine - check both state and ref
       const engine = agoraEngine || agoraEngineRef.current;
@@ -927,6 +976,10 @@ const AuctionLiveBroadcastScreen = () => {
         try {
           await auctionsAPI.startBroadcast(auctionId);
           console.log('✅ Broadcast started notification sent to backend');
+          
+          // Reset viewer count to 0 for live broadcast start
+          setViewerCount(0);
+          console.log('👁️ Reset viewer count to 0 for broadcast start');
         } catch (error: any) {
           console.error('⚠️ Failed to notify backend of broadcast start:', error);
           // Don't block the UI - broadcast is still active even if notification fails
@@ -1020,6 +1073,11 @@ const AuctionLiveBroadcastScreen = () => {
       // Start auction phase: timer_playing
       setAuctionPhase('timer_playing');
 
+      // Start visual countdown immediately (sync with sound)
+      setItemBiddingStatus('countdown');
+      setCountdownTimer(3);
+      setHasBids(false);
+
       // Play timer sound - when it completes, activate bidding
       await playTimer(() => {
         console.log('✅ Timer sound completed - activating bidding for item:', itemId);
@@ -1091,24 +1149,6 @@ const AuctionLiveBroadcastScreen = () => {
             setAuctionPhase('idle');
             return;
           }
-
-          // Play winner sound based on bid amount (>100 = winner2, ≤100 = winner1)
-          // Winner modal is already showing, sound plays in parallel
-          playWinner(currentBid, async () => {
-            console.log('✅ Winner sound completed');
-            
-            // Reset phase after winner sound completes
-            setAuctionPhase('complete');
-            
-            // Reset to idle after a short delay - this prepares for next item
-            // The item_sold event will also set phase to idle, ensuring smooth transition
-            setTimeout(() => {
-              setAuctionPhase('idle');
-              // Backend should have already loaded next item and sent item_ready event
-              // If item_ready hasn't arrived yet, itemBiddingStatus will remain 'sold' 
-              // and cancel button will stay hidden
-            }, 500);
-          });
         } else {
           // No bids received - skip winner sound and just end the item
           console.log('⚠️ No bids received - skipping winner sound for item:', itemId);
@@ -1355,6 +1395,18 @@ const AuctionLiveBroadcastScreen = () => {
   };
 
   const handleCreateItem = async () => {
+    console.log('🔧 Starting item creation for auction:', auctionId);
+    console.log('👤 Current user:', user?.id, user?.username);
+    console.log('📝 Item data:', {
+      title: newItemTitle.trim(),
+      description: newItemDescription.trim() || undefined,
+      lot_number: newItemLotNumber.trim() || undefined,
+      starting_price: parseFloat(newItemStartingPrice),
+      reserve_price: newItemReservePrice.trim() ? parseFloat(newItemReservePrice) : undefined,
+      bid_increment: newItemBidIncrement.trim() ? parseFloat(newItemBidIncrement) : undefined,
+    });
+    console.log('📸 Media files:', [...newItemImages, ...newItemVideos].length, 'files');
+
     if (!newItemTitle.trim()) {
       Alert.alert('Validation Error', 'Title is required');
       return;
@@ -1379,7 +1431,9 @@ const AuctionLiveBroadcastScreen = () => {
 
       // Combine images and videos for upload
       const allMedia = [...newItemImages, ...newItemVideos];
+      console.log('🚀 Calling auctionsAPI.createAuctionItem...');
       const newItem = await auctionsAPI.createAuctionItem(auctionId, itemData, allMedia);
+      console.log('✅ Item created successfully:', newItem);
 
       // Reset form
       setNewItemTitle('');
@@ -1398,8 +1452,21 @@ const AuctionLiveBroadcastScreen = () => {
       Alert.alert('Success', 'Item added successfully! It will appear in the queue.');
       console.log('✅ New item created:', newItem.id);
     } catch (error: any) {
-      console.error('Error creating item:', error);
-      Alert.alert('Error', error.message || 'Failed to create item');
+      console.error('❌ Error creating item:', error);
+      console.error('❌ Error details:', {
+        message: error.message,
+        status: error.status,
+        statusText: error.statusText,
+        data: error.data,
+        response: error.response?.data
+      });
+      
+      // Show more detailed error message
+      const errorMessage = error.response?.data?.message || 
+                          error.message || 
+                          'Failed to create item. Please check your connection and try again.';
+      
+      Alert.alert('Error', errorMessage);
     } finally {
       setCreatingItem(false);
     }
@@ -1596,39 +1663,54 @@ const AuctionLiveBroadcastScreen = () => {
 
         {/* Reactions Display */}
         {/* Reactions Overlay - Animated */}
-        {reactionAnimations.map((reaction) => {
-          const emoji = reaction.reaction_type === 'heart' ? '❤️' :
-                       reaction.reaction_type === 'thumbs_up' ? '👍' :
-                       reaction.reaction_type === 'applause' ? '👏' :
-                       reaction.reaction_type === 'fire' ? '🔥' : '👍';
-          return (
-            <Animated.View
-              key={reaction.id}
-              style={[
-                styles.reactionBubble,
-                {
-                  left: reaction.x,
-                  bottom: reaction.y,
-                  transform: [
-                    { scale: reaction.scale },
-                    { translateY: reaction.translateY }
-                  ],
-                  opacity: reaction.opacity,
-                }
-              ]}
-            >
-              <Text style={styles.reactionBubbleEmoji}>{emoji}</Text>
-            </Animated.View>
-          );
-        })}
+        {reactionAnimations.length > 0 && (
+          <View style={styles.reactionsOverlay} pointerEvents="none">
+            {reactionAnimations.map((reaction) => {
+              const emoji = reaction.reaction_type === 'heart' ? '❤️' :
+                           reaction.reaction_type === 'thumbs_up' ? '👍' :
+                           reaction.reaction_type === 'applause' ? '👏' :
+                           reaction.reaction_type === 'fire' ? '🔥' : '👍';
+              return (
+                <Animated.View
+                  key={reaction.id}
+                  style={[
+                    styles.reactionBubble,
+                    {
+                      left: reaction.x,
+                      transform: [
+                        { translateY: reaction.translateY }
+                      ],
+                      opacity: reaction.opacity,
+                    }
+                  ]}
+                >
+                  <Animated.View
+                    style={{
+                      transform: [
+                        { scale: reaction.scale }
+                      ],
+                    }}
+                  >
+                    <Text style={styles.reactionBubbleEmoji}>{emoji}</Text>
+                  </Animated.View>
+                </Animated.View>
+              );
+            })}
+          </View>
+        )}
 
-        {/* Bid Notifications */}
-        {bidNotifications.map((notification) => (
-          <BidNotificationBubble
-            key={notification.id}
-            notification={notification}
-          />
-        ))}
+        {/* Bid Notifications Overlay */}
+        <View style={styles.bidNotificationsOverlay} pointerEvents="none">
+          {(() => {
+            console.log('🎨 Rendering bid notifications:', bidNotifications.length, 'notifications');
+            return bidNotifications.map((notification) => (
+              <BidNotificationBubble
+                key={notification.id}
+                notification={notification}
+              />
+            ));
+          })()}
+        </View>
 
         {/* Reaction Counts Summary */}
         {(reactionCounts.heart > 0 || reactionCounts.thumbs_up > 0 || reactionCounts.applause > 0 || reactionCounts.fire > 0) && (
@@ -1958,7 +2040,11 @@ const AuctionLiveBroadcastScreen = () => {
                 <Text style={styles.sectionTitle}>📜 Recent Bids</Text>
                 <View style={styles.bidHistoryList}>
                   {bidHistory.slice(0, 10).length > 0 ? (
-                    bidHistory.slice(0, 10).map((bid) => renderBidItem({ item: bid }))
+                    bidHistory.slice(0, 10).map((bid) => (
+                      <View key={bid.id}>
+                        {renderBidItem({ item: bid })}
+                      </View>
+                    ))
                   ) : (
                     <View style={styles.emptyState}>
                       <Ionicons name="pricetag-outline" size={60} color="#666" />
@@ -2014,7 +2100,11 @@ const AuctionLiveBroadcastScreen = () => {
             ) : (
               <View style={styles.previousItemsContainer}>
                 {previousAuctionedItems.length > 0 ? (
-                  previousAuctionedItems.map((item) => renderPreviousItem({ item }))
+                  previousAuctionedItems.map((item) => (
+                    <View key={item.id}>
+                      {renderPreviousItem({ item })}
+                    </View>
+                  ))
                 ) : (
                   <View style={styles.emptyState}>
                     <Ionicons name="time-outline" size={60} color="#666" />
@@ -2391,7 +2481,7 @@ const AuctionLiveBroadcastScreen = () => {
               </TouchableOpacity>
             )}
           </View>
-        ) : (
+        ) : itemQueue.length > 0 ? (
           <View style={styles.auctionControlsContainer}>
             <TouchableOpacity 
               style={[styles.auctionButton, styles.selectItemButton]} 
@@ -2416,7 +2506,8 @@ const AuctionLiveBroadcastScreen = () => {
               <Text style={styles.auctionButtonText}>LOAD NEXT</Text>
             </TouchableOpacity>
           </View>
-        )}
+        ) : null}
+        
       </View>
 
       {/* Item Queue Modal */}
@@ -2616,6 +2707,25 @@ const styles = StyleSheet.create({
     padding: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 1000, // Ensure reactions appear above all other elements
+  },
+  reactionsOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    pointerEvents: 'none',
+    zIndex: 5,
+  },
+  bidNotificationsOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    pointerEvents: 'none',
+    zIndex: 1000,
   },
   reactionBubbleEmoji: {
     fontSize: 24,

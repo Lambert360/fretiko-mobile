@@ -239,7 +239,7 @@ const NotificationsScreen = () => {
           if (conversationId) {
             console.log('Navigating to chat conversation:', conversationId);
             // Navigate to IndividualChatScreen with the conversation details
-            navigation.navigate('IndividualChatScreen', {
+            (navigation as any).navigate('IndividualChatScreen', {
               chatId: conversationId,
               chatName: isGroupChat ? notification.data?.conversation_name || 'Group Chat' : senderName,
               chatType: isGroupChat ? 'group' : 'individual',
@@ -256,27 +256,27 @@ const NotificationsScreen = () => {
           const orderId = notification.data?.order_id;
           if (orderId) {
             console.log('Navigating to order:', orderId);
-            navigation.navigate('Orders', {
+            (navigation as any).navigate('Orders', {
               screen: 'OrderDetails',
               params: { orderId }
-            } as any);
+            });
           } else {
             Alert.alert('Order Notification', notification.message);
           }
           break;
 
-        case 'connection_request':
+        case 'connection_request' as any:
           // Navigate to connection requests screen
           console.log('Navigating to connection requests');
-          navigation.navigate('ConnectionRequests' as never);
+          (navigation as any).navigate('ConnectionRequests');
           break;
 
-        case 'connection_accepted':
+        case 'connection_accepted' as any:
           // Navigate to the user's profile who accepted the connection
-          const acceptedBy = notification.metadata?.acceptedBy || notification.data?.acceptedBy;
+          const acceptedBy = (notification as any).metadata?.acceptedBy || notification.data?.acceptedBy;
           if (acceptedBy) {
             console.log('Navigating to profile of user who accepted:', acceptedBy);
-            navigation.navigate('PublicProfile' as never, { userId: acceptedBy } as never);
+            (navigation as any).navigate('PublicProfile', { userId: acceptedBy });
           } else {
             Alert.alert('Connection Accepted!', notification.message);
           }
@@ -290,17 +290,17 @@ const NotificationsScreen = () => {
           if (postId) {
             // Navigate to specific post
             console.log('Navigating to post:', postId);
-            navigation.navigate('Social', {
+            (navigation as any).navigate('Social', {
               screen: 'Post',
               params: { postId }
-            } as any);
+            });
           } else if (senderId) {
             // Navigate to user profile
             console.log('Navigating to profile:', senderId);
-            navigation.navigate('Profile', {
+            (navigation as any).navigate('Profile', {
               screen: 'UserProfile',
               params: { userId: senderId }
-            } as any);
+            });
           } else {
             Alert.alert('Social Notification', notification.message);
           }
@@ -311,10 +311,10 @@ const NotificationsScreen = () => {
           const streamId = notification.data?.stream_id;
           if (streamId) {
             console.log('Navigating to live stream:', streamId);
-            navigation.navigate('Live', {
+            (navigation as any).navigate('Live', {
               screen: 'LiveStream',
               params: { streamId }
-            } as any);
+            });
           } else {
             Alert.alert('Live Notification', notification.message);
           }
@@ -325,22 +325,22 @@ const NotificationsScreen = () => {
           const trackingOrderId = notification.data?.order_id;
           if (trackingOrderId) {
             console.log('Navigating to order tracking:', trackingOrderId);
-            navigation.navigate('Orders', {
+            (navigation as any).navigate('Orders', {
               screen: 'OrderTracking',
               params: { orderId: trackingOrderId }
-            } as any);
+            });
           } else {
             Alert.alert('Delivery Notification', notification.message);
           }
           break;
 
-        case 'user_warning':
+        case 'user_warning' as any:
           // Navigate to account status screen
           console.log('Navigating to account status for warning');
-          navigation.navigate('AccountStatus' as never);
+          (navigation as any).navigate('AccountStatus');
           break;
 
-        case 'dispute':
+        case 'dispute' as any:
           // Navigate to dispute details
           const disputeId = notification.data?.dispute_id;
           if (disputeId) {
@@ -357,12 +357,12 @@ const NotificationsScreen = () => {
           const transactionId = notification.data?.transaction_id;
           if (transactionId) {
             console.log('Navigating to transaction:', transactionId);
-            navigation.navigate('Wallet', {
+            (navigation as any).navigate('Wallet', {
               screen: 'TransactionDetails',
               params: { transactionId }
-            } as any);
+            });
           } else {
-            navigation.navigate('Wallet' as any);
+            (navigation as any).navigate('Wallet');
           }
           break;
 
@@ -373,16 +373,16 @@ const NotificationsScreen = () => {
 
           if (productId) {
             console.log('Navigating to promoted product:', productId);
-            navigation.navigate('Products', {
+            (navigation as any).navigate('Products', {
               screen: 'ProductDetails',
               params: { productId }
-            } as any);
+            });
           } else if (promotionId) {
             console.log('Navigating to promotion:', promotionId);
-            navigation.navigate('Promotions', {
+            (navigation as any).navigate('Promotions', {
               screen: 'PromotionDetails',
               params: { promotionId }
-            } as any);
+            });
           } else {
             Alert.alert('Promotion', notification.message);
           }
@@ -391,7 +391,7 @@ const NotificationsScreen = () => {
         case 'system':
           // System notifications - show full message or navigate to settings
           if (notification.data?.navigate_to === 'settings') {
-            navigation.navigate('Settings' as any);
+            (navigation as any).navigate('Settings');
           } else {
             Alert.alert('System Notification', `${notification.title}\n\n${notification.message}`);
           }
@@ -450,7 +450,7 @@ const NotificationsScreen = () => {
                         notif.data?.user_id;
           if (userId) {
             console.log('Navigating to profile:', userId);
-            navigation.navigate('PublicProfile' as never, { userId } as never);
+            (navigation as any).navigate('PublicProfile', { userId });
           } else {
             Alert.alert('Error', 'Unable to find user profile');
           }
@@ -460,8 +460,8 @@ const NotificationsScreen = () => {
         case 'confirm':
         case 'accept request':
           // For connection requests, navigate to connection requests screen
-          if (notif.type === 'connection_request') {
-            navigation.navigate('ConnectionRequests' as never);
+          if (notif.type === 'connection_request' as string) {
+            (navigation as any).navigate('ConnectionRequests');
           } else {
             // For other types, trigger main navigation
             await handleNotificationPress(notif);
@@ -493,9 +493,9 @@ const NotificationsScreen = () => {
           const orderId = notif.data?.order_id;
           if (orderId) {
             if (normalizedAction.includes('track')) {
-              navigation.navigate('OrderTracking', { orderId });
+              (navigation as any).navigate('OrderTracking', { orderId });
             } else {
-              navigation.navigate('GroupedOrder', { orderId });
+              (navigation as any).navigate('GroupedOrder', { orderId });
             }
           } else {
             Alert.alert('Error', 'Order ID not found');
@@ -507,7 +507,7 @@ const NotificationsScreen = () => {
           // Navigate to product details
           const productId = notif.data?.product_id;
           if (productId) {
-            navigation.navigate('ProductDetails', { productId });
+            (navigation as any).navigate('ProductDetails', { productId });
           } else {
             Alert.alert('Error', 'Product ID not found');
           }
@@ -518,7 +518,7 @@ const NotificationsScreen = () => {
           // Navigate to service details
           const serviceId = notif.data?.service_id;
           if (serviceId) {
-            navigation.navigate('ServiceDetails', { serviceId });
+            (navigation as any).navigate('ServiceDetails', { serviceId });
           } else {
             Alert.alert('Error', 'Service ID not found');
           }
@@ -542,9 +542,9 @@ const NotificationsScreen = () => {
           const transactionId = notif.data?.transaction_id;
           if (transactionId) {
             // Navigate to wallet with transaction details if available
-            navigation.navigate('Wallet' as any);
+            (navigation as any).navigate('Wallet');
           } else {
-            navigation.navigate('Wallet' as any);
+            (navigation as any).navigate('Wallet');
           }
           break;
 
@@ -554,7 +554,7 @@ const NotificationsScreen = () => {
           // Navigate to live stream
           const streamId = notif.data?.stream_id;
           if (streamId) {
-            navigation.navigate('LiveStreamViewer', { streamId });
+            (navigation as any).navigate('LiveStreamViewer', { streamId });
           } else {
             Alert.alert('Error', 'Stream ID not found');
           }

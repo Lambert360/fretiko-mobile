@@ -11,6 +11,7 @@ import {
   Platform,
   Image,
   TextInput,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +20,17 @@ import { walletAPI } from '../services/walletAPI';
 import { checkoutAPI } from '../services/checkoutAPI';
 import { ordersAPI } from '../services/ordersAPI';
 import { Rider } from './RiderSelectionScreen';
+
+interface DeliveryAddress {
+  id?: string;
+  fullName: string;
+  phone: string;
+  address: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  isDefault: boolean;
+}
 
 interface LiveAuctionCartCheckoutScreenProps {
   navigation: any;
@@ -47,14 +59,16 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
   const [loading, setLoading] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
   const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>(null); // No default - user must choose
-  const [deliveryAddress, setDeliveryAddress] = useState({
+  const [deliveryAddress, setDeliveryAddress] = useState<DeliveryAddress>({
     fullName: '',
     phone: '',
     address: '',
     city: '',
     state: '',
     postalCode: '',
+    isDefault: false,
   });
+  const [showAddressModal, setShowAddressModal] = useState(false);
 
   useEffect(() => {
     loadCheckoutData();
@@ -64,6 +78,12 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
     try {
       const wallet = await walletAPI.getWallet();
       setWalletBalance(wallet.availableBalance);
+
+      // Load saved address if exists
+      const savedAddress = await checkoutAPI.getDefaultAddress();
+      if (savedAddress) {
+        setDeliveryAddress(savedAddress);
+      }
     } catch (error) {
       console.error('Error loading checkout data:', error);
       Alert.alert('Error', 'Failed to load checkout information');
@@ -71,7 +91,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
   };
 
   const calculateTotal = () => {
-    const itemsTotal = wonItems.reduce((sum, item) => sum + (item.winningBid || 0), 0);
+    const itemsTotal = wonItems.reduce((sum: number, item) => sum + (item.winningBid || 0), 0);
     const deliveryFee = selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object'
       ? (selectedRider.price || 0)
       : 0;
@@ -155,7 +175,35 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
   };
 
   const handleRemoveRider = () => {
-    setSelectedRider('pickup');
+    setSelectedRider(null); // Reset to show both options
+  };
+
+  const handleSaveAddress = async () => {
+    try {
+      // Validate all required fields
+      if (!deliveryAddress.fullName || !deliveryAddress.address ||
+          !deliveryAddress.phone || !deliveryAddress.city ||
+          !deliveryAddress.state) {
+        Alert.alert('Missing Fields', 'Please fill all required fields (Full Name, Phone, Address, City, State)');
+        return;
+      }
+
+      // Save address to backend
+      await checkoutAPI.saveAddress(deliveryAddress);
+
+      // Close modal
+      setShowAddressModal(false);
+
+      // Show success message
+      Alert.alert('Success', 'Delivery address saved successfully');
+    } catch (error) {
+      console.error('Error saving address:', error);
+      Alert.alert('Error', 'Failed to save address. Please try again.');
+    }
+  };
+
+  const handleAddressChange = (field: keyof DeliveryAddress, value: string | boolean) => {
+    setDeliveryAddress(prev => ({ ...prev, [field]: value }));
   };
 
   const processAuctionCheckout = async () => {
@@ -167,7 +215,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
         ? {
             riderId: selectedRider.id,
             riderName: selectedRider.name,
-            vehicleType: selectedRider.vehicleType,
+            vehicleType: selectedRider.vehicleType as 'pickup' | 'wheelbarrow' | 'bike' | 'car',
             deliveryPrice: selectedRider.price,
             estimatedArrival: selectedRider.estimatedArrival,
           }
@@ -175,7 +223,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
           ? {
               riderId: 'pickup',
               riderName: 'Self Pickup',
-              vehicleType: 'pickup',
+              vehicleType: 'pickup' as const,
               deliveryPrice: 0,
               estimatedArrival: 0,
             }
@@ -447,46 +495,40 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
               Where should we deliver your items?
             </Text>
 
-            <View style={styles.addressForm}>
-              <TextInput
-                style={styles.addressInput}
-                placeholder="Full Name *"
-                placeholderTextColor="#666"
-                value={deliveryAddress.fullName}
-                onChangeText={(text) => setDeliveryAddress(prev => ({ ...prev, fullName: text }))}
-              />
-              <TextInput
-                style={styles.addressInput}
-                placeholder="Phone Number *"
-                placeholderTextColor="#666"
-                value={deliveryAddress.phone}
-                onChangeText={(text) => setDeliveryAddress(prev => ({ ...prev, phone: text }))}
-                keyboardType="phone-pad"
-              />
-              <TextInput
-                style={styles.addressInput}
-                placeholder="Street Address *"
-                placeholderTextColor="#666"
-                value={deliveryAddress.address}
-                onChangeText={(text) => setDeliveryAddress(prev => ({ ...prev, address: text }))}
-              />
-              <View style={styles.addressRow}>
-                <TextInput
-                  style={styles.addressInputHalf}
-                  placeholder="City *"
-                  placeholderTextColor="#666"
-                  value={deliveryAddress.city}
-                  onChangeText={(text) => setDeliveryAddress(prev => ({ ...prev, city: text }))}
-                />
-                <TextInput
-                  style={styles.addressInputHalf}
-                  placeholder="State *"
-                  placeholderTextColor="#666"
-                  value={deliveryAddress.state}
-                  onChangeText={(text) => setDeliveryAddress(prev => ({ ...prev, state: text }))}
-                />
+            {/* Selected Address Display */}
+            {deliveryAddress.address ? (
+              <View style={styles.selectedAddress}>
+                <View style={styles.addressIcon}>
+                  <Ionicons name="location" size={24} color="#8E44AD" />
+                </View>
+                <View style={styles.addressInfo}>
+                  <Text style={styles.addressName}>
+                    {deliveryAddress.fullName || 'No name'}
+                  </Text>
+                  <Text style={styles.addressText}>
+                    {deliveryAddress.address}, {deliveryAddress.city}, {deliveryAddress.state}
+                  </Text>
+                  <Text style={styles.addressPhone}>
+                    {deliveryAddress.phone || 'No phone'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.editButton}
+                  onPress={() => setShowAddressModal(true)}
+                >
+                  <Ionicons name="pencil" size={18} color="#3498DB" />
+                  <Text style={styles.editButtonText}>Edit</Text>
+                </TouchableOpacity>
               </View>
-            </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.addAddressButton}
+                onPress={() => setShowAddressModal(true)}
+              >
+                <Ionicons name="add-circle" size={24} color="#8E44AD" />
+                <Text style={styles.addAddressText}>Add Delivery Address</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={styles.editAddressButton}
@@ -494,12 +536,14 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
                 selectMode: true,
                 onAddressSelected: (address: any) => {
                   setDeliveryAddress({
+                    id: address.id,
                     fullName: address.fullName || '',
                     phone: address.phone || '',
                     address: address.address || '',
                     city: address.city || '',
                     state: address.state || '',
                     postalCode: address.postalCode || '',
+                    isDefault: address.isDefault || false,
                   });
                 }
               })}
@@ -577,6 +621,118 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
               )}
         </TouchableOpacity>
       </View>
+      
+      {/* Address Modal */}
+      <Modal 
+        visible={showAddressModal} 
+        transparent 
+        animationType="slide"
+        onRequestClose={() => setShowAddressModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.addressModal}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Delivery Address</Text>
+              <TouchableOpacity onPress={() => setShowAddressModal(false)}>
+                <Ionicons name="close" size={24} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.addressForm} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Full Name *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={deliveryAddress.fullName}
+                  onChangeText={(text) => handleAddressChange('fullName', text)}
+                  placeholder="Enter your full name"
+                  placeholderTextColor="#666"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Phone Number *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={deliveryAddress.phone}
+                  onChangeText={(text) => handleAddressChange('phone', text)}
+                  placeholder="Enter phone number"
+                  placeholderTextColor="#666"
+                  keyboardType="phone-pad"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Address *</Text>
+                <TextInput
+                  style={[styles.textInput, styles.multilineInput]}
+                  value={deliveryAddress.address}
+                  onChangeText={(text) => handleAddressChange('address', text)}
+                  placeholder="Enter delivery address"
+                  placeholderTextColor="#666"
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                />
+              </View>
+              
+              <View style={styles.inputRow}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>City *</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={deliveryAddress.city}
+                    onChangeText={(text) => handleAddressChange('city', text)}
+                    placeholder="City"
+                    placeholderTextColor="#666"
+                  />
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>State *</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={deliveryAddress.state}
+                    onChangeText={(text) => handleAddressChange('state', text)}
+                    placeholder="State"
+                    placeholderTextColor="#666"
+                  />
+                </View>
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Postal Code</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={deliveryAddress.postalCode}
+                  onChangeText={(text) => handleAddressChange('postalCode', text)}
+                  placeholder="Enter postal code"
+                  placeholderTextColor="#666"
+                  keyboardType="numeric"
+                />
+              </View>
+            </ScrollView>
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => setShowAddressModal(false)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalSaveButton}
+                onPress={handleSaveAddress}
+              >
+                <Text style={styles.modalSaveText}>Save Address</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </KeyboardAvoidingView>
   );
 };
@@ -814,17 +970,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginHorizontal: 12,
   },
-  addressForm: {
-    gap: 12,
-    marginTop: 12,
-  },
-  addressInput: {
-    backgroundColor: '#222',
-    color: '#FFF',
-    padding: 14,
-    borderRadius: 8,
-    fontSize: 16,
-  },
   addressRow: {
     flexDirection: 'row',
     gap: 12,
@@ -928,6 +1073,156 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'flex-end',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  modalTitle: {
+    color: 'white',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  addressForm: {
+    padding: 20,
+  },
+  // Address Modal Styles
+  addressModal: {
+    backgroundColor: '#1a1a1a',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '80%',
+    paddingBottom: 32,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  textInput: {
+    backgroundColor: '#2a2a2a',
+    color: '#FFF',
+    padding: 14,
+    borderRadius: 8,
+    fontSize: 16,
+  },
+  multilineInput: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  inputRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 20,
+  },
+  modalCancelButton: {
+    flex: 1,
+    backgroundColor: '#333',
+    padding: 16,
+    borderRadius: 12,
+    marginRight: 8,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalSaveButton: {
+    flex: 1,
+    backgroundColor: '#8E44AD',
+    padding: 16,
+    borderRadius: 12,
+    marginLeft: 8,
+    alignItems: 'center',
+  },
+  modalSaveText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  // Selected Address Styles
+  selectedAddress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+  },
+  addressIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#222',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  addressInfo: {
+    flex: 1,
+  },
+  addressName: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  addressText: {
+    color: '#888',
+    fontSize: 14,
+    marginBottom: 2,
+  },
+  addressPhone: {
+    color: '#888',
+    fontSize: 12,
+  },
+  editButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#222',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 4,
+  },
+  editButtonText: {
+    color: '#3498DB',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  addAddressButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    gap: 8,
+  },
+  addAddressText: {
+    color: '#8E44AD',
     fontSize: 16,
     fontWeight: '600',
   },
