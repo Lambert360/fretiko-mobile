@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,13 @@ import {
   ImageBackground,
   Dimensions,
   Animated,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRegistration } from '../contexts/RegistrationContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -19,7 +23,13 @@ interface WelcomeScreenProps {
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ navigation }) => {
-  const { clearNewUserFlag } = useAuth();
+  const { clearNewUserFlag, signup } = useAuth();
+  const { registrationData, isRegistrationComplete, clearRegistrationData } = useRegistration();
+  const insets = useSafeAreaInsets();
+  
+  const [isLoading, setIsLoading] = useState(false);
+  const [accountCreated, setAccountCreated] = useState(false);
+
   const fadeAnim = new Animated.Value(0);
   const slideAnim = new Animated.Value(50);
 
@@ -39,10 +49,51 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ navigation }) => {
     ]).start();
   }, []);
 
+  const handleCreateAccount = async () => {
+    if (!isRegistrationComplete() || !registrationData) {
+      Alert.alert('Error', 'Registration data is incomplete. Please start over.');
+      navigation.navigate('Signup');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // Call signup with complete registration data
+      await signup(
+        registrationData!.email,
+        registrationData!.password,
+        registrationData!.firstName,
+        registrationData!.lastName,
+        registrationData!.dateOfBirth,
+        registrationData!.gender,
+        registrationData!.hasAcceptedTerms,
+        registrationData!.user_role,
+        registrationData!.is_seller,
+        registrationData!.is_rider,
+      );
+
+      // Clear registration data after successful account creation
+      clearRegistrationData();
+      setAccountCreated(true);
+      
+      // Navigation will be handled by auth state change
+    } catch (error: any) {
+      Alert.alert('Account Creation Failed', error.message || 'Something went wrong');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleExplore = () => {
-    // Clear new user flag and navigate to Main (Home)
-    clearNewUserFlag();
-    // Navigation will be handled automatically by App.tsx when isNewUser becomes false
+    if (accountCreated) {
+      // Clear new user flag and navigate to Main (Home)
+      clearNewUserFlag();
+      // Navigation will be handled automatically by App.tsx when isNewUser becomes false
+    } else {
+      // Try to create account first
+      handleCreateAccount();
+    }
   };
 
   return (

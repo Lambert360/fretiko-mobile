@@ -59,7 +59,7 @@ api.interceptors.request.use(
       let accessToken = null;
       try {
         accessToken = await SecureStore.getItemAsync('accessToken');
-      } catch (secureStoreError) {
+      } catch (secureStoreError: unknown) {
         console.log('⚠️ SecureStore error (common in Expo SDK 54):', secureStoreError.message);
 
         // Fallback to AsyncStorage for development
@@ -121,12 +121,30 @@ export const authAPI = {
     lastName: string;
     dateOfBirth?: string;
     gender?: string;
+    hasAcceptedTerms?: boolean;
+    user_role?: string;
+    is_seller?: boolean;
+    is_rider?: boolean;
+    is_verified?: boolean;
   }) => {
     try {
-      const response = await api.post('/auth/signup', userData);
-      return response.data;
+      // Use fetch instead of axios for local HTTP requests in React Native Expo
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/signup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(userData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Signup failed');
+      }
+
+      return await response.json();
     } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Signup failed');
+      throw new Error(error.message || 'Signup failed');
     }
   },
 

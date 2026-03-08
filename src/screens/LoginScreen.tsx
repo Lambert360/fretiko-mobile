@@ -36,7 +36,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   const { signin, migrate } = useAuth();
 
   const handleLogin = async () => {
-    // Basic validation
+    // Enhanced validation
     if (!email.trim() || !password.trim()) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
@@ -44,6 +44,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
 
     if (!email.includes('@')) {
       Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+
+    if (password.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters long');
+      return;
+    }
+
+    // Password complexity validation
+    const hasUpperCase = /[A-Z]/.test(password);
+    const hasLowerCase = /[a-z]/.test(password);
+    const hasNumbers = /\d/.test(password);
+
+    if (!hasUpperCase || !hasLowerCase || !hasNumbers) {
+      Alert.alert('Error', 'Password must contain uppercase, lowercase, and numbers');
       return;
     }
 
@@ -76,14 +91,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   };
 
   const handleMigration = async () => {
-    // Basic validation
+    // Enhanced validation
     if (!newPassword.trim()) {
       Alert.alert('Error', 'Please enter a new password');
       return;
     }
 
-    if (newPassword.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters long');
+    if (newPassword.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters long');
+      return;
+    }
+
+    // Password complexity validation
+    const hasUpperCase = /[A-Z]/.test(newPassword);
+    const hasLowerCase = /[a-z]/.test(newPassword);
+    const hasNumbers = /\d/.test(newPassword);
+
+    if (!hasUpperCase || !hasLowerCase || !hasNumbers) {
+      Alert.alert('Error', 'Password must contain uppercase, lowercase, and numbers');
       return;
     }
 

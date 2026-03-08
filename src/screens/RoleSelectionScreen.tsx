@@ -11,8 +11,8 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { userAPI } from '../services/userAPI';
-import { useAuth } from '../contexts/AuthContext';
+import { useRegistration } from '../contexts/RegistrationContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -31,13 +31,14 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
   navigation,
   route,
 }) => {
-  const { user, clearNewUserFlag } = useAuth();
+  const { registrationData, updateRegistrationData } = useRegistration();
   const { isFirstTime = true } = route.params || {};
+  const insets = useSafeAreaInsets();
 
   const [selectedRole, setSelectedRole] = useState<UserRole>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleRoleSelect = (role: 'vendor' | 'rider') => {
+  const handleRoleSelect = (role: 'vendor' | 'rider' | 'citizen') => {
     setSelectedRole(role);
   };
 
@@ -45,20 +46,17 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
     setLoading(true);
 
     try {
-      // If role is selected, update the profile
-      if (selectedRole === 'vendor' || selectedRole === 'rider') {
-        await userAPI.updateProfile({
-          isSeller: selectedRole === 'vendor',
-          isRider: selectedRole === 'rider',
-          preferences: {
-            primaryRole: selectedRole,
-            roleSelectedAt: new Date().toISOString(),
-          },
-        });
-      }
+      // Store role selection in registration data
+      const roleData = {
+        user_role: (selectedRole || 'citizen') as 'citizen' | 'vendor' | 'rider',
+        is_seller: selectedRole === 'vendor',
+        is_rider: selectedRole === 'rider',
+      };
 
-      // Navigate to Welcome screen (will be created next)
-      navigation.navigate('Welcome');
+      updateRegistrationData('stage2', roleData);
+
+      // Navigate to email verification screen
+      navigation.navigate('EmailVerification');
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to update role');
     } finally {
@@ -67,8 +65,17 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
   };
 
   const handleSkip = () => {
-    // Skip to Welcome screen without selecting role (remains citizen)
-    navigation.navigate('Welcome');
+    // Skip role selection - remain as citizen
+    const roleData = {
+      user_role: 'citizen' as const,
+      is_seller: false,
+      is_rider: false,
+    };
+
+    updateRegistrationData('stage2', roleData);
+    
+    // Navigate to email verification screen
+    navigation.navigate('EmailVerification');
   };
 
   return (

@@ -15,8 +15,12 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../contexts/AuthContext';
+import { useRegistration } from '../contexts/RegistrationContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PasswordStrengthIndicator } from '../components/PasswordStrengthIndicator';
+import { EmailAvailabilityChecker } from '../components/EmailAvailabilityChecker';
+import { SocialAuthButtons } from '../components/SocialAuthButtons';
+import { DatePickerInput } from '../components/DatePickerInput';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -38,9 +42,14 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
   const [showGenderPicker, setShowGenderPicker] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
+  const [passwordStrength, setPasswordStrength] = useState<'weak' | 'medium' | 'strong'>('weak');
+  const [isPasswordValid, setIsPasswordValid] = useState(false);
+  const [hasAcceptedTerms, setHasAcceptedTerms] = useState(false);
   const insets = useSafeAreaInsets();
 
-  const { signup } = useAuth();
+  const { updateRegistrationData } = useRegistration();
 
   const genderOptions = [
     { label: 'Male', value: 'male', icon: 'male' },
@@ -66,8 +75,8 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
       return false;
     }
 
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters long');
+    if (!isPasswordValid) {
+      Alert.alert('Error', 'Please create a stronger password (medium or strong)');
       return false;
     }
 
@@ -76,41 +85,82 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
       return false;
     }
 
-    // Date of birth validation (optional but recommended format check)
-    if (dateOfBirth && !isValidDate(dateOfBirth)) {
-      Alert.alert('Error', 'Please enter a valid date of birth (YYYY-MM-DD)');
+    if (!hasAcceptedTerms) {
+      Alert.alert('Terms Required', 'Please accept the Terms & Conditions and Privacy Policy to continue');
       return false;
     }
 
     return true;
   };
 
-  const isValidDate = (dateString: string) => {
-    const regex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!regex.test(dateString)) return false;
-    const date = new Date(dateString);
-    return date instanceof Date && !isNaN(date.getTime());
-  };
-
   const handleSignup = async () => {
     if (!validateForm()) return;
+
+    // Additional defensive validation
+    const { firstName, lastName, email, password } = formData;
+    if (!firstName?.trim() || !lastName?.trim() || !email?.trim() || !password?.trim()) {
+      Alert.alert('Error', 'Please fill in all required fields');
+      return;
+    }
 
     setIsLoading(true);
 
     try {
-      await signup(
-        formData.email.trim().toLowerCase(),
-        formData.password,
-        formData.firstName.trim(),
-        formData.lastName.trim(),
-        formData.dateOfBirth || undefined,
-        formData.gender || undefined
-      );
-      // Navigation will be handled by the auth state change
+      // Ensure all data is properly formatted
+      const signupData = {
+        email: formData.email?.trim()?.toLowerCase(),
+        password: formData.password,
+        firstName: formData.firstName?.trim(),
+        lastName: formData.lastName?.trim(),
+        dateOfBirth: formData.dateOfBirth?.trim() || undefined,
+        gender: formData.gender?.trim() || undefined,
+        hasAcceptedTerms,
+      };
+
+      // Debug logging - show actual values
+      console.log('📝 Storing registration data locally:', {
+        email: signupData.email,
+        password: signupData.password ? signupData.password.length + ' chars' : 'missing',
+        firstName: signupData.firstName,
+        lastName: signupData.lastName,
+        dateOfBirth: signupData.dateOfBirth,
+        gender: signupData.gender,
+        hasAcceptedTerms: signupData.hasAcceptedTerms,
+      });
+
+      // Store data locally and navigate to role selection
+      updateRegistrationData('stage1', signupData);
+      
+      // Navigate to role selection screen
+      navigation.navigate('RoleSelection');
     } catch (error: any) {
-      Alert.alert('Signup Failed', error.message || 'Something went wrong');
+      Alert.alert('Registration Failed', error.message || 'Something went wrong');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    try {
+      // TODO: Implement Google OAuth flow
+      Alert.alert('Coming Soon', 'Google sign-in will be available soon!');
+    } catch (error: any) {
+      Alert.alert('Google Sign-In Failed', error.message || 'Something went wrong');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleAppleSignIn = async () => {
+    setAppleLoading(true);
+    try {
+      // TODO: Implement Apple OAuth flow
+      Alert.alert('Coming Soon', 'Apple sign-in will be available soon!');
+    } catch (error: any) {
+      Alert.alert('Apple Sign-In Failed', error.message || 'Something went wrong');
+    } finally {
+      setAppleLoading(false);
     }
   };
 
@@ -204,6 +254,14 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                     <Ionicons name={showPassword ? 'eye-off' : 'eye'} size={20} color="#666" />
                   </TouchableOpacity>
                 </View>
+                {/* Password Strength Indicator */}
+                <PasswordStrengthIndicator
+                  password={formData.password}
+                  onStrengthChange={(strength) => {
+                    setPasswordStrength(strength);
+                    setIsPasswordValid(strength !== 'weak');
+                  }}
+                />
               </View>
 
               <View style={styles.inputGroup}>
@@ -229,17 +287,13 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                 </View>
               </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Date of Birth (Optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.dateOfBirth}
-                  onChangeText={(value) => updateFormData('dateOfBirth', value)}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#666"
-                  keyboardType="numbers-and-punctuation"
-                />
-              </View>
+              <DatePickerInput
+                value={formData.dateOfBirth}
+                onChange={(value) => updateFormData('dateOfBirth', value)}
+                placeholder="Select your date of birth"
+                label="Date of Birth (Optional)"
+                minimumAge={15}
+              />
 
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Gender (Optional)</Text>
@@ -295,10 +349,46 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                 )}
               </View>
 
+              {/* Terms and Conditions */}
+              <View style={styles.termsContainer}>
+                <TouchableOpacity
+                  style={styles.checkboxContainer}
+                  onPress={() => setHasAcceptedTerms(prev => !prev)}
+                >
+                  <View style={[styles.checkbox, hasAcceptedTerms && styles.checkboxChecked]}>
+                    {hasAcceptedTerms && (
+                      <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                    )}
+                  </View>
+                  <Text style={styles.termsText}>
+                    I agree to the{' '}
+                    <Text
+                      style={styles.termsLink}
+                      onPress={() => {
+                        // TODO: Navigate to terms and conditions screen or open web view
+                        Alert.alert('Terms & Conditions', 'Terms screen will be implemented soon!');
+                      }}
+                    >
+                      Terms & Conditions
+                    </Text>
+                    {' '}and{' '}
+                    <Text
+                      style={styles.termsLink}
+                      onPress={() => {
+                        // TODO: Navigate to privacy policy screen or open web view
+                        Alert.alert('Privacy Policy', 'Privacy policy screen will be implemented soon!');
+                      }}
+                    >
+                      Privacy Policy
+                    </Text>
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               <TouchableOpacity
-                style={[styles.button, isLoading && styles.buttonDisabled]}
+                style={[styles.button, (!hasAcceptedTerms || isLoading) && styles.buttonDisabled]}
                 onPress={handleSignup}
-                disabled={isLoading}
+                disabled={!hasAcceptedTerms || isLoading}
               >
                 {isLoading ? (
                   <ActivityIndicator color="#FFF" />
@@ -307,6 +397,15 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                 )}
               </TouchableOpacity>
             </View>
+
+            {/* Social Auth Buttons */}
+            <SocialAuthButtons
+              onGoogleSignIn={handleGoogleSignIn}
+              onAppleSignIn={handleAppleSignIn}
+              isLoading={isLoading}
+              googleLoading={googleLoading}
+              appleLoading={appleLoading}
+            />
 
             {/* Navigation to Login */}
             <View style={styles.footer}>
@@ -495,5 +594,38 @@ const styles = StyleSheet.create({
     color: '#007AFF',
     fontSize: 16,
     fontWeight: '500',
+  },
+  termsContainer: {
+    marginBottom: 20,
+  },
+  checkboxContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 8,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  termsText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#FFFFFF',
+    lineHeight: 20,
+  },
+  termsLink: {
+    color: '#007AFF',
+    textDecorationLine: 'underline',
   },
 });

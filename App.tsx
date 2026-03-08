@@ -12,6 +12,7 @@ import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
 
 // Import contexts
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
+import { RegistrationProvider } from './src/contexts/RegistrationContext';
 import { CartProvider } from './src/contexts/CartContext';
 import { FilterProvider } from './src/contexts/FilterContext';
 
@@ -22,6 +23,7 @@ import { pushNotificationService } from './src/services/pushNotificationService'
 import { SplashScreen } from './src/screens/SplashScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { SignupScreen } from './src/screens/SignupScreen';
+import { EmailVerificationScreen } from './src/screens/EmailVerificationScreen';
 import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
 import { WelcomeScreen } from './src/screens/WelcomeScreen';
 
@@ -137,6 +139,13 @@ const linking: any = {
   prefixes: [Linking.createURL('/'), 'fretiko://', 'https://fretiko.com', 'http://fretiko.com'],
   config: {
     screens: {
+      EmailVerification: {
+        path: 'auth/callback',
+        parse: {
+          token: (token: string) => token,
+          email: (email: string) => email,
+        },
+      },
       Main: {
         screens: {
           Stories: 'stories',
@@ -365,7 +374,6 @@ const AppNavigator: React.FC = () => {
         {isAuthenticated ? (
           isNewUser ? (
             <>
-              <Stack.Screen name="RoleSelection" component={RoleSelectionScreen as any} />
               <Stack.Screen name="Welcome" component={WelcomeScreen} />
             </>
           ) : (
@@ -455,6 +463,9 @@ const AppNavigator: React.FC = () => {
           <>
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Signup" component={SignupScreen} />
+            <Stack.Screen name="RoleSelection" component={RoleSelectionScreen as any} />
+            <Stack.Screen name="EmailVerification" component={EmailVerificationScreen as any} />
+            <Stack.Screen name="Welcome" component={WelcomeScreen} />
             <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
           </>
         )}
@@ -467,14 +478,16 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ErrorBoundary>
-        <AuthProvider>
-          <CartProvider>
-            <FilterProvider>
-              <AppNavigator />
-              <StatusBar style="light" backgroundColor="#000000" />
-            </FilterProvider>
-          </CartProvider>
-        </AuthProvider>
+        <RegistrationProvider>
+          <AuthProvider>
+            <CartProvider>
+              <FilterProvider>
+                <AppNavigator />
+                <StatusBar style="light" backgroundColor="#000000" />
+              </FilterProvider>
+            </CartProvider>
+          </AuthProvider>
+        </RegistrationProvider>
       </ErrorBoundary>
     </SafeAreaProvider>
   );

@@ -5,6 +5,14 @@ import { authAPI } from '../services/api';
 import { warningsAPI } from '../services/warningsAPI';
 import { pushNotificationService } from '../services/pushNotificationService';
 
+// Custom error class for unauthorized access
+class UnauthorizedException extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnauthorizedException';
+  }
+}
+
 // Types for our auth system
 export interface User {
   id: string;
@@ -17,6 +25,7 @@ export interface User {
   is_verified?: boolean;
   username?: string;
   avatar_url?: string;
+  hasAcceptedTerms?: boolean;
 }
 
 export interface AuthState {
@@ -38,13 +47,19 @@ export interface AuthContextType extends AuthState {
     firstName: string,
     lastName: string,
     dateOfBirth?: string,
-    gender?: string
+    gender?: string,
+    hasAcceptedTerms?: boolean,
+    user_role?: 'citizen' | 'vendor' | 'rider',
+    is_seller?: boolean,
+    is_rider?: boolean
   ) => Promise<void>;
+  socialSignIn: (provider: 'google' | 'apple', accessToken: string, idToken?: string) => Promise<void>;
   migrate: (email: string, newPassword: string) => Promise<void>;
   signout: () => Promise<void>;
   logout: () => Promise<void>;
   clearNewUserFlag: () => void;
   checkAccountStatus: () => Promise<void>;
+  acceptTerms: () => Promise<void>;
 }
 
 // Create the context
@@ -82,7 +97,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   // Register push notification token when user is authenticated
-  // Push notification registration
   useEffect(() => {
     const registerPushToken = async () => {
       if (authState.isAuthenticated && authState.accessToken && authState.user) {
@@ -177,7 +191,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             console.log('📦 Loaded token from AsyncStorage fallback');
           }
         }
-      } catch (secureStoreError) {
+      } catch (secureStoreError: any) {
         console.log('⚠️ SecureStore error, trying fallback:', secureStoreError.message);
         accessToken = await AsyncStorage.getItem('accessToken_fallback');
       }
@@ -197,7 +211,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             console.log('⚠️ Error parsing suspension status:', e);
           }
         }
-
+        
         // Validate token by checking if it's properly formatted JWT
         const tokenParts = accessToken.split('.');
         if (tokenParts.length === 3) {
@@ -336,7 +350,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           await SecureStore.setItemAsync('accessToken', accessToken);
           await SecureStore.setItemAsync('refreshToken', refreshToken);
           console.log('✅ Tokens saved to SecureStore');
-        } catch (secureStoreError) {
+        } catch (secureStoreError: any) {
           console.log('⚠️ SecureStore save failed, using fallback:', secureStoreError.message);
 
           // Fallback to AsyncStorage for development
@@ -382,7 +396,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           await SecureStore.deleteItemAsync('accessToken');
           await SecureStore.deleteItemAsync('refreshToken');
         }
-      } catch (secureStoreError) {
+      } catch (secureStoreError: any) {
         console.log('⚠️ SecureStore clear error (expected in some cases):', secureStoreError.message);
       }
 
@@ -497,15 +511,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Save auth data
       await saveAuthData(enrichedUser, response.accessToken, response.refreshToken);
       
-      // Save suspension status for app reload
-      const suspensionStatus = {
-        isSuspended: isSuspended,
-        isDeleted: false,
-        savedAt: new Date().toISOString(),
-      };
-      await AsyncStorage.setItem('suspensionStatus', JSON.stringify(suspensionStatus));
-
-      // Update state - if suspended, set isSuspended immediately
+      // Update state - use backend suspension response directly
       setAuthState({
         user: enrichedUser,
         accessToken: response.accessToken,
@@ -577,8 +583,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return;
       }
       
-      setAuthState(prev => ({ ...prev, isLoading: false }));
-      throw error; // Re-throw other errors so the UI can handle them
+      if (error.message && error.message.includes('Email not confirmed')) {
+        throw new UnauthorizedException('Please confirm your email before signing in');
+      }
+      throw new UnauthorizedException('Invalid email or password');
     }
   };
 
@@ -588,7 +596,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     firstName: string,
     lastName: string,
     dateOfBirth?: string,
-    gender?: string
+    gender?: string,
+    hasAcceptedTerms?: boolean,
+    user_role?: 'citizen' | 'vendor' | 'rider',
+    is_seller?: boolean,
+    is_rider?: boolean
   ) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
@@ -600,15 +612,47 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         lastName,
         dateOfBirth,
         gender,
+        hasAcceptedTerms,
+        user_role: user_role || 'citizen',
+        is_seller: is_seller || false,
+        is_rider: is_rider || false,
+        is_verified: false,
       });
 
+      // Handle the wrapped response from backend
+      const user = response.user;
+      const accessToken = response.accessToken;
+      const refreshToken = response.refreshToken;
+      const requiresEmailVerification = response.requiresEmailVerification;
+
+      // Debug logging
+      console.log('🔍 Backend response:', {
+        hasUser: !!user,
+        userId: user?.id,
+        hasAccessToken: !!accessToken,
+        requiresEmailVerification,
+      });
+
+      if (requiresEmailVerification) {
+        // Navigate to email verification screen
+        // This will be handled by the signup screen navigation logic
+        setAuthState(prev => ({ ...prev, isLoading: false }));
+        return;
+      }
+
+      // Validate user data before saving
+      if (!user || !user.id) {
+        console.error('❌ Invalid user data received from backend:', user);
+        throw new Error('Invalid user data received from server');
+      }
+
       // Save auth data
-      await saveAuthData(response.user, response.accessToken, response.refreshToken);
+      await saveAuthData(user, accessToken, refreshToken);
 
       // Update state - mark as new user to trigger role selection
       setAuthState({
-        user: response.user,
-        accessToken: response.accessToken,
+        user: user,
+        accessToken: accessToken,
         isLoading: false,
         isAuthenticated: true,
         isNewUser: true,
@@ -618,14 +662,56 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       });
     } catch (error) {
       setAuthState(prev => ({ ...prev, isLoading: false }));
-      throw error; // Re-throw so the UI can handle it
+      throw error; // Re-throw so UI can handle it
+    }
+  };
+
+  const socialSignIn = async (provider: 'google' | 'apple', accessToken: string, idToken?: string) => {
+    try {
+      setAuthState(prev => ({ ...prev, isLoading: true }));
+
+      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/auth/social/signin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider,
+          accessToken,
+          idToken,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Save auth data
+        await saveAuthData(data.user, data.accessToken, data.refreshToken);
+
+        // Update state
+        setAuthState({
+          user: data.user,
+          accessToken: data.accessToken,
+          isLoading: false,
+          isAuthenticated: true,
+          isNewUser: data.isNewUser || false,
+          isSuspended: data.isSuspended || false,
+          isDeleted: false,
+          isCheckingSuspension: !data.isSuspended,
+        });
+      } else {
+        throw new Error(data.message || 'Social authentication failed');
+      }
+    } catch (error) {
+      setAuthState(prev => ({ ...prev, isLoading: false }));
+      throw error;
     }
   };
 
   const migrate = async (email: string, newPassword: string) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
-
+      
       const response = await authAPI.migrate({ email, newPassword });
 
       // Save auth data
@@ -696,15 +782,33 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setAuthState(prev => ({ ...prev, isNewUser: false }));
   };
 
+  const acceptTerms = async () => {
+    try {
+      console.log('📋 Accepting terms for user:', authState.user?.id);
+
+      // TODO: Call backend API to accept terms
+      // This will update user_profiles.terms_accepted_at, terms_accepted_ip, etc.
+      // For now, just update local state
+      setAuthState(prev => ({ ...prev, hasAcceptedTerms: true }));
+
+      console.log('✅ Terms accepted successfully');
+    } catch (error) {
+      console.error('❌ Error accepting terms:', error);
+      throw error;
+    }
+  };
+
   const value: AuthContextType = {
     ...authState,
     signin,
     signup,
+    socialSignIn,
     migrate,
     signout,
     logout: signout, // Alias for signout
     clearNewUserFlag,
     checkAccountStatus,
+    acceptTerms,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
