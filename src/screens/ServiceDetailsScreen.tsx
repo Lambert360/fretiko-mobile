@@ -162,7 +162,7 @@ const ServiceDetailsScreen = () => {
         chatId: conversation.id,
         chatName: service.serviceProvider || 'Service Provider', // Use provider name
         chatAvatar: service.userAvatar || 'https://via.placeholder.com/50', // Use provider avatar
-        chatType: chatType as const,
+        chatType: chatType,
         isOnline: true, // Assume online for now
         verified: false, // Set based on provider verification status if available
         isAI: false,

@@ -71,11 +71,11 @@ export const RegistrationProvider: React.FC<RegistrationProviderProps> = ({ chil
       const updated = {
         ...prev,
         ...data,
-        // Set default values for stage 2 if not provided
+        // Only set defaults for missing role data, don't override existing data
         ...(stage === 'stage2' && !data.user_role && {
-          user_role: 'citizen',
-          is_seller: false,
-          is_rider: false,
+          user_role: prev?.user_role || 'citizen',
+          is_seller: prev?.is_seller || false,
+          is_rider: prev?.is_rider || false,
         }),
       } as RegistrationData;
 

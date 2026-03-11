@@ -23,7 +23,7 @@ import { pushNotificationService } from './src/services/pushNotificationService'
 import { SplashScreen } from './src/screens/SplashScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { SignupScreen } from './src/screens/SignupScreen';
-import { EmailVerificationScreen } from './src/screens/EmailVerificationScreen';
+import EmailVerificationScreen from './src/screens/EmailVerificationScreen';
 import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
 import { WelcomeScreen } from './src/screens/WelcomeScreen';
 
@@ -370,6 +370,7 @@ const AppNavigator: React.FC = () => {
           cardStyle: { backgroundColor: '#000000' }, // Match app dark theme
           gestureEnabled: true, // Allow swipe back gestures
         }}
+        key={`${isAuthenticated}-${isNewUser}-${isSuspended}-${isDeleted}`} // Force re-mount on auth state changes
       >
         {isAuthenticated ? (
           isNewUser ? (

@@ -535,6 +535,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isRider: enrichedUser.isRider 
       });
     } catch (error: any) {
+      // Reset loading state on error
+      setAuthState(prev => ({ ...prev, isLoading: false }));
+      
       // Check if this is a suspension error
       if (error.message && error.message.includes('suspended')) {
         console.log('🚫 Account suspended during login');

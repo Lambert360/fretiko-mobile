@@ -47,6 +47,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
   const [passwordStrength, setPasswordStrength] = useState<'weak' | 'medium' | 'strong'>('weak');
   const [isPasswordValid, setIsPasswordValid] = useState(false);
   const [hasAcceptedTerms, setHasAcceptedTerms] = useState(false);
+  const [showPasswordInstructions, setShowPasswordInstructions] = useState(false);
   const insets = useSafeAreaInsets();
 
   const { updateRegistrationData } = useRegistration();
@@ -128,12 +129,32 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
         hasAcceptedTerms: signupData.hasAcceptedTerms,
       });
 
-      // Store data locally and navigate to role selection
+      // Call backend to send verification email only (don't create user yet)
+      console.log('🚀 Sending verification email...');
+      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000'}/auth/send-verification-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(signupData),
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || 'Failed to send verification email');
+      }
+
+      console.log('✅ Verification email sent!');
+      console.log('- Email:', signupData.email);
+
+      // Store data locally and navigate to email verification
       updateRegistrationData('stage1', signupData);
       
-      // Navigate to role selection screen
-      navigation.navigate('RoleSelection');
+      // Navigate to email verification screen
+      navigation.navigate('EmailVerification');
     } catch (error: any) {
+      console.error('❌ Signup error:', error);
       Alert.alert('Registration Failed', error.message || 'Something went wrong');
     } finally {
       setIsLoading(false);
@@ -244,6 +265,8 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                     placeholderTextColor="#666"
                     secureTextEntry={!showPassword}
                     autoCapitalize="none"
+                    onFocus={() => setShowPasswordInstructions(true)}
+                    onBlur={() => setShowPasswordInstructions(false)}
                   />
                   <TouchableOpacity
                     accessibilityRole="button"
@@ -255,13 +278,15 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                   </TouchableOpacity>
                 </View>
                 {/* Password Strength Indicator */}
-                <PasswordStrengthIndicator
-                  password={formData.password}
-                  onStrengthChange={(strength) => {
-                    setPasswordStrength(strength);
-                    setIsPasswordValid(strength !== 'weak');
-                  }}
-                />
+                {showPasswordInstructions && (
+                  <PasswordStrengthIndicator
+                    password={formData.password}
+                    onStrengthChange={(strength) => {
+                      setPasswordStrength(strength);
+                      setIsPasswordValid(strength !== 'weak');
+                    }}
+                  />
+                )}
               </View>
 
               <View style={styles.inputGroup}>

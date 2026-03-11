@@ -11,6 +11,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../contexts/AuthContext';
 import { useRegistration } from '../contexts/RegistrationContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -39,7 +40,8 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
   const [loading, setLoading] = useState(false);
 
   const handleRoleSelect = (role: 'vendor' | 'rider' | 'citizen') => {
-    setSelectedRole(role);
+    // Toggle role selection
+    setSelectedRole(prevRole => prevRole === role ? null : role);
   };
 
   const handleContinue = async () => {
@@ -55,10 +57,42 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
 
       updateRegistrationData('stage2', roleData);
 
-      // Navigate to email verification screen
-      navigation.navigate('EmailVerification');
+      // Create user account with complete data (email, role, etc.)
+      if (!registrationData) {
+        Alert.alert('Error', 'Registration data not found. Please start over.');
+        navigation.navigate('Signup');
+        return;
+      }
+
+      const createUserResponse = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000'}/auth/create-verified-user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: registrationData.email,
+          password: registrationData.password,
+          firstName: registrationData.firstName,
+          lastName: registrationData.lastName,
+          hasAcceptedTerms: true,
+          user_role: roleData.user_role,
+          is_seller: roleData.is_seller,
+          is_rider: roleData.is_rider,
+        }),
+      });
+
+      const createUserResult = await createUserResponse.json();
+      
+      if (createUserResult.success) {
+        console.log('✅ User created successfully with role:', createUserResult.user);
+        
+        // Navigate to welcome screen - user will signin when they tap "Explore"
+        navigation.navigate('Welcome');
+      } else {
+        Alert.alert('Error', createUserResult.message || 'Account creation failed');
+      }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to update role');
+      Alert.alert('Error', error.message || 'Failed to create account');
     } finally {
       setLoading(false);
     }

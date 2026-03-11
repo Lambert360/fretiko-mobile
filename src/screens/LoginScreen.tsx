@@ -71,13 +71,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     } catch (error: any) {
       // Don't show alert for suspension/deletion - handled by AuthContext and App.tsx navigation
       if (error.message && (error.message.includes('suspended') || error.message.includes('deleted'))) {
-        setIsLoading(false);
         return; // Let App.tsx handle navigation to SuspensionScreen
       }
       
       if (error.message === 'LEGACY_USER_MIGRATION_NEEDED') {
         setNeedsMigration(true);
-        setIsLoading(false);
         Alert.alert(
           'Account Migration Required',
           'Your account needs to be migrated to our new system. Please set a new password to continue.',
@@ -85,8 +83,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
         );
       } else {
         Alert.alert('Login Failed', error.message || 'Something went wrong');
-        setIsLoading(false);
       }
+    } finally {
+      setIsLoading(false);
     }
   };
 

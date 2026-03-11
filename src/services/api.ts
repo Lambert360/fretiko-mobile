@@ -59,7 +59,7 @@ api.interceptors.request.use(
       let accessToken = null;
       try {
         accessToken = await SecureStore.getItemAsync('accessToken');
-      } catch (secureStoreError: unknown) {
+      } catch (secureStoreError: any) {
         console.log('⚠️ SecureStore error (common in Expo SDK 54):', secureStoreError.message);
 
         // Fallback to AsyncStorage for development
@@ -151,10 +151,34 @@ export const authAPI = {
   // Sign in existing user
   signin: async (credentials: { email: string; password: string }) => {
     try {
-      const response = await api.post('/auth/signin', credentials);
-      return response.data;
+      // Use fetch directly instead of axios to avoid token interceptor issues
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/signin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(credentials),
+      });
+
+      console.log('🔍 Frontend Signin Response:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: Object.fromEntries(response.headers.entries())
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.log('❌ Frontend Signin Error:', errorData);
+        throw new Error(errorData.message || 'Signin failed');
+      }
+
+      const responseData = await response.json();
+      console.log('✅ Frontend Signin Success:', responseData);
+      return responseData;
     } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Signin failed');
+      console.log('❌ Frontend Signin Exception:', error);
+      throw new Error(error.message || 'Signin failed');
     }
   },
 

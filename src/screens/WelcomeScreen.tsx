@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRegistration } from '../contexts/RegistrationContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,13 +24,10 @@ interface WelcomeScreenProps {
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ navigation }) => {
-  const { clearNewUserFlag, signup } = useAuth();
-  const { registrationData, isRegistrationComplete, clearRegistrationData } = useRegistration();
+  const { clearNewUserFlag, isAuthenticated, isNewUser, signin } = useAuth();
+  const { registrationData, clearRegistrationData } = useRegistration();
   const insets = useSafeAreaInsets();
   
-  const [isLoading, setIsLoading] = useState(false);
-  const [accountCreated, setAccountCreated] = useState(false);
-
   const fadeAnim = new Animated.Value(0);
   const slideAnim = new Animated.Value(50);
 
@@ -49,50 +47,45 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ navigation }) => {
     ]).start();
   }, []);
 
-  const handleCreateAccount = async () => {
-    if (!isRegistrationComplete() || !registrationData) {
-      Alert.alert('Error', 'Registration data is incomplete. Please start over.');
-      navigation.navigate('Signup');
-      return;
-    }
-
-    setIsLoading(true);
-
+  const handleExplore = async () => {
+    console.log('🚀 WelcomeScreen: Explore button tapped');
+    console.log('📊 Current auth state:', { isAuthenticated, isNewUser });
+    
     try {
-      // Call signup with complete registration data
-      await signup(
-        registrationData!.email,
-        registrationData!.password,
-        registrationData!.firstName,
-        registrationData!.lastName,
-        registrationData!.dateOfBirth,
-        registrationData!.gender,
-        registrationData!.hasAcceptedTerms,
-        registrationData!.user_role,
-        registrationData!.is_seller,
-        registrationData!.is_rider,
-      );
-
-      // Clear registration data after successful account creation
-      clearRegistrationData();
-      setAccountCreated(true);
+      // Get registration data to signin the user
+      const registrationDataJSON = await AsyncStorage.getItem('registrationData');
+      const registrationData = registrationDataJSON ? JSON.parse(registrationDataJSON) : null;
       
-      // Navigation will be handled by auth state change
-    } catch (error: any) {
-      Alert.alert('Account Creation Failed', error.message || 'Something went wrong');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleExplore = () => {
-    if (accountCreated) {
-      // Clear new user flag and navigate to Main (Home)
-      clearNewUserFlag();
-      // Navigation will be handled automatically by App.tsx when isNewUser becomes false
-    } else {
-      // Try to create account first
-      handleCreateAccount();
+      if (registrationData && registrationData.email && registrationData.password) {
+        console.log('🔐 Attempting to signin user...');
+        try {
+          await signin(registrationData.email, registrationData.password);
+          console.log('✅ Signin successful');
+          
+          // Clear new user flag and navigate to main app
+          await clearNewUserFlag();
+          console.log('✅ Navigating to Main app');
+        } catch (signinError: any) {
+          console.error('❌ Signin failed:', signinError);
+          // Show manual login option or navigate to login screen
+          Alert.alert(
+            'Login Required', 
+            'Please sign in to continue',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Sign In', onPress: () => navigation.navigate('Login') }
+            ]
+          );
+          return;
+        }
+      } else {
+        console.log('⚠️ No registration data found, clearing flag anyway');
+        await clearNewUserFlag();
+      }
+      
+      console.log('✅ Explore flow completed');
+    } catch (error) {
+      console.error('❌ Error in explore flow:', error);
     }
   };
 
