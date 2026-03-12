@@ -201,6 +201,30 @@ export const authAPI = {
       throw new Error(error.response?.data?.message || 'Password reset failed');
     }
   },
+
+  // Verify reset token
+  verifyResetToken: async (email: string, token: string) => {
+    try {
+      const response = await api.post('/auth/verify-reset-token', { email, token });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Token verification failed');
+    }
+  },
+
+  // Confirm password reset with token
+  confirmResetPassword: async (email: string, token: string, newPassword: string) => {
+    try {
+      const response = await api.post('/auth/confirm-reset-password', { 
+        email, 
+        token, 
+        newPassword 
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Password reset confirmation failed');
+    }
+  },
 };
 
 // Test connection to backend

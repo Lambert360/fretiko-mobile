@@ -25,6 +25,7 @@ import { LoginScreen } from './src/screens/LoginScreen';
 import { SignupScreen } from './src/screens/SignupScreen';
 import EmailVerificationScreen from './src/screens/EmailVerificationScreen';
 import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
+import { ResetPasswordScreen } from './src/screens/ResetPasswordScreen';
 import { WelcomeScreen } from './src/screens/WelcomeScreen';
 
 // Import profile and user screens
@@ -468,6 +469,7 @@ const AppNavigator: React.FC = () => {
             <Stack.Screen name="EmailVerification" component={EmailVerificationScreen as any} />
             <Stack.Screen name="Welcome" component={WelcomeScreen} />
             <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+            <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
           </>
         )}
       </Stack.Navigator>

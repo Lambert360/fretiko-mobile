@@ -45,8 +45,13 @@ export const ForgotPasswordScreen: React.FC<ForgotPasswordScreenProps> = ({ navi
         'Password reset instructions have been sent to your email address.',
         [
           {
-            text: 'OK',
+            text: 'Enter Reset Code',
+            onPress: () => navigation.navigate('ResetPassword', { email: email.trim().toLowerCase() }),
+          },
+          {
+            text: 'Cancel',
             onPress: () => navigation.goBack(),
+            style: 'cancel',
           },
         ]
       );
