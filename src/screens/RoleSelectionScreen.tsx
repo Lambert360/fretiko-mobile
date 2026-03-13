@@ -9,11 +9,13 @@ import {
   ActivityIndicator,
   ImageBackground,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useRegistration } from '../contexts/RegistrationContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Device from 'expo-device';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -57,28 +59,49 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
 
       updateRegistrationData('stage2', roleData);
 
-      // Create user account with complete data (email, role, etc.)
+      // Collect device information for terms acceptance tracking
+      console.log('🔍 Device module available:', !!Device);
+      console.log('🔍 Device.osName:', Device.osName);
+      console.log('🔍 Device.modelName:', Device.modelName);
+      console.log('🔍 Platform.OS:', Platform.OS);
+      console.log('🔍 Platform.Version:', Platform.Version);
+      
+      const deviceInfo = {
+        ipAddress: 'mobile_app', // Will be enhanced with real IP later
+        userAgent: `${Platform.OS} ${Platform.Version} - ${Device.deviceName || Device.modelName || 'Unknown Device'} - ${Device.brand || 'Unknown Brand'} ${Device.modelName || 'Unknown Model'}`,
+      };
+
+      console.log('📱 Device info for terms acceptance:', deviceInfo);
       if (!registrationData) {
         Alert.alert('Error', 'Registration data not found. Please start over.');
         navigation.navigate('Signup');
         return;
       }
 
+      const requestBody = {
+          email: registrationData.email,
+          password: registrationData.password,
+          firstName: registrationData.firstName,
+          lastName: registrationData.lastName,
+          dateOfBirth: registrationData.dateOfBirth,
+          gender: registrationData.gender,
+          hasAcceptedTerms: true,
+          user_role: roleData.user_role,
+          is_seller: roleData.is_seller,
+          is_rider: roleData.is_rider,
+          // Add device info for terms acceptance tracking
+          ipAddress: deviceInfo.ipAddress,
+          userAgent: deviceInfo.userAgent,
+        };
+
+      console.log('🚀 Request body being sent:', requestBody);
+
       const createUserResponse = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000'}/auth/create-verified-user`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          email: registrationData.email,
-          password: registrationData.password,
-          firstName: registrationData.firstName,
-          lastName: registrationData.lastName,
-          hasAcceptedTerms: true,
-          user_role: roleData.user_role,
-          is_seller: roleData.is_seller,
-          is_rider: roleData.is_rider,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       const createUserResult = await createUserResponse.json();
@@ -98,18 +121,79 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
     }
   };
 
-  const handleSkip = () => {
-    // Skip role selection - remain as citizen
-    const roleData = {
-      user_role: 'citizen' as const,
-      is_seller: false,
-      is_rider: false,
-    };
+  const handleSkip = async () => {
+    setLoading(true);
 
-    updateRegistrationData('stage2', roleData);
-    
-    // Navigate to email verification screen
-    navigation.navigate('EmailVerification');
+    try {
+      // Skip role selection - default to citizen
+      const roleData = {
+        user_role: 'citizen' as const,
+        is_seller: false,
+        is_rider: false,
+      };
+
+      updateRegistrationData('stage2', roleData);
+
+      // Collect device information for terms acceptance tracking
+      console.log('🔍 Device module available:', !!Device);
+      console.log('🔍 Device.osName:', Device.osName);
+      console.log('🔍 Device.modelName:', Device.modelName);
+      console.log('🔍 Platform.OS:', Platform.OS);
+      console.log('🔍 Platform.Version:', Platform.Version);
+      
+      const deviceInfo = {
+        ipAddress: 'mobile_app', // Will be enhanced with real IP later
+        userAgent: `${Platform.OS} ${Platform.Version} - ${Device.deviceName || Device.modelName || 'Unknown Device'} - ${Device.brand || 'Unknown Brand'} ${Device.modelName || 'Unknown Model'}`,
+      };
+
+      console.log('📱 Device info for terms acceptance (skip):', deviceInfo);
+      if (!registrationData) {
+        Alert.alert('Error', 'Registration data not found. Please start over.');
+        navigation.navigate('Signup');
+        return;
+      }
+
+      const requestBody = {
+          email: registrationData.email,
+          password: registrationData.password,
+          firstName: registrationData.firstName,
+          lastName: registrationData.lastName,
+          dateOfBirth: registrationData.dateOfBirth,
+          gender: registrationData.gender,
+          hasAcceptedTerms: true,
+          user_role: roleData.user_role,        // 'citizen'
+          is_seller: roleData.is_seller,        // false
+          is_rider: roleData.is_rider,         // false
+          // Add device info for terms acceptance tracking
+          ipAddress: deviceInfo.ipAddress,
+          userAgent: deviceInfo.userAgent,
+        };
+
+      console.log('🚀 Skip - Request body being sent:', requestBody);
+
+      const createUserResponse = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000'}/auth/create-verified-user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      const createUserResult = await createUserResponse.json();
+      
+      if (createUserResult.success) {
+        console.log('✅ User created successfully with citizen role:', createUserResult.user);
+        
+        // Navigate to welcome screen - user will signin when they tap "Explore"
+        navigation.navigate('Welcome');
+      } else {
+        Alert.alert('Error', createUserResult.message || 'Account creation failed');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to create account');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

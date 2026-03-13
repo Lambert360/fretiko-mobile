@@ -17,6 +17,7 @@ interface DatePickerInputProps {
   placeholder?: string;
   label?: string;
   minimumAge?: number;
+  required?: boolean;
 }
 
 export const DatePickerInput: React.FC<DatePickerInputProps> = ({
@@ -24,16 +25,18 @@ export const DatePickerInput: React.FC<DatePickerInputProps> = ({
   onChange,
   placeholder = 'Select date',
   label = 'Date of Birth',
-  minimumAge = 15,
+  minimumAge = 18,
+  required = false,
 }) => {
   const [showPicker, setShowPicker] = useState(false);
   const [mode, setMode] = useState<'date' | 'time'>('date');
 
-  // Calculate maximum date (today) and minimum date (minimumAge years ago)
+  // Calculate maximum date (18 years ago) and minimum date (much earlier)
   const today = new Date();
-  const maxDate = today;
+  const maxDate = new Date();
+  maxDate.setFullYear(today.getFullYear() - minimumAge); // Max date is 18 years ago
   const minDate = new Date();
-  minDate.setFullYear(today.getFullYear() - minimumAge);
+  minDate.setFullYear(today.getFullYear() - 120); // Allow very old dates (120 years ago)
 
   const formatDate = (date: Date): string => {
     const year = date.getFullYear();
@@ -62,14 +65,32 @@ export const DatePickerInput: React.FC<DatePickerInputProps> = ({
   };
 
   const handleDateChange = (event: any, selectedDate?: Date) => {
-    setShowPicker(false);
-
-    if (event.type === 'dismissed' || !selectedDate) {
-      return;
-    }
-
-    if (validateAge(selectedDate)) {
-      onChange(formatDate(selectedDate));
+    // Android: event.type is 'set' when user confirms, 'dismissed' when cancelled
+    // iOS: event.type is not present, selectedDate is always provided
+    
+    if (Platform.OS === 'android') {
+      if (event.type === 'dismissed') {
+        setShowPicker(false);
+        return;
+      }
+      
+      if (event.type === 'set' && selectedDate) {
+        if (validateAge(selectedDate)) {
+          onChange(formatDate(selectedDate));
+          setShowPicker(false);
+        }
+        // If validation fails, keep picker open for Android too
+      }
+    } else {
+      // iOS: always get selectedDate, handle validation
+      if (selectedDate) {
+        if (validateAge(selectedDate)) {
+          onChange(formatDate(selectedDate));
+        }
+        setShowPicker(false); // Always close on iOS
+      } else {
+        setShowPicker(false);
+      }
     }
   };
 
@@ -96,7 +117,10 @@ export const DatePickerInput: React.FC<DatePickerInputProps> = ({
 
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={styles.label}>
+        {label}
+        {required && <Text style={styles.requiredAsterisk}> *</Text>}
+      </Text>
       <TouchableOpacity
         style={styles.dateInput}
         onPress={showDatePicker}
@@ -109,42 +133,15 @@ export const DatePickerInput: React.FC<DatePickerInputProps> = ({
       </TouchableOpacity>
 
       {showPicker && (
-        <Modal
-          transparent={true}
-          animationType="slide"
-          visible={showPicker}
-          onRequestClose={() => setShowPicker(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={() => setShowPicker(false)}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <Text style={styles.modalTitle}>Select Date of Birth</Text>
-                <TouchableOpacity
-                  style={styles.doneButton}
-                  onPress={() => setShowPicker(false)}
-                >
-                  <Text style={styles.doneButtonText}>Done</Text>
-                </TouchableOpacity>
-              </View>
-              
-              <DateTimePicker
-                value={value ? new Date(value) : minDate}
-                mode={mode}
-                display="spinner"
-                onChange={handleDateChange}
-                maximumDate={maxDate}
-                minimumDate={minDate}
-                style={styles.picker}
-              />
-            </View>
-          </View>
-        </Modal>
+        <DateTimePicker
+          value={value ? new Date(value) : maxDate}
+          mode={mode}
+          display="default"
+          onChange={handleDateChange}
+          maximumDate={maxDate}
+          minimumDate={minDate}
+          style={styles.picker}
+        />
       )}
     </View>
   );
@@ -159,6 +156,10 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     marginBottom: 8,
     fontWeight: '500',
+  },
+  requiredAsterisk: {
+    color: '#FF3B30', // Red color for required indicator
+    fontSize: 16,
   },
   dateInput: {
     flexDirection: 'row',

@@ -71,6 +71,11 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
       return false;
     }
 
+    if (!dateOfBirth) {
+      Alert.alert('Error', 'Please select your date of birth');
+      return false;
+    }
+
     if (!email.includes('@')) {
       Alert.alert('Error', 'Please enter a valid email address');
       return false;
@@ -113,7 +118,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
         password: formData.password,
         firstName: formData.firstName?.trim(),
         lastName: formData.lastName?.trim(),
-        dateOfBirth: formData.dateOfBirth?.trim() || undefined,
+        dateOfBirth: formData.dateOfBirth?.trim(), // Now required
         gender: formData.gender?.trim() || undefined,
         hasAcceptedTerms,
       };
@@ -316,8 +321,9 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                 value={formData.dateOfBirth}
                 onChange={(value) => updateFormData('dateOfBirth', value)}
                 placeholder="Select your date of birth"
-                label="Date of Birth (Optional)"
-                minimumAge={15}
+                label="Date of Birth"
+                minimumAge={18}
+                required={true}
               />
 
               <View style={styles.inputGroup}>

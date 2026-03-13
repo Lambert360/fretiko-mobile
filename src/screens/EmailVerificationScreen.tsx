@@ -20,6 +20,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRegistration } from '../contexts/RegistrationContext';
 import { useAuth } from '../contexts/AuthContext';
+import * as Device from 'expo-device';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -115,15 +116,29 @@ export const EmailVerificationScreen: React.FC<EmailVerificationScreenProps> = (
     setErrorMessage('');
 
     try {
+      // Collect device information for terms acceptance tracking
+      const deviceInfo = {
+        ipAddress: 'mobile_app', // Will be enhanced with real IP later
+        userAgent: `${Platform.OS} ${Platform.Version} - ${Device.deviceName || Device.modelName || 'Unknown Device'} - ${Device.brand || 'Unknown Brand'} ${Device.modelName || 'Unknown Model'}`,
+      };
+
+      console.log('📱 Device info for email verification:', deviceInfo);
+
+      const requestBody = {
+        token: token.trim(),
+        email: registrationData.email,
+        ipAddress: deviceInfo.ipAddress,
+        userAgent: deviceInfo.userAgent,
+      };
+
+      console.log('🚀 Email verification request body:', requestBody);
+
       const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000'}/auth/verify-email-token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          token: token.trim(),
-          email: registrationData.email,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       const result = await response.json();

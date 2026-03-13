@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { userAPI, UpdateProfileData } from '../services/userAPI';
 import { AvatarUpload } from '../components/AvatarUpload';
 import { BackgroundUpload } from '../components/BackgroundUpload';
+import { DatePickerInput } from '../components/DatePickerInput';
 
 interface EditProfileScreenProps {
   navigation: any;
@@ -320,16 +321,14 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
 
           {/* Date of Birth */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Date of Birth</Text>
-            <TextInput
-              style={[styles.input, errors.dateOfBirth && styles.inputError]}
+            <DatePickerInput
               value={formData.dateOfBirth}
-              onChangeText={(value) => updateFormData('dateOfBirth', value)}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor="#666"
+              onChange={(value) => updateFormData('dateOfBirth', value)}
+              placeholder="Select your date of birth"
+              label="Date of Birth"
+              minimumAge={18}
+              required={false}
             />
-            <Text style={styles.inputHint}>Format: YYYY-MM-DD (e.g., 1990-01-15)</Text>
-            {errors.dateOfBirth && <Text style={styles.errorText}>{errors.dateOfBirth}</Text>}
           </View>
 
           {/* Gender */}
