@@ -465,7 +465,10 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
               <Text style={styles.actionLabel}>History</Text>
             </TouchableOpacity>
             
-            <TouchableOpacity style={styles.actionButton}>
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={() => navigation.navigate('AccountSettings')}
+            >
               <View style={[styles.actionIcon, { backgroundColor: '#9B59B6' }]}>
                 <MaterialIcons name="settings" size={24} color="#FFFFFF" />
               </View>

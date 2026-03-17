@@ -45,6 +45,9 @@ import WalletDepositScreen from './src/screens/WalletDepositScreen';
 import WalletWithdrawScreen from './src/screens/WalletWithdrawScreen';
 import AddBankAccountScreen from './src/screens/AddBankAccountScreen';
 import CreatePINScreen from './src/screens/CreatePINScreen';
+import PINResetTokenScreen from './src/screens/PINResetTokenScreen';
+import PINResetNewPinScreen from './src/screens/PINResetNewPinScreen';
+import PINResetSuccessScreen from './src/screens/PINResetSuccessScreen';
 
 // Import product and service screens
 import ProductUploadScreen from './src/screens/ProductUploadScreen';
@@ -401,6 +404,9 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="WalletWithdraw" component={WalletWithdrawScreen} />
               <Stack.Screen name="AddBankAccount" component={AddBankAccountScreen} />
               <Stack.Screen name="CreatePIN" component={CreatePINScreen} />
+              <Stack.Screen name="PINResetTokenScreen" component={PINResetTokenScreen} />
+              <Stack.Screen name="PINResetNewPinScreen" component={PINResetNewPinScreen} />
+              <Stack.Screen name="PINResetSuccessScreen" component={PINResetSuccessScreen} />
               <Stack.Screen name="ProductUpload" component={ProductUploadScreen} />
               <Stack.Screen name="ProductDetails" component={ProductDetailsScreen as any} />
               <Stack.Screen name="ServiceUpload" component={ServiceUploadScreen} />

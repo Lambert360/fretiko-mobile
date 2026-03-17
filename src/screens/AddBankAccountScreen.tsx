@@ -32,6 +32,8 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
   const [bankCode, setBankCode] = useState('');
   const [accountType, setAccountType] = useState<'savings' | 'checking' | 'current'>('savings');
   const [currency, setCurrency] = useState('NGN');
+  const [showCurrencyDropdown, setShowCurrencyDropdown] = useState(false);
+  const [currencySearch, setCurrencySearch] = useState('');
   const [loading, setLoading] = useState(false);
 
   const accountTypes = [
@@ -40,7 +42,71 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
     { id: 'current', label: 'Current' },
   ];
 
-  const currencies = ['NGN', 'USD', 'EUR', 'GBP'];
+  const currencies = [
+    // Major International Currencies (most common)
+    'USD', // United States Dollar
+    'EUR', // Euro
+    'GBP', // British Pound Sterling
+    'CAD', // Canadian Dollar
+    'AUD', // Australian Dollar
+    
+    // African Currencies (Flutterwave's primary market)
+    'NGN', // Nigerian Naira
+    'GHS', // Ghanaian Cedi
+    'KES', // Kenyan Shilling
+    'ZAR', // South African Rand
+    'UGX', // Ugandan Shilling
+    'TZS', // Tanzanian Shilling
+    'RWF', // Rwandan Franc
+    'XAF', // Central African CFA Franc
+    'XOF', // West African CFA Franc
+    'MWK', // Malawian Kwacha
+    'ZMW', // Zambian Kwacha
+    'EGP', // Egyptian Pound
+    'MAD', // Moroccan Dirham
+    'SLL', // Sierra Leonean Leone
+    'BWP', // Botswana Pula
+    'ETB', // Ethiopian Birr
+    'MZN', // Mozambican Metical
+    'MGA', // Malagasy Ariary
+    'AOA', // Angolan Kwanza
+    'SCR', // Seychellois Rupee
+    'MUR', // Mauritian Rupee
+    'SZL', // Swazi Lilangeni
+    'LSL', // Lesotho Loti
+    'NAD', // Namibian Dollar
+    'BIF', // Burundian Franc
+    'DJF', // Djiboutian Franc
+    'SOS', // Somali Shilling
+    'SDG', // Sudanese Pound
+    'SSP', // South Sudanese Pound
+    'STN', // São Tomé and Príncipe Dobra
+    'CDF', // Congolese Franc
+    'LRD', // Liberian Dollar
+    'GMD', // Gambian Dalasi
+    'GNF', // Guinean Franc
+    'TND', // Tunisian Dinar
+    'DZD', // Algerian Dinar
+    'MRU', // Mauritanian Ouguiya
+  ];
+
+  // Filter currencies based on search
+  const filteredCurrencies = currencies.filter(curr => 
+    curr.toLowerCase().includes(currencySearch.toLowerCase())
+  );
+
+  // Sort currencies: Major currencies first, then alphabetically
+  const majorCurrencies = ['USD', 'EUR', 'GBP', 'NGN', 'GHS', 'KES', 'ZAR'];
+  const sortedCurrencies = [
+    ...filteredCurrencies.filter(c => majorCurrencies.includes(c)),
+    ...filteredCurrencies.filter(c => !majorCurrencies.includes(c)).sort()
+  ];
+
+  const handleCurrencySelect = (selectedCurrency: string) => {
+    setCurrency(selectedCurrency);
+    setShowCurrencyDropdown(false);
+    setCurrencySearch('');
+  };
 
   const handleAddAccount = async () => {
     // Validation
@@ -59,6 +125,11 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
       return;
     }
 
+    if (!bankCode.trim()) {
+      Alert.alert('Error', 'Please enter bank code');
+      return;
+    }
+
     if (accountNumber.length < 10) {
       Alert.alert('Error', 'Account number must be at least 10 digits');
       return;
@@ -70,7 +141,7 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
         accountName: accountName.trim(),
         bankName: bankName.trim(),
         accountNumber: accountNumber.trim(),
-        bankCode: bankCode.trim() || undefined,
+        bankCode: bankCode.trim(),
         accountType,
         currency,
       });
@@ -110,7 +181,11 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
         <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.content} 
+        showsVerticalScrollIndicator={false}
+        scrollEnabled={!showCurrencyDropdown}
+      >
         {/* Info Card */}
         <View style={styles.infoCard}>
           <Ionicons name="information-circle" size={24} color="#3498DB" />
@@ -161,9 +236,9 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
             />
           </View>
 
-          {/* Bank Code (Optional) */}
+          {/* Bank Code */}
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Bank Code (Optional)</Text>
+            <Text style={styles.inputLabel}>Bank Code *</Text>
             <TextInput
               style={styles.input}
               value={bankCode}
@@ -205,27 +280,50 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
           {/* Currency */}
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Currency</Text>
-            <View style={styles.optionsRow}>
-              {currencies.map((curr) => (
-                <TouchableOpacity
-                  key={curr}
-                  style={[
-                    styles.currencyButton,
-                    currency === curr && styles.currencyButtonActive,
-                  ]}
-                  onPress={() => setCurrency(curr)}
+            <TouchableOpacity
+              style={styles.currencyPicker}
+              onPress={() => setShowCurrencyDropdown(!showCurrencyDropdown)}
+            >
+              <Text style={styles.currencyText}>{currency}</Text>
+              <Ionicons 
+                name={showCurrencyDropdown ? "chevron-up" : "chevron-down"} 
+                size={16} 
+                color="#999" 
+              />
+            </TouchableOpacity>
+            
+            {/* Currency Dropdown */}
+            {showCurrencyDropdown && (
+              <View style={styles.currencyDropdown}>
+                <ScrollView 
+                  style={styles.currencyDropdownScroll}
+                  nestedScrollEnabled={true}
+                  showsVerticalScrollIndicator={true}
+                  maximumZoomScale={1}
                 >
-                  <Text
-                    style={[
-                      styles.currencyButtonText,
-                      currency === curr && styles.currencyButtonTextActive,
-                    ]}
-                  >
-                    {curr}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+                  {sortedCurrencies.map((curr) => (
+                    <TouchableOpacity
+                      key={curr}
+                      style={[
+                        styles.currencyOption,
+                        currency === curr && styles.currencyOptionActive
+                      ]}
+                      onPress={() => handleCurrencySelect(curr)}
+                    >
+                      <Text style={[
+                        styles.currencyOptionText,
+                        currency === curr && styles.currencyOptionTextActive
+                      ]}>
+                        {curr}
+                      </Text>
+                      {currency === curr && (
+                        <Ionicons name="checkmark" size={16} color="#F39C12" />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
           </View>
 
           {/* Note */}
@@ -357,26 +455,61 @@ const styles = StyleSheet.create({
   optionButtonTextActive: {
     color: '#F39C12',
   },
-  currencyButton: {
-    flex: 1,
+  // Currency Picker Styles
+  currencyPicker: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: '#2A2A2A',
     borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#3A3A3A',
   },
-  currencyButtonActive: {
-    backgroundColor: 'rgba(243, 156, 18, 0.1)',
-    borderColor: '#F39C12',
-  },
-  currencyButtonText: {
-    fontSize: 14,
+  currencyText: {
+    fontSize: 16,
     fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  currencyDropdown: {
+    position: 'absolute',
+    bottom: '100%',  // Go UP instead of down
+    left: 0,
+    right: 0,
+    backgroundColor: '#222',
+    borderRadius: 12,
+    marginBottom: 4,  // Space above the input
+    zIndex: 1000,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },  // Shadow goes up
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    maxHeight: 300,
+  },
+  currencyDropdownScroll: {
+    maxHeight: 300,
+  },
+  currencyOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  currencyOptionActive: {
+    backgroundColor: 'rgba(243, 156, 18, 0.1)',
+  },
+  currencyOptionText: {
+    fontSize: 14,
+    fontWeight: '500',
     color: '#CCCCCC',
   },
-  currencyButtonTextActive: {
+  currencyOptionTextActive: {
     color: '#F39C12',
+    fontWeight: '600',
   },
   noteCard: {
     flexDirection: 'row',
@@ -414,11 +547,10 @@ const styles = StyleSheet.create({
     elevation: 0,
   },
   addButtonText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
   },
 });
 
 export default AddBankAccountScreen;
-

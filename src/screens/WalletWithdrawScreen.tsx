@@ -616,10 +616,10 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
         <TouchableOpacity
           style={[
             styles.withdrawButton,
-            (!fretiAmount || parseFloat(fretiAmount) <= 0 || loading) && styles.withdrawButtonDisabled
+            (!fretiAmount || parseFloat(fretiAmount) <= 0 || loading || exchangeRate === null) && styles.withdrawButtonDisabled
           ]}
           onPress={handleWithdraw}
-          disabled={!fretiAmount || parseFloat(fretiAmount) <= 0 || loading}
+          disabled={!fretiAmount || parseFloat(fretiAmount) <= 0 || loading || exchangeRate === null}
         >
           <Text style={styles.withdrawButtonText}>
             {loading ? 'Processing...' : `Withdraw ${fretiAmount ? walletAPI.formatFreti(parseFloat(fretiAmount)) : 'Funds'}`}

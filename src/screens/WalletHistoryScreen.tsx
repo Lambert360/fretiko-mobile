@@ -36,6 +36,10 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [showLeftArrow, setShowLeftArrow] = useState(false);
+  const [showRightArrow, setShowRightArrow] = useState(true);
+  const [currentScrollX, setCurrentScrollX] = useState(0);
+  const tabsScrollViewRef = React.useRef<ScrollView>(null);
 
   // ✅ NEW: Analytics state
   const [analytics, setAnalytics] = useState<{
@@ -346,6 +350,52 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
     setFilterType('all');
     setOffset(0);
     setHasMore(true);
+  };
+
+  // Arrow navigation functions
+  const scrollTabsLeft = () => {
+    if (tabsScrollViewRef.current) {
+      const newScrollX = Math.max(0, currentScrollX - 120);
+      tabsScrollViewRef.current.scrollTo({ x: newScrollX, animated: true });
+      setCurrentScrollX(newScrollX);
+      
+      // Update arrow states
+      setShowLeftArrow(newScrollX > 0);
+      setShowRightArrow(true);
+    }
+  };
+
+  const scrollTabsRight = () => {
+    if (tabsScrollViewRef.current) {
+      const newScrollX = currentScrollX + 120;
+      tabsScrollViewRef.current.scrollTo({ x: newScrollX, animated: true });
+      setCurrentScrollX(newScrollX);
+      
+      // Update arrow states with delay for smooth transition
+      setTimeout(() => {
+        setShowLeftArrow(true);
+        setShowRightArrow(false);
+      }, 100);
+    }
+  };
+
+  // Handle scroll events to show/hide arrows
+  const handleTabsScroll = (event: any) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const currentX = contentOffset.x;
+    const containerWidth = layoutMeasurement.width;
+    const totalWidth = contentSize.width;
+    
+    // Update current scroll position
+    setCurrentScrollX(currentX);
+    
+    // More precise edge detection with small threshold
+    const threshold = 5;
+    const isAtStart = currentX <= threshold;
+    const isAtEnd = currentX + containerWidth >= totalWidth - threshold;
+    
+    setShowLeftArrow(!isAtStart);
+    setShowRightArrow(!isAtEnd);
   };
 
   const salesFilterOptions = [
@@ -808,14 +858,24 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
 
       {/* Tab Selector */}
       <View style={styles.tabsContainer}>
+        {/* Left Arrow */}
+        {showLeftArrow && (
+          <TouchableOpacity 
+            style={styles.arrowButton}
+            onPress={scrollTabsLeft}
+          >
+            <Ionicons name="chevron-back" size={20} color="#FFFFFF" />
+          </TouchableOpacity>
+        )}
+        
         <ScrollView
+          ref={tabsScrollViewRef}
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={{ flexGrow: 0 }}
           contentContainerStyle={styles.tabsList}
-          scrollEnabled={true}
-          decelerationRate={Platform.OS === 'android' ? 0.85 : 'normal'}
-          overScrollMode={Platform.OS === 'android' ? 'always' : 'auto'}
+          keyboardShouldPersistTaps="handled"
+          removeClippedSubviews={false}
+          onScroll={handleTabsScroll}
           scrollEventThrottle={16}
         >
           {tabs.map((item) => (
@@ -841,6 +901,16 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
             </TouchableOpacity>
           ))}
         </ScrollView>
+        
+        {/* Right Arrow */}
+        {showRightArrow && (
+          <TouchableOpacity 
+            style={styles.arrowButton}
+            onPress={scrollTabsRight}
+          >
+            <Ionicons name="chevron-forward" size={20} color="#FFFFFF" />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Filter Options (only show for 'all' tab or 'sales' tab) */}
@@ -849,8 +919,7 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            style={{ flexGrow: 0 }}
-            contentContainerStyle={styles.filtersList}
+                        contentContainerStyle={styles.filtersList}
             scrollEnabled={true}
             decelerationRate={Platform.OS === 'android' ? 0.85 : 'normal'}
             overScrollMode={Platform.OS === 'android' ? 'always' : 'auto'}
@@ -865,8 +934,7 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            style={{ flexGrow: 0 }}
-            contentContainerStyle={styles.filtersList}
+                        contentContainerStyle={styles.filtersList}
             scrollEnabled={true}
             decelerationRate={Platform.OS === 'android' ? 0.85 : 'normal'}
             overScrollMode={Platform.OS === 'android' ? 'always' : 'auto'}
@@ -1117,9 +1185,23 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  arrowButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 8,
   },
   tabsList: {
     paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   tab: {
     flexDirection: 'row',
@@ -1131,6 +1213,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
+    minWidth: 120,  // Increased from 100 to ensure overflow
   },
   activeTab: {
     backgroundColor: '#F39C12',

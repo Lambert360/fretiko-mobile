@@ -52,7 +52,53 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
   placeholder = "Enter amount",
   editable = true,
   showCurrencyPicker = true,
-  supportedCurrencies = ['USD', 'NGN', 'EUR', 'GBP'],
+  supportedCurrencies = [
+    // Major International Currencies (most common)
+    'USD', // United States Dollar
+    'EUR', // Euro
+    'GBP', // British Pound Sterling
+    'CAD', // Canadian Dollar
+    'AUD', // Australian Dollar
+    
+    // African Currencies (Flutterwave's primary market)
+    'NGN', // Nigerian Naira
+    'GHS', // Ghanaian Cedi
+    'KES', // Kenyan Shilling
+    'ZAR', // South African Rand
+    'UGX', // Ugandan Shilling
+    'TZS', // Tanzanian Shilling
+    'RWF', // Rwandan Franc
+    'XAF', // Central African CFA Franc
+    'XOF', // West African CFA Franc
+    'MWK', // Malawian Kwacha
+    'ZMW', // Zambian Kwacha
+    'EGP', // Egyptian Pound
+    'MAD', // Moroccan Dirham
+    'SLL', // Sierra Leonean Leone
+    'BWP', // Botswana Pula
+    'ETB', // Ethiopian Birr
+    'MZN', // Mozambican Metical
+    'MGA', // Malagasy Ariary
+    'AOA', // Angolan Kwanza
+    'SCR', // Seychellois Rupee
+    'MUR', // Mauritian Rupee
+    'SZL', // Swazi Lilangeni
+    'LSL', // Lesotho Loti
+    'NAD', // Namibian Dollar
+    'BIF', // Burundian Franc
+    'DJF', // Djiboutian Franc
+    'SOS', // Somali Shilling
+    'SDG', // Sudanese Pound
+    'SSP', // South Sudanese Pound
+    'STN', // São Tomé and Príncipe Dobra
+    'CDF', // Congolese Franc
+    'LRD', // Liberian Dollar
+    'GMD', // Gambian Dalasi
+    'GNF', // Guinean Franc
+    'TND', // Tunisian Dinar
+    'DZD', // Algerian Dinar
+    'MRU', // Mauritanian Ouguiya
+  ],
   containerStyle,
   inputStyle,
   minAmount = 0,

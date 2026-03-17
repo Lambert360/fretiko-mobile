@@ -26,6 +26,7 @@ export interface User {
   username?: string;
   avatar_url?: string;
   hasAcceptedTerms?: boolean;
+  token?: string; // Add token property for PIN reset screens
 }
 
 export interface AuthState {

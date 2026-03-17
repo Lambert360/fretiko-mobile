@@ -17,8 +17,10 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { useAuth } from '../contexts/AuthContext';
 import { pinAPI } from '../services/pinAPI';
+import { useNavigation } from '@react-navigation/native';
 
 interface PINVerificationProps {
   visible: boolean;
@@ -35,10 +37,14 @@ export const PINVerification: React.FC<PINVerificationProps> = ({
   title = 'Enter your PIN',
   subtitle = 'Verify your identity to continue',
 }) => {
-  const { user } = useAuth();
+  const { user, accessToken } = useAuth();
+  const navigation = useNavigation();
   const [pin, setPin] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const inputRefs = useRef<(TextInput | null)[]>([]);
+  
+  // Get API URL from app.json
+  const API_URL = Constants.expoConfig?.extra?.apiUrl || process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000';
 
   const handlePinChange = (index: number, value: string) => {
     // Only allow numbers
@@ -121,7 +127,11 @@ export const PINVerification: React.FC<PINVerificationProps> = ({
             {pin.map((digit, index) => (
               <TextInput
                 key={index}
-                ref={ref => (inputRefs.current[index] = ref)}
+                ref={(ref) => {
+                  if (ref) {
+                    inputRefs.current[index] = ref;
+                  }
+                }}
                 style={[
                   styles.pinInput,
                   digit && styles.pinInputFilled,
@@ -160,10 +170,81 @@ export const PINVerification: React.FC<PINVerificationProps> = ({
           <TouchableOpacity
             style={styles.forgotButton}
             onPress={() => {
+              // Navigate to PIN reset flow
+              onClose(); // Close current modal first
+              
+              // Check if user is authenticated
+              if (!accessToken) {
+                Alert.alert(
+                  'Authentication Error',
+                  'Please log in again to reset your PIN.',
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+
               Alert.alert(
-                'Reset PIN',
-                'PIN reset will be available once the feature is fully configured. Contact support for assistance.',
-                [{ text: 'OK' }]
+                'PIN Reset',
+                'A 6-digit reset code will be sent to your email. Check your inbox after requesting.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { 
+                    text: 'Send Reset Code', 
+                    onPress: async () => {
+                      try {
+                        console.log('🔍 Sending PIN reset request...');
+                        console.log('- User ID:', user?.id);
+                        console.log('- API URL:', API_URL);
+                        console.log('- Access Token:', accessToken?.substring(0, 20) + '...');
+                        
+                        const response = await fetch(`${API_URL}/wallet/pin/reset-request`, {
+                          method: 'POST',
+                          headers: {
+                            'Authorization': `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                          },
+                          body: JSON.stringify({}), // Add empty body for proper POST request
+                        });
+
+                        console.log('📧 PIN Reset Response Status:', response.status);
+                        console.log('📧 Response OK:', response.ok);
+
+                        const result = await response.json();
+                        console.log('📧 Response Data:', result);
+
+                        if (response.ok && result.success) {
+                          Alert.alert(
+                            'Reset Code Sent',
+                            'Check your email for the 6-digit reset code.',
+                            [
+                              { 
+                                text: 'OK', 
+                                onPress: () => {
+                                  // Navigate to PIN reset token screen
+                                  navigation.navigate('PINResetTokenScreen' as never);
+                                }
+                              }
+                            ]
+                          );
+                        } else {
+                          console.error('❌ PIN Reset Error:', result);
+                          Alert.alert(
+                            'Error',
+                            result.message || 'Failed to send reset code. Please try again.',
+                            [{ text: 'OK' }]
+                          );
+                        }
+                      } catch (error) {
+                        console.error('❌ Network Error:', error);
+                        Alert.alert(
+                          'Network Error',
+                          'Failed to connect to server. Please check your internet connection and try again.',
+                          [{ text: 'OK' }]
+                        );
+                      }
+                    }
+                  }
+                ]
               );
             }}
           >
