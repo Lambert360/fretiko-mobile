@@ -89,10 +89,15 @@ export const API_BASE_URL = API_CONFIG.BASE_URL;
 // Network detection helper
 export const testNetworkConnection = async () => {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
     const response = await fetch(getEndpointUrl(API_CONFIG.ENDPOINTS.HEALTH), {
       method: 'GET',
-      timeout: 5000,
+      signal: controller.signal,
     });
+    
+    clearTimeout(timeoutId);
     return response.ok;
   } catch (error) {
     console.log('Network test failed:', error);

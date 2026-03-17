@@ -64,118 +64,157 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
   const [conversionError, setConversionError] = useState<string>('');
   const [showCurrencyDropdown, setShowCurrencyDropdown] = useState(false);
 
-  // Debounced conversion function
-  const convertCurrency = useCallback(
-    async (amount: string, sourceField: 'local' | 'freti') => {
-      if (!amount || amount === '0' || isNaN(parseFloat(amount))) {
-        if (sourceField === 'local') {
-          onFretiAmountChange('');
-        } else {
-          onLocalAmountChange('');
-        }
-        return;
-      }
-
-      setIsConverting(true);
-      setConversionError('');
-
-      try {
-        const numAmount = parseFloat(amount);
-        let convertedAmount: number;
-        let fretiAmount: number; // Always track FRETI amount for validation
-
-        if (sourceField === 'local') {
-          // Converting from local currency to Freti
-          // Use Flutterwave's real-time exchange rate API for accurate deposit rates
-          try {
-            const rateInfo = await walletAPI.getDepositRate(numAmount, localCurrency);
-            fretiAmount = rateInfo.fretiAmount; // Use the actual FRETI amount from Flutterwave
-            convertedAmount = fretiAmount;
-            onFretiAmountChange(convertedAmount.toFixed(2));
-            
-            if (rateInfo.usingFallback && rateInfo.warning) {
-              // Show warning if fallback rate is used
-              console.warn('⚠️ Using fallback exchange rate:', rateInfo.warning);
-              setConversionError(rateInfo.warning);
-            } else {
-              setConversionError('');
-            }
-            
-            console.log(`💱 ${rateInfo.usingFallback ? 'Fallback' : 'Real-time'} rate: ${numAmount} ${localCurrency} → ${fretiAmount.toFixed(2)} FRETI (Rate: ${rateInfo.exchangeRate.toFixed(4)})`);
-          } catch (rateError: any) {
-            // Final fallback to old method if both APIs fail
-            console.warn('⚠️ All rate APIs failed, using basic conversion:', rateError.message);
-            convertedAmount = await currencyAPI.quickConvert(localCurrency, 'FRETI', numAmount);
-            fretiAmount = convertedAmount;
-            onFretiAmountChange(convertedAmount.toFixed(2));
-            setConversionError('Exchange rate service unavailable. Using estimated rate. Actual rate may differ.');
-          }
-        } else {
-          // Converting from Freti to local currency
-          fretiAmount = numAmount; // User is editing FRETI directly
-          // For FRETI → local, we can use the inverse of the deposit rate
-          // Or use the old method (FRETI is 1:1 with USD, so this should be fine)
-          convertedAmount = await currencyAPI.quickConvert('FRETI', localCurrency, numAmount);
-          onLocalAmountChange(convertedAmount.toFixed(2));
-        }
-
-        // Validation: Always validate against FRETI amount (USD equivalent)
-        // maxAmount is in FRETI/USD, so we need to check the FRETI amount
-        const isValid = fretiAmount >= minAmount && (!maxAmount || fretiAmount <= maxAmount);
-        const error = !isValid 
-          ? (fretiAmount < minAmount 
-              ? `Minimum deposit is ${currencyAPI.formatCurrency(minAmount, 'FRETI')}`
-              : `Maximum deposit is ${currencyAPI.formatCurrency(maxAmount!, 'FRETI')} (approximately ${currencyAPI.formatCurrency(convertedAmount, localCurrency)} in ${localCurrency})`
-            )
-          : undefined;
-
-        onValidationChange?.(isValid, error);
-
-      } catch (error) {
-        console.error('Currency conversion error:', error);
-        setConversionError('Conversion failed. Please try again.');
-        onValidationChange?.(false, 'Conversion failed');
-      } finally {
-        setIsConverting(false);
-      }
-    },
-    [localCurrency, minAmount, maxAmount, onLocalAmountChange, onFretiAmountChange, onValidationChange]
-  );
-
-  // Debounced effect for local amount changes
   useEffect(() => {
+    console.log(' Local amount effect triggered:', {
+      lastEditedField,
+      localAmount,
+      shouldConvert: lastEditedField === 'local' && localAmount
+    });
+    
     if (lastEditedField === 'local' && localAmount) {
       const timeoutId = setTimeout(() => {
-        convertCurrency(localAmount, 'local');
+        console.log(' Starting conversion for local amount:', localAmount);
+        
+        (async () => {
+          if (!localAmount || localAmount === '0' || isNaN(parseFloat(localAmount))) {
+            console.log(' Invalid amount, clearing target field');
+            onFretiAmountChange('');
+            return;
+          }
+
+          setIsConverting(true);
+          setConversionError('');
+
+          try {
+            const numAmount = parseFloat(localAmount);
+            let fretiAmount: number;
+
+            try {
+              console.log(' Calling getDepositRate API...');
+              const rateInfo = await walletAPI.getDepositRate(numAmount, localCurrency);
+              console.log(' getDepositRate response:', rateInfo);
+              
+              fretiAmount = rateInfo.fretiAmount;
+              onFretiAmountChange(fretiAmount.toFixed(2));
+              
+              if (rateInfo.usingFallback && rateInfo.warning) {
+                console.warn(' Using fallback exchange rate:', rateInfo.warning);
+                setConversionError(rateInfo.warning);
+              } else {
+                setConversionError('');
+              }
+              
+              console.log(` ${rateInfo.usingFallback ? 'Fallback' : 'Real-time'} rate: ${numAmount} ${localCurrency} → ${fretiAmount.toFixed(2)} FRETI (Rate: ${rateInfo.exchangeRate.toFixed(4)})`);
+            } catch (rateError: any) {
+              console.warn(' All rate APIs failed, using basic conversion:', rateError.message);
+              const convertedAmount = await currencyAPI.quickConvert(localCurrency, 'FRETI', numAmount);
+              fretiAmount = convertedAmount;
+              onFretiAmountChange(convertedAmount.toFixed(2));
+              setConversionError('Exchange rate service unavailable. Using estimated rate. Actual rate may differ.');
+            }
+
+            const isValid = fretiAmount >= minAmount && (!maxAmount || fretiAmount <= maxAmount);
+            const error = !isValid 
+              ? (fretiAmount < minAmount 
+                  ? `Minimum deposit is ${currencyAPI.formatCurrency(minAmount, 'FRETI')}`
+                  : `Maximum deposit is ${currencyAPI.formatCurrency(maxAmount!, 'FRETI')} (approximately ${currencyAPI.formatCurrency(numAmount, localCurrency)} in ${localCurrency})`
+                )
+              : undefined;
+
+            onValidationChange?.(isValid, error);
+
+          } catch (error) {
+            console.error('Currency conversion error:', error);
+            setConversionError('Conversion failed. Please try again.');
+            onValidationChange?.(false, 'Conversion failed');
+          } finally {
+            setIsConverting(false);
+          }
+        })();
       }, 500); // 500ms debounce
 
       return () => clearTimeout(timeoutId);
     }
-  }, [localAmount, lastEditedField, convertCurrency]);
+  }, [localAmount, lastEditedField, localCurrency, minAmount, maxAmount]);
 
-  // Debounced effect for Freti amount changes
   useEffect(() => {
+    console.log(' Freti amount effect triggered:', {
+      lastEditedField,
+      fretiAmount,
+      shouldConvert: lastEditedField === 'freti' && fretiAmount
+    });
+    
     if (lastEditedField === 'freti' && fretiAmount) {
       const timeoutId = setTimeout(() => {
-        convertCurrency(fretiAmount, 'freti');
+        (async () => {
+          if (!fretiAmount || fretiAmount === '0' || isNaN(parseFloat(fretiAmount))) {
+            console.log(' Invalid amount, clearing target field');
+            onLocalAmountChange('');
+            return;
+          }
+
+          setIsConverting(true);
+          setConversionError('');
+
+          try {
+            const numAmount = parseFloat(fretiAmount);
+            const fretiAmountValue = numAmount; // User is editing FRETI directly
+            
+            try {
+              console.log(' Converting FRETI to local currency...');
+              
+              const rateInfo = await walletAPI.getDepositRate(1, localCurrency);
+              console.log(' Rate info for 1 unit:', rateInfo);
+              
+              const inverseRate = 1 / rateInfo.fretiAmount;
+              const convertedAmount = fretiAmountValue * inverseRate;
+              
+              console.log(` FRETI → Local rate: 1 FRETI = ${inverseRate.toFixed(6)} ${localCurrency}, so ${fretiAmountValue} FRETI = ${convertedAmount.toFixed(2)} ${localCurrency}`);
+              
+              onLocalAmountChange(convertedAmount.toFixed(2));
+              setConversionError('');
+            } catch (inverseError: any) {
+              console.warn(' Inverse rate calculation failed, using fallback:', inverseError.message);
+              const convertedAmount = await currencyAPI.quickConvert('FRETI', localCurrency, numAmount);
+              onLocalAmountChange(convertedAmount.toFixed(2));
+              setConversionError('Using estimated conversion rate. Actual rate may differ.');
+            }
+
+            const isValid = fretiAmountValue >= minAmount && (!maxAmount || fretiAmountValue <= maxAmount);
+            const error = !isValid 
+              ? (fretiAmountValue < minAmount 
+                  ? `Minimum deposit is ${currencyAPI.formatCurrency(minAmount, 'FRETI')}`
+                  : `Maximum deposit is ${currencyAPI.formatCurrency(maxAmount!, 'FRETI')} (approximately ${currencyAPI.formatCurrency(fretiAmountValue, localCurrency)} in ${localCurrency})`
+                )
+              : undefined;
+
+            onValidationChange?.(isValid, error);
+
+          } catch (error) {
+            console.error('Currency conversion error:', error);
+            setConversionError('Conversion failed. Please try again.');
+            onValidationChange?.(false, 'Conversion failed');
+          } finally {
+            setIsConverting(false);
+          }
+        })();
       }, 500); // 500ms debounce
 
       return () => clearTimeout(timeoutId);
     }
-  }, [fretiAmount, lastEditedField, convertCurrency]);
+  }, [fretiAmount, lastEditedField, localCurrency, minAmount, maxAmount]);
 
-  const handleLocalAmountChange = (text: string) => {
-    // Allow only numbers and decimal point
+  const handleLocalAmountChange = useCallback((text: string) => {
     const cleanText = text.replace(/[^0-9.]/g, '');
-    // Prevent multiple decimal points
     const parts = cleanText.split('.');
     const formattedText = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleanText;
     
+    console.log(' Local amount changed:', formattedText);
     setLastEditedField('local');
     onLocalAmountChange(formattedText);
-  };
+  }, [onLocalAmountChange]);
 
-  const handleFretiAmountChange = (text: string) => {
+  const handleFretiAmountChange = useCallback((text: string) => {
     // Allow only numbers and decimal point
     const cleanText = text.replace(/[^0-9.]/g, '');
     // Prevent multiple decimal points
@@ -184,16 +223,13 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
     
     setLastEditedField('freti');
     onFretiAmountChange(formattedText);
-  };
+  }, [onFretiAmountChange]);
 
   const handleCurrencySelect = (currency: string) => {
     onLocalCurrencyChange?.(currency);
     setShowCurrencyDropdown(false);
     
-    // Trigger conversion with current amount
-    if (localAmount) {
-      setTimeout(() => convertCurrency(localAmount, 'local'), 100);
-    }
+    // Note: Conversion will be triggered automatically by the useEffect when localCurrency changes
   };
 
   const renderCurrencyPicker = () => {

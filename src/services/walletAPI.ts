@@ -639,5 +639,243 @@ export const walletAPI = {
     };
     
     return types[type] || { label: type, icon: 'cash', color: '#95A5A6' };
+  },
+
+  // ================================
+  // OFFLINE TRANSACTION CACHING
+  // ================================
+
+  // Cache pending transaction for offline scenarios
+  cachePendingTransaction: async (transaction: {
+    id: string;
+    type: 'deposit' | 'withdrawal' | 'purchase' | 'sale';
+    amount: number;
+    currency: string;
+    timestamp: string;
+    status: 'pending';
+    data: any;
+  }): Promise<void> => {
+    try {
+      const cacheKey = `pending_transaction_${transaction.id}`;
+      const cacheData = {
+        ...transaction,
+        cachedAt: new Date().toISOString(),
+        syncAttempts: 0
+      };
+      
+      await SecureStore.setItemAsync(cacheKey, JSON.stringify(cacheData));
+      console.log(`💾 Transaction cached for offline: ${transaction.id}`);
+    } catch (error) {
+      console.error('❌ Failed to cache transaction:', error);
+    }
+  },
+
+  // Get all cached pending transactions
+  getCachedTransactions: async (): Promise<any[]> => {
+    try {
+      const cachedTransactions = [];
+      
+      // Get all SecureStore keys (limited to transaction keys)
+      // Note: SecureStore doesn't have a way to list all keys, so we'll try common patterns
+      const patterns = ['pending_transaction_', 'deposit_', 'withdrawal_', 'purchase_', 'sale_'];
+      
+      for (const pattern of patterns) {
+        try {
+          // This is a simplified approach - in production, you might want to maintain a key index
+          const keys = await SecureStore.getItemAsync('cached_transaction_keys');
+          if (keys) {
+            const keyList = JSON.parse(keys);
+            for (const key of keyList) {
+              if (key.startsWith(pattern)) {
+                const cached = await SecureStore.getItemAsync(key);
+                if (cached) {
+                  cachedTransactions.push(JSON.parse(cached));
+                }
+              }
+            }
+          }
+        } catch (error) {
+          // Continue if no keys found
+        }
+      }
+      
+      return cachedTransactions;
+    } catch (error) {
+      console.error('❌ Failed to get cached transactions:', error);
+      return [];
+    }
+  },
+
+  // Sync cached transactions when online
+  syncCachedTransactions: async (): Promise<{
+    synced: number;
+    failed: number;
+    errors: string[];
+  }> => {
+    const result = { synced: 0, failed: 0, errors: [] as string[] };
+    
+    try {
+      const cachedTransactions = await walletAPI.getCachedTransactions();
+      
+      for (const transaction of cachedTransactions) {
+        try {
+          // Check if transaction already exists on server
+          const headers = await getAuthHeaders();
+          
+          if (transaction.type === 'deposit') {
+            // Try to complete the deposit
+            await api.post('/wallet/complete-deposit', transaction.data, { headers });
+          } else if (transaction.type === 'withdrawal') {
+            // Try to complete the withdrawal
+            await api.post('/wallet/complete-withdrawal', transaction.data, { headers });
+          }
+          
+          // Remove from cache after successful sync
+          await SecureStore.deleteItemAsync(`pending_transaction_${transaction.id}`);
+          result.synced++;
+          
+          console.log(`✅ Synced cached transaction: ${transaction.id}`);
+        } catch (error: any) {
+          result.failed++;
+          result.errors.push(`${transaction.id}: ${error.message}`);
+          
+          // Update sync attempts
+          transaction.syncAttempts = (transaction.syncAttempts || 0) + 1;
+          
+          // Remove from cache if too many failed attempts
+          if (transaction.syncAttempts >= 3) {
+            await SecureStore.deleteItemAsync(`pending_transaction_${transaction.id}`);
+            console.log(`🗑️ Removed failed transaction after 3 attempts: ${transaction.id}`);
+          } else {
+            // Update cache with new attempt count
+            await SecureStore.setItemAsync(
+              `pending_transaction_${transaction.id}`, 
+              JSON.stringify(transaction)
+            );
+          }
+        }
+      }
+      
+      console.log(`🔄 Sync completed: ${result.synced} synced, ${result.failed} failed`);
+      return result;
+    } catch (error) {
+      console.error('❌ Failed to sync cached transactions:', error);
+      result.errors.push('Sync process failed');
+      return result;
+    }
+  },
+
+  // Check network connectivity
+  isOnline: (): boolean => {
+    // Simple connectivity check - in production, use NetInfo or similar
+    return navigator.onLine;
+  },
+
+  // Auto-sync when coming back online
+  autoSyncWhenOnline: async (): Promise<void> => {
+    try {
+      if (walletAPI.isOnline()) {
+        console.log('🌐 Back online - syncing cached transactions...');
+        await walletAPI.syncCachedTransactions();
+      }
+    } catch (error) {
+      console.error('❌ Auto-sync failed:', error);
+    }
+  },
+
+  // Enhanced deposit with offline caching
+  createDepositRequestOffline: async (depositData: any): Promise<any> => {
+    try {
+      // Try online first
+      const headers = await getAuthHeaders();
+      const response = await api.post('/wallet/deposit', depositData, { headers });
+      
+      // Cache the deposit for offline tracking
+      await walletAPI.cachePendingTransaction({
+        id: response.data.depositId || `temp_${Date.now()}`,
+        type: 'deposit',
+        amount: depositData.fretiAmount || depositData.amount,
+        currency: depositData.currency || 'USD',
+        timestamp: new Date().toISOString(),
+        status: 'pending',
+        data: depositData
+      });
+      
+      return response.data;
+    } catch (error: any) {
+      // If offline, cache for later sync
+      if (!walletAPI.isOnline() || error.code === 'NETWORK_ERROR') {
+        const tempId = `offline_deposit_${Date.now()}`;
+        
+        await walletAPI.cachePendingTransaction({
+          id: tempId,
+          type: 'deposit',
+          amount: depositData.fretiAmount || depositData.amount,
+          currency: depositData.currency || 'USD',
+          timestamp: new Date().toISOString(),
+          status: 'pending',
+          data: depositData
+        });
+        
+        console.log(`📴 Deposit cached for offline sync: ${tempId}`);
+        
+        return {
+          success: true,
+          cached: true,
+          message: 'Deposit cached - will sync when online',
+          tempId
+        };
+      }
+      
+      throw error;
+    }
+  },
+
+  // Enhanced withdrawal with offline caching
+  createWithdrawRequestOffline: async (withdrawData: any): Promise<any> => {
+    try {
+      // Try online first
+      const headers = await getAuthHeaders();
+      const response = await api.post('/wallet/withdraw', withdrawData, { headers });
+      
+      // Cache the withdrawal for offline tracking
+      await walletAPI.cachePendingTransaction({
+        id: response.data.payoutId || `temp_${Date.now()}`,
+        type: 'withdrawal',
+        amount: withdrawData.fretiAmount || withdrawData.amount,
+        currency: withdrawData.currency || 'USD',
+        timestamp: new Date().toISOString(),
+        status: 'pending',
+        data: withdrawData
+      });
+      
+      return response.data;
+    } catch (error: any) {
+      // If offline, cache for later sync
+      if (!walletAPI.isOnline() || error.code === 'NETWORK_ERROR') {
+        const tempId = `offline_withdraw_${Date.now()}`;
+        
+        await walletAPI.cachePendingTransaction({
+          id: tempId,
+          type: 'withdrawal',
+          amount: withdrawData.fretiAmount || withdrawData.amount,
+          currency: withdrawData.currency || 'USD',
+          timestamp: new Date().toISOString(),
+          status: 'pending',
+          data: withdrawData
+        });
+        
+        console.log(`📴 Withdrawal cached for offline sync: ${tempId}`);
+        
+        return {
+          success: true,
+          cached: true,
+          message: 'Withdrawal cached - will sync when online',
+          tempId
+        };
+      }
+      
+      throw error;
+    }
   }
 };

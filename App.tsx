@@ -163,6 +163,9 @@ const linking: any = {
         parse: {
           deposit_id: (deposit_id: string) => deposit_id,
         },
+        screens: {
+          Main: 'Wallet', // Navigate to Wallet screen instead of WalletDeposit
+        },
       },
       SharedWishlist: {
         path: 'wishlist/:ownerId/:ownerUsername',

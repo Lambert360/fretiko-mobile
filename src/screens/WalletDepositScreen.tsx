@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Alert, 
   Dimensions, 
@@ -38,7 +38,11 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
   const [isValid, setIsValid] = useState(true);
   const [validationError, setValidationError] = useState<string>('');
   const [pendingDepositId, setPendingDepositId] = useState<string | null>(null);
-  
+  const [isOnline, setIsOnline] = useState(walletAPI.isOnline());
+  const [alertShown, setAlertShown] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const processedDeposits = useRef<Set<string>>(new Set()); // Track processed deposits
+
   // Flutterwave supported currencies - comprehensive list
   // Source: https://flutterwave.com/support/general/what-are-the-currencies-accepted-on-flutterwave
   const supportedCurrencies = [
@@ -92,18 +96,35 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
   // Check if screen was opened via deep link with deposit_id
   useEffect(() => {
     const params = route.params as any;
-    if (params?.deposit_id) {
-      // Screen opened from payment callback
-      console.log('📥 Deposit callback received, deposit_id:', params.deposit_id);
-      setPendingDepositId(params.deposit_id);
-      // Polling will start automatically via useFocusEffect
+    const depositId = params?.deposit_id || params?.depositId;
+    
+    if (depositId && !alertShown && !isProcessing && depositId !== pendingDepositId) {
+      // Screen opened from payment callback - stay on Deposit screen to show success
+      console.log('📥 Deposit callback received, staying on Deposit screen:', depositId);
+      setPendingDepositId(depositId);
+      setIsProcessing(true);
+      // DON'T navigate to Wallet screen - stay here to show success alert
+      // navigation.navigate('Wallet'); // REMOVED - let user see success first
+      // Polling will continue in background via usePaymentStatus hook
     }
-  }, [route.params]);
+  }, [(route.params as any)?.deposit_id, (route.params as any)?.depositId, alertShown, isProcessing, pendingDepositId]);
 
   // Poll for payment status if there's a pending deposit
   const { deposit: pendingDeposit, isPolling, startPolling, stopPolling } = usePaymentStatus({
     depositId: pendingDepositId || '',
     onSuccess: (deposit) => {
+      // Check if this deposit was already processed
+      if (processedDeposits.current.has(deposit.id)) {
+        console.log('⚠️ Deposit already processed, skipping alert:', deposit.id);
+        return;
+      }
+      
+      // Mark this deposit as processed
+      processedDeposits.current.add(deposit.id);
+      
+      setAlertShown(true);
+      console.log('🎉 Showing success alert for deposit:', deposit.id);
+      
       Alert.alert(
         'Payment Successful! 🎉',
         `Your deposit of ${currencyAPI.formatCurrency(deposit.fretiAmount, 'FRETI')} has been completed.\n\n₣${deposit.fretiAmount} FRETI has been credited to your wallet.`,
@@ -112,13 +133,28 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
             text: 'OK',
             onPress: () => {
               setPendingDepositId(null);
+              setAlertShown(false);
+              setIsProcessing(false);
               navigation.navigate('Wallet');
+              console.log('✅ Deposit completed, navigating to Wallet screen');
             }
           }
         ]
       );
     },
     onFailure: (deposit) => {
+      // Check if this deposit was already processed
+      if (processedDeposits.current.has(deposit.id)) {
+        console.log('⚠️ Deposit already processed, skipping failure alert:', deposit.id);
+        return;
+      }
+      
+      // Mark this deposit as processed
+      processedDeposits.current.add(deposit.id);
+      
+      setAlertShown(true);
+      console.log('❌ Showing failure alert for deposit:', deposit.id);
+      
       Alert.alert(
         'Payment Failed',
         deposit.failureReason || 'Your payment could not be processed. Please try again.',
@@ -127,6 +163,8 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
             text: 'OK',
             onPress: () => {
               setPendingDepositId(null);
+              setAlertShown(false);
+              setIsProcessing(false);
             }
           }
         ]
@@ -158,6 +196,15 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
       subscription.remove();
     };
   }, [pendingDepositId, isPolling, startPolling]);
+
+  // Cleanup state when component unmounts
+  useEffect(() => {
+    return () => {
+      setAlertShown(false);
+      setIsProcessing(false);
+      stopPolling();
+    };
+  }, [stopPolling]);
 
   // NOTE: Payment method selection is for UX display only.
   // Flutterwave handles the actual payment method selection on their payment page.
@@ -207,15 +254,42 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
 
     setLoading(true);
     try {
-      const result = await walletAPI.createDeposit({
-        fretiAmount: fretiValue,
-        localAmount: localValue,
-        localCurrency: localCurrency
-      });
+      // Check if online, use offline-capable method
+      let result;
+      if (walletAPI.isOnline()) {
+        result = await walletAPI.createDeposit({
+          fretiAmount: fretiValue,
+          localAmount: localValue,
+          localCurrency: localCurrency
+        });
+      } else {
+        // Use offline-capable deposit method
+        result = await walletAPI.createDepositRequestOffline({
+          fretiAmount: fretiValue,
+          localAmount: localValue,
+          localCurrency: localCurrency
+        });
+      }
 
       // Get selected payment method details (for display only)
       // NOTE: Payment method selection is informational - Flutterwave handles actual method selection
       const selectedMethod = paymentMethods.find(m => m.id === paymentMethod);
+      
+      // Handle offline vs online responses
+      if (result.cached) {
+        // Offline cached response
+        Alert.alert(
+          'Deposit Cached 📴', 
+          `Your deposit of ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} has been cached and will be processed when you're back online.\n\nAmount: ${currencyAPI.formatCurrency(localValue, localCurrency)}\n\nWe'll notify you when processing begins.`,
+          [
+            { 
+              text: 'OK', 
+              onPress: () => navigation.goBack()
+            }
+          ]
+        );
+        return;
+      }
       
       // If payment link is provided, open it
       if (result.paymentLink) {

@@ -2,6 +2,7 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import { Alert, Dimensions, FlatList, Modal, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import NetInfo from '@react-native-community/netinfo';
 import { walletAPI, Wallet, WalletStats, WalletTransaction } from '../services/walletAPI';
 import { rewardsAPI, WalletDisplayRewards } from '../services/rewardsAPI';
 import * as SecureStore from 'expo-secure-store';
@@ -73,10 +74,39 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
       loadWalletData();
     });
 
+    // ✅ NEW: Auto-sync cached transactions when coming back online
+    const handleOnlineStatus = async () => {
+      if (walletAPI.isOnline()) {
+        try {
+          const result = await walletAPI.syncCachedTransactions();
+          if (result && result.synced > 0) {
+            Alert.alert(
+              'Transactions Synced! 🔄',
+              `${result.synced} cached transactions have been synced successfully.`,
+              [{ text: 'OK', onPress: () => loadWalletData() }]
+            );
+          }
+        } catch (error) {
+          console.error('❌ Auto-sync failed:', error);
+        }
+      }
+    };
+
+    // Listen for network connectivity changes using NetInfo
+    const unsubscribe = NetInfo.addEventListener(state => {
+      if (state.isConnected) {
+        handleOnlineStatus();
+      }
+    });
+
+    // Initial sync check on component mount
+    handleOnlineStatus();
+
     // Cleanup on unmount
     return () => {
       walletBalanceListener();
       escrowReleaseListener();
+      unsubscribe();
     };
   }, [wallet]);
 
@@ -98,28 +128,42 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
       // Get JWT token from SecureStore
       const token = await SecureStore.getItemAsync('accessToken');
       
-      const [walletData, statsData, transactionsData] = await Promise.all([
-        walletAPI.getWallet(),
-        walletAPI.getWalletStats(),
-        walletAPI.getTransactionHistory({ limit: 50 }),
-      ]);
-      
-      setWallet(walletData);
-      setWalletStats(statsData);
-      setTransactions(transactionsData);
+      // Load critical data first, then load optional data
+      try {
+        const [walletData, statsData] = await Promise.all([
+          walletAPI.getWallet(),
+          walletAPI.getWalletStats(),
+        ]);
+        
+        setWallet(walletData);
+        setWalletStats(statsData);
 
-      // ✅ Extract pending escrows from wallet data (already included in getWallet response)
-      if (walletData) {
-        setPendingEscrows({
-          vendorAmount: walletData.pendingVendorEarnings || 0,
-          riderAmount: walletData.pendingRiderEarnings || 0,
-          totalPending: walletData.totalPendingEarnings || 0,
-        });
-        console.log('💰 Pending escrows loaded:', {
-          vendor: walletData.pendingVendorEarnings,
-          rider: walletData.pendingRiderEarnings,
-          total: walletData.totalPendingEarnings,
-        });
+        // ✅ Extract pending escrows from wallet data (already included in getWallet response)
+        if (walletData) {
+          setPendingEscrows({
+            vendorAmount: walletData.pendingVendorEarnings || 0,
+            riderAmount: walletData.pendingRiderEarnings || 0,
+            totalPending: walletData.totalPendingEarnings || 0,
+          });
+          console.log('💰 Pending escrows loaded:', {
+            vendor: walletData.pendingVendorEarnings,
+            rider: walletData.pendingRiderEarnings,
+            total: walletData.totalPendingEarnings,
+          });
+        }
+      } catch (criticalError) {
+        console.error('❌ Failed to load critical wallet data:', criticalError);
+        throw criticalError;
+      }
+
+      // Load transaction history separately (non-blocking)
+      try {
+        const transactionsData = await walletAPI.getTransactionHistory({ limit: 50 });
+        setTransactions(transactionsData);
+      } catch (transactionError) {
+        console.warn('⚠️ Failed to load transaction history:', transactionError);
+        // Continue without transaction history - not critical for basic wallet functionality
+        setTransactions([]);
       }
 
       // Load rewards separately with error handling
@@ -251,7 +295,7 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
         </View>
 
         {/* Additional Balances */}
-        {walletStats && (wallet?.escrowBalance > 0 || wallet?.pendingWithdrawal > 0) && (
+        {walletStats && wallet && (wallet.escrowBalance > 0 || wallet.pendingWithdrawal > 0) && (
           <View style={styles.additionalBalancesCard}>
             <Text style={styles.sectionTitle}>Other Balances</Text>
             <View style={styles.additionalBalancesGrid}>
@@ -761,9 +805,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 20,
     width: 200,
-    backdropFilter: 'blur(20px)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
   },
   modalTitle: {
     color: '#FFFFFF',
