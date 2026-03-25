@@ -60,7 +60,6 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     } else {
-      console.log(`🎥 Pausing product video for ${memoizedVideoUri}`);
       player.pause();
     }
   }, [shouldAutoPlay, player, memoizedVideoUri]);
@@ -194,8 +193,10 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
           height: '100%'
         }}
         contentFit="contain"
-        allowsFullscreen={false}
-        allowsPictureInPicture={false}
+        fullscreenOptions={{
+          allowFullscreen: false,
+          allowPictureInPicture: false,
+        }}
       />
     </View>
   );

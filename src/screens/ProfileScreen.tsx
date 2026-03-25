@@ -11,6 +11,7 @@ import { fileUploadService } from '../services/fileUploadService';
 import { productsAPI, Product } from '../services/productsAPI';
 import { searchAPI } from '../services/searchAPI';
 import * as ImagePicker from 'expo-image-picker';
+import { SafeImage } from '../components/SafeImage';
 
 interface UserProfile {
   id: string;
@@ -854,10 +855,11 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                       activeOpacity={0.7}
                     >
                       <View style={styles.trendImageContainer}>
-                        <Image 
+                        <SafeImage 
                           source={{ uri: getProductImage(item) }} 
                           style={styles.trendImage}
-                          onError={() => console.log('Failed to load product image:', item.id)}
+                          fallbackSource={{ uri: 'https://via.placeholder.com/60x60.png?text=Product' }}
+                          fallbackText="Product"
                         />
                         <View style={styles.trendBadge}>
                           <Text style={styles.trendPercentage}>{getTrendPercentage(item)}</Text>

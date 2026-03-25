@@ -71,9 +71,6 @@ api.interceptors.request.use(
       }
 
       if (accessToken) {
-        console.log('🔑 Token for API request: Present (' + accessToken.substring(0, 20) + '...)');
-        console.log('🔍 Token length:', accessToken.length);
-        console.log('🔍 Token starts with:', accessToken.substring(0, 10));
         config.headers.Authorization = `Bearer ${accessToken}`;
       } else {
         console.log('⚠️ No access token found for API request - can\'t log in or create a new account.');

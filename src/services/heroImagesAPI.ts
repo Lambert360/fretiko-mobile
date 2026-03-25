@@ -102,7 +102,7 @@ class HeroImagesAPI {
       console.log(`✅ Loaded ${heroImages.length} hero images from Supabase`);
       return heroImages;
 
-    } catch (error) {
+    } catch (error: any) {
       console.warn('Failed to fetch hero images from Supabase, using local fallback:', error);
       return this.localHeroImages;
     }

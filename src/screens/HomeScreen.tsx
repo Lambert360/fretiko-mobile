@@ -58,666 +58,7 @@ import { liveSalesAPI, LiveStream, LiveStreamProduct, LiveStreamService } from '
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-// Function to get appropriate image for product type
-const getProductImage = (productName: string, imageType: 'product' | 'avatar' = 'product') => {
-  // Use reliable placeholder URLs that work on mobile
-  if (imageType === 'avatar') {
-    return 'https://picsum.photos/50/50?random=' + Math.abs(productName.charCodeAt(0));
-  }
-  return 'https://picsum.photos/400/400?random=' + Math.abs(productName.charCodeAt(0));
-};
-
-// ========== MOCK DATA FOR TESTING ==========
-const createMockProduct = (overrides: Partial<Product>): Product => ({
-  id: '',
-  user_id: '',
-  category_id: '',
-  name: '',
-  description: '',
-  price: 0,
-  quantity: 0,
-  condition: 'new',
-  images: [],
-  shipping_options: { pickup: true, delivery: true, shipping: true },
-  tags: [],
-  status: 'active',
-  is_featured: false,
-  view_count: 0,
-  like_count: 0,
-  save_count: 0,
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-  ...overrides,
-});
-
-const MOCK_PRODUCTS: Product[] = [
-  // Trending products (created recently with high engagement)
-  createMockProduct({ 
-    id: '1', 
-    name: 'Premium Wireless Headphones', 
-    description: 'High-quality wireless headphones with noise cancellation', 
-    price: 299.99, 
-    category_id: 'electronics', 
-    user_id: 'user1', 
-    vendor_username: 'TechStore', 
-    vendor_avatar: getProductImage('TechStore', 'avatar'), 
-    primary_image_url: getProductImage('Premium Wireless Headphones'), 
-    images: [getProductImage('Premium Wireless Headphones')], 
-    quantity: 50, 
-    condition: 'new', 
-    location: 'Lagos, Nigeria', 
-    average_rating: 4.8, 
-    view_count: 1200, 
-    like_count: 150, 
-    media_type: 'image', 
-    is_featured: true, 
-    tags: ['trending', 'electronics', 'audio'], 
-    created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() 
-  }), // 24 hours ago
-  createMockProduct({ 
-    id: '2', 
-    name: 'Designer Leather Jacket', 
-    description: 'Premium leather jacket with modern design', 
-    price: 450.00, 
-    category_id: 'fashion', 
-    user_id: 'user2', 
-    vendor_username: 'FashionHub', 
-    vendor_avatar: getProductImage('FashionHub', 'avatar'), 
-    primary_image_url: getProductImage('Designer Leather Jacket'), 
-    images: [getProductImage('Designer Leather Jacket')], 
-    quantity: 25, 
-    condition: 'new', 
-    location: 'Abuja, Nigeria', 
-    average_rating: 4.6, 
-    view_count: 850, 
-    like_count: 95, 
-    media_type: 'image', 
-    is_featured: true, 
-    tags: ['trending', 'fashion', 'winter'], 
-    created_at: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString() 
-  }), // 12 hours ago
-  createMockProduct({ 
-    id: '3', 
-    name: 'Smart Home Security System', 
-    description: 'Complete home security with cameras and sensors', 
-    price: 599.99, 
-    category_id: 'electronics', 
-    user_id: 'user3', 
-    vendor_username: 'SmartHome', 
-    vendor_avatar: getProductImage('SmartHome', 'avatar'), 
-    primary_image_url: getProductImage('Smart Home Security System'), 
-    images: [getProductImage('Smart Home Security System')], 
-    quantity: 30, 
-    condition: 'new', 
-    location: 'Port Harcourt, Nigeria', 
-    average_rating: 4.9, 
-    view_count: 2100, 
-    like_count: 280, 
-    media_type: 'image', 
-    is_featured: false, 
-    tags: ['trending', 'smart', 'security'], 
-    created_at: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString() 
-  }), // 36 hours ago
-  
-  // Hot Picks (featured products)
-  createMockProduct({ 
-    id: '4', 
-    name: 'Vintage Watch Collection', 
-    description: 'Rare vintage watches from the 1970s', 
-    price: 1200.00, 
-    category_id: 'fashion', 
-    user_id: 'user4', 
-    vendor_username: 'TimePiece', 
-    vendor_avatar: getProductImage('TimePiece', 'avatar'), 
-    primary_image_url: getProductImage('Vintage Watch Collection'), 
-    images: [getProductImage('Vintage Watch Collection')], 
-    quantity: 10, 
-    condition: 'used', 
-    location: 'Lagos, Nigeria', 
-    average_rating: 4.7, 
-    view_count: 1500, 
-    like_count: 120, 
-    media_type: 'image', 
-    is_featured: true, 
-    tags: ['vintage', 'luxury'] 
-  }),
-  createMockProduct({ 
-    id: '7', 
-    name: 'Gaming Laptop', 
-    description: 'High-performance gaming laptop with RTX graphics', 
-    price: 1299.99, 
-    category_id: 'electronics', 
-    user_id: 'user7', 
-    vendor_username: 'GameZone', 
-    vendor_avatar: getProductImage('GameZone', 'avatar'), 
-    primary_image_url: getProductImage('Gaming Laptop'), 
-    images: [getProductImage('Gaming Laptop')], 
-    quantity: 15, 
-    condition: 'new', 
-    location: 'Abuja, Nigeria', 
-    average_rating: 4.9, 
-    view_count: 3200, 
-    like_count: 400, 
-    media_type: 'image', 
-    is_featured: true, 
-    tags: ['gaming', 'tech'] 
-  }),
-  createMockProduct({ 
-    id: '9', 
-    name: 'iPhone 15 Pro Max Review', 
-    description: 'Detailed review of the latest iPhone', 
-    price: 1299.99, 
-    category_id: 'electronics', 
-    user_id: 'user9', 
-    vendor_username: 'TechReview', 
-    vendor_avatar: getProductImage('TechReview', 'avatar'), 
-    primary_image_url: getProductImage('iPhone 15 Pro Max Review'), 
-    primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', 
-    images: [getProductImage('iPhone 15 Pro Max Review')], 
-    videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'], 
-    quantity: 20, 
-    condition: 'new', 
-    location: 'Lagos, Nigeria', 
-    average_rating: 4.8, 
-    view_count: 5000, 
-    like_count: 600, 
-    media_type: 'video', 
-    is_featured: true, 
-    tags: ['review', 'tech'] 
-  }),
-  createMockProduct({ 
-    id: '12', 
-    name: 'Cooking Tutorial', 
-    description: 'Learn to cook amazing dishes', 
-    price: 0, 
-    category_id: 'foods', 
-    user_id: 'user12', 
-    vendor_username: 'ChefMaster', 
-    vendor_avatar: getProductImage('ChefMaster', 'avatar'), 
-    primary_image_url: getProductImage('Cooking Tutorial'), 
-    primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', 
-    images: [getProductImage('Cooking Tutorial')], 
-    videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4'], 
-    quantity: 0, 
-    condition: 'new', 
-    location: 'Lagos, Nigeria', 
-    average_rating: 4.6, 
-    view_count: 1800, 
-    like_count: 200, 
-    media_type: 'video', 
-    is_featured: true, 
-    tags: ['tutorial', 'food'] 
-  }),
-  
-  // Seasonal Rave products
-  createMockProduct({ 
-    id: '5', 
-    name: 'Organic Coffee Beans', 
-    description: 'Premium organic coffee beans from Ethiopia', 
-    price: 35.99, 
-    category_id: 'foods', 
-    user_id: 'user5', 
-    vendor_username: 'CoffeeLovers', 
-    vendor_avatar: getProductImage('CoffeeLovers', 'avatar'), 
-    primary_image_url: getProductImage('Organic Coffee Beans'), 
-    images: [getProductImage('Organic Coffee Beans')], 
-    quantity: 100, 
-    condition: 'new', 
-    location: 'Ibadan, Nigeria', 
-    average_rating: 4.5, 
-    view_count: 600, 
-    like_count: 50, 
-    media_type: 'image', 
-    is_featured: false, 
-    tags: ['seasonal', 'winter', 'holiday'] 
-  }),
-  createMockProduct({ 
-    id: '6', 
-    name: 'Yoga Mat Premium', 
-    description: 'Non-slip premium yoga mat', 
-    price: 45.00, 
-    category_id: 'sports', 
-    user_id: 'user6', 
-    vendor_username: 'FitLife', 
-    vendor_avatar: getProductImage('FitLife', 'avatar'), 
-    primary_image_url: getProductImage('Yoga Mat Premium'), 
-    images: [getProductImage('Yoga Mat Premium')], 
-    quantity: 75, 
-    condition: 'new', 
-    location: 'Lagos, Nigeria', 
-    average_rating: 4.4, 
-    view_count: 400, 
-    like_count: 30, 
-    media_type: 'image', 
-    is_featured: false, 
-    tags: ['seasonal', 'summer', 'fitness'] 
-  }),
-  createMockProduct({ 
-    id: '11', 
-    name: 'Home Decor Tour', 
-    description: 'Beautiful home decoration ideas', 
-    price: 0, 
-    category_id: 'home', 
-    user_id: 'user11', 
-    vendor_username: 'HomeDesign', 
-    vendor_avatar: getProductImage('HomeDesign', 'avatar'), 
-    primary_image_url: getProductImage('Home Decor Tour'), 
-    primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', 
-    images: [getProductImage('Home Decor Tour')], 
-    videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'], 
-    quantity: 0, 
-    condition: 'new', 
-    location: 'Port Harcourt, Nigeria', 
-    average_rating: 4.5, 
-    view_count: 1200, 
-    like_count: 100, 
-    media_type: 'video', 
-    is_featured: false, 
-    tags: ['seasonal', 'christmas', 'holiday'] 
-  }),
-  
-  // Combo Deals
-  createMockProduct({ 
-    id: '8', 
-    name: 'Skincare Set', 
-    description: 'Complete skincare routine set', 
-    price: 89.99, 
-    category_id: 'beauty', 
-    user_id: 'user8', 
-    vendor_username: 'BeautyBox', 
-    vendor_avatar: getProductImage('BeautyBox', 'avatar'), 
-    primary_image_url: getProductImage('Skincare Set'), 
-    images: [getProductImage('Skincare Set')], 
-    quantity: 60, 
-    condition: 'new', 
-    location: 'Lagos, Nigeria', 
-    average_rating: 4.6, 
-    view_count: 950, 
-    like_count: 80, 
-    media_type: 'image', 
-    is_featured: false, 
-    tags: ['combo', 'bundle', 'set'] 
-  }),
-  createMockProduct({ 
-    id: '14', 
-    name: 'Tech Bundle Package', 
-    description: 'Phone, charger, and case combo', 
-    price: 399.99, 
-    category_id: 'electronics', 
-    user_id: 'user14', 
-    vendor_username: 'TechBundle', 
-    vendor_avatar: getProductImage('TechBundle', 'avatar'), 
-    primary_image_url: getProductImage('Tech Bundle Package'), 
-    images: [getProductImage('Tech Bundle Package')], 
-    quantity: 40, 
-    condition: 'new', 
-    location: 'Abuja, Nigeria', 
-    average_rating: 4.7, 
-    view_count: 1100, 
-    like_count: 130, 
-    media_type: 'image', 
-    is_featured: false, 
-    tags: ['combo', 'package', 'bundle'] 
-  }),
-  createMockProduct({ 
-    id: '15', 
-    name: 'Fitness Equipment Set', 
-    description: 'Complete home gym package', 
-    price: 599.99, 
-    category_id: 'sports', 
-    user_id: 'user15', 
-    vendor_username: 'FitPackage', 
-    vendor_avatar: getProductImage('FitPackage', 'avatar'), 
-    primary_image_url: getProductImage('Fitness Equipment Set'), 
-    images: [getProductImage('Fitness Equipment Set')], 
-    quantity: 20, 
-    condition: 'new', 
-    location: 'Lagos, Nigeria', 
-    average_rating: 4.8, 
-    view_count: 800, 
-    like_count: 90, 
-    media_type: 'image', 
-    is_featured: false, 
-    tags: ['combo', 'set', 'package'] 
-  }),
-  
-  // Flash Sales
-  createMockProduct({ 
-    id: '16', 
-    name: 'Flash Sale: Designer Shoes', 
-    description: 'Limited time offer on designer shoes', 
-    price: 199.99, 
-    category_id: 'fashion', 
-    user_id: 'user16', 
-    vendor_username: 'ShoeDeal', 
-    vendor_avatar: getProductImage('ShoeDeal', 'avatar'), 
-    primary_image_url: getProductImage('Flash Sale: Designer Shoes'), 
-    images: [getProductImage('Flash Sale: Designer Shoes')], 
-    quantity: 30, 
-    condition: 'new', 
-    location: 'Lagos, Nigeria', 
-    average_rating: 4.5, 
-    view_count: 700, 
-    like_count: 60, 
-    media_type: 'image', 
-    is_featured: false, 
-    tags: ['flash', 'sale', 'deal'] 
-  }),
-  createMockProduct({ 
-    id: '17', 
-    name: 'Flash Sale: Smart Watch', 
-    description: 'Limited time discount on smart watch', 
-    price: 249.99, 
-    category_id: 'electronics', 
-    user_id: 'user17', 
-    vendor_username: 'WatchDeal', 
-    vendor_avatar: getProductImage('WatchDeal', 'avatar'), 
-    primary_image_url: getProductImage('Flash Sale: Smart Watch'), 
-    images: [getProductImage('Flash Sale: Smart Watch')], 
-    quantity: 25, 
-    condition: 'new', 
-    location: 'Abuja, Nigeria', 
-    average_rating: 4.6, 
-    view_count: 900, 
-    like_count: 75, 
-    media_type: 'image', 
-    is_featured: false, 
-    tags: ['flash', 'sale', 'discount'] 
-  }),
-  createMockProduct({ 
-    id: '18', 
-    name: 'Flash Deal: Beauty Products', 
-    description: 'Limited time beauty product sale', 
-    price: 49.99, 
-    category_id: 'beauty', 
-    user_id: 'user18', 
-    vendor_username: 'BeautyDeal', 
-    vendor_avatar: getProductImage('BeautyDeal', 'avatar'), 
-    primary_image_url: getProductImage('Flash Deal: Beauty Products'), 
-    images: [getProductImage('Flash Deal: Beauty Products')], 
-    quantity: 50, 
-    condition: 'new', 
-    location: 'Port Harcourt, Nigeria', 
-    average_rating: 4.4, 
-    view_count: 550, 
-    like_count: 45, 
-    media_type: 'image', 
-    is_featured: false, 
-    tags: ['flash', 'deal', 'sale'] 
-  }),
-  
-  // Regular products for For You section
-  createMockProduct({ 
-    id: '10', 
-    name: 'Fashion Haul Video', 
-    description: 'Latest fashion trends and styles', 
-    price: 0, 
-    category_id: 'fashion', 
-    user_id: 'user10', 
-    vendor_username: 'StyleVlog', 
-    vendor_avatar: getProductImage('StyleVlog', 'avatar'), 
-    primary_image_url: getProductImage('Fashion Haul Video'), 
-    primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', 
-    images: [getProductImage('Fashion Haul Video')], 
-    videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'], 
-    quantity: 0, 
-    condition: 'new', 
-    location: 'Abuja, Nigeria', 
-    average_rating: 4.7, 
-    view_count: 2800, 
-    like_count: 250, 
-    media_type: 'video', 
-    is_featured: false, 
-    tags: ['fashion', 'vlog'] 
-  }),
-  createMockProduct({ 
-    id: '13', 
-    name: 'Fitness Workout', 
-    description: 'Intense workout session', 
-    price: 0, 
-    category_id: 'sports', 
-    user_id: 'user13', 
-    vendor_username: 'FitCoach', 
-    vendor_avatar: getProductImage('FitCoach', 'avatar'), 
-    primary_image_url: getProductImage('Fitness Workout'), 
-    primary_video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', 
-    images: [getProductImage('Fitness Workout')], 
-    videos: ['https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4'], 
-    quantity: 0, 
-    condition: 'new', 
-    location: 'Ibadan, Nigeria', 
-    average_rating: 4.4, 
-    view_count: 900, 
-    like_count: 70, 
-    media_type: 'video', 
-    is_featured: false, 
-    tags: ['fitness', 'workout'] 
-  }),
-];
-
-const MOCK_CATEGORIES: ProductCategory[] = [
-  { id: 'electronics', name: 'Electronics', icon_name: 'tv-outline', sort_order: 1, is_active: true },
-  { id: 'fashion', name: 'Fashion', icon_name: 'shirt-outline', sort_order: 2, is_active: true },
-  { id: 'home', name: 'Home & Garden', icon_name: 'home-outline', sort_order: 3, is_active: true },
-  { id: 'beauty', name: 'Beauty', icon_name: 'flower-outline', sort_order: 4, is_active: true },
-  { id: 'sports', name: 'Sports', icon_name: 'fitness-outline', sort_order: 5, is_active: true },
-  { id: 'foods', name: 'Foods', icon_name: 'restaurant-outline', sort_order: 6, is_active: true },
-];
-
-const MOCK_ACTIVE_AUCTIONS: any[] = [
-  { 
-    id: 'auction1', 
-    title: 'Vintage Rolex Watch', 
-    description: 'Rare 1970s Rolex', 
-    starting_price: 5000, 
-    current_bid: 7500, 
-    end_time: new Date(Date.now() + 86400000).toISOString(), 
-    status: 'active', 
-    category_id: 'fashion', 
-    images: [getProductImage('Vintage Watch Collection')], 
-    created_at: new Date().toISOString(), 
-    bids_count: 12, 
-    highest_bidder: 'bidder1', 
-    seller_id: 'seller1', 
-    seller_username: 'WatchCollector', 
-    seller: { id: 'seller1', username: 'WatchCollector', is_verified: true }, 
-    category: { id: 'fashion', name: 'Fashion', icon_name: 'shirt-outline', color: '#3498DB', slug: 'fashion' }, 
-    current_winning_bid: { id: 'bid1', bidder_display_id: 'bidder1', amount: 7500, created_at: new Date().toISOString() } 
-  },
-  { 
-    id: 'auction2', 
-    title: 'Antique Painting', 
-    description: '19th Century Artwork', 
-    starting_price: 2000, 
-    current_bid: 3200, 
-    end_time: new Date(Date.now() + 172800000).toISOString(), 
-    status: 'active', 
-    category_id: 'home', 
-    images: [getProductImage('Home Decor Tour')], 
-    created_at: new Date().toISOString(), 
-    bids_count: 8, 
-    highest_bidder: 'bidder2', 
-    seller_id: 'seller2', 
-    seller_username: 'ArtGallery', 
-    seller: { id: 'seller2', username: 'ArtGallery', is_verified: true }, 
-    category: { id: 'home', name: 'Home & Garden', icon_name: 'home-outline', color: '#27AE60', slug: 'home' }, 
-    current_winning_bid: { id: 'bid2', bidder_display_id: 'bidder2', amount: 3200, created_at: new Date().toISOString() } 
-  },
-  { 
-    id: 'auction3', 
-    title: 'Classic Car', 
-    description: '1965 Mustang', 
-    starting_price: 15000, 
-    current_bid: 22000, 
-    end_time: new Date(Date.now() + 259200000).toISOString(), 
-    status: 'active', 
-    category_id: 'automotive', 
-    images: [getProductImage('Gaming Laptop')], 
-    created_at: new Date().toISOString(), 
-    bids_count: 25, 
-    highest_bidder: 'bidder3', 
-    seller_id: 'seller3', 
-    seller_username: 'CarDealer', 
-    seller: { id: 'seller3', username: 'CarDealer', is_verified: true }, 
-    category: { id: 'automotive', name: 'Automotive', icon_name: 'car-outline', color: '#E67E22', slug: 'automotive' }, 
-    current_winning_bid: { id: 'bid3', bidder_display_id: 'bidder3', amount: 22000, created_at: new Date().toISOString() } 
-  },
-];
-
-const MOCK_UPCOMING_AUCTIONS: any[] = [
-  { 
-    id: 'auction4', 
-    title: 'Diamond Ring', 
-    description: '2 Carat Diamond', 
-    starting_price: 8000, 
-    current_bid: 8000, 
-    end_time: new Date(Date.now() + 604800000).toISOString(), 
-    status: 'scheduled', 
-    category_id: 'fashion', 
-    images: [getProductImage('Vintage Watch Collection')], 
-    created_at: new Date().toISOString(), 
-    bids_count: 0, 
-    highest_bidder: null, 
-    seller_id: 'seller4', 
-    seller_username: 'JewelryStore', 
-    seller: { id: 'seller4', username: 'JewelryStore', is_verified: true }, 
-    category: { id: 'fashion', name: 'Fashion', icon_name: 'shirt-outline', color: '#3498DB', slug: 'fashion' } 
-  },
-  { 
-    id: 'auction5', 
-    title: 'Rare Book Collection', 
-    description: 'First Edition Books', 
-    starting_price: 3000, 
-    current_bid: 3000, 
-    end_time: new Date(Date.now() + 518400000).toISOString(), 
-    status: 'scheduled', 
-    category_id: 'books', 
-    images: [getProductImage('Skincare Set')], 
-    created_at: new Date().toISOString(), 
-    bids_count: 0, 
-    highest_bidder: null, 
-    seller_id: 'seller5', 
-    seller_username: 'BookStore', 
-    seller: { id: 'seller5', username: 'BookStore', is_verified: true }, 
-    category: { id: 'books', name: 'Books', icon_name: 'library-outline', color: '#9B59B6', slug: 'books' } 
-  },
-];
-
-const MOCK_LIVE_PRODUCTS = [
-  { streamId: 'live1', productId: 'prod1', title: 'Live: iPhone 15 Unboxing', price: 1299.99, image: getProductImage('iPhone 15 Pro Max Review') },
-  { streamId: 'live2', productId: 'prod2', title: 'Live: Fashion Show', price: 299.99, image: getProductImage('Fashion Haul Video') },
-  { streamId: 'live3', productId: 'prod3', title: 'Live: Tech Review', price: 599.99, image: getProductImage('Gaming Laptop') },
-];
-
-const MOCK_LIVE_SERVICES = [
-  { streamId: 'live-svc1', serviceId: 'svc1', title: 'Live: Personal Training Session', price: 50.00, description: 'Join our live fitness training' },
-  { streamId: 'live-svc2', serviceId: 'svc2', title: 'Live: Cooking Class', price: 35.00, description: 'Learn to cook amazing dishes' },
-  { streamId: 'live-svc3', serviceId: 'svc3', title: 'Live: Beauty Consultation', price: 25.00, description: 'Get expert beauty advice' },
-];
-
-const MOCK_VIDEO_FEED: VideoFeedItem[] = [
-  { 
-    id: 'video1', 
-    title: 'Professional Photography Service', 
-    description: 'High-quality photos for your events', 
-    videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', 
-    thumbnail: getProductImage('Premium Wireless Headphones'), 
-    userId: 'user1', 
-    username: 'PhotoPro', 
-    userAvatar: getProductImage('PhotoPro', 'avatar'), 
-    price: 150.00, 
-    rating: 4.9, 
-    likes: '1250', 
-    comments: '89', 
-    shares: '45', 
-    location: 'Lagos, Nigeria', 
-    serviceProvider: 'PhotoPro', 
-    completedJobs: '250', 
-    isLiked: false, 
-    isBookmarked: false 
-  },
-  { 
-    id: 'video2', 
-    title: 'Graphic Design Services', 
-    description: 'Logo design and branding', 
-    videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', 
-    thumbnail: getProductImage('Designer Leather Jacket'), 
-    userId: 'user2', 
-    username: 'DesignStudio', 
-    userAvatar: getProductImage('DesignStudio', 'avatar'), 
-    price: 200.00, 
-    rating: 4.8, 
-    likes: '980', 
-    comments: '67', 
-    shares: '32', 
-    location: 'Abuja, Nigeria', 
-    serviceProvider: 'DesignStudio', 
-    completedJobs: '180', 
-    isLiked: false, 
-    isBookmarked: false 
-  },
-  { 
-    id: 'video3', 
-    title: 'Music Production', 
-    description: 'Professional music mixing and mastering', 
-    videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', 
-    thumbnail: getProductImage('Smart Home Security System'), 
-    userId: 'user3', 
-    username: 'MusicLab', 
-    userAvatar: getProductImage('MusicLab', 'avatar'), 
-    price: 300.00, 
-    rating: 4.7, 
-    likes: '750', 
-    comments: '54', 
-    shares: '28', 
-    location: 'Port Harcourt, Nigeria', 
-    serviceProvider: 'MusicLab', 
-    completedJobs: '120', 
-    isLiked: false, 
-    isBookmarked: false 
-  },
-  { 
-    id: 'video4', 
-    title: 'Video Editing Service', 
-    description: 'Professional video editing for your content', 
-    videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', 
-    thumbnail: getProductImage('Vintage Watch Collection'), 
-    userId: 'user4', 
-    username: 'EditMaster', 
-    userAvatar: getProductImage('EditMaster', 'avatar'), 
-    price: 180.00, 
-    rating: 4.6, 
-    likes: '620', 
-    comments: '43', 
-    shares: '21', 
-    location: 'Lagos, Nigeria', 
-    serviceProvider: 'EditMaster', 
-    completedJobs: '95', 
-    isLiked: false, 
-    isBookmarked: false 
-  },
-  { 
-    id: 'video5', 
-    title: 'Web Development', 
-    description: 'Custom websites and web apps', 
-    videoUri: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', 
-    thumbnail: getProductImage('Gaming Laptop'), 
-    userId: 'user5', 
-    username: 'WebDevPro', 
-    userAvatar: getProductImage('WebDevPro', 'avatar'), 
-    price: 500.00, 
-    rating: 4.9, 
-    likes: '1100', 
-    comments: '78', 
-    shares: '38', 
-    location: 'Ibadan, Nigeria', 
-    serviceProvider: 'WebDevPro', 
-    completedJobs: '200', 
-    isLiked: false, 
-    isBookmarked: false 
-  },
-];
-// ========== END MOCK DATA ==========
+// Real API data is now used instead of mock data
 
 // Compact header dimensions - Twitter-style (REMOVED TABS FROM MAIN HEADER)
 const HEADER_FULL_HEIGHT = 60; // Increased to ensure content fits
@@ -884,10 +225,9 @@ const HomeScreen = () => {
           // Debug: Check for video products
           const videoProducts = productsData.filter((p: any) => p.media_type === 'video');
 
-          // For testing: Always use mock data (merge with API data if available)
-          // In production, remove MOCK_PRODUCTS and use only productsData
-          const finalProducts = MOCK_PRODUCTS.length > 0 ? MOCK_PRODUCTS : (productsData || []);
-          const finalCategories = MOCK_CATEGORIES.length > 0 ? MOCK_CATEGORIES : (categoriesData || []);
+          // Use real API data - remove mock data dependency
+          const finalProducts = productsData || [];
+          const finalCategories = categoriesData || [];
           
           setProducts(finalProducts);
           setCategories(finalCategories);
@@ -913,8 +253,8 @@ const HomeScreen = () => {
       try {
         const videoData = await servicesAPI.getVideoFeed({ limit: 10 });
 
-        // For testing: Always use mock data (merge with API data if available)
-        const finalVideoData = MOCK_VIDEO_FEED.length > 0 ? MOCK_VIDEO_FEED : (videoData || []);
+        // Use real API data - remove mock data dependency
+        const finalVideoData = videoData || [];
         setVideoFeedData(finalVideoData);
       } catch (videoError) {
         // Video feed errors are non-critical, log but don't block
@@ -922,10 +262,10 @@ const HomeScreen = () => {
           // Retry video feed load
           servicesAPI.getVideoFeed({ limit: 10 })
             .then(setVideoFeedData)
-            .catch(() => setVideoFeedData(MOCK_VIDEO_FEED));
+            .catch(() => setVideoFeedData([]));
         });
-        console.warn('🔴 Error loading video data, using mock data:', videoErrorInfo);
-        setVideoFeedData(MOCK_VIDEO_FEED);
+        console.warn('🔴 Error loading video data, using empty array:', videoErrorInfo);
+        setVideoFeedData([]);
       }
 
       // Load auctions (small batches for MVP)
@@ -936,15 +276,15 @@ const HomeScreen = () => {
         ]);
         const active = activeResp.auctions || [];
         const upcoming = upcomingResp.auctions || [];
-        // For testing: Always use mock data (merge with API data if available)
-        const finalActive = MOCK_ACTIVE_AUCTIONS.length > 0 ? MOCK_ACTIVE_AUCTIONS : active;
-        const finalUpcoming = MOCK_UPCOMING_AUCTIONS.length > 0 ? MOCK_UPCOMING_AUCTIONS : upcoming;
+        // Use real API data - remove mock data dependency
+        const finalActive = active;
+        const finalUpcoming = upcoming;
         setActiveAuctions(finalActive);
         setUpcomingAuctions(finalUpcoming);
       } catch (auctionError) {
-        console.warn('🔴 Error loading auctions, using mock data:', auctionError);
-        setActiveAuctions(MOCK_ACTIVE_AUCTIONS);
-        setUpcomingAuctions(MOCK_UPCOMING_AUCTIONS);
+        console.warn('🔴 Error loading auctions, using empty arrays:', auctionError);
+        setActiveAuctions([]);
+        setUpcomingAuctions([]);
       }
 
       // Load live sales streams (small batches)
@@ -979,15 +319,15 @@ const HomeScreen = () => {
               }))
             ) || [];
 
-        // For testing: Always use mock data (merge with API data if available)
-        const finalLiveProducts = MOCK_LIVE_PRODUCTS.length > 0 ? MOCK_LIVE_PRODUCTS : liveProductItems;
-        const finalLiveServices = MOCK_LIVE_SERVICES.length > 0 ? MOCK_LIVE_SERVICES : liveServiceItems;
+        // Use real API data - remove mock data dependency
+        const finalLiveProducts = liveProductItems;
+        const finalLiveServices = liveServiceItems;
         setLiveProducts(finalLiveProducts);
         setLiveServices(finalLiveServices);
       } catch (liveError) {
-        console.warn('🔴 Error loading live sales, using mock data:', liveError);
-        setLiveProducts(MOCK_LIVE_PRODUCTS);
-        setLiveServices(MOCK_LIVE_SERVICES);
+        console.warn('🔴 Error loading live sales, using empty arrays:', liveError);
+        setLiveProducts([]);
+        setLiveServices([]);
       }
 
     } catch (error) {
@@ -3376,8 +2716,6 @@ const HomeScreen = () => {
               const absoluteY = pageY + currentScrollY.current;
               
               videoProductPositions.current.set(item.id, { absoluteY, height });
-              
-              console.log(`📍 Video ${item.id}: pageY=${pageY.toFixed(0)}, scrollY=${currentScrollY.current.toFixed(0)}, absoluteY=${absoluteY.toFixed(0)}, height=${height}`);
               
               // Check visibility immediately
               checkVideoVisibility();

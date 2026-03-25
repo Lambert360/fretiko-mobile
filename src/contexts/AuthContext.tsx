@@ -4,6 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import { authAPI } from '../services/api';
 import { warningsAPI } from '../services/warningsAPI';
 import { pushNotificationService } from '../services/pushNotificationService';
+import { API_CONFIG } from '../config/api';
 
 // Custom error class for unauthorized access
 class UnauthorizedException extends Error {
@@ -129,7 +130,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       try {
         console.log('🔄 Refreshing authentication token...');
         // Validate current token by making a lightweight API call
-        const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/users/profile`, {
+        const response = await fetch(`${API_CONFIG.BASE_URL}/users/profile`, {
           headers: {
             'Authorization': `Bearer ${authState.accessToken}`,
             'Content-Type': 'application/json',
@@ -226,7 +227,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               
               // ✅ Fetch fresh user profile to get role info (is_seller, is_rider)
               try {
-                const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/users/profile`, {
+                const response = await fetch(`${API_CONFIG.BASE_URL}/users/profile`, {
                   headers: {
                     'Authorization': `Bearer ${accessToken}`,
                     'Content-Type': 'application/json',

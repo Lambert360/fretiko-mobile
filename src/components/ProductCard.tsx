@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { walletAPI } from '../services/walletAPI';
+import { SafeImage } from './SafeImage';
 
 const { width } = Dimensions.get('window');
 const cardWidth = (width - 24) / 2; // Account for padding
@@ -86,11 +87,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
       >
         {/* Image Container */}
         <View style={styles.imageContainer}>
-          <Image 
+          <SafeImage 
             source={image} 
             style={styles.image} 
             resizeMode="cover"
-            onError={(e) => console.log('Product image error:', e.nativeEvent.error)}
+            fallbackSource={{ uri: 'https://via.placeholder.com/300x300.png?text=Product' }}
+            fallbackText="Product image"
           />
           
           {/* Discount Badge */}

@@ -55,7 +55,9 @@ const AuctionVideoViewer: React.FC<{
         style={styles.videoViewer}
         contentFit="contain"
         nativeControls={false}
-        allowsFullscreen={false}
+        fullscreenOptions={{
+          allowFullscreen: false,
+        }}
       />
       {!isPlaying && (
         <TouchableOpacity

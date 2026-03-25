@@ -1700,7 +1700,7 @@ const AuctionLiveViewerScreen = () => {
               <>
                 <Ionicons name="trophy" size={80} color="#FFD700" />
                 <Text style={styles.winnerModalTitle}>🎉 Congratulations!</Text>
-                <Text style={styles.winnerText}>You won "{winnerData.item_title}"</Text>
+                <Text style={styles.winnerText}>You won \"{winnerData.item_title}\"</Text>
                 <Text style={styles.winnerBid}>for ₣{winnerData.winning_bid.toFixed(2)}</Text>
                 <View style={styles.winnerModalButtons}>
                   <TouchableOpacity
@@ -1730,7 +1730,7 @@ const AuctionLiveViewerScreen = () => {
               <>
                 <Ionicons name="heart" size={80} color="#E74C3C" />
                 <Text style={styles.winnerModalTitle}>😔 Better Luck Next Time!</Text>
-                <Text style={styles.winnerText}> "{winnerData.item_title}"</Text>
+                <Text style={styles.winnerText}>\"{winnerData.item_title}\"</Text>
                 <Text style={styles.winnerBid}>went to {winnerData.winner_display_id} for ₣{winnerData.winning_bid.toFixed(2)}</Text>
                 <Text style={styles.winnerSubtext}>Thanks for participating!</Text>
                 <TouchableOpacity
@@ -1748,7 +1748,7 @@ const AuctionLiveViewerScreen = () => {
                 <Ionicons name="trophy" size={80} color="#FFD700" />
                 <Text style={styles.winnerModalTitle}>🏆 Auction Complete!</Text>
                 <Text style={styles.winnerText}>{winnerData.winner_display_id} won</Text>
-                <Text style={styles.winnerBid}> "{winnerData.item_title}" for ₣{winnerData.winning_bid.toFixed(2)}</Text>
+                <Text style={styles.winnerBid}>\"{winnerData.item_title}\" for ₣{winnerData.winning_bid.toFixed(2)}</Text>
                 <TouchableOpacity
                   style={styles.winnerModalButton}
                   onPress={() => setShowWinnerModal(false)}
@@ -1764,7 +1764,7 @@ const AuctionLiveViewerScreen = () => {
               <>
                 <Ionicons name="close-circle" size={80} color="#95A5A6" />
                 <Text style={styles.winnerModalTitle}>🤷 Item Not Sold</Text>
-                <Text style={styles.winnerText}> "{winnerData.item_title}"</Text>
+                <Text style={styles.winnerText}>\"{winnerData.item_title}\"</Text>
                 <Text style={styles.winnerBid}>No bids met the reserve price</Text>
                 <TouchableOpacity
                   style={styles.winnerModalButton}
@@ -1837,7 +1837,9 @@ const SimpleVideoViewer: React.FC<{ videoUri: string }> = ({ videoUri }) => {
       style={styles.imageViewerImage}
       contentFit="contain"
       nativeControls={true}
-      allowsFullscreen={false}
+      fullscreenOptions={{
+        allowFullscreen: false,
+      }}
     />
   );
 };

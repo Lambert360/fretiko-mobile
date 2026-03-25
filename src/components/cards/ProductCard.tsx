@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { SafeImage } from '../SafeImage';
 
 export interface ProductData {
   id: string;
@@ -87,13 +88,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
     return (
       <View style={[styles.mediaContainer, { height: getMediaHeight(), backgroundColor: '#1a1a1a' }]}>
-        <Image
+        <SafeImage
           source={{ uri: imageUri }}
           style={styles.mediaContent}
           resizeMode="cover"
-          onError={(error) => {
-            console.error('❌ Image load error:', imageUri, error.nativeEvent);
-          }}
+          fallbackSource={{ uri: 'https://via.placeholder.com/300x300.png?text=Product' }}
+          fallbackText="Product image"
         />
 
         {isVideo && (
@@ -157,11 +157,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           style={styles.vendorInfo}
           onPress={() => onVendorPress?.(product.vendor?.id)}
         >
-          <Image 
+          <SafeImage 
             source={{ 
               uri: product.vendor?.avatar || `https://picsum.photos/30/30?random=${product.vendor?.id || 'default'}` 
             }} 
             style={styles.vendorAvatar} 
+            fallbackSource={{ uri: 'https://via.placeholder.com/30x30.png?text=Vendor' }}
+            fallbackText="Vendor"
           />
           <View style={styles.vendorDetails}>
             <Text style={styles.vendorName}>{product.vendor?.name || 'Unknown Vendor'}</Text>

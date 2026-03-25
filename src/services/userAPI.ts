@@ -94,12 +94,6 @@ export interface ClientRelationship {
 // Add auth token to requests automatically
 const getAuthHeaders = async () => {
   const token = await SecureStore.getItemAsync('accessToken');
-  console.log('🔑 Token for API request:', token ? `Present (${token.substring(0, 20)}...)` : 'Missing');
-  
-  if (token) {
-    console.log('🔍 Token length:', token.length);
-    console.log('🔍 Token starts with:', token.substring(0, 10));
-  }
   
   return token ? { 
     Authorization: `Bearer ${token}`,

@@ -3,6 +3,7 @@ import { ikoAPI } from './ikoAPI';
 import { ikoSearchAPI, IkoSearchFunctionSchemas } from './ikoSearchAPI';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
+import { API_BASE_URL } from '../config/api';
 
 // Types and interfaces
 export interface GeminiMessage {
@@ -420,7 +421,7 @@ class GeminiAPI {
       // For now, we'll return a placeholder URL
       // In production, you'd make an API call to your backend which calls Google TTS
 
-      const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/api/tts/generate`, {
+      const response = await fetch(`${API_BASE_URL}/api/tts/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
