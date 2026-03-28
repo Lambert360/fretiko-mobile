@@ -92,6 +92,11 @@ export const API_CONFIG = {
   },
 };
 
+// Log the final API configuration for debugging
+console.log('🌐 API Configuration:');
+console.log('  - BASE_URL:', API_CONFIG.BASE_URL);
+console.log('  - Environment:', __DEV__ ? 'Development' : 'Production');
+
 // Helper function to get full endpoint URL
 export const getEndpointUrl = (endpoint: string) => {
   return `${API_CONFIG.BASE_URL}${endpoint}`;

@@ -148,8 +148,11 @@ export const authAPI = {
   // Sign in existing user
   signin: async (credentials: { email: string; password: string }) => {
     try {
+      const backendUrl = `${API_CONFIG.BASE_URL}/auth/signin`;
+      console.log('🔍 Attempting signin to:', backendUrl);
+      
       // Use fetch directly instead of axios to avoid token interceptor issues
-      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/signin`, {
+      const response = await fetch(backendUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -175,6 +178,16 @@ export const authAPI = {
       return responseData;
     } catch (error: any) {
       console.log('❌ Frontend Signin Exception:', error);
+      
+      // Provide more specific error messages
+      if (error.message === 'Network request failed') {
+        throw new Error('Unable to connect to the server. Please check if the backend is running on localhost:3000');
+      } else if (error.message.includes('ECONNREFUSED')) {
+        throw new Error('Backend server is not running. Please start the backend server.');
+      } else if (error.message.includes('timeout')) {
+        throw new Error('Request timeout. Please check your internet connection.');
+      }
+      
       throw new Error(error.message || 'Signin failed');
     }
   },

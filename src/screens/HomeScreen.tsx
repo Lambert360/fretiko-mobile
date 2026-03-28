@@ -123,7 +123,7 @@ const HomeScreen = () => {
   } = useFilters();
   const tabBarHeightFromContext = React.useContext(BottomTabBarHeightContext) || TAB_BAR_HEIGHT;
 
-  const [activeTab, setActiveTab] = useState<'products' | 'services'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'services'>('services');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [isSidebarVisible, setSidebarVisible] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -910,7 +910,7 @@ const HomeScreen = () => {
     if (Platform.OS === 'ios') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-    const targetPage = tab === 'products' ? 0 : 1;
+    const targetPage = tab === 'services' ? 0 : 1;
     mainPagerRef.current?.setPage(targetPage);
   };
 
@@ -1676,23 +1676,6 @@ const HomeScreen = () => {
           marginRight: 24, 
           paddingHorizontal: 16, 
           paddingVertical: 8, 
-          borderBottomWidth: activeTab === 'products' ? 3 : 0, 
-          borderBottomColor: '#fff' 
-        }}
-        onPress={() => handleTabPress('products')}
-      >
-        <Text style={{ 
-          color: activeTab === 'products' ? '#fff' : '#888', 
-          fontSize: 15, 
-          fontWeight: activeTab === 'products' ? '700' : '500' 
-        }}>
-          Products
-        </Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={{ 
-          paddingHorizontal: 16, 
-          paddingVertical: 8, 
           borderBottomWidth: activeTab === 'services' ? 3 : 0, 
           borderBottomColor: '#fff' 
         }}
@@ -1704,6 +1687,23 @@ const HomeScreen = () => {
           fontWeight: activeTab === 'services' ? '700' : '500' 
         }}>
           Services
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={{ 
+          paddingHorizontal: 16, 
+          paddingVertical: 8, 
+          borderBottomWidth: activeTab === 'products' ? 3 : 0, 
+          borderBottomColor: '#fff' 
+        }}
+        onPress={() => handleTabPress('products')}
+      >
+        <Text style={{ 
+          color: activeTab === 'products' ? '#fff' : '#888', 
+          fontSize: 15, 
+          fontWeight: activeTab === 'products' ? '700' : '500' 
+        }}>
+          Products
         </Text>
       </TouchableOpacity>
     </Animated.View>
@@ -3614,23 +3614,6 @@ const HomeScreen = () => {
               marginRight: 24,
               paddingHorizontal: 16,
               paddingVertical: 8,
-              borderBottomWidth: activeTab === 'products' ? 3 : 0,
-              borderBottomColor: '#fff'
-            }}
-            onPress={() => handleTabPress('products')}
-          >
-            <Text style={{
-              color: activeTab === 'products' ? '#fff' : '#888',
-              fontSize: 15,
-              fontWeight: activeTab === 'products' ? '700' : '500'
-            }}>
-              Products
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={{
-              paddingHorizontal: 16,
-              paddingVertical: 8,
               borderBottomWidth: activeTab === 'services' ? 3 : 0,
               borderBottomColor: '#fff'
             }}
@@ -3644,6 +3627,23 @@ const HomeScreen = () => {
               Services
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={{
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderBottomWidth: activeTab === 'products' ? 3 : 0,
+              borderBottomColor: '#fff'
+            }}
+            onPress={() => handleTabPress('products')}
+          >
+            <Text style={{
+              color: activeTab === 'products' ? '#fff' : '#888',
+              fontSize: 15,
+              fontWeight: activeTab === 'products' ? '700' : '500'
+            }}>
+              Products
+            </Text>
+          </TouchableOpacity>
         </View>
       </Animated.View>
 
@@ -3654,7 +3654,7 @@ const HomeScreen = () => {
         initialPage={0}
         overdrag={true}
         onPageSelected={(e) => {
-          const newTab = e.nativeEvent.position === 0 ? 'products' : 'services';
+          const newTab = e.nativeEvent.position === 0 ? 'services' : 'products';
           if (newTab !== activeTab) {
             setActiveTab(newTab);
             if (newTab === 'services') {
@@ -3679,30 +3679,6 @@ const HomeScreen = () => {
           }
         }}
       >
-        <View key="products" style={{ flex: 1 }}>
-          {activeTab === 'products' ? (
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={{ flexGrow: 1 }}
-              onScroll={handleScroll}
-              scrollEventThrottle={16}
-              refreshControl={
-                <RefreshControl
-                  refreshing={refreshing}
-                  onRefresh={refreshData}
-                  colors={['#3498DB']}
-                  tintColor="#3498DB"
-                title="Pull to refresh"
-              />
-            }
-          >
-            {renderProductsTab()}
-          </ScrollView>
-          ) : (
-            <View style={{ flex: 1, backgroundColor: '#000' }} />
-          )}
-        </View>
-        
         <View key="services" style={{ flex: 1 }}>
           {activeTab === 'services' ? (
             <>
@@ -3717,12 +3693,36 @@ const HomeScreen = () => {
               }}>
             <TouchableOpacity
               style={{ flex: 1 }}
-              onPress={() => mainPagerRef.current?.setPage(0)}
+              onPress={() => mainPagerRef.current?.setPage(1)}
             >
             </TouchableOpacity>
           </View>
           {renderServicesTab()}
             </>
+          ) : (
+            <View style={{ flex: 1, backgroundColor: '#000' }} />
+          )}
+        </View>
+        
+        <View key="products" style={{ flex: 1 }}>
+          {activeTab === 'products' ? (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ flexGrow: 1 }}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={refreshData}
+                  colors={['#3498DB']}
+                  tintColor="#3498DB"
+                  title="Pull to refresh"
+              />
+            }
+          >
+            {renderProductsTab()}
+          </ScrollView>
           ) : (
             <View style={{ flex: 1, backgroundColor: '#000' }} />
           )}
