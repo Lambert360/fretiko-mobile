@@ -21,6 +21,7 @@ import { PasswordStrengthIndicator } from '../components/PasswordStrengthIndicat
 import { EmailAvailabilityChecker } from '../components/EmailAvailabilityChecker';
 import { SocialAuthButtons } from '../components/SocialAuthButtons';
 import { DatePickerInput } from '../components/DatePickerInput';
+import { API_CONFIG } from '../config/api';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -119,7 +120,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
         firstName: formData.firstName?.trim(),
         lastName: formData.lastName?.trim(),
         dateOfBirth: formData.dateOfBirth?.trim(), // Now required
-        gender: formData.gender?.trim() || undefined,
+        gender: formData.gender?.trim(),
         hasAcceptedTerms,
       };
 
@@ -136,7 +137,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
 
       // Call backend to send verification email only (don't create user yet)
       console.log('🚀 Sending verification email...');
-      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000'}/auth/send-verification-email`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/send-verification-email`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

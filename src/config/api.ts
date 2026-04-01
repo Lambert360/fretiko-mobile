@@ -8,10 +8,18 @@ import Constants from 'expo-constants';
  * - Production: Uses production API URL
  */
 const getBackendUrl = (): string => {
+  // Force production for testing (override in development)
+  const forceProduction = process.env.EXPO_PUBLIC_FORCE_PROD === 'true';
+  
+  // Debug: Check for runtime toggle (development only)
+  const runtimeForceProd = __DEV__ && process.env.EXPO_PUBLIC_RUNTIME_PROD === 'true';
+  
   // Production: Use production URL
-  if (!__DEV__) {
-    const prodUrl = process.env.EXPO_PUBLIC_API_URL || 'https://api.fretiko.com';
-    console.log('🚀 Production environment:', prodUrl);
+  if (!__DEV__ || forceProduction || runtimeForceProd) {
+    const prodUrl = process.env.EXPO_PUBLIC_API_URL || 'https://fretiko-backend.onrender.com';
+    console.log('🚀 Production environment:', prodUrl, 
+      forceProduction ? '(forced)' : 
+      runtimeForceProd ? '(runtime)' : '(native)');
     return prodUrl;
   }
 
@@ -23,7 +31,7 @@ const getBackendUrl = (): string => {
   });
 
   // If running on Expo Go or physical device, try to get the host IP from Expo
-  const expoHostUri = Constants.expoConfig?.hostUri || Constants.expoGoConfig?.manifest?.hostUri;
+  const expoHostUri = Constants.expoConfig?.hostUri || Constants.linkingUri;
   console.log('🔍 Debug: expoHostUri:', expoHostUri);
   console.log('🔍 Debug: Constants.expoConfig:', Constants.expoConfig);
   console.log('🔍 Debug: Constants.expoGoConfig:', Constants.expoGoConfig);

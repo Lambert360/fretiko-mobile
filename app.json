@@ -96,7 +96,7 @@
       "eas": {
         "projectId": "81969c14-245c-442b-9a46-ce19211e1c8e"
       },
-      "apiUrl": "http://localhost:3000"
+      "apiUrl": "https://fretiko-backend.onrender.com"
     }
   }
 }
