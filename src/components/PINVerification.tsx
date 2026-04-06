@@ -17,10 +17,10 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { useAuth } from '../contexts/AuthContext';
 import { pinAPI } from '../services/pinAPI';
 import { useNavigation } from '@react-navigation/native';
+import { API_CONFIG } from '../config/api';
 
 interface PINVerificationProps {
   visible: boolean;
@@ -42,9 +42,8 @@ export const PINVerification: React.FC<PINVerificationProps> = ({
   const [pin, setPin] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const inputRefs = useRef<(TextInput | null)[]>([]);
-  
-  // Get API URL from app.json
-  const API_URL = Constants.expoConfig?.extra?.apiUrl || process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000';
+
+  console.log('🌐 Using API_CONFIG.BASE_URL for PIN verification:', API_CONFIG.BASE_URL);
 
   const handlePinChange = (index: number, value: string) => {
     // Only allow numbers
@@ -194,10 +193,10 @@ export const PINVerification: React.FC<PINVerificationProps> = ({
                       try {
                         console.log('🔍 Sending PIN reset request...');
                         console.log('- User ID:', user?.id);
-                        console.log('- API URL:', API_URL);
+                        console.log('- API URL:', API_CONFIG.BASE_URL);
                         console.log('- Access Token:', accessToken?.substring(0, 20) + '...');
                         
-                        const response = await fetch(`${API_URL}/wallet/pin/reset-request`, {
+                        const response = await fetch(`${API_CONFIG.BASE_URL}/wallet/pin/reset-request`, {
                           method: 'POST',
                           headers: {
                             'Authorization': `Bearer ${accessToken}`,

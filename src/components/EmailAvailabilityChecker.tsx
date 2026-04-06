@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { debounce } from 'lodash';
+import { API_CONFIG } from '../config/api';
 
 interface EmailAvailabilityCheckerProps {
   email: string;
@@ -31,8 +32,11 @@ export const EmailAvailabilityChecker: React.FC<EmailAvailabilityCheckerProps> =
       onAvailabilityChange(null);
 
       try {
+        console.log('🔍 Checking email availability for:', emailToCheck);
+        console.log('🌐 Using API_CONFIG.BASE_URL:', API_CONFIG.BASE_URL);
+        
         const response = await fetch(
-          `${process.env.EXPO_PUBLIC_API_URL}/auth/check-email-availability?email=${encodeURIComponent(emailToCheck)}`,
+          `${API_CONFIG.BASE_URL}/auth/check-email-availability?email=${encodeURIComponent(emailToCheck)}`,
           {
             method: 'GET',
             headers: {

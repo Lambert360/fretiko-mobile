@@ -120,56 +120,120 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     registerPushToken();
   }, [authState.isAuthenticated, authState.accessToken, authState.user?.id]);
 
-  // Token refresh mechanism - refresh token every 30 minutes to prevent expiration
+  // Token refresh mechanism - refresh tokens only when needed or on activity
   useEffect(() => {
     if (!authState.isAuthenticated || !authState.accessToken) {
       return;
     }
 
-    const refreshToken = async () => {
+    const refreshTokenIfNeeded = async () => {
       try {
-        console.log('🔄 Refreshing authentication token...');
-        // Validate current token by making a lightweight API call
-        const response = await fetch(`${API_CONFIG.BASE_URL}/users/profile`, {
-          headers: {
-            'Authorization': `Bearer ${authState.accessToken}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (response.status === 401) {
-          // Token expired, need to re-authenticate
-          console.log('⚠️ Token expired, logging out...');
-          await signout();
-        } else if (response.ok) {
-          console.log('✅ Token still valid');
-          // Token is still valid, update user data if needed
-          const profileData = await response.json();
-          setAuthState(prev => ({
-            ...prev,
-            user: {
-              ...prev.user!,
-              isSeller: profileData.isSeller,
-              isRider: profileData.isRider,
-              is_seller: profileData.isSeller,
-              is_rider: profileData.isRider,
-              is_verified: profileData.is_verified,
-            },
-          }));
+        // Additional null check for TypeScript
+        if (!authState.accessToken) {
+          return;
+        }
+        
+        // Check if token is close to expiration (within 24 hours)
+        const tokenParts = authState.accessToken.split('.');
+        if (tokenParts.length === 3) {
+          const payload = JSON.parse(atob(tokenParts[1]));
+          const currentTime = Date.now() / 1000;
+          const timeUntilExpiry = payload.exp - currentTime;
+          
+          // Refresh if token expires within 24 hours (86400 seconds)
+          if (timeUntilExpiry < 86400) {
+            console.log('🔄 Token expiring soon, refreshing...');
+            await refreshAccessToken();
+          } else {
+            console.log('✅ Token still valid, no refresh needed');
+          }
         }
       } catch (error) {
-        console.error('❌ Error refreshing token:', error);
+        console.error('❌ Error checking token expiration:', error);
       }
     };
 
-    // Refresh immediately on mount
-    refreshToken();
+    // Check token expiration immediately on mount
+    refreshTokenIfNeeded();
 
-    // Set up interval to refresh every 30 minutes
-    const refreshInterval = setInterval(refreshToken, 30 * 60 * 1000);
+    // Set up interval to check every 6 hours (more reasonable than 30 minutes)
+    const checkInterval = setInterval(refreshTokenIfNeeded, 6 * 60 * 60 * 1000);
 
-    return () => clearInterval(refreshInterval);
+    return () => clearInterval(checkInterval);
   }, [authState.isAuthenticated, authState.accessToken]);
+
+  // Function to refresh access token
+  const refreshAccessToken = async (): Promise<boolean> => {
+    try {
+      // Get refresh token from storage
+      let refreshToken = null;
+      try {
+        let isSecureStoreAvailable = false;
+        try {
+          if (SecureStore.isAvailableAsync) {
+            isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+          } else {
+            isSecureStoreAvailable = true;
+          }
+        } catch (error) {
+          console.log('⚠️ SecureStore availability check failed:', error);
+          isSecureStoreAvailable = false;
+        }
+
+        if (isSecureStoreAvailable) {
+          refreshToken = await SecureStore.getItemAsync('refreshToken');
+        }
+        if (!refreshToken) {
+          refreshToken = await AsyncStorage.getItem('refreshToken_fallback');
+        }
+      } catch (error) {
+        refreshToken = await AsyncStorage.getItem('refreshToken_fallback');
+      }
+
+      if (!refreshToken) {
+        console.log('❌ No refresh token available');
+        return false;
+      }
+
+      console.log('🔄 Refreshing access token...');
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refreshToken }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        console.log('✅ Access token refreshed successfully');
+        
+        // Update stored tokens
+        await saveAuthData(authState.user!, data.accessToken, data.refreshToken);
+        
+        // Update state
+        setAuthState(prev => ({
+          ...prev,
+          accessToken: data.accessToken,
+        }));
+
+        // Log activity
+        console.log('📝 Token refresh activity logged');
+        return true;
+      } else {
+        console.log('❌ Token refresh failed:', data.message);
+        if (response.status === 401 || data.message?.includes('expired')) {
+          console.log('⚠️ Refresh token expired, logging out...');
+          await signout();
+        }
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Error refreshing token:', error);
+      return false;
+    }
+  };
 
   const loadAuthData = async () => {
     try {
@@ -179,8 +243,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       let accessToken = null;
       try {
         // Check if SecureStore is available
-        const isSecureStoreAvailable = SecureStore.isAvailableAsync ?
-          await SecureStore.isAvailableAsync() : true;
+        let isSecureStoreAvailable = false;
+        try {
+          if (SecureStore.isAvailableAsync) {
+            isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+          } else {
+            isSecureStoreAvailable = true;
+          }
+        } catch (error) {
+          console.log('⚠️ SecureStore availability check failed:', error);
+          isSecureStoreAvailable = false;
+        }
 
         if (isSecureStoreAvailable) {
           accessToken = await SecureStore.getItemAsync('accessToken');
@@ -343,8 +416,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.log('  - Refresh token length:', refreshToken?.length || 'N/A');
 
       // Expo SDK 54 compatibility: Check if SecureStore is available
-      const isSecureStoreAvailable = SecureStore.isAvailableAsync ?
-        await SecureStore.isAvailableAsync() : true;
+      let isSecureStoreAvailable = false;
+      try {
+        // Check if SecureStore is available (works in both Expo Go and production)
+        if (SecureStore.isAvailableAsync) {
+          isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+        } else {
+          // Fallback for older Expo versions
+          isSecureStoreAvailable = true;
+        }
+      } catch (error) {
+        console.log('⚠️ SecureStore availability check failed, using fallback:', error);
+        isSecureStoreAvailable = false;
+      }
 
       if (isSecureStoreAvailable) {
         try {
@@ -364,6 +448,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.log('⚠️ SecureStore not available, using AsyncStorage');
         await AsyncStorage.setItem('accessToken_fallback', accessToken);
         await AsyncStorage.setItem('refreshToken_fallback', refreshToken);
+        console.log('✅ Tokens saved to AsyncStorage fallback');
       }
 
       // Save user data in regular storage (less sensitive)
@@ -391,8 +476,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       // Clear from SecureStore if available
       try {
-        const isSecureStoreAvailable = SecureStore.isAvailableAsync ?
-          await SecureStore.isAvailableAsync() : true;
+        let isSecureStoreAvailable = false;
+        try {
+          if (SecureStore.isAvailableAsync) {
+            isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+          } else {
+            isSecureStoreAvailable = true;
+          }
+        } catch (error) {
+          console.log('⚠️ SecureStore availability check failed:', error);
+          isSecureStoreAvailable = false;
+        }
 
         if (isSecureStoreAvailable) {
           await SecureStore.deleteItemAsync('accessToken');
@@ -675,7 +769,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
 
-      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/auth/social/signin`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/social/signin`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -744,6 +838,49 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const signout = async () => {
     try {
+      // Get refresh token for logout
+      let refreshToken = null;
+      try {
+        let isSecureStoreAvailable = false;
+        try {
+          if (SecureStore.isAvailableAsync) {
+            isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+          } else {
+            isSecureStoreAvailable = true;
+          }
+        } catch (error) {
+          console.log('⚠️ SecureStore availability check failed:', error);
+          isSecureStoreAvailable = false;
+        }
+
+        if (isSecureStoreAvailable) {
+          refreshToken = await SecureStore.getItemAsync('refreshToken');
+        }
+        if (!refreshToken) {
+          refreshToken = await AsyncStorage.getItem('refreshToken_fallback');
+        }
+      } catch (error) {
+        refreshToken = await AsyncStorage.getItem('refreshToken_fallback');
+      }
+
+      // Call logout endpoint to revoke refresh token
+      if (refreshToken) {
+        try {
+          console.log('🔒 Revoking refresh token...');
+          await fetch(`${API_CONFIG.BASE_URL}/auth/logout`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ refreshToken }),
+          });
+          console.log('✅ Refresh token revoked');
+        } catch (logoutError) {
+          console.error('⚠️ Error revoking refresh token:', logoutError);
+          // Continue with local logout even if server logout fails
+        }
+      }
+
       // Unregister push token before signing out
       if (authState.accessToken) {
         try {

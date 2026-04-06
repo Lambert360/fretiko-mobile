@@ -16,10 +16,17 @@ const getBackendUrl = (): string => {
   
   // Production: Use production URL
   if (!__DEV__ || forceProduction || runtimeForceProd) {
-    const prodUrl = process.env.EXPO_PUBLIC_API_URL || 'https://fretiko-backend.onrender.com';
-    console.log('🚀 Production environment:', prodUrl, 
-      forceProduction ? '(forced)' : 
-      runtimeForceProd ? '(runtime)' : '(native)');
+    // Try multiple sources for the production URL
+    const envUrl = process.env.EXPO_PUBLIC_API_URL;
+    const appJsonUrl = Constants.expoConfig?.extra?.apiUrl;
+    const fallbackUrl = 'https://fretiko-backend.onrender.com';
+    
+    const prodUrl = envUrl || appJsonUrl || fallbackUrl;
+    
+    console.log('🚀 Production environment:', prodUrl);
+    console.log('🔍 URL sources - ENV:', envUrl, 'app.json:', appJsonUrl, 'fallback:', fallbackUrl);
+    console.log('🔍 Using URL from:', envUrl ? 'environment' : appJsonUrl ? 'app.json' : 'fallback');
+    
     return prodUrl;
   }
 
