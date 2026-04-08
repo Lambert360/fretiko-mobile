@@ -509,51 +509,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const checkAccountStatus = async () => {
-    // Get access token - try state first, then storage
-    let accessToken: string | null = null;
-    
-    // Try to get from current state
-    setAuthState(prev => {
-      if (prev.accessToken) {
-        accessToken = prev.accessToken;
-      }
-      return prev;
-    });
-
-    // If not in state, get from storage
-    if (!accessToken) {
-      try {
-        const isSecureStoreAvailable = SecureStore.isAvailableAsync ?
-          await SecureStore.isAvailableAsync() : true;
-        if (isSecureStoreAvailable) {
-          accessToken = await SecureStore.getItemAsync('accessToken');
-        }
-        if (!accessToken) {
-          accessToken = await AsyncStorage.getItem('accessToken_fallback');
-        }
-      } catch (e) {
-        accessToken = await AsyncStorage.getItem('accessToken_fallback');
-      }
-      
-      // Update state with token if we got it from storage
-      if (accessToken) {
-        setAuthState(prev => {
-          if (!prev.accessToken) {
-            return { ...prev, accessToken };
-          }
-          return prev;
-        });
-      }
-    }
-
-    if (!accessToken) {
+    // Don't check if we're not authenticated
+    if (!authState.isAuthenticated || !authState.accessToken) {
       setAuthState(prev => ({ ...prev, isCheckingSuspension: false }));
       return;
     }
 
     try {
       setAuthState(prev => ({ ...prev, isCheckingSuspension: true }));
-      const accountStatus = await warningsAPI.getAccountStatus(accessToken);
+      const accountStatus = await warningsAPI.getAccountStatus(authState.accessToken);
       
       const isSuspended = accountStatus.accountStatus === 'suspended' || 
                          accountStatus.suspension.isSuspended;

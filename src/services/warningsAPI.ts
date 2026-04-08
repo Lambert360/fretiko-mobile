@@ -67,12 +67,12 @@ const getAuthToken = async (providedToken?: string | null): Promise<string | nul
     
     // Try SecureStore first
     try {
-      const isAvailable = SecureStore.default.isAvailableAsync 
-        ? await SecureStore.default.isAvailableAsync() 
+      const isAvailable = SecureStore.isAvailableAsync 
+        ? await SecureStore.isAvailableAsync() 
         : true;
       
       if (isAvailable) {
-        const token = await SecureStore.default.getItemAsync('accessToken');
+        const token = await SecureStore.getItemAsync('accessToken');
         if (token) return token;
       }
     } catch (e) {
