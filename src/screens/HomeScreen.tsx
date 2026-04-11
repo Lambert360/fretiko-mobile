@@ -3289,7 +3289,7 @@ const HomeScreen = () => {
                       </Text>
                     </TouchableOpacity>
                   </View>
-                  <TouchableOpacity onPress={() => showCart()}>
+                  <TouchableOpacity onPress={handleCartIconPress}>
                     <View style={{ position: 'relative' }}>
                       <Ionicons name="bag-outline" size={28} color="white" />
                       {itemCount && itemCount > 0 && (
@@ -3305,7 +3305,7 @@ const HomeScreen = () => {
                           alignItems: 'center'
                         }}>
                           <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
-                            {itemCount}
+                            {itemCount > 99 ? '99+' : String(itemCount || 0)}
                           </Text>
                         </View>
                       )}
