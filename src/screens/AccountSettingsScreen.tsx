@@ -298,6 +298,19 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
             <Ionicons name="chevron-forward" size={20} color="#B0B0B0" />
           </TouchableOpacity>
 
+          {profile?.isRider !== true && (
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={() => navigation.navigate('RiderVerification')}
+            >
+              <View style={styles.settingInfo}>
+                <Ionicons name="bicycle-outline" size={20} color="#10B981" />
+                <Text style={styles.settingLabel}>Become a Verified Rider</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#B0B0B0" />
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={styles.settingItem}
             onPress={() => Alert.alert('Coming Soon', 'Data & storage settings will be available soon!')}

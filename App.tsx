@@ -75,6 +75,7 @@ import GroupedOrderScreen from './src/screens/GroupedOrderScreen';
 import RiderSelectionScreen from './src/screens/RiderSelectionScreen';
 import RiderDetailScreen from './src/screens/RiderDetailScreen';
 import RateOrderScreen from './src/screens/RateOrderScreen';
+import { RiderVerificationScreen } from './src/screens/RiderVerificationScreen';
 
 // Import communication screens
 import IndividualChatScreen from './src/screens/IndividualChatScreen';
@@ -394,6 +395,7 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="Main" component={BottomTabNavigator} />
               <Stack.Screen name="EditProfile" component={EditProfileScreen as any} />
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
+              <Stack.Screen name="RiderVerification" component={RiderVerificationScreen} />
               <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} />
               <Stack.Screen name="AccountStatus" component={AccountStatusScreen} />
               <Stack.Screen name="Suspension" component={SuspensionScreen} />
