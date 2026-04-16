@@ -6,6 +6,8 @@ import React, { memo, useEffect, useRef, useState, useMemo, useCallback } from '
 import {
   Alert,
   Animated,
+  AppState,
+  AppStateStatus,
   Dimensions,
   FlatList,
   Image,
@@ -57,6 +59,9 @@ import { getActiveAuctions, getUpcomingAuctions } from '../utils/auctionMappers'
 import { liveSalesAPI, LiveStream, LiveStreamProduct, LiveStreamService } from '../services/liveSalesAPI';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+// Platform-specific bottom offset for consistent spacing
+const BOTTOM_OFFSET = Platform.OS === 'ios' ? 8 : 4;
 
 // Real API data is now used instead of mock data
 
@@ -112,6 +117,12 @@ const HomeScreen = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+
+  // Track actual mount/unmount (not re-renders)
+  useEffect(() => {
+    console.log('🏠 HomeScreen ACTUAL MOUNT');
+    return () => console.log('🏠 HomeScreen UNMOUNT');
+  }, []);
   const { itemCount = 0, isVisible: isCartVisible, showCart, hideCart, addToCart, addServiceToCart } = useCart();
   const { 
     productFilters, 
@@ -199,6 +210,7 @@ const HomeScreen = () => {
 
   // Data loading functions - USING REAL API DATA with enhanced error handling
   const loadData = async (showLoading = true) => {
+    console.log('🏠 HomeScreen loadData called, showLoading:', showLoading);
     if (showLoading) setLoading(true);
     setErrorState(null);
 
@@ -237,11 +249,11 @@ const HomeScreen = () => {
             setUserProfile(profileData);
           }
         },
-        3, // maxRetries
+        1, // maxRetries (reduced from 3 to 1 to prevent long loading states)
         1000, // baseDelay
         (errorInfo, attempt) => {
           // Log retry attempts
-          if (attempt >= 3) {
+          if (attempt >= 1) {
             // Final attempt failed, show error
             setErrorState(errorInfo);
             handleError(errorInfo, () => loadData(showLoading), () => setErrorState(null));
@@ -359,6 +371,7 @@ const HomeScreen = () => {
 
   // Load data when component mounts - only once
   useEffect(() => {
+    console.log('🏠 HomeScreen useEffect running, calling loadData...');
     loadData();
   }, []);
 
@@ -369,8 +382,41 @@ const HomeScreen = () => {
       if (products.length === 0 && videoFeedData.length === 0) {
         loadData(false);
       }
-    }, []) // Empty dependency array - only run once
+    }, [products.length, videoFeedData.length]) // Proper dependencies
   );
+
+  // Handle app state changes (foreground/background) to reload data when app returns
+  useEffect(() => {
+    let lastBackgroundTime = Date.now();
+    
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'background' || nextAppState === 'inactive') {
+        lastBackgroundTime = Date.now();
+      }
+      
+      if (nextAppState === 'active') {
+        const timeInBackground = Date.now() - lastBackgroundTime;
+        console.log('📱 App returned to foreground (background for', timeInBackground, 'ms)');
+        
+        // Only reload if:
+        // 1. Screen is focused
+        // 2. No data yet
+        // 3. App was in background for > 30 seconds (prevents rapid reloads)
+        if (isScreenFocused && products.length === 0 && videoFeedData.length === 0 && timeInBackground > 30000) {
+          console.log('📱 HomeScreen is focused, reloading data...');
+          loadData(false);
+        } else if (!isScreenFocused) {
+          console.log('📱 HomeScreen is not focused, skipping data reload');
+        } else if (timeInBackground <= 30000) {
+          console.log('📱 App was only background for', timeInBackground, 'ms, skipping reload');
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [isScreenFocused, products.length, videoFeedData.length]); // Proper dependencies
 
   // Initialize visible video products (first 2) when products load
   useEffect(() => {
@@ -404,6 +450,16 @@ const HomeScreen = () => {
       setIsPlaying(true);
     }
   }, [activeTab, isPlaying, videoFeedData.length, isScreenFocused]);
+
+  // Cleanup play button timer on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (playButtonTimer.current) {
+        clearTimeout(playButtonTimer.current);
+        playButtonTimer.current = null;
+      }
+    };
+  }, []);
 
   // Check which video products are currently in viewport
   const checkVideoVisibility = useCallback(() => {
@@ -506,10 +562,10 @@ const HomeScreen = () => {
         // Clear visible video products to stop rendering them
         setVisibleVideoProducts(new Set());
 
-        // Clear services UI timer
-        if (servicesUITimer.current) {
-          clearTimeout(servicesUITimer.current);
-          servicesUITimer.current = null;
+        // Clear play button timer
+        if (playButtonTimer.current) {
+          clearTimeout(playButtonTimer.current);
+          playButtonTimer.current = null;
         }
       };
     }, [activeTab, products, checkVideoVisibility]) // Added checkVideoVisibility dependency
@@ -1686,7 +1742,7 @@ const HomeScreen = () => {
           fontSize: 15, 
           fontWeight: activeTab === 'services' ? '700' : '500' 
         }}>
-          Services
+          Home
         </Text>
       </TouchableOpacity>
       <TouchableOpacity
@@ -2912,67 +2968,111 @@ const HomeScreen = () => {
     />
   );
 
-  // Services tab UI fade state
-  const [servicesUIVisible, setServicesUIVisible] = useState(true);
-  const servicesUIOpacity = useRef(new Animated.Value(1)).current;
-  const servicesUITimer = useRef<NodeJS.Timeout | null>(null);
+  // Services tab UI fade state - only play button fades out
+  const [playButtonVisible, setPlayButtonVisible] = useState(true);
+  const playButtonOpacity = useRef(new Animated.Value(1)).current;
+  const playButtonTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Video progress tracking
   const [videoProgress, setVideoProgress] = useState(0); // 0 to 1
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoPosition, setVideoPosition] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const videoProgressThrottle = useRef<number>(0); // Throttle state updates to max 10/sec
+  const currentVideoProgress = useRef<number>(0); // Track current progress for callback without causing re-renders
+
+  // Memoized playback status update handler to prevent constant re-subscription in ServiceVideoPlayer
+  const handlePlaybackStatusUpdate = useCallback((status: any) => {
+    const duration = status?.duration || status?.durationMillis || 0;
+    if (duration > 0) {
+      const currentPos = status?.currentTime || status?.currentTimeMillis || 0;
+      const progress = currentPos / duration;
+
+      // Throttle state updates to max 10 times per second (100ms)
+      const now = Date.now();
+      if (now - videoProgressThrottle.current > 100) {
+        videoProgressThrottle.current = now;
+
+        // Update progress state only on significant change (0.005 = 0.5%) or at start
+        // Use ref for comparison to avoid dependency on videoProgress state
+        if (Math.abs(progress - currentVideoProgress.current) > 0.005 || progress === 0) {
+          currentVideoProgress.current = progress; // Update ref
+          setVideoProgress(progress);
+          setVideoPosition(currentPos * 1000);
+          setVideoDuration(duration * 1000);
+        }
+      }
+    }
+  }, []); // Empty deps - callback never recreates, preventing listener teardown in ServiceVideoPlayer
 
   // Video players for expo-video (managed by ServiceVideoPlayer components)
   // Removed videoRefs since expo-video doesn't use refs for playback control
 
-  // Auto-hide UI for services tab
-  const startServicesUIHideTimer = () => {
-    if (servicesUITimer.current) clearTimeout(servicesUITimer.current as any);
-    servicesUITimer.current = setTimeout(() => hideServicesUI(), 3000) as any; // Industry standard 3 seconds
+  // Auto-hide play button only (other UI stays visible)
+  const startPlayButtonHideTimer = () => {
+    if (playButtonTimer.current) clearTimeout(playButtonTimer.current);
+    playButtonTimer.current = setTimeout(() => hidePlayButton(), 1500); // 1.5 seconds
   };
 
-  const showServicesUI = () => {
-    setServicesUIVisible(true);
-    Animated.timing(servicesUIOpacity, {
+  const showPlayButton = () => {
+    setPlayButtonVisible(true);
+    Animated.timing(playButtonOpacity, {
       toValue: 1,
-      duration: 200, // Fast show
-      useNativeDriver: false
+      duration: 200,
+      useNativeDriver: true
     }).start();
-    startServicesUIHideTimer();
+    startPlayButtonHideTimer();
   };
 
-  const hideServicesUI = () => {
-    setServicesUIVisible(false);
-    Animated.timing(servicesUIOpacity, {
+  const hidePlayButton = () => {
+    setPlayButtonVisible(false);
+    Animated.timing(playButtonOpacity, {
       toValue: 0,
-      duration: 800, // Slow, natural fade
-      useNativeDriver: false
+      duration: 800,
+      useNativeDriver: true
     }).start();
-    if (servicesUITimer.current) {
-      clearTimeout(servicesUITimer.current);
-      servicesUITimer.current = null;
+    if (playButtonTimer.current) {
+      clearTimeout(playButtonTimer.current);
+      playButtonTimer.current = null;
     }
   };
+
+  // Handle play button visibility based on isPlaying state
+  useEffect(() => {
+    if (activeTab === 'services') {
+      if (isPlaying) {
+        // Video is playing - fade out play button after delay
+        startPlayButtonHideTimer();
+      } else {
+        // Video is paused - show play button
+        showPlayButton();
+      }
+    }
+  }, [isPlaying, activeTab]);
 
   const handleVideoTap = () => {
-    if (servicesUIVisible) {
-      hideServicesUI();
-    } else {
-      showServicesUI();
-    }
+    // Toggle play/pause on video tap
+    setIsPlaying(!isPlaying);
   };
 
   const handlePlayPausePress = (e: any) => {
     e?.stopPropagation();
-    setIsPlaying(!isPlaying);
-    showServicesUI(); // Show UI when play/pause is pressed
+    const newPlayingState = !isPlaying;
+    setIsPlaying(newPlayingState);
+    if (newPlayingState) {
+      // Started playing - start fade out timer
+      startPlayButtonHideTimer();
+    } else {
+      // Paused - show play button
+      showPlayButton();
+    }
   };
 
   // TODO: Implement progress bar seeking for expo-video
   const handleProgressBarPress = async (e: any, itemId: string) => {
     // Progress bar seeking will be implemented when we add player refs to ServiceVideoPlayer
-    showServicesUI();
+    // Keep play button visible briefly
+    showPlayButton();
     return;
   };
 
@@ -3059,13 +3159,14 @@ const HomeScreen = () => {
             setVideoProgress(0);
             setVideoPosition(0);
             setVideoDuration(0);
+            currentVideoProgress.current = 0; // Reset ref for callback comparison
 
             // Ensure video is playing when switching
             if (activeTab === 'services') {
               setIsPlaying(true);
             }
 
-            showServicesUI(); // Show UI when switching videos
+            showPlayButton(); // Show play button when switching videos
           }}
         >
           {filteredServices.map((item, index) => {
@@ -3109,21 +3210,7 @@ const HomeScreen = () => {
                             setVideoPosition(0);
                           }
                         }}
-                        onPlaybackStatusUpdate={(status) => {
-                          if (isCurrentVideo && status.duration) {
-                            // Only update if we have valid duration and position
-                            const currentPos = status.currentTime || 0;
-                            const duration = status.duration;
-                            const progress = duration > 0 ? currentPos / duration : 0;
-
-                            // Update progress more frequently for smoother progress bar (0.005 = 0.5%)
-                            if (Math.abs(progress - videoProgress) > 0.005 || progress === 0) {
-                              setVideoProgress(progress);
-                              setVideoPosition(currentPos * 1000); // Convert to milliseconds for consistency
-                              setVideoDuration(duration * 1000); // Convert to milliseconds for consistency
-                            }
-                          }
-                        }}
+                        onPlaybackStatusUpdate={isCurrentVideo ? handlePlaybackStatusUpdate : undefined}
                       />
                     ) : (
                       // Show thumbnail for videos out of range or if no video URI
@@ -3161,9 +3248,9 @@ const HomeScreen = () => {
                   </View>
                 </TouchableWithoutFeedback>
 
-              {/* Play Button - Simple and always visible when paused */}
-              {!isPlaying && index === currentVideoIndex && (
-                <View style={{
+              {/* Play Button - Centered, fades out when playing */}
+              {index === currentVideoIndex && (
+                <Animated.View style={{
                   position: 'absolute',
                   top: '50%',
                   left: '50%',
@@ -3174,6 +3261,13 @@ const HomeScreen = () => {
                   justifyContent: 'center',
                   alignItems: 'center',
                   zIndex: 9999,
+                  opacity: playButtonOpacity,
+                  transform: [{
+                    scale: playButtonOpacity.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.8, 1]
+                    })
+                  }]
                 }}>
                   <TouchableOpacity
                     style={{
@@ -3194,23 +3288,135 @@ const HomeScreen = () => {
                     onPress={handlePlayPausePress}
                   >
                     <Ionicons 
-                      name="play" 
+                      name={isPlaying ? "pause" : "play"} 
                       size={36} 
                       color="#000" 
-                      style={{ marginLeft: 4 }} 
+                      style={{ marginLeft: isPlaying ? 0 : 4 }} 
                     />
                   </TouchableOpacity>
-                </View>
+                </Animated.View>
               )}
 
-              {/* Progress Bar with Scrubbing */}
-              <Animated.View style={{
+              {/* Bottom UI Cluster - tight grouping of all elements */}
+              <View style={{
+                position: 'absolute',
+                bottom: tabBarHeightFromContext + 12, // Just above tab bar, simplified calculation
+                left: 16,
+                right: 100,
+              }}>
+                {/* User info - tight spacing */}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}
+                  onPress={() => {
+                    handleVendorPress(item.userId);
+                  }}
+                >
+                  <Image
+                    source={{ uri: item.userAvatar || 'https://via.placeholder.com/40x40' }}
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      marginRight: 10,
+                      borderWidth: 2,
+                      borderColor: 'white'
+                    }}
+                  />
+                  <View>
+                    <Text style={{ color: 'white', fontSize: 15, fontWeight: 'bold' }}>
+                      @{String(item.username || '')}
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 1 }}>
+                      <Ionicons name="star" size={11} color="#FFD700" />
+                      <Text style={{ color: 'white', fontSize: 11, marginLeft: 3 }}>
+                        {(item.rating || 0).toFixed(1)}
+                      </Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+
+                {item.description && String(item.description).trim() ? (
+                  <View style={{ marginBottom: 6 }}>
+                    <Text 
+                      style={{ color: 'white', fontSize: 13 }}
+                      numberOfLines={expandedDescriptions.has(item.id) ? undefined : 2}
+                    >
+                      {String(item.description)}
+                    </Text>
+                    {item.description.length > 100 && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          const next = new Set(expandedDescriptions);
+                          if (next.has(item.id)) next.delete(item.id);
+                          else next.add(item.id);
+                          setExpandedDescriptions(next);
+                        }}
+                        style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}
+                      >
+                        <Text style={{ color: '#007AFF', fontSize: 11, fontWeight: '600', marginRight: 3 }}>
+                          {expandedDescriptions.has(item.id) ? 'See Less' : 'See More'}
+                        </Text>
+                        <Ionicons 
+                          name={expandedDescriptions.has(item.id) ? 'chevron-up' : 'chevron-down'} 
+                          size={12} 
+                          color="#007AFF" 
+                        />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ) : null}
+
+                {/* Price - tight spacing */}
+                <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold', marginBottom: 8 }}>
+                  ₣{(item.price || 0).toFixed(2)}
+                </Text>
+
+                {/* Action buttons - tight spacing */}
+                <View style={{ flexDirection: 'row' }}>
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#25D366',
+                      paddingHorizontal: 14,
+                      paddingVertical: 8,
+                      borderRadius: 18,
+                      marginRight: 10
+                    }}
+                    onPress={() => handleChatWithServiceProvider(item)}
+                  >
+                    <Ionicons name="chatbubble-outline" size={14} color="white" />
+                    <Text style={{ color: 'white', fontSize: 13, fontWeight: 'bold', marginLeft: 5 }}>
+                      Chat
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#3498DB',
+                      paddingHorizontal: 14,
+                      paddingVertical: 8,
+                      borderRadius: 18
+                    }}
+                    onPress={() => handleBook(item.id)}
+                  >
+                    <Ionicons name="calendar-outline" size={14} color="white" />
+                    <Text style={{ color: 'white', fontSize: 13, fontWeight: 'bold', marginLeft: 5 }}>
+                      Book
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Progress Bar - positioned at bottom just above tab bar */}
+              <View style={{
                   position: 'absolute',
-                  bottom: tabBarHeightFromContext + insets.bottom - 4,
-                  left: 0,
-                  right: 0,
-                  height: 6,
-                  opacity: servicesUIOpacity
+                  bottom: tabBarHeightFromContext + 4, // Slightly lower than UI cluster
+                  left: 16,
+                  right: 16,
+                  height: 4
                 }}>
                   <TouchableOpacity
                     style={{
@@ -3249,10 +3455,10 @@ const HomeScreen = () => {
                       shadowRadius: 2,
                     }} />
                   </TouchableOpacity>
-              </Animated.View>
+              </View>
                 
-              {/* Services Header */}
-              <Animated.View style={{
+              {/* Services Header - always visible */}
+              <View style={{
                   position: 'absolute',
                   top: insets.top + 10,
                   left: 0,
@@ -3260,10 +3466,12 @@ const HomeScreen = () => {
                   flexDirection: 'row',
                   justifyContent: 'space-between',
                   alignItems: 'center',
-                  paddingHorizontal: 16,
-                  opacity: servicesUIOpacity
+                  paddingHorizontal: 16
                 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity onPress={toggleSidebar} style={{ marginRight: 12, padding: 8 }}>
+                      <Ionicons name="menu-outline" size={20} color="white" />
+                    </TouchableOpacity>
                     <Text style={{
                       color: 'white',
                       fontSize: 24,
@@ -3311,127 +3519,14 @@ const HomeScreen = () => {
                       )}
                     </View>
                   </TouchableOpacity>
-              </Animated.View>
+              </View>
                 
-              {/* Bottom left info with action buttons */}
-              <Animated.View style={{
-                  position: 'absolute',
-                  bottom: tabBarHeightFromContext + insets.bottom + 20,
-                  left: 16,
-                  right: 80,
-                  opacity: servicesUIOpacity
-                }}>
-                  {/* User info */}
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}
-                    onPress={() => {
-                      handleVendorPress(item.userId);
-                    }}
-                  >
-                    <Image
-                      source={{ uri: item.userAvatar || 'https://via.placeholder.com/40x40' }}
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 20,
-                        marginRight: 12,
-                        borderWidth: 2,
-                        borderColor: 'white'
-                      }}
-                    />
-                    <View>
-                      <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>
-                        @{String(item.username || '')}
-                      </Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                        <Ionicons name="star" size={12} color="#FFD700" />
-                        <Text style={{ color: 'white', fontSize: 12, marginLeft: 4 }}>
-                          {(item.rating || 0).toFixed(1)}
-                        </Text>
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-
-                  {item.description && String(item.description).trim() ? (
-                    <View style={{ marginBottom: 12 }}>
-                      <Text 
-                        style={{ color: 'white', fontSize: 14 }}
-                        numberOfLines={expandedDescriptions.has(item.id) ? undefined : 2}
-                      >
-                        {String(item.description)}
-                      </Text>
-                      {item.description.length > 100 && (
-                        <TouchableOpacity
-                          onPress={() => {
-                            const next = new Set(expandedDescriptions);
-                            if (next.has(item.id)) next.delete(item.id);
-                            else next.add(item.id);
-                            setExpandedDescriptions(next);
-                          }}
-                          style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
-                        >
-                          <Text style={{ color: '#007AFF', fontSize: 12, fontWeight: '600', marginRight: 4 }}>
-                            {expandedDescriptions.has(item.id) ? 'See Less' : 'See More'}
-                          </Text>
-                          <Ionicons 
-                            name={expandedDescriptions.has(item.id) ? 'chevron-up' : 'chevron-down'} 
-                            size={14} 
-                            color="#007AFF" 
-                          />
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  ) : null}
-
-                  <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold', marginBottom: 16 }}>
-                    ₣{(item.price || 0).toFixed(2)}
-                  </Text>
-
-                  {/* Action buttons */}
-                  <View style={{ flexDirection: 'row' }}>
-                    <TouchableOpacity
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        backgroundColor: '#25D366',
-                        paddingHorizontal: 16,
-                        paddingVertical: 10,
-                        borderRadius: 20,
-                        marginRight: 12
-                      }}
-                      onPress={() => handleChatWithServiceProvider(item)}
-                    >
-                      <Ionicons name="chatbubble-outline" size={16} color="white" />
-                      <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold', marginLeft: 6 }}>
-                        Chat
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        backgroundColor: '#3498DB',
-                        paddingHorizontal: 16,
-                        paddingVertical: 10,
-                        borderRadius: 20
-                      }}
-                      onPress={() => handleBook(item.id)}
-                    >
-                      <Ionicons name="calendar-outline" size={16} color="white" />
-                      <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold', marginLeft: 6 }}>
-                        Book
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-              </Animated.View>
                 
-              {/* Right side actions */}
-              <Animated.View style={{
+              {/* Right side actions - aligned with bottom cluster */}
+              <View style={{
                   position: 'absolute',
                   right: 16,
-                  bottom: tabBarHeightFromContext + insets.bottom + 60,
-                  opacity: servicesUIOpacity
+                  bottom: tabBarHeightFromContext + 12 // Same height as UI cluster
                 }}>
                   <TouchableOpacity 
                     style={{ marginBottom: 24, alignItems: 'center' }}
@@ -3517,7 +3612,7 @@ const HomeScreen = () => {
                       {String(item.shares || '0')}
                     </Text>
                   </TouchableOpacity>
-              </Animated.View>
+              </View>
             </View>
             );
           })}

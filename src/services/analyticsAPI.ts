@@ -159,7 +159,7 @@ class AnalyticsAPI {
         queryParams.append('date', date.toISOString().split('T')[0]);
       }
 
-      const response = await fetch(`${API_BASE_URL}/analytics?${queryParams.toString()}`, {
+      const response = await fetch(`${API_BASE_URL}/analytics/stats?${queryParams.toString()}`, {
         method: 'GET',
         headers,
       });

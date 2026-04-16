@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
 import { FilterOptions } from '../components/FilterDropdown';
 import { loadFilters, saveFilters, debouncedSaveFilters, getDefaultFilters } from '../utils/filterStorage';
 
@@ -80,7 +80,8 @@ export const FilterProvider: React.FC<FilterProviderProps> = ({ children }) => {
     });
   }, []);
 
-  const value: FilterContextType = {
+  // Memoize context value to prevent unnecessary re-renders
+  const value = useMemo<FilterContextType>(() => ({
     productFilters,
     serviceFilters,
     setProductFilters,
@@ -88,7 +89,7 @@ export const FilterProvider: React.FC<FilterProviderProps> = ({ children }) => {
     resetProductFilters,
     resetServiceFilters,
     isLoading,
-  };
+  }), [productFilters, serviceFilters, setProductFilters, setServiceFilters, resetProductFilters, resetServiceFilters, isLoading]);
 
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>;
 };

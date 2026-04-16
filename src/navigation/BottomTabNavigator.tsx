@@ -197,6 +197,8 @@ export const BottomTabNavigator: React.FC = () => {
       initialRouteName="Home"
       screenOptions={{
         headerShown: false,
+        freezeOnBlur: true, // Prevents inactive screens from re-rendering
+        lazy: true, // Only renders screen when first focused
         tabBarStyle: [
           styles.tabBar,
           {

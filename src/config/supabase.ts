@@ -2,9 +2,15 @@ import 'react-native-url-polyfill/auto';
 import { StorageClient } from '@supabase/storage-js';
 import { GoTrueClient } from '@supabase/gotrue-js';
 
-// Supabase configuration
-const supabaseUrl = 'https://piytfaopdlxltdczdvtk.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpeXRmYW9wZGx4bHRkY3pkdnRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUzNTU2MDksImV4cCI6MjA3MDkzMTYwOX0.rkKCsoP2elIhsHHeiTHWgaomCjP93Odd-iULbyOXE-Y';
+// Supabase configuration from environment variables
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+
+// Validate configuration
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('❌ CRITICAL: Missing Supabase environment variables. Check your .env file.');
+  console.error('   Required: EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY');
+}
 
 // Create individual clients for only what we need
 export const supabaseAuth = new GoTrueClient({

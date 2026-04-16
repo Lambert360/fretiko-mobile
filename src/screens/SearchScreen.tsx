@@ -57,7 +57,7 @@ const SearchScreen = () => {
   });
   
   // Debounce timer
-  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Use our search hooks
   const { search, searchResults, isSearching, searchError, searchHistory, clearSearch } = useSearch();
@@ -71,12 +71,8 @@ const SearchScreen = () => {
 
   const tabs = ['For You', 'Products', 'Services', 'Vendors', 'Riders', 'People'];
 
-  // Get data from discover content with fallbacks and map to card format
-  const trendingData = discoverContent?.trending || [
-    { query: 'iPhone 15', count: 1250, category: 'Electronics' },
-    { query: 'Web Development', count: 890, category: 'Services' },
-    { query: 'Fashion Lagos', count: 567, category: 'Fashion' },
-  ];
+  // Get data from discover content - no mock fallback data
+  const trendingData = discoverContent?.trending || [];
 
   // Map API data to card format using useMemo to prevent re-renders
   const featuredContent = useMemo(() => {
@@ -258,6 +254,12 @@ const SearchScreen = () => {
               onChangeText={handleSearch}
               onFocus={() => setIsSearchFocused(true)}
               onBlur={() => setIsSearchFocused(false)}
+              onSubmitEditing={() => {
+                // Close suggestions modal and perform search when Enter is pressed
+                setIsSearchFocused(false);
+                performSearch(searchQuery);
+              }}
+              returnKeyType="search"
             />
             {searchQuery.length > 0 && !isSearching && (
               <TouchableOpacity onPress={() => {
@@ -2147,12 +2149,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  trendingSubtitle: {
-    color: 'rgba(255,255,255,0.6)',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  
+
   // Filter Modal Styles
   modalOverlay: {
     flex: 1,

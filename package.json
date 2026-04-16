@@ -25,6 +25,7 @@
     "agora-react-native-rtm": "^1.5.1",
     "agora-rn-uikit": "^5.0.2",
     "axios": "^1.11.0",
+    "country-state-city": "^3.2.1",
     "expo": "~54.0.31",
     "expo-audio": "~1.1.1",
     "expo-battery": "~10.0.8",

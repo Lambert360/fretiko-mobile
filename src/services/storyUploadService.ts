@@ -7,9 +7,10 @@ import * as VideoThumbnails from 'expo-video-thumbnails';
 import { fileUploadService } from './fileUploadService';
 import { API_BASE_URL } from '../config/api';
 
-// Supabase configuration
-const supabaseUrl = 'https://piytfaopdlxltdczdvtk.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpeXRmYW9wZGx4bHRkY3pkdnRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUzNTU2MDksImV4cCI6MjA3MDkzMTYwOX0.rkKCsoP2elIhsHHeiTHWgaomCjP93Odd-iULbyOXE-Y';
+// Import Supabase configuration from centralized config (keys now loaded from env variables)
+import { supabaseStorage } from '../config/supabase';
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
 export interface StoryUploadResult {
   publicUrl: string;
@@ -101,7 +102,7 @@ class StoryUploadService {
       // Read file as base64
       console.log('📖 Reading story file from device...');
       const fileData = await FileSystem.readAsStringAsync(fileUri, {
-        encoding: FileSystem.EncodingType.Base64,
+        encoding: 'base64',
       });
 
       // Convert base64 to Uint8Array

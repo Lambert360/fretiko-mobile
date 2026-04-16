@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { VideoView, ResizeMode } from 'expo-video';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import React, { useRef, useState, useEffect } from 'react';
 import {
   Animated,
   Dimensions,
   Image,
+  ImageStyle,
   Platform,
   StyleSheet,
   Text,
@@ -12,6 +13,7 @@ import {
   TouchableWithoutFeedback,
   View,
   Alert,
+  ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { VideoFeedItem } from '../services/servicesAPI';
@@ -48,7 +50,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
   onBook,
   onVendorPress,
 }) => {
-  console.log('🎬 VideoCard rendering for:', item.title, 'ID:', item.id);
+  console.log(' VideoCard rendering for:', item.title, 'ID:', item.id);
   const insets = useSafeAreaInsets();
   
   // Calculate available viewport height
@@ -64,8 +66,8 @@ const VideoCard: React.FC<VideoCardProps> = ({
   const playButtonOpacity = useRef(new Animated.Value(0)).current;
   
   // Timers
-  const hideTimer = useRef<NodeJS.Timeout | null>(null);
-  const playButtonTimer = useRef<NodeJS.Timeout | null>(null);
+  const hideTimer = useRef<number | null>(null);
+  const playButtonTimer = useRef<number | null>(null);
 
   // Cleanup timers on unmount
   useEffect(() => {
@@ -79,9 +81,9 @@ const VideoCard: React.FC<VideoCardProps> = ({
   useEffect(() => {
     const shouldPlayVideo = isActive && isPlaying;
     if (shouldPlayVideo) {
-      console.log(`🎥 Starting video playback for ${item.videoUri}`);
+      console.log(` Starting video playback for ${item.videoUri}`);
     } else {
-      console.log(`🎥 Pausing video for ${item.videoUri}`);
+      console.log(` Pausing video for ${item.videoUri}`);
     }
   }, [isActive, isPlaying, item.videoUri]);
 
@@ -153,14 +155,20 @@ const VideoCard: React.FC<VideoCardProps> = ({
     }
   };
 
-  const getVideoStyle = () => {
+  // Create video player for expo-video API
+  const player = useVideoPlayer(item.videoUri || '', (player) => {
+    player.loop = true;
+    player.muted = false;
+  });
+
+  const getVideoStyle = (): ViewStyle => {
     // Use parent container dimensions - the Reels wrapper sets the exact height
     const containerHeight = screenHeight - tabBarHeight - insets.bottom;
     
     if (!videoAspectRatio) {
       return {
         width: screenWidth,
-        height: '100%',
+        height: containerHeight,
       };
     }
 
@@ -171,8 +179,8 @@ const VideoCard: React.FC<VideoCardProps> = ({
       if (videoAspectRatio > containerAspectRatio) {
         // Video is wider than container - fit to container height
         return {
-          width: '100%',
-          height: '100%',
+          width: screenWidth,
+          height: containerHeight,
         };
       } else {
         // Video is not as wide - fit to screen width, center vertically
@@ -193,8 +201,8 @@ const VideoCard: React.FC<VideoCardProps> = ({
       } else {
         // Video is taller than container - fit to container height
         return {
-          width: '100%',
-          height: '100%',
+          width: screenWidth,
+          height: containerHeight,
         };
       }
     }
@@ -254,19 +262,15 @@ const VideoCard: React.FC<VideoCardProps> = ({
         <View style={styles.videoContainer}>
           {item.videoUri ? (
             <VideoView
-              source={{ uri: item.videoUri }}
+              player={player}
               style={getVideoStyle()}
-              shouldPlay={isActive && isPlaying}
-              isLooping
               contentFit="contain"
-              showsControls={false}
-              onLoad={handleVideoLoad}
+              nativeControls={false}
             />
           ) : (
             <Image 
               source={{ uri: item.thumbnail || 'https://via.placeholder.com/400x600' }} 
-              style={getVideoStyle()} 
-              resizeMode="contain"
+              style={getVideoStyle() as ImageStyle} 
             />
           )}
         </View>
@@ -291,7 +295,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
         <Animated.View style={[
           styles.userInfoContainer,
           {
-            bottom: tabBarHeight + insets.bottom + 20,
+            bottom: tabBarHeight + insets.bottom + 6,
             opacity: uiOpacity
           }
         ]}>
@@ -322,7 +326,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
         <Animated.View style={[
           styles.descriptionContainer,
           {
-            bottom: tabBarHeight + insets.bottom + 20,
+            bottom: tabBarHeight + insets.bottom + 6,
             opacity: uiOpacity
           }
         ]}>
@@ -377,7 +381,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
         <Animated.View style={[
           styles.rightActionsContainer,
           {
-            bottom: tabBarHeight + insets.bottom + 20,
+            bottom: tabBarHeight + insets.bottom + 6,
             opacity: uiOpacity
           }
         ]}>
@@ -573,6 +577,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   chatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#25D366',
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -585,6 +591,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   bookButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#3498DB',
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -653,23 +661,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 8,
-  },
-  chatButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#25D366',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginHorizontal: 6,
-  },
-  bookButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#3498DB',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
   },
   rightActionsContainer: {
     position: 'absolute',

@@ -9,7 +9,7 @@ import { ordersAPI, Order } from '../services/ordersAPI';
 import { giftAPI, UserGift } from '../services/giftAPI';
 import { fileUploadService } from '../services/fileUploadService';
 import { productsAPI, Product } from '../services/productsAPI';
-import { searchAPI } from '../services/searchAPI';
+import { searchAPI, SearchType } from '../services/searchAPI';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeImage } from '../components/SafeImage';
 
@@ -34,7 +34,7 @@ interface ProfileScreenProps {
 
 const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
   const insets = useSafeAreaInsets();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUserProfile } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -136,7 +136,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         walletAPI.getWalletStats(),
         ordersAPI.getMyOrders({ status: ['delivered', 'shipped', 'processing', 'cancelled'] }),
         giftAPI.getUserGifts().catch(() => ({ gifts: [], total_gifts: 0, total_value: 0 })), // Gracefully handle errors
-        searchAPI.getFeaturedContent('products', undefined, 10).catch(() => ({ products: [] })) // Get featured/trending products
+        searchAPI.getFeaturedContent(SearchType.PRODUCTS, undefined, 10).catch(() => ({ products: [] })) // Get featured/trending products
       ]);
       
       setProfile(profileData);
@@ -231,6 +231,9 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
           // Update profile with new avatar URL
           await userAPI.updateProfile({ avatarUrl: uploadResult.publicUrl });
           
+          // Refresh auth context with updated user data
+          await refreshUserProfile();
+          
           // Reload profile to show updated avatar
           await loadProfile();
           
@@ -275,6 +278,9 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
           
           // Update profile with new background URL
           await userAPI.updateProfile({ bgPicUrl: uploadResult.publicUrl });
+          
+          // Refresh auth context with updated user data
+          await refreshUserProfile();
           
           // Reload profile to show updated background
           await loadProfile();

@@ -368,13 +368,13 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
           <Text style={styles.sectionSubtitle}>Add up to 6 photos or videos (max 60s)</Text>
 
           <FlatList
-            data={media}
+            data={[...media].reverse()}
             horizontal
             showsHorizontalScrollIndicator={false}
             renderItem={renderMediaItem}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.imagesList}
-            ListFooterComponent={
+            ListHeaderComponent={
               media.length < 6 ? (
                 <TouchableOpacity style={styles.addImageButton} onPress={pickMedia}>
                   <Ionicons name="add-circle" size={32} color="rgba(255,255,255,0.6)" />

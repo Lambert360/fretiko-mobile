@@ -219,9 +219,21 @@ class ChatAPI {
       });
 
       return response.data.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error in findOrCreateConversation:', error);
-      // Fallback to creating a new conversation
+      
+      // Check for specific database errors that indicate missing AI user
+      const errorMessage = error?.response?.data?.message || error?.message || '';
+      const isAIDatabaseError = chatType === 'ai' && 
+        (errorMessage.includes('No suitable key') || 
+         errorMessage.includes('PGRST301') ||
+         errorMessage.includes('foreign key'));
+      
+      if (isAIDatabaseError) {
+        throw new Error('AI assistant is not configured. Please contact support.');
+      }
+      
+      // For other errors, fallback to creating a new conversation
       return await this.createConversation({
         participantIds,
         chatType,

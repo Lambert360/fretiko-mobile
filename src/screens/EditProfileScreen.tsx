@@ -18,6 +18,8 @@ import { userAPI, UpdateProfileData } from '../services/userAPI';
 import { AvatarUpload } from '../components/AvatarUpload';
 import { BackgroundUpload } from '../components/BackgroundUpload';
 import { DatePickerInput } from '../components/DatePickerInput';
+import LocationSelector from '../components/LocationSelector';
+import { useAuth } from '../contexts/AuthContext';
 
 interface EditProfileScreenProps {
   navigation: any;
@@ -35,6 +37,7 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
   route 
 }) => {
   const { profile: initialProfile, focusAvatar, becomeSeller } = route.params;
+  const { refreshUserProfile } = useAuth();
   
   const [formData, setFormData] = useState({
     username: initialProfile?.username || '',
@@ -51,6 +54,7 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
   const [loading, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [backgroundUrl, setBackgroundUrl] = useState<string | undefined>(initialProfile?.bgPicUrl);
+  const [isLocationSelectorVisible, setLocationSelectorVisible] = useState(false);
 
   const genderOptions = [
     { label: 'Male', value: 'male', icon: 'male' },
@@ -83,6 +87,11 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: '' }));
     }
+  };
+
+  const handleLocationSelect = (selectedLocation: string) => {
+    updateFormData('location', selectedLocation);
+    setLocationSelectorVisible(false);
   };
 
   const validateForm = (): boolean => {
@@ -148,6 +157,9 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
       };
 
       await userAPI.updateProfile(updateData);
+      
+      // Refresh auth context with updated user data
+      await refreshUserProfile();
       
       // Determine success message based on role changes
       let successMessage = 'Your profile has been updated successfully!';
@@ -294,14 +306,21 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
           {/* Location */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Location</Text>
-            <TextInput
-              style={[styles.input, errors.location && styles.inputError]}
-              value={formData.location}
-              onChangeText={(value) => updateFormData('location', value)}
-              placeholder="City, Country"
-              placeholderTextColor="#666"
-              autoCapitalize="words"
-            />
+            <TouchableOpacity
+              style={styles.locationButton}
+              onPress={() => setLocationSelectorVisible(true)}
+            >
+              <View style={styles.locationButtonContent}>
+                <Ionicons name="location" size={20} color={formData.location ? '#FFFFFF' : 'rgba(255,255,255,0.5)'} />
+                <Text style={[
+                  styles.locationButtonText,
+                  !formData.location && styles.locationButtonPlaceholder
+                ]}>
+                  {formData.location || 'Select location'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.3)" />
+            </TouchableOpacity>
             {errors.location && <Text style={styles.errorText}>{errors.location}</Text>}
           </View>
 
@@ -482,6 +501,14 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
             </View>
           )}
         </ScrollView>
+
+        {/* Location Selector Modal */}
+        <LocationSelector
+          visible={isLocationSelectorVisible}
+          selectedLocation={formData.location}
+          onLocationSelect={handleLocationSelect}
+          onClose={() => setLocationSelectorVisible(false)}
+        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -633,6 +660,34 @@ const styles = StyleSheet.create({
     color: '#B0B0B0',
     marginBottom: 4,
   },
+  riderBenefits: {
+    backgroundColor: '#1E1E1E',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 8,
+  },
+  locationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E1E1E',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  locationButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  locationButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  locationButtonPlaceholder: {
+    color: 'rgba(255,255,255,0.5)',
+  },
   genderSelector: {
     backgroundColor: '#1E1E1E',
     borderRadius: 12,
@@ -678,7 +733,7 @@ const styles = StyleSheet.create({
     color: '#007AFF',
     fontWeight: '600',
   },
-  riderBenefits: {
+  benefits: {
     backgroundColor: '#1E1E1E',
     borderRadius: 12,
     padding: 16,

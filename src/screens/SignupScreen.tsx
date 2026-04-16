@@ -19,9 +19,9 @@ import { useRegistration } from '../contexts/RegistrationContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PasswordStrengthIndicator } from '../components/PasswordStrengthIndicator';
 import { EmailAvailabilityChecker } from '../components/EmailAvailabilityChecker';
-import { SocialAuthButtons } from '../components/SocialAuthButtons';
 import { DatePickerInput } from '../components/DatePickerInput';
 import { API_CONFIG } from '../config/api';
+import * as Linking from 'expo-linking';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -43,8 +43,6 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
   const [showGenderPicker, setShowGenderPicker] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
-  const [appleLoading, setAppleLoading] = useState(false);
   const [passwordStrength, setPasswordStrength] = useState<'weak' | 'medium' | 'strong'>('weak');
   const [isPasswordValid, setIsPasswordValid] = useState(false);
   const [hasAcceptedTerms, setHasAcceptedTerms] = useState(false);
@@ -164,30 +162,6 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
       Alert.alert('Registration Failed', error.message || 'Something went wrong');
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
-    setGoogleLoading(true);
-    try {
-      // TODO: Implement Google OAuth flow
-      Alert.alert('Coming Soon', 'Google sign-in will be available soon!');
-    } catch (error: any) {
-      Alert.alert('Google Sign-In Failed', error.message || 'Something went wrong');
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
-
-  const handleAppleSignIn = async () => {
-    setAppleLoading(true);
-    try {
-      // TODO: Implement Apple OAuth flow
-      Alert.alert('Coming Soon', 'Apple sign-in will be available soon!');
-    } catch (error: any) {
-      Alert.alert('Apple Sign-In Failed', error.message || 'Something went wrong');
-    } finally {
-      setAppleLoading(false);
     }
   };
 
@@ -396,20 +370,14 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                     I agree to the{' '}
                     <Text
                       style={styles.termsLink}
-                      onPress={() => {
-                        // TODO: Navigate to terms and conditions screen or open web view
-                        Alert.alert('Terms & Conditions', 'Terms screen will be implemented soon!');
-                      }}
+                      onPress={() => Linking.openURL('https://fretiko.com/terms')}
                     >
                       Terms & Conditions
                     </Text>
                     {' '}and{' '}
                     <Text
                       style={styles.termsLink}
-                      onPress={() => {
-                        // TODO: Navigate to privacy policy screen or open web view
-                        Alert.alert('Privacy Policy', 'Privacy policy screen will be implemented soon!');
-                      }}
+                      onPress={() => Linking.openURL('https://fretiko.com/privacy')}
                     >
                       Privacy Policy
                     </Text>
@@ -429,15 +397,6 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                 )}
               </TouchableOpacity>
             </View>
-
-            {/* Social Auth Buttons */}
-            <SocialAuthButtons
-              onGoogleSignIn={handleGoogleSignIn}
-              onAppleSignIn={handleAppleSignIn}
-              isLoading={isLoading}
-              googleLoading={googleLoading}
-              appleLoading={appleLoading}
-            />
 
             {/* Navigation to Login */}
             <View style={styles.footer}>

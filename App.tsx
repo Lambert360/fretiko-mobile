@@ -1,3 +1,7 @@
+import { enableScreens, enableFreeze } from 'react-native-screens';
+enableScreens(true);
+enableFreeze(true); // Prevents background screens from re-rendering
+
 import React, { useEffect, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
@@ -8,6 +12,7 @@ import * as Notifications from 'expo-notifications';
 // Import base64 polyfill first
 import './src/utils/base64-polyfill';
 import { createStackNavigator } from '@react-navigation/stack';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
 
 // Import contexts
@@ -494,8 +499,10 @@ export default function App() {
           <AuthProvider>
             <CartProvider>
               <FilterProvider>
-                <AppNavigator />
-                <StatusBar style="light" backgroundColor="#000000" />
+                <GestureHandlerRootView style={{ flex: 1 }}>
+                  <AppNavigator />
+                  <StatusBar style="light" backgroundColor="#000000" />
+                </GestureHandlerRootView>
               </FilterProvider>
             </CartProvider>
           </AuthProvider>

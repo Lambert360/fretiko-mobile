@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
 import { Alert } from 'react-native';
 import { cartAPI, CartItem, CartSummary } from '../services/cartAPI';
 import { checkoutAPI } from '../services/checkoutAPI';
@@ -54,6 +54,15 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     loading: false,
     isVisible: false,
   });
+
+  // Define showCart/hideCart first (hoisted) so other functions can reference them
+  const showCart = useCallback(() => {
+    setCartState(prev => ({ ...prev, isVisible: true }));
+  }, []);
+
+  const hideCart = useCallback(() => {
+    setCartState(prev => ({ ...prev, isVisible: false }));
+  }, []);
 
   // Load cart data when user is authenticated
   useEffect(() => {
@@ -246,15 +255,8 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     }
   };
 
-  const showCart = () => {
-    setCartState(prev => ({ ...prev, isVisible: true }));
-  };
-
-  const hideCart = () => {
-    setCartState(prev => ({ ...prev, isVisible: false }));
-  };
-
-  const value: CartContextType = {
+  // Memoize context value to prevent unnecessary re-renders
+  const value = useMemo<CartContextType>(() => ({
     ...cartState,
     addToCart,
     removeFromCart,
@@ -264,7 +266,7 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     hideCart,
     addServiceToCart,
     refreshCart,
-  };
+  }), [cartState, addToCart, removeFromCart, updateQuantity, clearCart, showCart, hideCart, addServiceToCart, refreshCart]);
 
   return (
     <CartContext.Provider value={value}>

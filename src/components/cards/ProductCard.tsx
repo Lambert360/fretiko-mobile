@@ -244,31 +244,30 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           )}
         </View>
 
-        {/* Action Buttons */}
+        {/* Action Buttons - Equal sized buttons filling card width */}
         {(onCartPress || onBargainPress) && (
           <View style={styles.actionButtonsRow}>
+            {onBargainPress && (
+              <TouchableOpacity
+                style={[styles.actionIconButton, styles.bargainIconButton]}
+                onPress={(e) => {
+                  e?.stopPropagation?.();
+                  onBargainPress(product);
+                }}
+              >
+                <Ionicons name="chatbubble-ellipses-outline" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
+
             {onCartPress && (
               <TouchableOpacity
-                style={styles.cartButton}
+                style={styles.actionIconButton}
                 onPress={(e) => {
                   e?.stopPropagation?.();
                   onCartPress(product);
                 }}
               >
                 <Ionicons name="cart-outline" size={18} color="#FFFFFF" />
-              </TouchableOpacity>
-            )}
-
-            {onBargainPress && (
-              <TouchableOpacity
-                style={styles.bargainButton}
-                onPress={(e) => {
-                  e?.stopPropagation?.();
-                  onBargainPress(product);
-                }}
-              >
-                <Ionicons name="chatbubble-ellipses-outline" size={16} color="#FFFFFF" />
-                <Text style={styles.bargainButtonText}>Bargain</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -502,34 +501,17 @@ const styles = StyleSheet.create({
   },
   actionButtonsRow: {
     flexDirection: 'row',
-    gap: 8,
+    justifyContent: 'space-between',
     marginTop: 12,
+    gap: 8,
   },
-  cartButton: {
-    backgroundColor: '#4CAF50',
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 24,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  bargainButton: {
+  actionIconButton: {
     flex: 1,
+    backgroundColor: '#4CAF50',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#FF9800',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 12,
     borderRadius: 8,
     shadowColor: '#000',
     shadowOffset: {
@@ -540,9 +522,12 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
-  bargainButtonText: {
+  bargainIconButton: {
+    backgroundColor: '#FF9800',
+  },
+  actionButtonText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
   },
 

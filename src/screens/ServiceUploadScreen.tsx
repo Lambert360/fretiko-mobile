@@ -57,6 +57,7 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
   const [isPriceValid, setIsPriceValid] = useState(true);
   const [priceError, setPriceError] = useState<string>('');
   const [isLocationSelectorVisible, setLocationSelectorVisible] = useState(false);
+  const [bookingType, setBookingType] = useState('add_to_cart');
   
   const supportedCurrencies = ['NGN', 'USD', 'EUR', 'GBP', 'CAD', 'AUD'];
 
@@ -340,13 +341,13 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
           <Text style={styles.sectionSubtitle}>Add photos and videos (max 60s) to showcase your service</Text>
           
           <FlatList
-            data={media}
+            data={[...media].reverse()}
             horizontal
             showsHorizontalScrollIndicator={false}
             renderItem={renderMediaItem}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.mediaList}
-            ListFooterComponent={
+            ListHeaderComponent={
               media.length < 6 ? (
                 <TouchableOpacity style={styles.addMediaButton} onPress={pickMedia}>
                   <Ionicons name="add-circle" size={32} color="rgba(255,255,255,0.6)" />

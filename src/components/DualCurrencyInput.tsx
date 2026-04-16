@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,9 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
+  Dimensions,
+  LayoutChangeEvent,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { currencyAPI } from '../services/currencyAPI';
@@ -109,6 +112,9 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
   const [lastEditedField, setLastEditedField] = useState<'local' | 'freti'>('local');
   const [conversionError, setConversionError] = useState<string>('');
   const [showCurrencyDropdown, setShowCurrencyDropdown] = useState(false);
+  const [dropdownPosition, setDropdownPosition] = useState<'above' | 'below'>('below');
+  const inputContainerRef = useRef<View>(null);
+  const { height: screenHeight } = Dimensions.get('window');
 
   useEffect(() => {
     console.log(' Local amount effect triggered:', {
@@ -278,13 +284,35 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
     // Note: Conversion will be triggered automatically by the useEffect when localCurrency changes
   };
 
+  const measureAndPositionDropdown = () => {
+    inputContainerRef.current?.measure((x, y, width, height, pageX, pageY) => {
+      const spaceAbove = pageY;
+      const spaceBelow = screenHeight - (pageY + height);
+      const dropdownHeight = 300; // maxHeight of dropdown
+
+      // Position dropdown where there's more space
+      if (spaceBelow < dropdownHeight && spaceAbove > spaceBelow) {
+        setDropdownPosition('above');
+      } else {
+        setDropdownPosition('below');
+      }
+    });
+  };
+
+  const toggleDropdown = () => {
+    if (!showCurrencyDropdown) {
+      measureAndPositionDropdown();
+    }
+    setShowCurrencyDropdown(!showCurrencyDropdown);
+  };
+
   const renderCurrencyPicker = () => {
     if (!showCurrencyPicker) return null;
 
     return (
       <TouchableOpacity
         style={styles.currencyPicker}
-        onPress={() => setShowCurrencyDropdown(!showCurrencyDropdown)}
+        onPress={toggleDropdown}
         disabled={!editable}
       >
         <Text style={styles.currencyText}>{localCurrency}</Text>
@@ -308,37 +336,63 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
     ];
 
     return (
-      <View style={styles.currencyDropdown}>
-        <ScrollView 
-          style={styles.currencyDropdownScroll}
-          nestedScrollEnabled={true}
-          showsVerticalScrollIndicator={true}
-          maximumZoomScale={1}
+      <Modal
+        visible={showCurrencyDropdown}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCurrencyDropdown(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={() => setShowCurrencyDropdown(false)}
         >
-          {sortedCurrencies.map((currency) => (
-            <TouchableOpacity
-              key={currency}
-              style={[
-                styles.currencyOption,
-                currency === localCurrency && styles.selectedCurrency
-              ]}
-              onPress={() => handleCurrencySelect(currency)}
+          <TouchableOpacity
+            style={styles.modalContent}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Currency</Text>
+              <TouchableOpacity onPress={() => setShowCurrencyDropdown(false)}>
+                <Ionicons name="close" size={24} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={styles.currencyList}
+              showsVerticalScrollIndicator={true}
+              keyboardShouldPersistTaps="handled"
             >
-              <Text style={[
-                styles.currencyOptionText,
-                currency === localCurrency && styles.selectedCurrencyText
-              ]}>
-                {currencyAPI.getCurrencySymbol(currency)} {currency}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
+              {sortedCurrencies.map((currency) => (
+                <TouchableOpacity
+                  key={currency}
+                  style={[
+                    styles.currencyOption,
+                    currency === localCurrency && styles.selectedCurrency
+                  ]}
+                  onPress={() => handleCurrencySelect(currency)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[
+                    styles.currencyOptionText,
+                    currency === localCurrency && styles.selectedCurrencyText
+                  ]}>
+                    {currencyAPI.getCurrencySymbol(currency)} {currency}
+                  </Text>
+                  {currency === localCurrency && (
+                    <Ionicons name="checkmark" size={20} color="#3498DB" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     );
   };
 
   return (
-    <View style={[styles.container, containerStyle]}>
+    <View style={[styles.container, containerStyle]} ref={inputContainerRef}>
       {title && <Text style={styles.title}>{title}</Text>}
       
       <View style={styles.inputContainer}>
@@ -481,12 +535,14 @@ const styles = StyleSheet.create({
     elevation: 8,
     maxHeight: 300, // Limit height for scrolling
   },
+  currencyDropdownAbove: {
+    top: 'auto',
+    bottom: '100%',
+    marginTop: 0,
+    marginBottom: 4,
+  },
   currencyDropdownScroll: {
     maxHeight: 300,
-  },
-  currencyOption: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
   },
   selectedCurrency: {
     backgroundColor: 'rgba(52, 152, 219, 0.2)',
@@ -504,6 +560,46 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 8,
     textAlign: 'center',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 16,
+    width: '90%',
+    maxHeight: '80%',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  modalTitle: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  currencyList: {
+    maxHeight: 400,
+  },
+  currencyOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
   },
 });
 

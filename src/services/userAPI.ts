@@ -106,7 +106,7 @@ export const userAPI = {
   getProfile: async (): Promise<UserProfile> => {
     try {
       const headers = await getAuthHeaders();
-      const response = await api.get('/users/profile', { headers });
+      const response = await api.get('/users/profile', { headers, timeout: 10000 });
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to get profile');

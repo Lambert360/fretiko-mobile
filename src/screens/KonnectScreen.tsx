@@ -61,7 +61,8 @@ const KonnectScreen = () => {
 
   // Refs for cleanup functions
   const cleanupFnRef = useRef<(() => void) | null>(null);
-  
+  const pulseAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
@@ -178,17 +179,14 @@ const KonnectScreen = () => {
     return swipeStatesRef.current.get(chatId)!;
   };
 
-  // Update swipe active state (triggers re-render via state update)
-  const [, setSwipeActiveTrigger] = useState(0);
+  // Update swipe active state (using ref only - no re-render needed)
   const setSwipeActive = (chatId: string, isActive: boolean) => {
     const state = swipeStatesRef.current.get(chatId);
     if (state) {
       state.isSwipeActive = isActive;
-      // Trigger minimal re-render to update UI
-      setSwipeActiveTrigger(prev => prev + 1);
+      // Note: No state update needed - swipe animation handles UI via Animated.Value
     }
   };
-
 
   // Load all conversations from backend API (including AI conversations)
   const loadAllConversations = async (filter?: string, page: number = 1): Promise<ChatConversation[]> => {
@@ -407,27 +405,33 @@ const KonnectScreen = () => {
       }),
     ]).start();
 
-    // Pulse animation for unread badges
-    Animated.loop(
+    // Pulse animation for unread badges - slower and smoother
+    pulseAnimationRef.current = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
-          toValue: 1.2,
-          duration: 1000,
+          toValue: 1.15,
+          duration: 1200,
           useNativeDriver: true,
         }),
         Animated.timing(pulseAnim, {
           toValue: 1,
-          duration: 1000,
+          duration: 1200,
           useNativeDriver: true,
         }),
       ])
-    ).start();
+    );
+    pulseAnimationRef.current.start();
 
     // Cleanup on unmount
     return () => {
       if (cleanupFnRef.current) {
         cleanupFnRef.current();
         cleanupFnRef.current = null;
+      }
+      // Stop pulse animation to prevent memory leaks and glitches
+      if (pulseAnimationRef.current) {
+        pulseAnimationRef.current.stop();
+        pulseAnimationRef.current = null;
       }
       realtimeAPI.disconnect();
     };
@@ -437,11 +441,11 @@ const KonnectScreen = () => {
   // Reload conversations when screen is focused
   useFocusEffect(
     React.useCallback(() => {
-      // Only refresh if not loading initially and user is authenticated
-      if (!loading && isAuthenticated && user && accessToken) {
+      // Only refresh if user is authenticated (avoid loading dependency to prevent loops)
+      if (isAuthenticated && user && accessToken) {
         loadConversations();
       }
-    }, [loading, isAuthenticated, user, accessToken])
+    }, [isAuthenticated, user, accessToken]) // Removed 'loading' to prevent re-render loops
   );
 
   // Reload conversations when filter changes
@@ -512,7 +516,31 @@ const KonnectScreen = () => {
       return conversation;
     } catch (error: any) {
       console.error('Error creating AI conversation:', error);
-      Alert.alert('AI Chat Error', `Failed to create AI conversation: ${error?.message || String(error)}`);
+      const errorMessage = error?.message || String(error);
+      
+      // Check for specific AI configuration errors
+      if (errorMessage.includes('not configured') || errorMessage.includes('contact support')) {
+        Alert.alert(
+          'AI Assistant Unavailable',
+          'The AI assistant is temporarily unavailable. Please try again later or contact support if the problem persists.',
+          [
+            { text: 'OK', style: 'default' }
+          ]
+        );
+      } else {
+        Alert.alert(
+          'Chat Error',
+          'Unable to start conversation with Iko. Please check your connection and try again.',
+          [
+            { text: 'OK', style: 'default' },
+            { 
+              text: 'Retry', 
+              style: 'default',
+              onPress: () => createOrFindAIConversation()
+            }
+          ]
+        );
+      }
       return null;
     }
   };
@@ -648,40 +676,41 @@ const KonnectScreen = () => {
     );
   };
 
-  // Filter and sort chats with Iko always at the top
-  const filteredChats = chats
-    .filter(chat => {
-      // Search filter with null checks and object handling
-      const lastMessageText = typeof chat.lastMessage === 'string'
-        ? chat.lastMessage
-        : (chat.lastMessage && typeof chat.lastMessage === 'object' && 'content' in chat.lastMessage)
-          ? (chat.lastMessage as any).content || ''
-          : '';
+  // Filter and sort chats with Iko always at the top - memoized to prevent recalculation
+  const filteredChats = React.useMemo(() => {
+    return chats
+      .filter(chat => {
+        // Search filter with null checks and object handling
+        const lastMessageText = typeof chat.lastMessage === 'string'
+          ? chat.lastMessage
+          : (chat.lastMessage && typeof chat.lastMessage === 'object' && 'content' in chat.lastMessage)
+            ? (chat.lastMessage as any).content || ''
+            : '';
 
-      const matchesSearch = (chat.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (lastMessageText || '').toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesSearch = (chat.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (lastMessageText || '').toLowerCase().includes(searchQuery.toLowerCase());
 
-      // Type filter
-      let matchesType: boolean = true;
-      if (activeFilter !== 'all') {
-        matchesType = chat.chatType === activeFilter || (activeFilter === 'ai' && chat.isAI === true);
-      }
+        // Type filter
+        let matchesType: boolean = true;
+        if (activeFilter !== 'all') {
+          matchesType = chat.chatType === activeFilter || (activeFilter === 'ai' && chat.isAI === true);
+        }
 
-      return matchesSearch && matchesType;
-    })
-    .sort((a, b) => {
-      // Always pin Iko (AI) to the top if showing all or AI filter
-      if ((activeFilter === 'all' || activeFilter === 'ai') && a.isAI && !b.isAI) return -1;
-      if ((activeFilter === 'all' || activeFilter === 'ai') && !a.isAI && b.isAI) return 1;
+        return matchesSearch && matchesType;
+      })
+      .sort((a, b) => {
+        // Always pin Iko (AI) to the top if showing all or AI filter
+        if ((activeFilter === 'all' || activeFilter === 'ai') && a.isAI && !b.isAI) return -1;
+        if ((activeFilter === 'all' || activeFilter === 'ai') && !a.isAI && b.isAI) return 1;
 
-      // Then sort by pinned status
-      if (a.isPinned && !b.isPinned) return -1;
-      if (!a.isPinned && b.isPinned) return 1;
+        // Then sort by pinned status
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
 
-      // Finally sort by timestamp (most recent first)
-      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-    });
-
+        // Finally sort by timestamp (most recent first)
+        return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+      });
+  }, [chats, searchQuery, activeFilter]); // Only recompute when these change
 
   const renderHeader = () => (
     <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
@@ -1238,14 +1267,13 @@ const KonnectScreen = () => {
                 )}
               </View>
             </View>
-
             <View style={styles.messagePreview}>
               {(item as any).isTyping ? (
                 <View style={styles.typingIndicator}>
                   <View style={styles.typingDots}>
-                    <Animated.View style={[styles.typingDot, { opacity: pulseAnim }]} />
-                    <Animated.View style={[styles.typingDot, { opacity: pulseAnim }]} />
-                    <Animated.View style={[styles.typingDot, { opacity: pulseAnim }]} />
+                    <View style={[styles.typingDot, styles.typingDot1]} />
+                    <View style={[styles.typingDot, styles.typingDot2]} />
+                    <View style={[styles.typingDot, styles.typingDot3]} />
                   </View>
                   <Text style={styles.typingText}>typing...</Text>
                 </View>
@@ -1417,6 +1445,20 @@ const KonnectScreen = () => {
           renderEmptyState()
         )}
       </View>
+
+      {/* Floating Action Button - Connections (stacked above Iko) */}
+      <TouchableOpacity
+        style={[styles.connectionsFab, { bottom: insets.bottom + 136 }]}
+        onPress={() => {
+          (navigation as any).navigate('ConnectionsList', {
+            type: 'plugs',
+            userId: user?.id,
+            title: 'My Connections',
+          });
+        }}
+      >
+        <Ionicons name="people" size={24} color="#FFFFFF" />
+      </TouchableOpacity>
 
       {/* Floating Action Button - Quick Access to Iko */}
       <TouchableOpacity
@@ -1976,6 +2018,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#E91E63',
     marginHorizontal: 1,
   },
+  typingDot1: {
+    opacity: 0.3,
+  },
+  typingDot2: {
+    opacity: 0.6,
+  },
+  typingDot3: {
+    opacity: 1,
+  },
   typingText: {
     color: '#E91E63',
     fontSize: 14,
@@ -2073,6 +2124,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#E91E63',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  connectionsFab: {
+    position: 'absolute',
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#3498DB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#3498DB',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,

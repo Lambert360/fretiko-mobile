@@ -44,12 +44,16 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
     }
   }, [rotationAnim, isBuffering]);
 
+  // Track progress with ref for polling fallback
+  const progressIntervalRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastProgressRef = React.useRef(0);
+
   // Create video player for this specific video
   const player = useVideoPlayer(videoUri, (player) => {
     player.loop = true;
     player.muted = false;
-    // Reduce time update interval for better performance
-    player.timeUpdateEventInterval = 0.25; // Update every 250ms (was 100ms)
+    // Set time update interval - must be >= 0.1 for reliable updates
+    player.timeUpdateEventInterval = 0.1; // 100ms for smooth progress
   });
 
   // Control playback based on props
@@ -93,28 +97,60 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
       }
     });
 
+    // Time update listener for progress tracking
     const timeUpdateSubscription = player.addListener('timeUpdate', (timeUpdate) => {
-      const timeUpdateAny = timeUpdate as any;
-      if (onPlaybackStatusUpdate && (timeUpdateAny.duration || timeUpdateAny.durationMillis)) {
-        // If we're getting time updates, video is definitely playing
+      const payload = timeUpdate as any;
+      // expo-video timeUpdate payload has currentTime and duration directly
+      const currentTime = payload?.currentTime ?? payload?.currentTimeMillis ?? 0;
+      const duration = payload?.duration ?? payload?.durationMillis ?? 0;
+      
+      if (onPlaybackStatusUpdate && duration > 0) {
+        lastProgressRef.current = currentTime / duration;
         if (isLoading) {
           setIsLoading(false);
           setIsBuffering(false);
         }
         onPlaybackStatusUpdate({
-          currentTime: timeUpdateAny.currentTime || timeUpdateAny.currentTimeMillis || 0,
-          duration: timeUpdateAny.duration || timeUpdateAny.durationMillis || 0,
+          currentTime,
+          duration,
           isLoaded: true
         });
       }
     });
 
+    // Backup: Poll currentTime if timeUpdate events are inconsistent (iOS/Android compatibility)
+    progressIntervalRef.current = setInterval(() => {
+      if (player && isCurrentVideo && onPlaybackStatusUpdate) {
+        try {
+          const currentTime = player.currentTime ?? 0;
+          const duration = player.duration ?? 0;
+          if (duration > 0) {
+            const progress = currentTime / duration;
+            // Only update if progress changed significantly (avoid spam)
+            if (Math.abs(progress - lastProgressRef.current) > 0.001) {
+              lastProgressRef.current = progress;
+              onPlaybackStatusUpdate({
+                currentTime,
+                duration,
+                isLoaded: true
+              });
+            }
+          }
+        } catch (e) {
+          // Silently ignore - player might not be ready
+        }
+      }
+    }, 200); // 200ms polling as backup
+
     return () => {
-      // Cleanup listeners
+      // Cleanup listeners and intervals
       statusSubscription?.remove();
       timeUpdateSubscription?.remove();
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+      }
     };
-  }, [player, onLoad, onPlaybackStatusUpdate, videoUri, isLoading]);
+  }, [player, onLoad, onPlaybackStatusUpdate, videoUri, isLoading, isCurrentVideo]);
 
   // Show buffering overlay (not full screen loading)
   if (isLoading && !hasError) {
@@ -130,6 +166,7 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
             left: 0
           }}
           contentFit="contain"
+          nativeControls={false}
         />
         {/* Subtle buffering indicator overlay */}
         <View style={styles.bufferingOverlay}>
@@ -186,6 +223,7 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
         left: 0
       }}
       contentFit="contain"
+      nativeControls={false}
     />
   );
 });

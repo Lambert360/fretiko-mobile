@@ -13,6 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import * as Location from 'expo-location';
+import { Country, State } from 'country-state-city';
 
 const { width } = Dimensions.get('window');
 
@@ -21,6 +22,10 @@ interface Location {
   state: string;
   code: string;
 }
+
+// Type definitions for country-state-city library
+type CountryType = typeof Country;
+type StateType = typeof State;
 
 interface LocationSelectorProps {
   visible: boolean;
@@ -60,57 +65,42 @@ const getLocationName = async (latitude: number, longitude: number): Promise<str
   }
 };
 
-// Sample locations data - in production, this would come from backend
-const LOCATIONS: Location[] = [
-  // Nigeria
-  { country: 'Nigeria', state: 'Lagos', code: 'NG-LA' },
-  { country: 'Nigeria', state: 'Abuja', code: 'NG-FC' },
-  { country: 'Nigeria', state: 'Rivers', code: 'NG-RI' },
-  { country: 'Nigeria', state: 'Kano', code: 'NG-KN' },
-  { country: 'Nigeria', state: 'Oyo', code: 'NG-OY' },
-  { country: 'Nigeria', state: 'Delta', code: 'NG-DE' },
-  { country: 'Nigeria', state: 'Kaduna', code: 'NG-KD' },
-  { country: 'Nigeria', state: 'Ogun', code: 'NG-OG' },
-  { country: 'Nigeria', state: 'Imo', code: 'NG-IM' },
-  { country: 'Nigeria', state: 'Plateau', code: 'NG-PL' },
-  
-  // Ghana
-  { country: 'Ghana', state: 'Greater Accra', code: 'GH-AA' },
-  { country: 'Ghana', state: 'Ashanti', code: 'GH-AH' },
-  { country: 'Ghana', state: 'Western', code: 'GH-WP' },
-  { country: 'Ghana', state: 'Central', code: 'GH-CP' },
-  { country: 'Ghana', state: 'Eastern', code: 'GH-EP' },
-  
-  // Kenya
-  { country: 'Kenya', state: 'Nairobi', code: 'KE-30' },
-  { country: 'Kenya', state: 'Mombasa', code: 'KE-40' },
-  { country: 'Kenya', state: 'Kisumu', code: 'KE-42' },
-  { country: 'Kenya', state: 'Nakuru', code: 'KE-32' },
-  
-  // South Africa
-  { country: 'South Africa', state: 'Western Cape', code: 'ZA-WC' },
-  { country: 'South Africa', state: 'Gauteng', code: 'ZA-GT' },
-  { country: 'South Africa', state: 'KwaZulu-Natal', code: 'ZA-NL' },
-  { country: 'South Africa', state: 'Eastern Cape', code: 'ZA-EC' },
-  
-  // USA (Popular states)
-  { country: 'United States', state: 'California', code: 'US-CA' },
-  { country: 'United States', state: 'New York', code: 'US-NY' },
-  { country: 'United States', state: 'Texas', code: 'US-TX' },
-  { country: 'United States', state: 'Florida', code: 'US-FL' },
-  { country: 'United States', state: 'Illinois', code: 'US-IL' },
-  
-  // UK
-  { country: 'United Kingdom', state: 'England', code: 'GB-ENG' },
-  { country: 'United Kingdom', state: 'Scotland', code: 'GB-SCT' },
-  { country: 'United Kingdom', state: 'Wales', code: 'GB-WLS' },
-  
-  // Canada
-  { country: 'Canada', state: 'Ontario', code: 'CA-ON' },
-  { country: 'Canada', state: 'British Columbia', code: 'CA-BC' },
-  { country: 'Canada', state: 'Quebec', code: 'CA-QC' },
-  { country: 'Canada', state: 'Alberta', code: 'CA-AB' },
-];
+// Get all countries and states from library
+const allCountries: any[] = [];
+const allStates: any[] = [];
+
+// Initialize data (this could be moved to a separate file for better performance)
+try {
+  // Use the imported Country and State objects from country-state-city
+  // Country.getAllCountries() returns all countries
+  // State.getStatesOfCountry(countryCode) returns states for a specific country
+
+  // Get all countries
+  const countries = Country.getAllCountries();
+  if (countries && Array.isArray(countries)) {
+    allCountries.push(...countries);
+
+    // Get all states for all countries
+    allCountries.forEach(country => {
+      if (country && country.isoCode) {
+        const countryStates = State.getStatesOfCountry(country.isoCode);
+        if (countryStates && Array.isArray(countryStates)) {
+          allStates.push(...countryStates);
+        }
+      }
+    });
+  }
+} catch (error) {
+  console.error('Error loading country/state data:', error);
+  // Add fallback data for Nigeria
+  allCountries.push({ isoCode: 'NG', name: 'Nigeria' });
+  allStates.push(
+    { isoCode: 'NG-LA', name: 'Lagos', countryCode: 'NG' },
+    { isoCode: 'NG-AB', name: 'Abuja', countryCode: 'NG' },
+    { isoCode: 'NG-RV', name: 'Rivers', countryCode: 'NG' },
+    { isoCode: 'NG-KN', name: 'Kano', countryCode: 'NG' }
+  );
+}
 
 const LocationSelector: React.FC<LocationSelectorProps> = ({
   visible,
@@ -119,8 +109,10 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
   onClose,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [filteredLocations, setFilteredLocations] = useState<Location[]>(LOCATIONS);
+  const [filteredCountries, setFilteredCountries] = useState<any[]>(allCountries);
+  const [filteredStates, setFilteredStates] = useState<any[]>([]);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [selectedCountry, setSelectedCountry] = useState<any>(null);
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
 
@@ -156,33 +148,53 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
     }
   }, [visible]);
 
-  // Filter locations based on search
+  // Filter countries based on search
   useEffect(() => {
-    if (searchQuery.trim()) {
-      const filtered = LOCATIONS.filter(location =>
-        location.country.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        location.state.toLowerCase().includes(searchQuery.toLowerCase())
+    if (selectedCountry) {
+      // Filter states when country is selected
+      if (searchQuery.trim()) {
+        const filtered = allStates.filter(state =>
+          state.name.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+        setFilteredStates(filtered);
+      } else {
+        const countryStates = allStates.filter(state => 
+        state && state.countryCode && selectedCountry && selectedCountry.isoCode && 
+        state.countryCode === selectedCountry.isoCode
       );
-      setFilteredLocations(filtered);
+        setFilteredStates(countryStates);
+      }
     } else {
-      setFilteredLocations(LOCATIONS);
+      // Filter countries when no country is selected
+      if (searchQuery.trim()) {
+        const filtered = allCountries.filter(country =>
+          country.name.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+        setFilteredCountries(filtered);
+      } else {
+        setFilteredCountries(allCountries);
+      }
     }
-  }, [searchQuery]);
+  }, [searchQuery, selectedCountry]);
 
-  // Group locations by country
-  const groupedLocations = filteredLocations.reduce((groups, location) => {
-    const country = location.country;
-    if (!groups[country]) {
-      groups[country] = [];
+  const handleLocationSelect = (state: any) => {
+    if (!state || !state.name || !selectedCountry || !selectedCountry.name) {
+      console.error('Invalid state or country data:', { state, selectedCountry });
+      return;
     }
-    groups[country].push(location);
-    return groups;
-  }, {} as Record<string, Location[]>);
-
-  const handleLocationSelect = (location: Location) => {
-    const locationString = `${location.state}, ${location.country}`;
+    const locationString = `${state.name}, ${selectedCountry.name}`;
     onLocationSelect(locationString);
     onClose();
+  };
+
+  const handleCountrySelect = (country: any) => {
+    setSelectedCountry(country);
+    setSearchQuery(''); // Clear search when switching to states
+  };
+
+  const handleBackToCountries = () => {
+    setSelectedCountry(null);
+    setSearchQuery(''); // Clear search when switching back
   };
 
   const handleCurrentLocation = async () => {
@@ -288,7 +300,7 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
             style={styles.searchInput}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search countries or states..."
+            placeholder={selectedCountry ? "Search states..." : "Search countries..."}
             placeholderTextColor="#666"
           />
           {searchQuery.length > 0 && (
@@ -298,52 +310,86 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
           )}
         </View>
 
-        {/* Locations List */}
-        <ScrollView 
-          style={styles.locationsList}
-          showsVerticalScrollIndicator={false}
-        >
-          {Object.entries(groupedLocations).map(([country, locations]) => (
-            <View key={country} style={styles.countryGroup}>
-              <Text style={styles.countryTitle}>{country}</Text>
+        {/* Back Button (when viewing states) */}
+        {selectedCountry && (
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={handleBackToCountries}
+          >
+            <Ionicons name="chevron-back" size={20} color="#3498DB" />
+            <Text style={styles.backButtonText}>Back to Countries</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Country List */}
+        {!selectedCountry && (
+          <ScrollView 
+            style={styles.locationsList}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={true}
+            nestedScrollEnabled={true}
+            keyboardShouldPersistTaps="handled"
+          >
+            {filteredCountries.map((country) => (
+              <TouchableOpacity
+                key={country.isoCode}
+                style={styles.countryItem}
+                onPress={() => handleCountrySelect(country)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.countryItemContent}>
+                  <Text style={styles.countryItemText}>{country.name}</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#666" />
+                </View>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+
+        {/* State List (when country is selected) */}
+        {selectedCountry && (
+          <ScrollView 
+            style={styles.locationsList}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={true}
+            nestedScrollEnabled={true}
+            keyboardShouldPersistTaps="handled"
+          >
+            {filteredStates.map((state, index) => {
+              if (!state || !state.name) {
+                console.error('Invalid state data:', state);
+                return null;
+              }
               
-              {locations.map((location) => {
-                const locationString = `${location.state}, ${location.country}`;
-                const isSelected = selectedLocation === locationString;
-                
-                return (
-                  <TouchableOpacity
-                    key={location.code}
-                    style={[
-                      styles.locationItem,
-                      isSelected && styles.selectedLocationItem
-                    ]}
-                    onPress={() => handleLocationSelect(location)}
-                  >
-                    <View style={styles.locationInfo}>
-                      <Text style={[
-                        styles.stateName,
-                        isSelected && styles.selectedStateName
-                      ]}>
-                        {location.state}
-                      </Text>
-                      <Text style={[
-                        styles.countryName,
-                        isSelected && styles.selectedCountryName
-                      ]}>
-                        {location.country}
-                      </Text>
-                    </View>
-                    
-                    {isSelected && (
-                      <Ionicons name="checkmark-circle" size={20} color="#3498DB" />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          ))}
-        </ScrollView>
+              const locationString = `${state.name}, ${selectedCountry?.name || 'Unknown'}`;
+              const isSelected = selectedLocation === locationString;
+              
+              return (
+                <TouchableOpacity
+                  key={state.isoCode || `state-${index}`}
+                  style={[
+                    styles.locationItem,
+                    isSelected && styles.selectedLocationItem
+                  ]}
+                  onPress={() => handleLocationSelect(state)}
+                >
+                  <View style={styles.locationInfo}>
+                    <Text style={[
+                      styles.stateName,
+                      isSelected && styles.selectedStateName
+                    ]}>
+                      {state.name}
+                    </Text>
+                  </View>
+                  
+                  {isSelected && (
+                    <Ionicons name="checkmark-circle" size={20} color="#3498DB" />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
 
         {/* Current Location Option */}
         <TouchableOpacity 
@@ -445,6 +491,10 @@ const styles = StyleSheet.create({
     maxHeight: 300,
     paddingHorizontal: 16,
   },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 20,
+  },
   countryGroup: {
     marginBottom: 20,
   },
@@ -502,6 +552,40 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
     marginLeft: 12,
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3498DB',
+  },
+  backButtonText: {
+    color: '#3498DB',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  countryItem: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  countryItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  countryItemText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '500',
   },
 });
 

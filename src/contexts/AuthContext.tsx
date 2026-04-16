@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, ReactNode } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { authAPI } from '../services/api';
@@ -62,6 +63,7 @@ export interface AuthContextType extends AuthState {
   clearNewUserFlag: () => void;
   checkAccountStatus: () => Promise<void>;
   acceptTerms: () => Promise<void>;
+  refreshUserProfile: () => Promise<void>;
 }
 
 // Create the context
@@ -93,9 +95,315 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isCheckingSuspension: false,
   });
 
+  // Ref to track latest auth state for AppState handler (prevents stale closure)
+  const authStateRef = useRef(authState);
+  useEffect(() => {
+    authStateRef.current = authState;
+  }, [authState]);
+
+  // Function to load authentication data
+  const loadAuthData = async () => {
+    try {
+      console.log('Loading auth data...');
+      
+      // Try to get saved tokens and user data
+      let accessToken = null;
+      try {
+        let isSecureStoreAvailable = false;
+        try {
+          if (SecureStore.isAvailableAsync) {
+            isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+          } else {
+            isSecureStoreAvailable = true;
+          }
+        } catch (error) {
+          console.log('SecureStore availability check failed:', error);
+          isSecureStoreAvailable = false;
+        }
+
+        if (isSecureStoreAvailable) {
+          accessToken = await SecureStore.getItemAsync('accessToken');
+        }
+        if (!accessToken) {
+          accessToken = await AsyncStorage.getItem('accessToken_fallback');
+        }
+      } catch (error) {
+        accessToken = await AsyncStorage.getItem('accessToken_fallback');
+      }
+
+      const userDataString = await AsyncStorage.getItem('userData');
+      const suspensionStatusString = await AsyncStorage.getItem('suspensionStatus');
+      
+      let storedSuspensionStatus = { isSuspended: false, isDeleted: false };
+      if (suspensionStatusString) {
+        try {
+          storedSuspensionStatus = JSON.parse(suspensionStatusString);
+        } catch (e) {
+          console.log('Error parsing suspension status:', e);
+        }
+      }
+
+      if (accessToken && userDataString) {
+        console.log('Found stored token and user data');
+        
+        // Validate token by checking if it's properly formatted JWT
+        const tokenParts = accessToken.split('.');
+        if (tokenParts.length === 3) {
+          try {
+            // Decode token payload to check expiration
+            const payload = JSON.parse(atob(tokenParts[1]));
+            const currentTime = Date.now() / 1000;
+
+            if (payload.exp && payload.exp > currentTime) {
+              const userData = JSON.parse(userDataString);
+              
+              // Fetch fresh user profile to get role info
+              try {
+                const response = await fetch(`${API_CONFIG.BASE_URL}/users/profile`, {
+                  headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json',
+                  },
+                });
+                
+                if (response.ok) {
+                  const profileData = await response.json();
+                  console.log('Profile data from API:', profileData);
+                  
+                  // Merge profile data with stored user data
+                  const enrichedUserData = {
+                    ...userData,
+                    isSeller: profileData.isSeller,
+                    isRider: profileData.isRider,
+                    is_seller: profileData.isSeller,
+                    is_rider: profileData.isRider,
+                    is_verified: profileData.is_verified,
+                  };
+                  
+                  setAuthState({
+                    user: enrichedUserData,
+                    accessToken,
+                    isLoading: false,
+                    isAuthenticated: true,
+                    isNewUser: false,
+                    isSuspended: storedSuspensionStatus.isSuspended,
+                    isDeleted: storedSuspensionStatus.isDeleted,
+                    isCheckingSuspension: storedSuspensionStatus.isSuspended,
+                  });
+                  
+                  console.log('Valid token loaded with roles:', { 
+                    isSeller: enrichedUserData.isSeller,
+                    isRider: enrichedUserData.isRider,
+                    is_seller: enrichedUserData.is_seller, 
+                    is_rider: enrichedUserData.is_rider 
+                  });
+                } else {
+                  // Fallback to stored data if profile fetch fails
+                  setAuthState({
+                    user: userData,
+                    accessToken,
+                    isLoading: false,
+                    isAuthenticated: true,
+                    isNewUser: false,
+                    isSuspended: storedSuspensionStatus.isSuspended,
+                    isDeleted: storedSuspensionStatus.isDeleted,
+                    isCheckingSuspension: storedSuspensionStatus.isSuspended,
+                  });
+                }
+              } catch (profileError) {
+                console.error('Error fetching profile:', profileError);
+                // Fallback to stored data
+                setAuthState({
+                  user: userData,
+                  accessToken,
+                  isLoading: false,
+                  isAuthenticated: true,
+                  isNewUser: false,
+                  isSuspended: storedSuspensionStatus.isSuspended,
+                  isDeleted: storedSuspensionStatus.isDeleted,
+                  isCheckingSuspension: storedSuspensionStatus.isSuspended,
+                });
+              }
+            } else {
+              console.log('Token expired, clearing auth data');
+              await clearAuthData();
+              setAuthState(prev => ({ 
+                ...prev, 
+                isLoading: false,
+                isSuspended: false,
+                isDeleted: false,
+                isCheckingSuspension: false
+              }));
+            }
+          } catch (decodeError) {
+            console.log('Invalid token format, clearing auth data');
+            await clearAuthData();
+            setAuthState(prev => ({ 
+              ...prev, 
+              isLoading: false,
+              isSuspended: false,
+              isDeleted: false,
+              isCheckingSuspension: false
+            }));
+          }
+        } else {
+          console.log('Malformed token, clearing auth data');
+          await clearAuthData();
+          setAuthState(prev => ({ 
+            ...prev, 
+            isLoading: false,
+            isSuspended: false,
+            isDeleted: false,
+            isCheckingSuspension: false
+          }));
+        }
+      } else {
+        console.log('No stored auth data found');
+        setAuthState(prev => ({ 
+          ...prev, 
+          isLoading: false,
+          isSuspended: false,
+          isDeleted: false,
+          isCheckingSuspension: false
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading auth data:', error);
+      setAuthState(prev => ({ 
+        ...prev, 
+        isLoading: false,
+        isSuspended: false,
+        isDeleted: false,
+        isCheckingSuspension: false
+      }));
+    }
+  };
+
+  // Function to clear authentication data
+  const clearAuthData = async () => {
+    try {
+      console.log('Clearing auth data...');
+      
+      // Clear SecureStore
+      try {
+        let isSecureStoreAvailable = false;
+        try {
+          if (SecureStore.isAvailableAsync) {
+            isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+          } else {
+            isSecureStoreAvailable = true;
+          }
+        } catch (error) {
+          console.log('SecureStore availability check failed:', error);
+          isSecureStoreAvailable = false;
+        }
+
+        if (isSecureStoreAvailable) {
+          await SecureStore.deleteItemAsync('accessToken');
+          await SecureStore.deleteItemAsync('refreshToken');
+        }
+      } catch (secureStoreError) {
+        console.log('Error clearing SecureStore:', secureStoreError);
+      }
+
+      // Clear AsyncStorage
+      await AsyncStorage.multiRemove([
+        'accessToken_fallback',
+        'refreshToken_fallback',
+        'userData',
+        'suspensionStatus'
+      ]);
+
+      console.log('Auth data cleared successfully');
+    } catch (error) {
+      console.error('Error clearing auth data:', error);
+    }
+  };
+
   // Load saved auth data on app start
   useEffect(() => {
     loadAuthData();
+  }, []);
+
+  // Refresh auth session when app returns from background
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active' && authStateRef.current.isAuthenticated) {
+        console.log('📱 App returned to foreground, refreshing auth session...');
+        
+        // Check if we have a stored token
+        let accessToken = null;
+        try {
+          let isSecureStoreAvailable = false;
+          try {
+            if (SecureStore.isAvailableAsync) {
+              isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+            } else {
+              isSecureStoreAvailable = true;
+            }
+          } catch (error) {
+            console.log('SecureStore availability check failed:', error);
+            isSecureStoreAvailable = false;
+          }
+
+          if (isSecureStoreAvailable) {
+            accessToken = await SecureStore.getItemAsync('accessToken');
+          }
+          if (!accessToken) {
+            accessToken = await AsyncStorage.getItem('accessToken_fallback');
+          }
+        } catch (error) {
+          accessToken = await AsyncStorage.getItem('accessToken_fallback');
+        }
+
+        // If we have a token, validate it and refresh user data
+        if (accessToken) {
+          try {
+            const response = await fetch(`${API_CONFIG.BASE_URL}/users/profile`, {
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+            });
+            
+            if (response.ok) {
+              const profileData = await response.json();
+              console.log('Profile data from API:', profileData);
+              
+              const userDataString = await AsyncStorage.getItem('userData');
+              const userData = userDataString ? JSON.parse(userDataString) : {};
+              const enrichedUserData = {
+                ...userData,
+                isSeller: profileData.isSeller,
+                isRider: profileData.isRider,
+                is_seller: profileData.isSeller,
+                is_rider: profileData.isRider,
+                is_verified: profileData.is_verified,
+              };
+              
+              setAuthState({
+                user: enrichedUserData,
+                accessToken,
+                isLoading: false,
+                isAuthenticated: true,
+                isNewUser: false,
+                isSuspended: false,
+                isDeleted: false,
+                isCheckingSuspension: false,
+              });
+            } else {
+              console.error('Failed to fetch user profile during refresh');
+            }
+          } catch (error) {
+            console.error('Error refreshing auth session:', error);
+          }
+        }
+      }
+    });
+
+    return () => {
+      subscription?.remove();
+    };
   }, []);
 
   // Register push notification token when user is authenticated
@@ -119,6 +427,120 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     registerPushToken();
   }, [authState.isAuthenticated, authState.accessToken, authState.user?.id]);
+
+  // Function to refresh access token
+  const refreshAccessToken = async (): Promise<boolean> => {
+    try {
+      // Get refresh token from storage
+      let refreshToken = null;
+      try {
+        let isSecureStoreAvailable = false;
+        try {
+          if (SecureStore.isAvailableAsync) {
+            isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+          } else {
+            isSecureStoreAvailable = true;
+          }
+        } catch (error) {
+          console.log('SecureStore availability check failed:', error);
+          isSecureStoreAvailable = false;
+        }
+
+        if (isSecureStoreAvailable) {
+          refreshToken = await SecureStore.getItemAsync('refreshToken');
+        }
+        if (!refreshToken) {
+          refreshToken = await AsyncStorage.getItem('refreshToken_fallback');
+        }
+      } catch (error) {
+        refreshToken = await AsyncStorage.getItem('refreshToken_fallback');
+      }
+
+      if (refreshToken) {
+        // Attempt to refresh token via backend API
+        const response = await fetch(`${API_CONFIG.BASE_URL}/auth/refresh`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ refreshToken }),
+        });
+
+        const refreshData = await response.json();
+
+        if (response.ok && refreshData.success) {
+          console.log('Token refreshed successfully');
+          
+          // Update stored tokens
+          try {
+            let isSecureStoreAvailable = false;
+            try {
+              if (SecureStore.isAvailableAsync) {
+                isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+              } else {
+                isSecureStoreAvailable = true;
+              }
+            } catch (error) {
+              console.log('SecureStore availability check failed:', error);
+              isSecureStoreAvailable = false;
+            }
+
+            if (isSecureStoreAvailable) {
+              await SecureStore.setItemAsync('accessToken', refreshData.accessToken);
+              await SecureStore.setItemAsync('refreshToken', refreshData.refreshToken);
+            }
+          } catch (secureStoreError) {
+            console.log('Error storing tokens in SecureStore:', secureStoreError);
+          }
+
+          // Fallback to AsyncStorage
+          await AsyncStorage.setItem('accessToken_fallback', refreshData.accessToken);
+          await AsyncStorage.setItem('refreshToken_fallback', refreshData.refreshToken);
+
+          // Update auth state
+          setAuthState(prev => ({
+            ...prev,
+            accessToken: refreshData.accessToken,
+          }));
+
+          return true;
+        } else {
+          console.error('Token refresh failed:', refreshData.message || 'Unknown error');
+          await clearAuthData();
+          setAuthState(prev => ({
+            ...prev,
+            user: null,
+            accessToken: null,
+            isAuthenticated: false,
+            isLoading: false,
+          }));
+          return false;
+        }
+      } else {
+        console.log('No refresh token available');
+        await clearAuthData();
+        setAuthState(prev => ({
+          ...prev,
+          user: null,
+          accessToken: null,
+          isAuthenticated: false,
+          isLoading: false,
+        }));
+        return false;
+      }
+    } catch (error) {
+      console.error('Error refreshing token:', error);
+      await clearAuthData();
+      setAuthState(prev => ({
+        ...prev,
+        user: null,
+        accessToken: null,
+        isAuthenticated: false,
+        isLoading: false,
+      }));
+      return false;
+    }
+  };
 
   // Token refresh mechanism - refresh tokens only when needed or on activity
   useEffect(() => {
@@ -161,251 +583,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     return () => clearInterval(checkInterval);
   }, [authState.isAuthenticated, authState.accessToken]);
-
-  // Function to refresh access token
-  const refreshAccessToken = async (): Promise<boolean> => {
-    try {
-      // Get refresh token from storage
-      let refreshToken = null;
-      try {
-        let isSecureStoreAvailable = false;
-        try {
-          if (SecureStore.isAvailableAsync) {
-            isSecureStoreAvailable = await SecureStore.isAvailableAsync();
-          } else {
-            isSecureStoreAvailable = true;
-          }
-        } catch (error) {
-          console.log('⚠️ SecureStore availability check failed:', error);
-          isSecureStoreAvailable = false;
-        }
-
-        if (isSecureStoreAvailable) {
-          refreshToken = await SecureStore.getItemAsync('refreshToken');
-        }
-        if (!refreshToken) {
-          refreshToken = await AsyncStorage.getItem('refreshToken_fallback');
-        }
-      } catch (error) {
-        refreshToken = await AsyncStorage.getItem('refreshToken_fallback');
-      }
-
-      if (!refreshToken) {
-        console.log('❌ No refresh token available');
-        return false;
-      }
-
-      console.log('🔄 Refreshing access token...');
-      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/refresh`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ refreshToken }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        console.log('✅ Access token refreshed successfully');
-        
-        // Update stored tokens
-        await saveAuthData(authState.user!, data.accessToken, data.refreshToken);
-        
-        // Update state
-        setAuthState(prev => ({
-          ...prev,
-          accessToken: data.accessToken,
-        }));
-
-        // Log activity
-        console.log('📝 Token refresh activity logged');
-        return true;
-      } else {
-        console.log('❌ Token refresh failed:', data.message);
-        if (response.status === 401 || data.message?.includes('expired')) {
-          console.log('⚠️ Refresh token expired, logging out...');
-          await signout();
-        }
-        return false;
-      }
-    } catch (error) {
-      console.error('❌ Error refreshing token:', error);
-      return false;
-    }
-  };
-
-  const loadAuthData = async () => {
-    try {
-      console.log('🔍 Loading auth data...');
-
-      // Try to get saved tokens and user data with Expo SDK 54 compatibility
-      let accessToken = null;
-      try {
-        // Check if SecureStore is available
-        let isSecureStoreAvailable = false;
-        try {
-          if (SecureStore.isAvailableAsync) {
-            isSecureStoreAvailable = await SecureStore.isAvailableAsync();
-          } else {
-            isSecureStoreAvailable = true;
-          }
-        } catch (error) {
-          console.log('⚠️ SecureStore availability check failed:', error);
-          isSecureStoreAvailable = false;
-        }
-
-        if (isSecureStoreAvailable) {
-          accessToken = await SecureStore.getItemAsync('accessToken');
-        }
-
-        // Fallback to AsyncStorage if SecureStore fails or isn't available
-        if (!accessToken) {
-          accessToken = await AsyncStorage.getItem('accessToken_fallback');
-          if (accessToken) {
-            console.log('📦 Loaded token from AsyncStorage fallback');
-          }
-        }
-      } catch (secureStoreError: any) {
-        console.log('⚠️ SecureStore error, trying fallback:', secureStoreError.message);
-        accessToken = await AsyncStorage.getItem('accessToken_fallback');
-      }
-
-      const userDataString = await AsyncStorage.getItem('userData');
-      const suspensionStatusString = await AsyncStorage.getItem('suspensionStatus');
-
-      if (accessToken && userDataString) {
-        console.log('🔑 Found stored token and user data');
-        
-        // Load suspension status if available
-        let storedSuspensionStatus = { isSuspended: false, isDeleted: false };
-        if (suspensionStatusString) {
-          try {
-            storedSuspensionStatus = JSON.parse(suspensionStatusString);
-          } catch (e) {
-            console.log('⚠️ Error parsing suspension status:', e);
-          }
-        }
-        
-        // Validate token by checking if it's properly formatted JWT
-        const tokenParts = accessToken.split('.');
-        if (tokenParts.length === 3) {
-          try {
-            // Decode token payload to check expiration
-            const payload = JSON.parse(atob(tokenParts[1]));
-            const currentTime = Date.now() / 1000;
-
-            if (payload.exp && payload.exp > currentTime) {
-              const userData = JSON.parse(userDataString);
-              
-              // ✅ Fetch fresh user profile to get role info (is_seller, is_rider)
-              try {
-                const response = await fetch(`${API_CONFIG.BASE_URL}/users/profile`, {
-                  headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json',
-                  },
-                });
-                
-                if (response.ok) {
-                  const profileData = await response.json();
-                  console.log('🔍 Profile data from API:', profileData);
-                  
-                  // Merge profile data with stored user data
-                  // Add BOTH naming conventions for compatibility
-                  const enrichedUserData = {
-                    ...userData,
-                    // Backend returns camelCase
-                    isSeller: profileData.isSeller,
-                    isRider: profileData.isRider,
-                    // Also add snake_case for consistency
-                    is_seller: profileData.isSeller,
-                    is_rider: profileData.isRider,
-                    is_verified: profileData.is_verified,
-                  };
-                  
-                  setAuthState({
-                    user: enrichedUserData,
-                    accessToken,
-                    isLoading: false,
-                    isAuthenticated: true,
-                    isNewUser: false,
-                    isSuspended: storedSuspensionStatus.isSuspended,
-                    isDeleted: storedSuspensionStatus.isDeleted,
-                    isCheckingSuspension: !storedSuspensionStatus.isSuspended,
-                  });
-                  
-                  // Check account status after loading user (if not already suspended)
-                  if (!storedSuspensionStatus.isSuspended) {
-                    checkAccountStatus();
-                  }
-                  
-                  console.log('✅ Valid token loaded with roles:', { 
-                    isSeller: enrichedUserData.isSeller,
-                    isRider: enrichedUserData.isRider,
-                    is_seller: enrichedUserData.is_seller, 
-                    is_rider: enrichedUserData.is_rider 
-                  });
-                } else {
-                  // Fallback to stored data if profile fetch fails
-                  setAuthState({
-                    user: userData,
-                    accessToken,
-                    isLoading: false,
-                    isAuthenticated: true,
-                    isNewUser: false,
-                    isSuspended: storedSuspensionStatus.isSuspended,
-                    isDeleted: storedSuspensionStatus.isDeleted,
-                    isCheckingSuspension: !storedSuspensionStatus.isSuspended,
-                  });
-                  // Check account status even with fallback data (if not already suspended)
-                  if (!storedSuspensionStatus.isSuspended) {
-                    checkAccountStatus();
-                  }
-                  console.log('⚠️ Profile fetch failed, using stored data');
-                }
-              } catch (profileError) {
-                console.log('⚠️ Error fetching profile:', profileError);
-                // Fallback to stored data
-                setAuthState({
-                  user: userData,
-                  accessToken,
-                  isLoading: false,
-                  isAuthenticated: true,
-                  isNewUser: false,
-                  isSuspended: storedSuspensionStatus.isSuspended,
-                  isDeleted: storedSuspensionStatus.isDeleted,
-                  isCheckingSuspension: !storedSuspensionStatus.isSuspended,
-                });
-                // Check account status even with fallback data (if not already suspended)
-                if (!storedSuspensionStatus.isSuspended) {
-                  checkAccountStatus();
-                }
-              }
-            } else {
-              console.log('🔓 Token expired, clearing auth data');
-              await clearAuthData();
-              setAuthState(prev => ({ ...prev, isLoading: false, isSuspended: false, isCheckingSuspension: false }));
-            }
-          } catch (decodeError) {
-            console.log('🔓 Invalid token format, clearing auth data');
-            await clearAuthData();
-            setAuthState(prev => ({ ...prev, isLoading: false, isSuspended: false, isCheckingSuspension: false }));
-          }
-        } else {
-          console.log('🔓 Malformed token, clearing auth data');
-          await clearAuthData();
-          setAuthState(prev => ({ ...prev, isLoading: false, isSuspended: false, isCheckingSuspension: false }));
-        }
-      } else {
-        console.log('ℹ️ No stored auth data found');
-        setAuthState(prev => ({ ...prev, isLoading: false, isSuspended: false, isCheckingSuspension: false }));
-      }
-    } catch (error) {
-      console.error('❌ Error loading auth data:', error);
-      setAuthState(prev => ({ ...prev, isLoading: false }));
-    }
-  };
 
   const saveAuthData = async (user: User, accessToken: string, refreshToken: string) => {
     try {
@@ -470,7 +647,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const clearAuthData = async () => {
+  const clearAuthDataDuplicate = async () => {
     try {
       console.log('🧹 Clearing all auth data...');
 
@@ -580,7 +757,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isNewUser: false,
         isSuspended: isSuspended,
         isDeleted: false,
-        isCheckingSuspension: !isSuspended, // Only check if not already suspended
+        isCheckingSuspension: isSuspended, // Only check if actually suspended
       });
       
       // Check account status after signin (if not already suspended)
@@ -760,7 +937,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           isNewUser: data.isNewUser || false,
           isSuspended: data.isSuspended || false,
           isDeleted: false,
-          isCheckingSuspension: !data.isSuspended,
+          isCheckingSuspension: data.isSuspended,
         });
       } else {
         throw new Error(data.message || 'Social authentication failed');
@@ -888,6 +1065,50 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setAuthState(prev => ({ ...prev, isNewUser: false }));
   };
 
+  const refreshUserProfile = async () => {
+    if (!authState.accessToken) {
+      console.warn('Cannot refresh profile: No access token');
+      return;
+    }
+
+    try {
+      console.log('🔄 Refreshing user profile from API...');
+      const response = await fetch(`${API_CONFIG.BASE_URL}/users/profile`, {
+        headers: {
+          'Authorization': `Bearer ${authState.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const profileData = await response.json();
+        console.log('✅ Profile refreshed successfully:', profileData);
+
+        // Update auth state with fresh data
+        setAuthState(prev => {
+          if (!prev.user) return prev;
+
+          return {
+            ...prev,
+            user: {
+              ...prev.user,
+              ...profileData,
+              isSeller: profileData.isSeller,
+              isRider: profileData.isRider,
+              is_seller: profileData.isSeller,
+              is_rider: profileData.isRider,
+              is_verified: profileData.is_verified,
+            },
+          };
+        });
+      } else {
+        console.error('Failed to refresh profile:', response.status);
+      }
+    } catch (error) {
+      console.error('Error refreshing profile:', error);
+    }
+  };
+
   const acceptTerms = async () => {
     try {
       console.log('📋 Accepting terms for user:', authState.user?.id);
@@ -904,7 +1125,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const value: AuthContextType = {
+  // Memoize context value to prevent unnecessary re-renders
+  const value = useMemo<AuthContextType>(() => ({
     ...authState,
     signin,
     signup,
@@ -915,7 +1137,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     clearNewUserFlag,
     checkAccountStatus,
     acceptTerms,
-  };
+    refreshUserProfile,
+  }), [authState, signin, signup, socialSignIn, migrate, signout, clearNewUserFlag, checkAccountStatus, acceptTerms, refreshUserProfile]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

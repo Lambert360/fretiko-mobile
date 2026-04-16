@@ -156,7 +156,7 @@ class ProductsAPI {
   // Get all product categories with caching and fallback
   async getCategories(): Promise<ProductCategory[]> {
     const cacheKey = 'product_categories';
-    
+
     try {
       // Check cache first
       const cached = await this.cacheGet(cacheKey);
@@ -166,21 +166,10 @@ class ProductsAPI {
       }
 
       console.log('🌐 Fetching product categories from API');
-      let response;
-      
-      // Try different possible endpoints
-      try {
-        response = await api.get('/products/categories', { timeout: 8000 });
-      } catch (firstError) {
-        console.log('🔄 Trying alternative endpoint /api/products/categories');
-        try {
-          response = await api.get('/api/products/categories', { timeout: 8000 });
-        } catch (secondError) {
-          console.log('🔄 Trying alternative endpoint /categories/products');
-          response = await api.get('/categories/products', { timeout: 8000 });
-        }
-      }
-      
+
+      // Use single endpoint with reduced timeout to prevent long loading
+      const response = await api.get('/products/categories', { timeout: 5000 });
+
       await this.cacheSet(cacheKey, response.data);
       return response.data;
     } catch (error) {
@@ -190,7 +179,7 @@ class ProductsAPI {
         console.log('🔄 Using stale cache as fallback for product categories');
         return fallbackData;
       }
-      
+
       // No fallback to mock data - throw error for real database requirement
       throw new Error('Unable to fetch product categories from database');
     }
@@ -238,7 +227,7 @@ class ProductsAPI {
     offset?: number;
   }): Promise<Product[]> {
     const cacheKey = `products_${JSON.stringify(params || {})}`;
-    
+
     try {
       // Check cache first
       const cached = await this.cacheGet(cacheKey);
@@ -248,33 +237,22 @@ class ProductsAPI {
       }
 
       console.log('🛍️ Fetching products from API');
-      let response;
-      
-      // Try different possible endpoints
-      try {
-        response = await api.get('/products', { params, timeout: 8000 });
-      } catch (firstError) {
-        console.log('🔄 Trying alternative endpoint /api/products');
-        try {
-          response = await api.get('/api/products', { params, timeout: 8000 });
-        } catch (secondError) {
-          console.log('🔄 Trying alternative endpoint /products/all');
-          response = await api.get('/products/all', { params, timeout: 8000 });
-        }
-      }
-      
+
+      // Use single endpoint with reduced timeout to prevent long loading
+      const response = await api.get('/products', { params, timeout: 5000 });
+
       await this.cacheSet(cacheKey, response.data);
       return response.data;
-    } catch (error) {
-      console.warn('All product API endpoints failed, trying cache...', error.message);
-      
+    } catch (error: any) {
+      console.warn('Product API endpoint failed, trying cache...', error?.message);
+
       // Try cache as fallback
       const cached = await this.cacheGet(cacheKey);
       if (cached) {
         console.log('📦 Using cached products');
         return cached;
       }
-      
+
       // No fallback to mock data - throw error for real database requirement
       throw new Error('Unable to fetch products from database');
     }
