@@ -71,9 +71,6 @@ api.interceptors.request.use(
       }
 
       if (accessToken) {
-        console.log('🔑 Token for API request: Present (' + accessToken.substring(0, 20) + '...)');
-        console.log('🔍 Token length:', accessToken.length);
-        console.log('🔍 Token starts with:', accessToken.substring(0, 10));
         config.headers.Authorization = `Bearer ${accessToken}`;
       } else {
         console.log('⚠️ No access token found for API request - can\'t log in or create a new account.');
@@ -95,21 +92,159 @@ api.interceptors.request.use(
   }
 );
 
-// Add response interceptor to handle common errors
+// Add response interceptor to handle common errors and token refresh
+let isRefreshing = false;
 api.interceptors.response.use(
   (response) => {
+    // Log successful API activity (helps with activity-based refresh)
+    logUserActivity('api_call');
     return response;
   },
-  (error) => {
+  async (error) => {
+    // Handle token refresh on 401 errors
+    if (error.response?.status === 401 && !isRefreshing) {
+      console.log('🔄 401 error detected, attempting token refresh...');
+      isRefreshing = true;
+      
+      try {
+        // Get refresh token
+        let refreshToken = null;
+        try {
+          let isSecureStoreAvailable = false;
+          try {
+            if (SecureStore.isAvailableAsync) {
+              isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+            } else {
+              isSecureStoreAvailable = true;
+            }
+          } catch (error) {
+            console.log('⚠️ SecureStore availability check failed:', error);
+            isSecureStoreAvailable = false;
+          }
+
+          if (isSecureStoreAvailable) {
+            refreshToken = await SecureStore.getItemAsync('refreshToken');
+          }
+          if (!refreshToken) {
+            refreshToken = await AsyncStorage.getItem('refreshToken_fallback');
+          }
+        } catch (storageError) {
+          refreshToken = await AsyncStorage.getItem('refreshToken_fallback');
+        }
+
+        if (refreshToken) {
+          // Attempt to refresh token
+          const refreshResponse = await fetch(`${API_CONFIG.BASE_URL}/auth/refresh`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ refreshToken }),
+          });
+
+          const refreshData = await refreshResponse.json();
+
+          if (refreshResponse.ok && refreshData.success) {
+            console.log('✅ Token refreshed successfully, retrying original request...');
+            
+            // Update stored tokens
+            try {
+              let isSecureStoreAvailable = false;
+              try {
+                if (SecureStore.isAvailableAsync) {
+                  isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+                } else {
+                  isSecureStoreAvailable = true;
+                }
+              } catch (error) {
+                console.log('⚠️ SecureStore availability check failed:', error);
+                isSecureStoreAvailable = false;
+              }
+
+              if (isSecureStoreAvailable) {
+                await SecureStore.setItemAsync('accessToken', refreshData.accessToken);
+                await SecureStore.setItemAsync('refreshToken', refreshData.refreshToken);
+              } else {
+                await AsyncStorage.setItem('accessToken_fallback', refreshData.accessToken);
+                await AsyncStorage.setItem('refreshToken_fallback', refreshData.refreshToken);
+              }
+            } catch (storageError) {
+              await AsyncStorage.setItem('accessToken_fallback', refreshData.accessToken);
+              await AsyncStorage.setItem('refreshToken_fallback', refreshData.refreshToken);
+            }
+
+            // Update the original request with new token and retry once
+            if (error.config && error.config.headers) {
+              error.config.headers.Authorization = `Bearer ${refreshData.accessToken}`;
+              
+              // Retry the original request (only once)
+              const retryResponse = await api.request(error.config);
+              isRefreshing = false;
+              return retryResponse;
+            }
+          } else {
+            console.log('❌ Token refresh failed:', refreshData.message);
+            // Refresh token is invalid, user needs to re-login
+            // This will be handled by the AuthContext
+          }
+        } else {
+          console.log('❌ No refresh token available for refresh');
+        }
+      } catch (refreshError) {
+        console.error('❌ Error during token refresh:', refreshError);
+      } finally {
+        isRefreshing = false;
+      }
+    }
+
     // Handle common errors here
     if (error.code === 'ECONNABORTED') {
       console.error('Request timeout - is your backend running?');
     } else if (error.message === 'Network Error') {
       console.error('Network error - check your backend URL and connection');
     }
+    
     return Promise.reject(error);
   }
 );
+
+// Activity logging helper
+const logUserActivity = async (activityType: string) => {
+  try {
+    // Only log activity for authenticated requests
+    let accessToken = null;
+    try {
+      let isSecureStoreAvailable = false;
+      try {
+        if (SecureStore.isAvailableAsync) {
+          isSecureStoreAvailable = await SecureStore.isAvailableAsync();
+        } else {
+          isSecureStoreAvailable = true;
+        }
+      } catch (error) {
+        console.log('⚠️ SecureStore availability check failed:', error);
+        isSecureStoreAvailable = false;
+      }
+
+      if (isSecureStoreAvailable) {
+        accessToken = await SecureStore.getItemAsync('accessToken');
+      } else {
+        accessToken = await AsyncStorage.getItem('accessToken_fallback');
+      }
+    } catch (error) {
+      accessToken = await AsyncStorage.getItem('accessToken_fallback');
+    }
+
+    if (accessToken) {
+      // This would typically call an activity logging endpoint
+      // For now, we'll just log to console for debugging
+      console.log(`📝 Activity logged: ${activityType}`);
+    }
+  } catch (error) {
+    // Silently fail activity logging to not interrupt API calls
+    console.error('❌ Activity logging failed:', error);
+  }
+};
 
 // Auth API functions
 export const authAPI = {
@@ -151,8 +286,11 @@ export const authAPI = {
   // Sign in existing user
   signin: async (credentials: { email: string; password: string }) => {
     try {
+      const backendUrl = `${API_CONFIG.BASE_URL}/auth/signin`;
+      console.log('🔍 Attempting signin to:', backendUrl);
+      
       // Use fetch directly instead of axios to avoid token interceptor issues
-      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/signin`, {
+      const response = await fetch(backendUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -178,6 +316,16 @@ export const authAPI = {
       return responseData;
     } catch (error: any) {
       console.log('❌ Frontend Signin Exception:', error);
+      
+      // Provide more specific error messages
+      if (error.message === 'Network request failed') {
+        throw new Error('Unable to connect to the server. Please check if the backend is running on localhost:3000');
+      } else if (error.message.includes('ECONNREFUSED')) {
+        throw new Error('Backend server is not running. Please start the backend server.');
+      } else if (error.message.includes('timeout')) {
+        throw new Error('Request timeout. Please check your internet connection.');
+      }
+      
       throw new Error(error.message || 'Signin failed');
     }
   },

@@ -208,8 +208,10 @@ const StoryUploadScreen = () => {
           <VideoView
             style={styles.media}
             player={player}
-            allowsFullscreen={false}
-            allowsPictureInPicture={false}
+            fullscreenOptions={{
+              allowFullscreen: false,
+              allowPictureInPicture: false,
+            }}
           />
         ) : (
           <Image

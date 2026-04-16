@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Dimensions, TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { View, Dimensions, TouchableOpacity, Text, StyleSheet, Animated } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoLoadingSkeleton } from './VideoLoadingSkeleton';
@@ -15,7 +15,7 @@ interface ServiceVideoPlayerProps {
   onPlaybackStatusUpdate?: (status: any) => void;
 }
 
-export const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = ({
+const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
   videoUri,
   isCurrentVideo,
   shouldAutoPlay,
@@ -26,21 +26,37 @@ export const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = ({
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Rotation animation for buffering indicator - only run when needed
+  const rotationAnim = React.useRef(new Animated.Value(0)).current;
+  const [isBuffering, setIsBuffering] = useState(false);
+
+  React.useEffect(() => {
+    if (isBuffering) {
+      const rotation = Animated.loop(
+        Animated.timing(rotationAnim, {
+          toValue: 360,
+          duration: 1000,
+          useNativeDriver: true,
+        })
+      );
+      rotation.start();
+      return () => rotation.stop();
+    }
+  }, [rotationAnim, isBuffering]);
+
   // Create video player for this specific video
   const player = useVideoPlayer(videoUri, (player) => {
     player.loop = true;
     player.muted = false;
-    // Set time update interval for progress tracking
-    player.timeUpdateEventInterval = 0.1; // Update every 100ms for smooth progress
+    // Reduce time update interval for better performance
+    player.timeUpdateEventInterval = 0.25; // Update every 250ms (was 100ms)
   });
 
   // Control playback based on props
   useEffect(() => {
     if (isCurrentVideo && shouldAutoPlay) {
-      console.log(`🎥 Starting video playback for ${videoUri}`);
       player.play();
     } else {
-      console.log(`🎥 Pausing video for ${videoUri}`);
       player.pause();
     }
   }, [isCurrentVideo, shouldAutoPlay, player]);
@@ -48,35 +64,46 @@ export const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = ({
   // Setup status listeners with correct expo-video events
   useEffect(() => {
     const statusSubscription = player.addListener('statusChange', (status) => {
-      if (status.status === 'loaded') {
-        console.log(`🎥 Video loaded: ${videoUri}`, status);
+      // Use type assertion to access status properties
+      const statusAny = status as any;
+      
+      if (statusAny.status === 'loaded' || statusAny.isLoaded) {
         setIsLoading(false);
         setHasError(false);
         setErrorMessage(null);
         if (onLoad) {
           onLoad({
-            duration: status.duration || 0
+            duration: statusAny.duration || statusAny.durationMillis || 0
           });
         }
-      } else if (status.status === 'error') {
-        console.error(`❌ Service video error: ${videoUri}`, status);
+      } else if (statusAny.error) {
         setIsLoading(false);
         setHasError(true);
-        const errorInfo = handleError(status.error || new Error('Failed to load video'));
+        const errorInfo = handleError(statusAny.error || new Error('Failed to load video'));
         setErrorMessage(errorInfo.userMessage);
-      } else if (status.status === 'loading') {
+      } else if (statusAny.status === 'loading' || statusAny.isLoading) {
         setIsLoading(true);
+        setIsBuffering(true);
+        setHasError(false);
+      } else if (statusAny.status === 'playing' || statusAny.isPlaying || statusAny.status === 'readyToPlay' || statusAny.isReadyToPlay) {
+        // Video is playing, ensure loading state is cleared
+        setIsLoading(false);
+        setIsBuffering(false);
         setHasError(false);
       }
     });
 
-    const timeUpdateSubscription = player.addListener('timeUpdate', ({ currentTime, duration }) => {
-      if (onPlaybackStatusUpdate && duration) {
-        // Temporarily log to verify updates are being sent
-        // console.log(`📊 Progress: ${currentTime?.toFixed(1)}s / ${duration?.toFixed(1)}s`);
+    const timeUpdateSubscription = player.addListener('timeUpdate', (timeUpdate) => {
+      const timeUpdateAny = timeUpdate as any;
+      if (onPlaybackStatusUpdate && (timeUpdateAny.duration || timeUpdateAny.durationMillis)) {
+        // If we're getting time updates, video is definitely playing
+        if (isLoading) {
+          setIsLoading(false);
+          setIsBuffering(false);
+        }
         onPlaybackStatusUpdate({
-          currentTime: currentTime || 0,
-          duration: duration || 0,
+          currentTime: timeUpdateAny.currentTime || timeUpdateAny.currentTimeMillis || 0,
+          duration: timeUpdateAny.duration || timeUpdateAny.durationMillis || 0,
           isLoaded: true
         });
       }
@@ -87,16 +114,43 @@ export const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = ({
       statusSubscription?.remove();
       timeUpdateSubscription?.remove();
     };
-  }, [player, onLoad, onPlaybackStatusUpdate, videoUri]);
+  }, [player, onLoad, onPlaybackStatusUpdate, videoUri, isLoading]);
 
-  // Show loading skeleton
+  // Show buffering overlay (not full screen loading)
   if (isLoading && !hasError) {
     return (
-      <VideoLoadingSkeleton
-        width={screenWidth}
-        height={screenHeight}
-        variant="service"
-      />
+      <>
+        <VideoView
+          player={player}
+          style={{
+            width: screenWidth,
+            height: screenHeight,
+            position: 'absolute',
+            top: 0,
+            left: 0
+          }}
+          contentFit="contain"
+        />
+        {/* Subtle buffering indicator overlay */}
+        <View style={styles.bufferingOverlay}>
+          <View style={styles.bufferingIndicator}>
+            <Animated.View
+              style={{
+                transform: [
+                  {
+                    rotate: rotationAnim.interpolate({
+                      inputRange: [0, 360],
+                      outputRange: ['0deg', '360deg'],
+                    })
+                  }
+                ]
+              }}
+            >
+              <Ionicons name="refresh" size={24} color="#FFF" />
+            </Animated.View>
+          </View>
+        </View>
+      </>
     );
   }
 
@@ -134,7 +188,7 @@ export const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = ({
       contentFit="contain"
     />
   );
-};
+});
 
 const styles = StyleSheet.create({
   errorContainer: {
@@ -170,6 +224,23 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  bufferingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  bufferingIndicator: {
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 20,
+    padding: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

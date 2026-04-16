@@ -20,8 +20,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { useAuth } from '../contexts/AuthContext';
+import { API_CONFIG } from '../config/api';
 
 interface PINResetNewPinScreenProps {
   navigation: any;
@@ -38,9 +38,8 @@ const PINResetNewPinScreen: React.FC<PINResetNewPinScreenProps> = ({ navigation,
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const newPinRefs = useRef<(TextInput | null)[]>([]);
   const confirmPinRefs = useRef<(TextInput | null)[]>([]);
-  
-  // Get API URL from app.json
-  const API_URL = Constants.expoConfig?.extra?.apiUrl || process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000';
+
+  console.log('🌐 Using API_CONFIG.BASE_URL for PIN reset confirmation:', API_CONFIG.BASE_URL);
 
   const handlePinChange = (index: number, value: string, isNewPin: boolean = true) => {
     // Only allow numbers
@@ -122,7 +121,7 @@ const PINResetNewPinScreen: React.FC<PINResetNewPinScreenProps> = ({ navigation,
     console.log('- New PIN:', newPinString);
     console.log('- Token from route:', receivedToken);
     console.log('- Route params:', route.params);
-    console.log('- API URL:', API_URL);
+    console.log('- API URL:', API_CONFIG.BASE_URL);
     console.log('- Access Token:', accessToken?.substring(0, 20) + '...');
     
     if (!receivedToken) {
@@ -132,7 +131,7 @@ const PINResetNewPinScreen: React.FC<PINResetNewPinScreenProps> = ({ navigation,
     
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/wallet/pin/confirm-reset`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/wallet/pin/confirm-reset`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,

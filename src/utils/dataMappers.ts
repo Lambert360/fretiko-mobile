@@ -12,18 +12,6 @@ export const mapProductToCard = (apiProduct: any): ProductData => {
   const videoUrl = apiProduct.primary_video_url || apiProduct.videos?.[0];
   const isVideo = apiProduct.media_type === 'video';
 
-  console.log('📦 Mapping product to card:', {
-    id: apiProduct.id,
-    name: apiProduct.name,
-    price: apiProduct.price,
-    media_type: apiProduct.media_type,
-    user_id: apiProduct.user_id,
-    vendor_username: apiProduct.vendor_username,
-    vendor_avatar: apiProduct.vendor_avatar,
-    primary_image_url: apiProduct.primary_image_url,
-    primary_video_url: apiProduct.primary_video_url,
-  });
-
   const mappedProduct = {
     id: apiProduct.id || '',
     title: apiProduct.name || apiProduct.title || 'Untitled Product',
@@ -57,14 +45,6 @@ export const mapProductToCard = (apiProduct: any): ProductData => {
     isTrending: apiProduct.is_trending || false,
   };
 
-  console.log('✅ Mapped product result:', {
-    id: mappedProduct.id,
-    title: mappedProduct.title,
-    price: mappedProduct.price,
-    vendorName: mappedProduct.vendor.name,
-    vendorId: mappedProduct.vendor.id,
-  });
-
   return mappedProduct;
 };
 
@@ -72,17 +52,6 @@ export const mapProductToCard = (apiProduct: any): ProductData => {
  * Maps API service data to ServiceCard format
  */
 export const mapServiceToCard = (apiService: any): ServiceData => {
-  console.log('🛠️ Mapping service to card:', {
-    id: apiService.id,
-    name: apiService.name,
-    price: apiService.price,
-    base_price: apiService.base_price,
-    provider_name: apiService.provider_name,
-    provider_avatar: apiService.provider_avatar,
-    user_id: apiService.user_id,
-    user_profiles: apiService.user_profiles,
-  });
-
   const mappedService = {
     id: apiService.id || '',
     title: apiService.title || apiService.name || 'Untitled Service',
@@ -117,14 +86,6 @@ export const mapServiceToCard = (apiService: any): ServiceData => {
     isTopRated: apiService.is_top_rated || false,
     actionType: 'book',
   };
-
-  console.log('✅ Mapped service result:', {
-    id: mappedService.id,
-    title: mappedService.title,
-    price: mappedService.price,
-    providerName: mappedService.provider.name,
-    providerId: mappedService.provider.id,
-  });
 
   return mappedService;
 };

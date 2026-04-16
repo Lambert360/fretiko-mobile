@@ -26,11 +26,24 @@
       }
     },
     "production": {
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://fretiko-backend.onrender.com",
+        "EXPO_PUBLIC_FORCE_PROD": "true"
+      },
       "ios": {
         "resourceClass": "m-medium"
       },
       "android": {
         "buildType": "app-bundle"
+      }
+    },
+    "production-apk": {
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://fretiko-backend.onrender.com",
+        "EXPO_PUBLIC_FORCE_PROD": "true"
+      },
+      "android": {
+        "buildType": "apk"
       }
     }
   },

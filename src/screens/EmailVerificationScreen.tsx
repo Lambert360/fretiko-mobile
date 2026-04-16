@@ -20,6 +20,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRegistration } from '../contexts/RegistrationContext';
 import { useAuth } from '../contexts/AuthContext';
+import { API_CONFIG } from '../config/api';
 import * as Device from 'expo-device';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -123,6 +124,7 @@ export const EmailVerificationScreen: React.FC<EmailVerificationScreenProps> = (
       };
 
       console.log('📱 Device info for email verification:', deviceInfo);
+      console.log('🌐 Using API_BASE_URL:', API_CONFIG.BASE_URL);
 
       const requestBody = {
         token: token.trim(),
@@ -133,7 +135,7 @@ export const EmailVerificationScreen: React.FC<EmailVerificationScreenProps> = (
 
       console.log('🚀 Email verification request body:', requestBody);
 
-      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000'}/auth/verify-email-token`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/verify-email-token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -141,7 +143,12 @@ export const EmailVerificationScreen: React.FC<EmailVerificationScreenProps> = (
         body: JSON.stringify(requestBody),
       });
 
+      console.log('📡 Verification response status:', response.status);
+      console.log('📡 Verification response OK:', response.ok);
+
       const result = await response.json();
+      
+      console.log('📡 Verification response data:', result);
 
       if (result.success) {
         setVerificationStatus('success');
@@ -151,11 +158,19 @@ export const EmailVerificationScreen: React.FC<EmailVerificationScreenProps> = (
           navigation.navigate('RoleSelection');
         }, 2000);
       } else {
+        console.error('❌ Verification failed:', result);
         setErrorMessage(result.message || 'Verification failed');
         setVerificationStatus('error');
       }
     } catch (error: any) {
-      setErrorMessage(error.message || 'Verification failed');
+      console.error('❌ Network error during verification:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+        code: error.code,
+      });
+      console.error('❌ Full error object:', error);
+      setErrorMessage(error.message || 'Verification failed - network request failed');
       setVerificationStatus('error');
     } finally {
       setIsLoading(false);
@@ -172,7 +187,10 @@ export const EmailVerificationScreen: React.FC<EmailVerificationScreenProps> = (
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000'}/auth/resend-verification-token`, {
+      console.log('🌐 Using API_BASE_URL for resend:', API_CONFIG.BASE_URL);
+      console.log('📧 Resending token to email:', registrationData.email);
+
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/resend-verification-token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -182,7 +200,12 @@ export const EmailVerificationScreen: React.FC<EmailVerificationScreenProps> = (
         }),
       });
 
+      console.log('📡 Resend response status:', response.status);
+      console.log('📡 Resend response OK:', response.ok);
+
       const result = await response.json();
+      
+      console.log('📡 Resend response data:', result);
 
       if (result.success) {
         Alert.alert(
@@ -197,9 +220,17 @@ export const EmailVerificationScreen: React.FC<EmailVerificationScreenProps> = (
         setErrorMessage('');
         setResendCountdown(60); // Reset resend countdown to 1 minute
       } else {
+        console.error('❌ Resend failed:', result);
         Alert.alert('Error', result.message || 'Failed to resend verification code');
       }
     } catch (error: any) {
+      console.error('❌ Network error during resend:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+        code: error.code,
+      });
+      console.error('❌ Full resend error object:', error);
       Alert.alert('Error', error.message || 'Failed to resend verification code');
     } finally {
       setIsLoading(false);

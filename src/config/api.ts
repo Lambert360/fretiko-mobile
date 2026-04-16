@@ -2,21 +2,33 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
-// For Expo development:
-// Automatically detects the correct backend URL based on environment
-// - iOS Simulator: Uses localhost (127.0.0.1)
-// - Android Emulator: Uses 10.0.2.2 (Android's special alias for host)
-// - Physical Device/Expo Go: Uses your computer's LAN IP from Expo manifest
-
 /**
- * Get the appropriate backend URL based on the runtime environment
+ * Get appropriate backend URL based on environment
+ * - Development: Auto-detects platform (simulator/emulator/physical device)
+ * - Production: Uses production API URL
  */
 const getBackendUrl = (): string => {
-  // Production URL (when deployed)
-  // Uncomment and set this when deploying to production
-  // if (!__DEV__) {
-  //   return 'https://your-production-api.com';
-  // }
+  // Force production for testing (override in development)
+  const forceProduction = process.env.EXPO_PUBLIC_FORCE_PROD === 'true';
+  
+  // Debug: Check for runtime toggle (development only)
+  const runtimeForceProd = __DEV__ && process.env.EXPO_PUBLIC_RUNTIME_PROD === 'true';
+  
+  // Production: Use production URL
+  if (!__DEV__ || forceProduction || runtimeForceProd) {
+    // Try multiple sources for the production URL
+    const envUrl = process.env.EXPO_PUBLIC_API_URL;
+    const appJsonUrl = Constants.expoConfig?.extra?.apiUrl;
+    const fallbackUrl = 'https://fretiko-backend.onrender.com';
+    
+    const prodUrl = envUrl || appJsonUrl || fallbackUrl;
+    
+    console.log('🚀 Production environment:', prodUrl);
+    console.log('🔍 URL sources - ENV:', envUrl, 'app.json:', appJsonUrl, 'fallback:', fallbackUrl);
+    console.log('🔍 Using URL from:', envUrl ? 'environment' : appJsonUrl ? 'app.json' : 'fallback');
+    
+    return prodUrl;
+  }
 
   // Development: Auto-detect based on platform and environment
   const localhost = Platform.select({
@@ -26,18 +38,35 @@ const getBackendUrl = (): string => {
   });
 
   // If running on Expo Go or physical device, try to get the host IP from Expo
-  const expoHostUri = Constants.expoConfig?.hostUri;
+  const expoHostUri = Constants.expoConfig?.hostUri || Constants.linkingUri;
+  console.log('🔍 Debug: expoHostUri:', expoHostUri);
+  console.log('🔍 Debug: Constants.expoConfig:', Constants.expoConfig);
+  console.log('🔍 Debug: Constants.expoGoConfig:', Constants.expoGoConfig);
+
+  // Try to get from environment variable as fallback
+  const envApiUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
+  console.log('🔍 Debug: EXPO_PUBLIC_API_BASE_URL:', envApiUrl);
 
   if (expoHostUri) {
     // Extract IP from Expo's host URI (e.g., "192.168.1.5:8081" -> "192.168.1.5")
     const host = expoHostUri.split(':')[0];
     console.log('📱 Detected Expo host IP:', host);
-    return `http://${host}:3000`;
+    const url = `http://${host}:3000`;
+    console.log('🌐 Using URL:', url);
+    return url;
+  }
+
+  // Fallback to environment variable if available
+  if (envApiUrl) {
+    console.log('🌐 Using environment variable URL:', envApiUrl);
+    return envApiUrl;
   }
 
   // Fallback to localhost/emulator IP
   console.log('💻 Using local environment:', localhost);
-  return `http://${localhost}:3000`;
+  const url = `http://${localhost}:3000`;
+  console.log('🌐 Using URL:', url);
+  return url;
 };
 
 export const API_CONFIG = {
@@ -77,6 +106,11 @@ export const API_CONFIG = {
     HEALTH: '/',
   },
 };
+
+// Log the final API configuration for debugging
+console.log('🌐 API Configuration:');
+console.log('  - BASE_URL:', API_CONFIG.BASE_URL);
+console.log('  - Environment:', __DEV__ ? 'Development' : 'Production');
 
 // Helper function to get full endpoint URL
 export const getEndpointUrl = (endpoint: string) => {

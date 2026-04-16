@@ -16,6 +16,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useRegistration } from '../contexts/RegistrationContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Device from 'expo-device';
+import { API_CONFIG } from '../config/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -96,7 +97,7 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
 
       console.log('🚀 Request body being sent:', requestBody);
 
-      const createUserResponse = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000'}/auth/create-verified-user`, {
+      const createUserResponse = await fetch(`${API_CONFIG.BASE_URL}/auth/create-verified-user`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -171,7 +172,7 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
 
       console.log('🚀 Skip - Request body being sent:', requestBody);
 
-      const createUserResponse = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000'}/auth/create-verified-user`, {
+      const createUserResponse = await fetch(`${API_CONFIG.BASE_URL}/auth/create-verified-user`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

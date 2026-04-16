@@ -20,8 +20,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { useAuth } from '../contexts/AuthContext';
+import { API_CONFIG } from '../config/api';
 
 interface PINResetTokenScreenProps {
   navigation: any;
@@ -36,9 +36,8 @@ const PINResetTokenScreen: React.FC<PINResetTokenScreenProps> = ({ navigation, r
   const [resending, setResending] = useState(false);
   const [timeLeft, setTimeLeft] = useState(60);
   const inputRefs = useRef<(TextInput | null)[]>([]);
-  
-  // Get API URL from app.json
-  const API_URL = Constants.expoConfig?.extra?.apiUrl || process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.3:3000';
+
+  console.log('🌐 Using API_CONFIG.BASE_URL for PIN reset:', API_CONFIG.BASE_URL);
 
   // Countdown timer for resend button
   React.useEffect(() => {
@@ -81,10 +80,10 @@ const PINResetTokenScreen: React.FC<PINResetTokenScreenProps> = ({ navigation, r
       console.log('🔍 Verifying PIN reset token...');
       console.log('- User ID:', user?.id);
       console.log('- Token:', tokenString);
-      console.log('- API URL:', API_URL);
+      console.log('- API URL:', API_CONFIG.BASE_URL);
       console.log('- Access Token:', accessToken?.substring(0, 20) + '...');
       
-      const response = await fetch(`${API_URL}/wallet/pin/verify-reset`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/wallet/pin/verify-reset`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -122,10 +121,10 @@ const PINResetTokenScreen: React.FC<PINResetTokenScreenProps> = ({ navigation, r
     try {
       console.log('🔍 Resending PIN reset code...');
       console.log('- User ID:', user?.id);
-      console.log('- API URL:', API_URL);
+      console.log('- API URL:', API_CONFIG.BASE_URL);
       console.log('- Access Token:', accessToken?.substring(0, 20) + '...');
       
-      const response = await fetch(`${API_URL}/wallet/pin/reset-request`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/wallet/pin/reset-request`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
