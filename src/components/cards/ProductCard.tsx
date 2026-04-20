@@ -24,16 +24,13 @@ export interface ProductData {
   inStock?: boolean;
   fastShipping?: boolean;
   location?: string;
-  // Media content
   mediaType?: 'image' | 'video';
   mediaUrl?: string;
   mediaAspectRatio?: 'landscape' | 'portrait' | 'square';
-  // Engagement
   likes?: number;
   views?: number;
   isLiked?: boolean;
   isBookmarked?: boolean;
-  // Special badges
   isNew?: boolean;
   isFeatured?: boolean;
   isTrending?: boolean;
@@ -63,7 +60,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const getMediaHeight = () => {
     if (variant === 'grid') return 140;
     if (variant === 'list') return 80;
-    
     switch (product.mediaAspectRatio) {
       case 'portrait': return 240;
       case 'landscape': return 160;
@@ -72,22 +68,21 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     }
   };
 
-  const renderMedia = () => {
-    // For video products, use the image if available, otherwise use placeholder
-    // Never try to render video URL as an image
+  const getImageUri = () => {
     const isVideo = product.mediaType === 'video';
-    let imageUri: string;
-
     if (isVideo) {
-      // Video product: use image thumbnail or placeholder
-      imageUri = product.image || `https://picsum.photos/400/400?random=${product.id}`;
-    } else {
-      // Image product: use image, mediaUrl, or placeholder (prioritize image field)
-      imageUri = product.image || product.mediaUrl || `https://picsum.photos/400/400?random=${product.id}`;
+      return product.image || `https://picsum.photos/400/400?random=${product.id}`;
     }
+    return product.image || product.mediaUrl || `https://picsum.photos/400/400?random=${product.id}`;
+  };
+
+
+  const renderMedia = () => {
+    const isVideo = product.mediaType === 'video';
+    const imageUri = getImageUri();
 
     return (
-      <View style={[styles.mediaContainer, { height: getMediaHeight(), backgroundColor: '#1a1a1a' }]}>
+      <View style={[styles.mediaContainer, { height: getMediaHeight() }]}>
         <SafeImage
           source={{ uri: imageUri }}
           style={styles.mediaContent}
@@ -102,7 +97,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </View>
         )}
 
-        {/* Badges */}
         <View style={styles.badgeContainer}>
           {product.isNew && (
             <View style={[styles.badge, styles.newBadge]}>
@@ -116,28 +110,26 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           )}
           {product.discount && product.discount > 0 && (
             <View style={[styles.badge, styles.discountBadge]}>
-              <Text style={styles.badgeText}>-{product.discount}%</Text>
+              <Text style={styles.badgeText}>-{String(product.discount)}%</Text>
             </View>
           )}
         </View>
 
-        {/* Action buttons */}
         <View style={styles.actionButtons}>
           {onBookmark && (
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.actionButton}
               onPress={() => onBookmark(product)}
             >
-              <Ionicons 
-                name={product.isBookmarked ? "bookmark" : "bookmark-outline"} 
-                size={16} 
-                color={product.isBookmarked ? "#FFD700" : "rgba(255,255,255,0.8)"} 
+              <Ionicons
+                name={product.isBookmarked ? "bookmark" : "bookmark-outline"}
+                size={16}
+                color={product.isBookmarked ? "#FFD700" : "rgba(255,255,255,0.8)"}
               />
             </TouchableOpacity>
           )}
         </View>
 
-        {/* Stock status */}
         {!product.inStock && (
           <View style={styles.outOfStockOverlay}>
             <Text style={styles.outOfStockText}>Out of Stock</Text>
@@ -147,64 +139,92 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     );
   };
 
-  const renderFeaturedCard = () => (
+  if (variant === 'list') {
+    return (
+      <TouchableOpacity style={styles.listCard} onPress={() => onPress?.(product)}>
+        {renderMedia()}
+        <View style={styles.listContent}>
+          <Text style={styles.listTitle} numberOfLines={1}>{String(product.title || '')}</Text>
+          <Text style={styles.listVendor}>{product.vendor?.name || 'Unknown Vendor'}</Text>
+          <Text style={styles.listPrice}>
+            {String(product.currency || '₣')}{typeof product.price === 'number' && !isNaN(product.price) ? product.price.toLocaleString() : String(product.price || 0)}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  if (variant === 'grid') {
+    return (
+      <TouchableOpacity style={styles.gridCard} onPress={() => onPress?.(product)}>
+        {renderMedia()}
+        <View style={styles.gridContent}>
+          <Text style={styles.gridTitle} numberOfLines={2}>{String(product.title || '')}</Text>
+          <Text style={styles.gridPrice}>
+            {String(product.currency || '₣')}{typeof product.price === 'number' && !isNaN(product.price) ? product.price.toLocaleString() : String(product.price || 0)}
+          </Text>
+          {typeof product.rating === 'number' && product.rating > 0 && (
+            <View style={styles.gridRating}>
+              <Ionicons name="star" size={10} color="#FFD700" />
+              <Text style={styles.gridRatingText}>{product.rating.toFixed(1)}</Text>
+            </View>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  return (
     <TouchableOpacity style={styles.featuredCard} onPress={() => onPress?.(product)}>
       {renderMedia()}
-      
       <View style={styles.cardContent}>
-        {/* Vendor info */}
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.vendorInfo}
           onPress={() => onVendorPress?.(product.vendor?.id)}
         >
-          <SafeImage 
-            source={{ 
-              uri: product.vendor?.avatar || `https://picsum.photos/30/30?random=${product.vendor?.id || 'default'}` 
-            }} 
-            style={styles.vendorAvatar} 
+          <SafeImage
+            source={{ uri: product.vendor?.avatar || `https://picsum.photos/30/30?random=${product.vendor?.id || 'default'}` }}
+            style={styles.vendorAvatar}
             fallbackSource={{ uri: 'https://via.placeholder.com/30x30.png?text=Vendor' }}
             fallbackText="Vendor"
           />
           <View style={styles.vendorDetails}>
-            <Text style={styles.vendorName}>{product.vendor?.name || 'Unknown Vendor'}</Text>
+            <Text style={styles.vendorName}>{String(product.vendor?.name || 'Unknown Vendor')}</Text>
             {product.vendor?.verified && (
               <Ionicons name="checkmark-circle" size={12} color="#1DA1F2" />
             )}
           </View>
         </TouchableOpacity>
 
-        {/* Product details */}
-        <Text style={styles.productTitle} numberOfLines={2}>{product.title}</Text>
-        
-        {product.category && (
+        <Text style={styles.productTitle} numberOfLines={2}>{String(product.title || '')}</Text>
+
+        {typeof product.category === 'string' && product.category.length > 0 && (
           <Text style={styles.category}>{product.category}</Text>
         )}
 
         <View style={styles.priceRow}>
           <Text style={styles.price}>
-            {product.currency || '₦'}{product.price.toLocaleString()}
+            {String(product.currency || '₣')}{typeof product.price === 'number' && !isNaN(product.price) ? product.price.toLocaleString() : String(product.price || 0)}
           </Text>
-          {product.originalPrice && product.originalPrice > product.price && (
+          {typeof product.originalPrice === 'number' && !isNaN(product.originalPrice) && product.originalPrice > product.price && (
             <Text style={styles.originalPrice}>
-              {product.currency || '₦'}{product.originalPrice.toLocaleString()}
+              {String(product.currency || '₣')}{product.originalPrice.toLocaleString()}
             </Text>
           )}
         </View>
 
-        {/* Rating and reviews */}
-        {product.rating && (
+        {typeof product.rating === 'number' && product.rating > 0 && (
           <View style={styles.ratingRow}>
             <View style={styles.rating}>
               <Ionicons name="star" size={12} color="#FFD700" />
               <Text style={styles.ratingText}>{product.rating.toFixed(1)}</Text>
             </View>
-            {product.reviews && (
+            {typeof product.reviews === 'number' && product.reviews > 0 && (
               <Text style={styles.reviewsText}>({product.reviews} reviews)</Text>
             )}
           </View>
         )}
 
-        {/* Features */}
         <View style={styles.features}>
           {product.fastShipping && (
             <View style={styles.feature}>
@@ -215,12 +235,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           {product.location && (
             <View style={styles.feature}>
               <Ionicons name="location" size={10} color="#9E9E9E" />
-              <Text style={styles.featureText}>{product.location}</Text>
+              <Text style={styles.featureText}>{String(product.location || '')}</Text>
             </View>
           )}
         </View>
 
-        {/* Engagement */}
         <View style={styles.engagementRow}>
           {onLike && (
             <TouchableOpacity
@@ -232,11 +251,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 size={14}
                 color={product.isLiked ? "#E91E63" : "rgba(255,255,255,0.6)"}
               />
-              {product.likes && <Text style={styles.engagementText}>{product.likes}</Text>}
+              {typeof product.likes === 'number' && product.likes > 0 && <Text style={styles.engagementText}>{product.likes}</Text>}
             </TouchableOpacity>
           )}
 
-          {product.views && (
+          {typeof product.views === 'number' && product.views > 0 && (
             <View style={styles.engagementButton}>
               <Ionicons name="eye" size={14} color="rgba(255,255,255,0.6)" />
               <Text style={styles.engagementText}>{product.views}</Text>
@@ -244,7 +263,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           )}
         </View>
 
-        {/* Action Buttons - Equal sized buttons filling card width */}
         {(onCartPress || onBargainPress) && (
           <View style={styles.actionButtonsRow}>
             {onBargainPress && (
@@ -275,47 +293,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       </View>
     </TouchableOpacity>
   );
-
-  const renderGridCard = () => (
-    <TouchableOpacity style={styles.gridCard} onPress={() => onPress?.(product)}>
-      {renderMedia()}
-      <View style={styles.gridContent}>
-        <Text style={styles.gridTitle} numberOfLines={2}>{product.title}</Text>
-        <Text style={styles.gridPrice}>
-          {product.currency || '₦'}{product.price.toLocaleString()}
-        </Text>
-        {product.rating && (
-          <View style={styles.gridRating}>
-            <Ionicons name="star" size={10} color="#FFD700" />
-            <Text style={styles.gridRatingText}>{product.rating.toFixed(1)}</Text>
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-
-  const renderListCard = () => (
-    <TouchableOpacity style={styles.listCard} onPress={() => onPress?.(product)}>
-      {renderMedia()}
-      <View style={styles.listContent}>
-        <Text style={styles.listTitle} numberOfLines={1}>{product.title}</Text>
-        <Text style={styles.listVendor}>{product.vendor?.name || 'Unknown Vendor'}</Text>
-        <Text style={styles.listPrice}>
-          {product.currency || '₦'}{product.price.toLocaleString()}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
-
-  switch (variant) {
-    case 'grid': return renderGridCard();
-    case 'list': return renderListCard();
-    default: return renderFeaturedCard();
-  }
 };
 
 const styles = StyleSheet.create({
-  // Featured card styles
   featuredCard: {
     backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 16,
@@ -323,6 +303,22 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
+  },
+  gridCard: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  listCard: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    marginBottom: 12,
   },
   mediaContainer: {
     position: 'relative',
@@ -401,6 +397,14 @@ const styles = StyleSheet.create({
   cardContent: {
     padding: 16,
   },
+  gridContent: {
+    padding: 12,
+  },
+  listContent: {
+    flex: 1,
+    padding: 12,
+    justifyContent: 'center',
+  },
   vendorInfo: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -429,6 +433,19 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     lineHeight: 20,
   },
+  gridTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+    lineHeight: 18,
+  },
+  listTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
   category: {
     color: 'rgba(255,255,255,0.6)',
     fontSize: 12,
@@ -443,6 +460,17 @@ const styles = StyleSheet.create({
   price: {
     color: '#4CAF50',
     fontSize: 18,
+    fontWeight: '700',
+  },
+  gridPrice: {
+    color: '#4CAF50',
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  listPrice: {
+    color: '#4CAF50',
+    fontSize: 14,
     fontWeight: '700',
   },
   originalPrice: {
@@ -461,9 +489,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 2,
   },
+  gridRating: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
   ratingText: {
     color: '#FFD700',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  gridRatingText: {
+    color: '#FFD700',
+    fontSize: 10,
     fontWeight: '600',
   },
   reviewsText: {
@@ -489,6 +527,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 16,
+    marginBottom: 12,
   },
   engagementButton: {
     flexDirection: 'row',
@@ -530,71 +569,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-
-  // Grid card styles
-  gridCard: {
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  gridContent: {
-    padding: 12,
-  },
-  gridTitle: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 4,
-    lineHeight: 18,
-  },
-  gridPrice: {
-    color: '#4CAF50',
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  gridRating: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  gridRatingText: {
-    color: '#FFD700',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-
-  // List card styles
-  listCard: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    marginBottom: 12,
-  },
-  listContent: {
-    flex: 1,
-    padding: 12,
-    justifyContent: 'center',
-  },
-  listTitle: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
   listVendor: {
     color: '#1DA1F2',
     fontSize: 12,
     marginBottom: 4,
-  },
-  listPrice: {
-    color: '#4CAF50',
-    fontSize: 14,
-    fontWeight: '700',
   },
 });

@@ -940,7 +940,7 @@ const AuctionDiscoveryScreen = () => {
       {/* Floating Create Lot Button - Only visible to sellers */}
       {profile?.isSeller && (
         <TouchableOpacity
-          style={styles.createLotButton}
+          style={[styles.createLotButton, { bottom: 20 + insets.bottom }]}
           onPress={navigateToCreateAuction}
           activeOpacity={0.8}
         >

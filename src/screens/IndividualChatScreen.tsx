@@ -6106,10 +6106,6 @@ const IndividualChatScreen = () => {
               style={styles.videoPlayer}
               player={videoPlayer}
               nativeControls
-              fullscreenOptions={{
-                allowFullscreen: allowsFullscreen,
-                allowPictureInPicture: allowsPictureInPicture,
-              }}
             />
           </View>
         )}

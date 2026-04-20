@@ -416,6 +416,17 @@ class ServicesAPI {
   }): Promise<VideoFeedItem[]> {
     const cacheKey = `video_feed_${JSON.stringify(params || {})}`;
 
+    // Helper function to validate media URLs
+    const isValidMediaUrl = (url?: string): boolean => {
+      if (!url) return false;
+      if (typeof url !== 'string') return false;
+      // Block ImagePicker temp files
+      if (url.includes('ImagePicker/')) return false;
+      // Must be http/https
+      if (!url.startsWith('http')) return false;
+      return true;
+    };
+
     try {
       // TEMPORARILY DISABLE CACHE to force fresh API call
       // const cached = await this.cacheGet(cacheKey);
@@ -438,25 +449,43 @@ class ServicesAPI {
       console.log('🎥 ServicesAPI received data:', videoFeedItems.length, 'items');
       console.log('🎥 First item from API:', JSON.stringify(videoFeedItems[0], null, 2));
 
-      // Check if userId is missing and try to fix it
+      // Validate and fix data
       const fixedVideoFeedItems = videoFeedItems.map((item, index) => {
+        let fixedItem = { ...item };
+
+        // Check if userId is missing and try to fix it
         if (!item.userId) {
           console.log(`🔧 WARNING: Missing userId in video item ${index}:`, JSON.stringify(item, null, 2));
           console.log('🔧 Available fields:', Object.keys(item));
           // Try to get userId from user_id field if it exists
           const fixedUserId = (item as any).user_id || `missing-user-id-${index}`;
           console.log('🔧 Setting userId to:', fixedUserId);
-          return { ...item, userId: fixedUserId };
+          fixedItem = { ...fixedItem, userId: fixedUserId };
         }
-        return item;
+
+        // Validate media URLs
+        if (!isValidMediaUrl(item.thumbnail)) {
+          console.log(`🔧 WARNING: Invalid thumbnail URL in item ${index}:`, item.thumbnail);
+          fixedItem = { ...fixedItem, thumbnail: undefined };
+        }
+        if (!isValidMediaUrl(item.videoUri)) {
+          console.log(`🔧 WARNING: Invalid videoUri in item ${index}:`, item.videoUri);
+          fixedItem = { ...fixedItem, videoUri: undefined };
+        }
+        if (!isValidMediaUrl(item.userAvatar)) {
+          console.log(`🔧 WARNING: Invalid userAvatar in item ${index}:`, item.userAvatar);
+          fixedItem = { ...fixedItem, userAvatar: '' };
+        }
+
+        return fixedItem;
       });
 
-      console.log('🎥 After userId fix - First item:', JSON.stringify(fixedVideoFeedItems[0], null, 2));
+      console.log('🎥 After validation - First item:', JSON.stringify(fixedVideoFeedItems[0], null, 2));
 
       await this.cacheSet(cacheKey, fixedVideoFeedItems);
       return fixedVideoFeedItems;
-    } catch (error) {
-      console.warn('Video feed API failed, trying cache...', error.message);
+    } catch (error: any) {
+      console.warn('Video feed API failed, trying cache...', error?.message || 'Unknown error');
       
       // Try cache as fallback
       const cached = await this.cacheGet(cacheKey);
@@ -470,7 +499,6 @@ class ServicesAPI {
     }
   }
 
-
   // Like/unlike a service with offline support
   async toggleLike(serviceId: string): Promise<{ liked: boolean; likeCount: number }> {
     try {
@@ -481,8 +509,8 @@ class ServicesAPI {
       this.cache.delete('video_feed_{}');
       
       return response.data;
-    } catch (error) {
-      console.warn('Like action failed, queuing for offline processing:', error.message);
+    } catch (error: any) {
+      console.warn('Like action failed, queuing for offline processing:', error?.message || 'Unknown error');
       
       // Add to offline queue for later processing
       await this.addToQueue('POST', `/services/${serviceId}/like`);
@@ -502,8 +530,8 @@ class ServicesAPI {
       const response = await api.get(`/services/${serviceId}/comments`);
       console.log('✅ Received', response.data?.length || 0, 'comments from API');
       return response.data;
-    } catch (error) {
-      console.error('❌ Error fetching service comments:', error);
+    } catch (error: any) {
+      console.error('❌ Error fetching service comments:', error?.message || 'Unknown error');
       throw error;
     }
   }
@@ -519,8 +547,8 @@ class ServicesAPI {
 
       console.log('✅ Comment added successfully:', response.data);
       return response.data;
-    } catch (error) {
-      console.warn('Comment failed, queuing for offline processing:', error.message);
+    } catch (error: any) {
+      console.warn('Comment failed, queuing for offline processing:', error?.message || 'Unknown error');
 
       // Add to offline queue
       await this.addToQueue('POST', `/services/${serviceId}/comments`, { content });
@@ -542,8 +570,8 @@ class ServicesAPI {
   async rateService(serviceId: string, rating: number, comment?: string): Promise<void> {
     try {
       await api.post(`/services/${serviceId}/rate`, { rating, comment });
-    } catch (error) {
-      console.error('Error rating service:', error);
+    } catch (error: any) {
+      console.error('Error rating service:', error?.message || 'Unknown error');
       throw error;
     }
   }
@@ -553,8 +581,8 @@ class ServicesAPI {
     try {
       const response = await api.post('/services/book', bookingData);
       return response.data;
-    } catch (error) {
-      console.error('Error booking service:', error);
+    } catch (error: any) {
+      console.error('Error booking service:', error?.message || 'Unknown error');
       throw error;
     }
   }
@@ -564,8 +592,8 @@ class ServicesAPI {
     try {
       const response = await api.get('/services/my-bookings');
       return response.data;
-    } catch (error) {
-      console.error('Error fetching bookings:', error);
+    } catch (error: any) {
+      console.error('Error fetching bookings:', error?.message || 'Unknown error');
       throw error;
     }
   }
@@ -580,8 +608,8 @@ class ServicesAPI {
       this.cache.delete('video_feed_{}');
 
       return response.data;
-    } catch (error) {
-      console.warn('Bookmark action failed, queuing for offline processing:', error.message);
+    } catch (error: any) {
+      console.warn('Bookmark action failed, queuing for offline processing:', error?.message || 'Unknown error');
 
       // Add to offline queue
       await this.addToQueue('POST', `/services/${serviceId}/bookmark`);
@@ -604,8 +632,8 @@ class ServicesAPI {
       this.cache.delete('video_feed_{}');
 
       return response.data;
-    } catch (error) {
-      console.warn('Share action failed, queuing for offline processing:', error.message);
+    } catch (error: any) {
+      console.warn('Share action failed, queuing for offline processing:', error?.message || 'Unknown error');
 
       // Add to offline queue
       await this.addToQueue('POST', `/services/${serviceId}/share`);

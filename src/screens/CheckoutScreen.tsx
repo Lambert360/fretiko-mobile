@@ -495,7 +495,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         deliveryInstructions: deliveryInstructions.trim() || undefined,
         useRewards,
         rewardsAmount,
-        directCheckout: directCheckout ? { productId, quantity } : undefined,
+        directCheckout: directCheckout && productId && quantity ? { productId, quantity } : undefined,
         auctionCheckout: auctionCheckout ? { auctionId: auctionCheckout.auctionId } : undefined,
         invoiceCheckout: source === 'invoice' && invoiceId && invoiceItems && vendorId ? {
           invoiceId,
@@ -551,14 +551,14 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         console.log('📦 Order data being sent to backend:');
         console.log('  - Payment method:', orderData.paymentMethodId);
         console.log('  - Source:', source);
-        console.log('  - Number of items:', orderSummary.items.length);
-        console.log('  - Items:', orderSummary.items.map(i => ({ id: i.id, name: i.name })));
+        console.log('  - Number of items:', orderSummary?.items?.length || 0);
+        console.log('  - Items:', orderSummary?.items?.map(i => ({ id: i.id, name: i.name })) || []);
         console.log('  - Total:', orderSummary?.subtotal || 0);
         if (source === 'invoice') {
           console.log('  - Invoice ID:', invoiceId);
         }
 
-        order = await checkoutAPI.createOrder(orderData);
+        order = await checkoutAPI.createOrder(orderData as any);
         console.log(`✅ Single order created: ${order.orderNumber}`);
       }
 
@@ -599,7 +599,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
             text: 'View Order',
             onPress: () => {
               // Check if this is a grouped order (multi-vendor)
-              if (order.isGrouped && order.id) {
+              if ((order as any).isGrouped && order.id) {
                 // Navigate to GroupedOrderScreen
                 navigation.navigate('GroupedOrder', { groupId: order.id });
               } else {
@@ -616,11 +616,11 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
           },
         ]
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error placing order:', error);
       Alert.alert(
         'Order Failed',
-        error.message || 'Failed to place order. Please try again.',
+        error?.message || 'Failed to place order. Please try again.',
         [{ text: 'OK' }]
       );
     } finally {
@@ -964,7 +964,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                           {assignment.vendorIds.length} vendor{assignment.vendorIds.length > 1 ? 's' : ''} • {assignment.vehicleType}
                         </Text>
                         <Text style={styles.riderAssignmentRoute}>
-                          {assignment.route.totalDistance.toFixed(1)}km • {assignment.route.estimatedTime} min
+                          {assignment.route.totalDistance != null ? assignment.route.totalDistance.toFixed(1) : '0.0'}km • {assignment.route.estimatedTime ?? 0} min
                         </Text>
                       </View>
                       {assignment.vendorIds.length > 1 && (
@@ -1023,7 +1023,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                     </Text>
                   </View>
                   <Text style={styles.selectedRiderDistance}>
-                    {selectedRider.distanceFromPickup.toFixed(1)}km away • {selectedRider.estimatedArrival} min arrival
+                    {selectedRider.distanceFromPickup != null ? selectedRider.distanceFromPickup.toFixed(1) : '0.0'}km away • {selectedRider.estimatedArrival ?? 0} min arrival
                   </Text>
                 </View>
               </View>

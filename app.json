@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/horse.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "scheme": "fretiko",
     "splash": {
       "image": "./assets/horse.png",
@@ -88,7 +88,6 @@
           "mode": "production"
         }
       ],
-      "@config-plugins/react-native-webrtc",
       "expo-font",
       "expo-maps"
     ],

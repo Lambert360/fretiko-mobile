@@ -57,6 +57,7 @@ import { auctionsAPI, AuctionWithDetails } from '../services/auctionsAPI';
 import AuctionCard from '../components/AuctionCard';
 import { getActiveAuctions, getUpcomingAuctions } from '../utils/auctionMappers';
 import { liveSalesAPI, LiveStream, LiveStreamProduct, LiveStreamService } from '../services/liveSalesAPI';
+import ProductsTab from '../components/ProductsTab';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -109,7 +110,7 @@ const StableProductCard = memo(ProductCard, (prevProps, nextProps) => {
 const FallbackCard = ({ error }: { error?: string }) => (
   <View style={{ padding: 20, backgroundColor: '#1a1a1a', borderRadius: 8, margin: 6 }}>
     <Text style={{ color: 'red', fontSize: 12, marginBottom: 4 }}>ProductCard Error</Text>
-    {error && <Text style={{ color: '#888', fontSize: 10 }}>{error}</Text>}
+    {error ? <Text style={{ color: '#888', fontSize: 10 }}>{error}</Text> : null}
   </View>
 );
 
@@ -1140,13 +1141,6 @@ const HomeScreen = () => {
 
   // Enhanced ProductCard with centralized data mapper
   const renderEnhancedProductCard = useCallback((item: any, isHorizontal = false) => {
-    // Don't render when screen is unfocused
-    if (!isScreenFocused) {
-      return null;
-    }
-
-    const cardStyle = isHorizontal ? { width: screenWidth * 0.4, marginHorizontal: 6 } : {};
-
     try {
       // Use centralized mapper to ensure consistent data transformation
       const productData = mapProductToCard(item);
@@ -1157,8 +1151,12 @@ const HomeScreen = () => {
         return <FallbackCard error="Missing product data" />;
       }
 
+      const cardStyle = isHorizontal
+        ? { width: '48%' as const, marginRight: 12 }
+        : { width: '100%' as const };
+
       return (
-        <View style={[cardStyle, { width: isHorizontal ? screenWidth * 0.4 : '100%' }]}>
+        <View style={cardStyle as any}>
           <ModernProductCard
             product={productData}
             variant={isHorizontal ? 'grid' : 'featured'}
@@ -1296,7 +1294,8 @@ const HomeScreen = () => {
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, marginBottom: 12 }}>
           <View>
             <Text style={{ color: 'white', fontSize: 20, fontWeight: 'bold' }}>
-              <Text style={{ color: '#3498DB' }}>Featured</Text> Products
+              <Text style={{ color: '#3498DB' }}>Featured</Text>
+              <Text> Products</Text>
             </Text>
             <Text style={{ color: '#888', fontSize: 14 }}>Handpicked by our team</Text>
           </View>
@@ -2021,7 +2020,7 @@ const HomeScreen = () => {
     return (
       <View style={{ flex: 1 }}>
         {/* Error Banner */}
-        {errorState && (
+        {errorState ? (
           <View style={{
             position: 'absolute',
             top: insets.top + HEADER_FULL_HEIGHT + SUB_HEADER_HEIGHT + 8,
@@ -2040,7 +2039,7 @@ const HomeScreen = () => {
               <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '600', marginBottom: 4 }}>
                 {errorState.userMessage}
               </Text>
-              {errorState.retryable && (
+              {errorState.retryable ? (
                 <TouchableOpacity
                   onPress={() => loadData(true)}
                   style={{
@@ -2054,13 +2053,13 @@ const HomeScreen = () => {
                 >
                   <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>Retry</Text>
                 </TouchableOpacity>
-              )}
+              ) : null}
             </View>
             <TouchableOpacity onPress={() => setErrorState(null)}>
               <Ionicons name="close" size={20} color="#FFF" />
             </TouchableOpacity>
           </View>
-        )}
+        ) : null}
 
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -2102,11 +2101,11 @@ const HomeScreen = () => {
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                   <Ionicons name="funnel" size={14} color="#3498DB" />
                   <Text style={{ color: '#3498DB', fontSize: 13, fontWeight: '600', marginLeft: 6 }}>
-                    {activeFilterCount} Filter{activeFilterCount > 1 ? 's' : ''} Active
+                    {String(activeFilterCount)} Filter{activeFilterCount > 1 ? 's' : ''} Active
                   </Text>
                 </View>
                 <Text style={{ color: '#888', fontSize: 11 }}>
-                  {filteredProducts.length} of {products.length} products shown
+                  {String(filteredProducts.length)} of {String(products.length)} products shown
                 </Text>
               </View>
               <TouchableOpacity
@@ -2162,11 +2161,11 @@ const HomeScreen = () => {
             <>
               <View style={{ paddingHorizontal: 16, marginBottom: 16, marginTop: 8 }}>
                 <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#FFFFFF', marginBottom: 2 }}>
-                  {(categories.find(c => c.id === selectedCategory)?.name ||
-                    selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1)) + ' Products'}
+                  {String((categories.find(c => c.id === selectedCategory)?.name ||
+                    selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1))) + ' Products'}
                 </Text>
                 <Text style={{ fontSize: 13, color: '#888', marginBottom: 2 }}>
-                  {filteredProducts.length} products found
+                  {String(filteredProducts.length)} products found
                 </Text>
               </View>
               <View style={{ paddingHorizontal: 12, marginBottom: 20 }}>
@@ -2817,17 +2816,17 @@ const HomeScreen = () => {
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flex: 1 }}>
               <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold', marginBottom: 4 }} numberOfLines={1}>
-                {item.name}
+                {String(item.name || 'Product')}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={{ color: '#FFD700', fontSize: 18, fontWeight: 'bold', marginRight: 8 }}>
                   ₣{(item.price || 0).toFixed(2)}
                 </Text>
-                {item.vendor_username && (
+                {item.vendor_username ? (
                   <Text style={{ color: '#888', fontSize: 12 }}>
-                    by @{item.vendor_username}
+                    by @{String(item.vendor_username)}
                   </Text>
-                )}
+                ) : null}
               </View>
             </View>
 
@@ -3175,13 +3174,14 @@ const HomeScreen = () => {
             const isCurrentVideo = index === currentVideoIndex;
             const shouldPlay = activeTab === 'services' && isPlaying && isCurrentVideo;
 
-            return (
-              <View key={`video-${item.id}-${index}`} style={{
-                width: screenWidth,
-                height: screenHeight,
-                backgroundColor: '#000',
-                position: 'relative'
-              }}>
+            try {
+              return (
+                <View key={`video-${item.id}-${index}`} style={{
+                  width: screenWidth,
+                  height: screenHeight,
+                  backgroundColor: '#000',
+                  position: 'relative'
+                }}>
                 {/* Video container */}
                 <TouchableWithoutFeedback onPress={() => {
                   // If it's a live service, navigate to LiveStreamViewer
@@ -3329,7 +3329,7 @@ const HomeScreen = () => {
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 1 }}>
                       <Ionicons name="star" size={11} color="#FFD700" />
                       <Text style={{ color: 'white', fontSize: 11, marginLeft: 3 }}>
-                        {(item.rating || 0).toFixed(1)}
+                        {Number(item.rating || 0).toFixed(1)}
                       </Text>
                     </View>
                   </View>
@@ -3343,7 +3343,7 @@ const HomeScreen = () => {
                     >
                       {String(item.description)}
                     </Text>
-                    {item.description.length > 100 && (
+                    {String(item.description || '').length > 100 && (
                       <TouchableOpacity
                         onPress={() => {
                           const next = new Set(expandedDescriptions);
@@ -3368,7 +3368,7 @@ const HomeScreen = () => {
 
                 {/* Price - tight spacing */}
                 <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold', marginBottom: 8 }}>
-                  ₣{(item.price || 0).toFixed(2)}
+                  ₣{Number(item.price || 0).toFixed(2)}
                 </Text>
 
                 {/* Action buttons - tight spacing */}
@@ -3500,7 +3500,7 @@ const HomeScreen = () => {
                   <TouchableOpacity onPress={handleCartIconPress}>
                     <View style={{ position: 'relative' }}>
                       <Ionicons name="bag-outline" size={28} color="white" />
-                      {itemCount && itemCount > 0 && (
+                      {itemCount > 0 ? (
                         <View style={{
                           position: 'absolute',
                           top: -8,
@@ -3516,7 +3516,7 @@ const HomeScreen = () => {
                             {itemCount > 99 ? '99+' : String(itemCount || 0)}
                           </Text>
                         </View>
-                      )}
+                      ) : null}
                     </View>
                   </TouchableOpacity>
               </View>
@@ -3615,6 +3615,13 @@ const HomeScreen = () => {
               </View>
             </View>
             );
+            } catch (renderError) {
+              return (
+                <View key={`error-${index}`} style={{width: screenWidth, height: screenHeight, justifyContent: 'center', alignItems: 'center'}}>
+                  <Text style={{color: 'red'}}>Render Error</Text>
+                </View>
+              );
+            }
           })}
         </PagerView>
       </View>
@@ -3800,27 +3807,11 @@ const HomeScreen = () => {
         </View>
         
         <View key="products" style={{ flex: 1 }}>
-          {activeTab === 'products' ? (
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={{ flexGrow: 1 }}
-              onScroll={handleScroll}
-              scrollEventThrottle={16}
-              refreshControl={
-                <RefreshControl
-                  refreshing={refreshing}
-                  onRefresh={refreshData}
-                  colors={['#3498DB']}
-                  tintColor="#3498DB"
-                  title="Pull to refresh"
-              />
-            }
-          >
-            {renderProductsTab()}
-          </ScrollView>
-          ) : (
-            <View style={{ flex: 1, backgroundColor: '#000' }} />
-          )}
+          <ProductsTab
+            isScreenFocused={isScreenFocused && activeTab === 'products'}
+            headerOpacity={headerOpacity}
+            subHeaderOpacity={subHeaderOpacity}
+          />
         </View>
       </PagerView>
 
@@ -3828,12 +3819,12 @@ const HomeScreen = () => {
       {renderSidebar()}
 
       {/* Overlay for closing sidebar */}
-      {isSidebarVisible && (
+      {isSidebarVisible ? (
         <TouchableOpacity 
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2000 }}
           onPress={toggleSidebar}
         />
-      )}
+      ) : null}
 
       {/* Modals */}
       <CartModal

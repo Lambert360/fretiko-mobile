@@ -4,19 +4,17 @@ import React, { useRef, useState, useEffect } from 'react';
 import {
   Animated,
   Dimensions,
-  Image,
   ImageStyle,
-  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
-  Alert,
   ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { VideoFeedItem } from '../services/servicesAPI';
+import SafeImage from './SafeImage';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const TAB_BAR_HEIGHT = 70;
@@ -28,6 +26,7 @@ interface VideoCardProps {
   tabBarHeight?: number;
   headerHeight?: number;
   onVideoTouch?: () => void;
+  onTogglePlay?: (itemId: string) => void;
   onLike?: (itemId: string) => void;
   onComment?: (itemId: string) => void;
   onBookmark?: (itemId: string) => void;
@@ -43,6 +42,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
   tabBarHeight = TAB_BAR_HEIGHT,
   headerHeight = 0,
   onVideoTouch,
+  onTogglePlay,
   onLike,
   onComment,
   onBookmark,
@@ -53,13 +53,9 @@ const VideoCard: React.FC<VideoCardProps> = ({
   console.log(' VideoCard rendering for:', item.title, 'ID:', item.id);
   const insets = useSafeAreaInsets();
   
-  // Calculate available viewport height
-  const availableHeight = screenHeight - headerHeight - tabBarHeight - insets.bottom;
-  
   // UI State Management
   const [isUIVisible, setIsUIVisible] = useState(true);
   const [isPlayButtonVisible, setIsPlayButtonVisible] = useState(false);
-  const [videoAspectRatio, setVideoAspectRatio] = useState<number | null>(null);
   
   // Animation References
   const uiOpacity = useRef(new Animated.Value(1)).current;
@@ -98,7 +94,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
     Animated.timing(uiOpacity, { 
       toValue: 1, 
       duration: 300, // Faster show animation
-      useNativeDriver: false 
+      useNativeDriver: true 
     }).start();
     startHideTimer();
   };
@@ -108,7 +104,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
     Animated.timing(uiOpacity, { 
       toValue: 0, 
       duration: 800, // Slower, more natural fade out
-      useNativeDriver: false 
+      useNativeDriver: true 
     }).start();
     if (hideTimer.current) {
       clearTimeout(hideTimer.current);
@@ -127,7 +123,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
     setIsPlayButtonVisible(true);
     Animated.spring(playButtonOpacity, {
       toValue: 1,
-      useNativeDriver: false,
+      useNativeDriver: true,
       tension: 100,
       friction: 8,
     }).start();
@@ -141,75 +137,59 @@ const VideoCard: React.FC<VideoCardProps> = ({
       Animated.timing(playButtonOpacity, {
         toValue: 0,
         duration: 500, // Smoother fade out
-        useNativeDriver: false,
+        useNativeDriver: true,
       }).start();
     }, 2500);
 
     onVideoTouch?.();
   };
 
-  const handleVideoLoad = (status: any) => {
-    if (status.naturalSize) {
-      const { width, height } = status.naturalSize;
-      setVideoAspectRatio(width / height);
-    }
-  };
+  // Validate video URI
+  const isValidVideo = item.videoUri && typeof item.videoUri === 'string' && item.videoUri.startsWith('http');
+  const videoSource: string | null = isValidVideo ? (item.videoUri as string) : null;
 
-  // Create video player for expo-video API
-  const player = useVideoPlayer(item.videoUri || '', (player) => {
-    player.loop = true;
-    player.muted = false;
-  });
+  // Always call the hook (React rules) - pass null when invalid
+  const player = useVideoPlayer(
+    isValidVideo ? videoSource : null,
+    (player) => {
+      if (!player) return;
+      player.loop = true;
+      player.muted = false;
+    }
+  );
+
+  // Control playback based on active state and play state
+  useEffect(() => {
+    if (!player) return;
+
+    if (isActive && isPlaying) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [isActive, isPlaying, player]);
 
   const getVideoStyle = (): ViewStyle => {
     // Use parent container dimensions - the Reels wrapper sets the exact height
     const containerHeight = screenHeight - tabBarHeight - insets.bottom;
-    
-    if (!videoAspectRatio) {
-      return {
-        width: screenWidth,
-        height: containerHeight,
-      };
-    }
-
-    const containerAspectRatio = screenWidth / containerHeight;
-    
-    if (videoAspectRatio > 1) {
-      // Landscape video
-      if (videoAspectRatio > containerAspectRatio) {
-        // Video is wider than container - fit to container height
-        return {
-          width: screenWidth,
-          height: containerHeight,
-        };
-      } else {
-        // Video is not as wide - fit to screen width, center vertically
-        const videoHeight = screenWidth / videoAspectRatio;
-        return {
-          width: screenWidth,
-          height: videoHeight,
-        };
-      }
-    } else {
-      // Portrait video - fill screen width, center vertically if needed
-      const videoHeight = screenWidth / videoAspectRatio;
-      if (videoHeight <= containerHeight) {
-        return {
-          width: screenWidth,
-          height: videoHeight,
-        };
-      } else {
-        // Video is taller than container - fit to container height
-        return {
-          width: screenWidth,
-          height: containerHeight,
-        };
-      }
-    }
+    return {
+      width: screenWidth,
+      height: containerHeight,
+    };
   };
 
   const togglePlayPause = (e: any) => {
     e.stopPropagation();
+    
+    // Notify parent to toggle play state (dedicated callback for playback control)
+    onTogglePlay?.(item.id);
+    
+    // Keep UI visible while user interacts with controls
+    if (!isUIVisible) {
+      showUI();
+    } else {
+      startHideTimer(); // Reset hide timer
+    }
     
     // Keep play button visible for a bit longer after interaction
     if (playButtonTimer.current) {
@@ -220,7 +200,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
       Animated.timing(playButtonOpacity, {
         toValue: 0,
         duration: 200,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }).start();
     }, 3000);
   };
@@ -260,17 +240,18 @@ const VideoCard: React.FC<VideoCardProps> = ({
       <View style={styles.container}>
         {/* 1. Video Player - Full Screen with Crop (TikTok Style) */}
         <View style={styles.videoContainer}>
-          {item.videoUri ? (
+          {isValidVideo && player ? (
             <VideoView
               player={player}
               style={getVideoStyle()}
-              contentFit="contain"
+              contentFit="cover"
               nativeControls={false}
             />
           ) : (
-            <Image 
-              source={{ uri: item.thumbnail || 'https://via.placeholder.com/400x600' }} 
-              style={getVideoStyle() as ImageStyle} 
+            <SafeImage
+              source={item.thumbnail ? { uri: item.thumbnail } : undefined}
+              fallbackText="No preview"
+              style={getVideoStyle() as ImageStyle}
             />
           )}
         </View>
@@ -295,7 +276,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
         <Animated.View style={[
           styles.userInfoContainer,
           {
-            bottom: tabBarHeight + insets.bottom + 6,
+            bottom: tabBarHeight + insets.bottom + 10,
             opacity: uiOpacity
           }
         ]}>
@@ -303,19 +284,21 @@ const VideoCard: React.FC<VideoCardProps> = ({
             style={styles.userInfo}
             onPress={() => onVendorPress?.(item.userId)}
           >
-            <Image 
-              source={{ uri: item.userAvatar || 'https://via.placeholder.com/50x50' }} 
-              style={styles.userAvatar} 
+            <SafeImage
+              source={{ uri: item.userAvatar }}
+              fallbackText=""
+              showFallbackIcon={false}
+              style={styles.userAvatar}
             />
             <View style={styles.userDetails}>
-              <Text style={styles.username}>@{item.username}</Text>
+              <Text style={styles.username}>@{item.username || 'user'}</Text>
               <View style={styles.userBadgeContainer}>
                 <View style={styles.proBadge}>
                   <Text style={styles.proText}>Pro</Text>
                 </View>
                 <View style={styles.ratingContainer}>
                   <Ionicons name="star" size={12} color="#FFD700" />
-                  <Text style={styles.ratingText}>{item.rating.toFixed(1)}</Text>
+                  <Text style={styles.ratingText}>{item.rating ? item.rating.toFixed(1) : '0.0'}</Text>
                 </View>
               </View>
             </View>
@@ -326,36 +309,36 @@ const VideoCard: React.FC<VideoCardProps> = ({
         <Animated.View style={[
           styles.descriptionContainer,
           {
-            bottom: tabBarHeight + insets.bottom + 6,
+            bottom: tabBarHeight + insets.bottom + 10,
             opacity: uiOpacity
           }
         ]}>
           <Text style={styles.description} numberOfLines={3}>
-            {item.description}
+            {String(item.description || '')}
           </Text>
           
           {/* Service Details */}
           <View style={styles.serviceTagsContainer}>
             <View style={styles.serviceTag}>
               <Ionicons name="checkmark-circle-outline" size={14} color="#27AE60" />
-              <Text style={styles.serviceTagText}>{item.completedJobs} jobs</Text>
+              <Text style={styles.serviceTagText}>{String(item.completedJobs || 0)} jobs</Text>
             </View>
             <View style={styles.serviceTag}>
               <Ionicons name="location-outline" size={14} color="#B0B0B0" />
-              <Text style={styles.serviceTagText}>{item.location}</Text>
+              <Text style={styles.serviceTagText}>{String(item.location || 'Unknown')}</Text>
             </View>
           </View>
 
           {/* Price and Action Buttons */}
           <View style={styles.actionButtonsRow}>
             <View style={styles.priceContainer}>
-              {item.originalPrice && item.originalPrice > item.price ? (
+              {item.originalPrice && Number(item.originalPrice) > Number(item.price) ? (
                 <>
-                  <Text style={styles.originalPrice}>₣{item.originalPrice.toFixed(2)}</Text>
-                  <Text style={styles.currentPrice}>₣{item.price.toFixed(2)}</Text>
+                  <Text style={styles.originalPrice}>₣{Number(item.originalPrice).toFixed(2)}</Text>
+                  <Text style={styles.currentPrice}>₣{Number(item.price || 0).toFixed(2)}</Text>
                 </>
               ) : (
-                <Text style={styles.currentPrice}>₣{item.price.toFixed(2)}</Text>
+                <Text style={styles.currentPrice}>₣{Number(item.price || 0).toFixed(2)}</Text>
               )}
             </View>
             
@@ -381,7 +364,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
         <Animated.View style={[
           styles.rightActionsContainer,
           {
-            bottom: tabBarHeight + insets.bottom + 6,
+            bottom: tabBarHeight + insets.bottom + 10,
             opacity: uiOpacity
           }
         ]}>
@@ -397,7 +380,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
                 color={item.isLiked ? '#FF4757' : 'white'} 
               />
             </View>
-            <Text style={styles.rightActionText}>{item.likes}</Text>
+            <Text style={styles.rightActionText}>{String(item.likes || 0)}</Text>
           </TouchableOpacity>
 
           {/* Comment Button */}
@@ -408,7 +391,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
             <View style={styles.iconBackground}>
               <Ionicons name="chatbubble-outline" size={28} color="white" />
             </View>
-            <Text style={styles.rightActionText}>{item.comments}</Text>
+            <Text style={styles.rightActionText}>{String(item.comments || 0)}</Text>
           </TouchableOpacity>
 
           {/* Bookmark Button */}
@@ -433,7 +416,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
             <View style={styles.iconBackground}>
               <Ionicons name="share-outline" size={28} color="white" />
             </View>
-            <Text style={styles.rightActionText}>{item.shares}</Text>
+            <Text style={styles.rightActionText}>{String(item.shares || 0)}</Text>
           </TouchableOpacity>
         </Animated.View>
       </View>

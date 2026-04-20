@@ -347,19 +347,10 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
 
         {/* Action Buttons */}
         <View style={styles.actionsSection}>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.primaryButton]}
-            onPress={() => navigation.navigate('RoleSelection', { isFirstTime: false })}
-          >
-            <Ionicons name="refresh" size={20} color="#FFFFFF" />
-            <Text style={[styles.actionButtonText, styles.primaryButtonText]}>
-              Change Role
-            </Text>
-          </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => Alert.alert('Coming Soon', 'Help & Support will be available soon!')}
+            onPress={() => Alert.alert('Coming Soon', 'use the dispute form to report any issues!')}
           >
             <Ionicons name="help-circle-outline" size={20} color="#FFFFFF" />
             <Text style={styles.actionButtonText}>Help & Support</Text>
@@ -367,7 +358,7 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => Alert.alert('Coming Soon', 'Terms & Privacy will be available soon!')}
+            onPress={() => Alert.alert('Coming Soon', 'visit our website fretiko.com/terms for terms and privacy!')}
           >
             <Ionicons name="document-text-outline" size={20} color="#FFFFFF" />
             <Text style={styles.actionButtonText}>Terms & Privacy</Text>
