@@ -90,17 +90,17 @@ export const PersonCard: React.FC<PersonCardProps> = ({
         
         {/* Overlay badges */}
         {person?.isOnline && <View style={styles.onlineIndicator} />}
-        {person?.verified && (
+        {!!person?.verified && (
           <View style={styles.verifiedBadge}>
             <Ionicons name="checkmark" size={12} color="#FFFFFF" />
           </View>
         )}
         
         {/* Engagement overlay for video/special content */}
-        {person?.engagementRate && (
+        {!!person?.engagementRate && (
           <View style={styles.engagementOverlay}>
             <Ionicons name="eye" size={12} color="#FFFFFF" />
-            <Text style={styles.engagementText}>{person?.engagementRate}K</Text>
+            <Text style={styles.engagementText}>{String(person?.engagementRate)}K</Text>
           </View>
         )}
       </View>
@@ -112,21 +112,21 @@ export const PersonCard: React.FC<PersonCardProps> = ({
               ? `${person?.firstName} ${person?.lastName}` 
               : person?.username}
           </Text>
-          {person?.trustScore && (
+          {!!person?.trustScore && (
             <View style={styles.trustScore}>
               <Ionicons name="shield-checkmark" size={12} color="#27AE60" />
-              <Text style={styles.trustScoreText}>{person?.trustScore}</Text>
+              <Text style={styles.trustScoreText}>{String(person?.trustScore)}</Text>
             </View>
           )}
         </View>
         
         <Text style={styles.username}>@{person?.username}</Text>
         
-        {person?.specialty && (
+        {!!person?.specialty && (
           <Text style={styles.specialty}>{person?.specialty}</Text>
         )}
         
-        {person?.location && (
+        {!!person?.location && (
           <Text style={styles.location}>
             <Ionicons name="location-outline" size={12} color="rgba(255,255,255,0.6)" />
             {' ' + person?.location}
@@ -134,14 +134,12 @@ export const PersonCard: React.FC<PersonCardProps> = ({
         )}
 
         <View style={styles.statsRow}>
-          {person?.followers && (
+          {!!person?.followers && (
             <Text style={styles.statText}>
-              {typeof person?.followers === 'number' 
-                ? `${person?.followers}` 
-                : person?.followers} followers
+              {String(person?.followers)} followers
             </Text>
           )}
-          {person?.mutualConnections && person?.mutualConnections > 0 && (
+          {!!person?.mutualConnections && person?.mutualConnections > 0 && (
             <Text style={styles.mutualText}>
               {person?.mutualConnections} mutual
             </Text>
@@ -179,14 +177,14 @@ export const PersonCard: React.FC<PersonCardProps> = ({
               ? `${person?.firstName} ${person?.lastName}` 
               : person?.username}
           </Text>
-          {person?.isOnline && <View style={styles.onlineIndicatorSmall} />}
+          {!!person?.isOnline && <View style={styles.onlineIndicatorSmall} />}
         </View>
         <Text style={styles.compactUsername}>@{person?.username}</Text>
-        {person?.location && (
+        {!!person?.location && (
           <Text style={styles.compactLocation}>{person?.location}</Text>
         )}
       </View>
-      {onConnect && (
+      {!!onConnect && (
         <TouchableOpacity 
           style={styles.compactConnectButton} 
           onPress={() => onConnect(person)}
@@ -208,21 +206,21 @@ export const PersonCard: React.FC<PersonCardProps> = ({
       <View style={styles.trendingContent}>
         <View style={styles.trendingHeader}>
           <Text style={styles.trendingUsername}>@{person?.username}</Text>
-          {person.engagementRate && (
+          {!!person?.engagementRate && (
             <View style={styles.growthBadge}>
-              <Text style={styles.growthText}>+{person.engagementRate}%</Text>
+              <Text style={styles.growthText}>+{String(person?.engagementRate)}%</Text>
             </View>
           )}
         </View>
-        {person?.followers && (
+        {!!person?.followers && (
           <Text style={styles.trendingFollowers}>
-            {person?.followers} followers
+            {String(person?.followers)} followers
           </Text>
         )}
-        {person?.location && (
+        {!!person?.location && (
           <Text style={styles.trendingLocation}>{person?.location}</Text>
         )}
-        {person?.recentActivity && (
+        {!!person?.recentActivity && (
           <Text style={styles.trendingActivity}>{person?.recentActivity}</Text>
         )}
       </View>

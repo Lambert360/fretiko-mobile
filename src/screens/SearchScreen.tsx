@@ -36,7 +36,6 @@ import {
   mapProvidersArray,
 } from '../utils/dataMappers';
 
-
 const SearchScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
@@ -452,10 +451,10 @@ const SearchScreen = () => {
 
   const renderFeaturedProviderItem = ({ item }: { item: ProviderData }) => (
     <ProviderCard
-      provider={item}
+      rider={item}
       variant="featured"
-      onPress={(provider) => navigation.navigate('PublicProfile', { userId: provider.id })}
-      onSelect={(provider) => console.log('Select provider:', provider.name)}
+      onPress={(rider) => navigation.navigate('PublicProfile', { userId: rider.id })}
+      onSelect={(rider) => console.log('Select provider:', rider.name)}
     />
   );
 
@@ -519,10 +518,10 @@ const SearchScreen = () => {
 
   const renderRiderItem = ({ item }: { item: RiderResult }) => (
     <ProviderCard
-      provider={item}
+      rider={item}
       variant="selection"
-      onPress={(provider) => navigation.navigate('PublicProfile', { userId: provider.id })}
-      onSelect={(provider) => console.log('Select provider for order:', provider.name)}
+      onPress={(rider) => navigation.navigate('PublicProfile', { userId: rider.id })}
+      onSelect={(rider) => console.log('Select provider for order:', rider.name)}
     />
   );
 
@@ -574,7 +573,7 @@ const SearchScreen = () => {
                     data={searchResults?.results?.providers || []}
                     renderItem={({ item }) => (
                       <ProviderCard
-                        provider={item}
+                        rider={item}
                         variant="compact"
                         onPress={() => navigation.navigate('PublicProfile', { userId: item.id })}
                       />
@@ -715,8 +714,9 @@ const SearchScreen = () => {
                 <Text style={styles.sectionTitle}>Recommended for You</Text>
                 <FlatList
                   data={[...recommendations.products, ...recommendations.services].slice(0, 6)}
-                  renderItem={({ item }) =>
-                    item.actionType ? (
+                  renderItem={({ item }) => {
+                    const isService = 'provider' in item;
+                    return isService ? (
                       <ServiceCard
                         service={item}
                         variant="grid"
@@ -728,8 +728,8 @@ const SearchScreen = () => {
                         variant="grid"
                         onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
                       />
-                    )
-                  }
+                    );
+                  }}
                   keyExtractor={(item) => item.id}
                   scrollEnabled={false}
                   numColumns={2}
@@ -748,13 +748,13 @@ const SearchScreen = () => {
                 <FlatList
                   data={trendingData}
                   renderItem={({ item }) => (
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={styles.trendingItem}
                       onPress={() => handleSearch(item.query)}
                     >
                       <View style={styles.trendingContent}>
-                        <Text style={styles.trendingTitle}>{item.query}</Text>
-                        <Text style={styles.trendingSubtitle}>{item.count} searches • {item.category}</Text>
+                        <Text style={styles.trendingTitle}>{item.query || 'Search query'}</Text>
+                        <Text style={styles.trendingSubtitle}>{String(item.count ?? 0)} searches • {item.category || 'All'}</Text>
                       </View>
                       <View style={styles.trendingBadge}>
                         <Ionicons name="trending-up" size={16} color="#4CAF50" />

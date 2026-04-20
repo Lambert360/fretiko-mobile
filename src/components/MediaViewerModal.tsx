@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Modal,
@@ -6,6 +6,8 @@ import {
   StyleSheet,
   Dimensions,
   Image,
+  ScrollView,
+  Text,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +20,8 @@ interface MediaViewerModalProps {
   onClose: () => void;
   type: 'image' | 'video';
   uri: string;
+  uris?: string[];
+  initialIndex?: number;
 }
 
 const ModalVideoPlayer = ({ uri, onClose }: { uri: string; onClose: () => void }) => {
@@ -40,7 +44,6 @@ const ModalVideoPlayer = ({ uri, onClose }: { uri: string; onClose: () => void }
         player={player}
         style={styles.video}
         contentFit="contain"
-        showsControls={true}
       />
     </View>
   );
@@ -51,9 +54,29 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   onClose,
   type,
   uri,
+  uris,
+  initialIndex = 0,
 }) => {
   const insets = useSafeAreaInsets();
-  if (!uri) return null;
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  // Reset index when modal opens with new URIs
+  useEffect(() => {
+    if (visible && uris && uris.length > 0) {
+      setCurrentIndex(initialIndex);
+      scrollViewRef.current?.scrollTo({
+        x: initialIndex * screenWidth,
+        animated: false,
+      });
+    }
+  }, [visible, uris, initialIndex]);
+
+  if (!uri && (!uris || uris.length === 0)) return null;
+
+  // Use uris array if provided, otherwise fall back to single uri
+  const imageUris = uris && uris.length > 0 ? uris : [uri];
+  const showMultiple = imageUris.length > 1 && type === 'image';
 
   return (
     <Modal
@@ -71,11 +94,44 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
           <Ionicons name="close" size={28} color="#FFFFFF" />
         </TouchableOpacity>
         {type === 'image' ? (
-          <Image
-            source={{ uri }}
-            style={styles.image}
-            resizeMode="contain"
-          />
+          <>
+            {showMultiple ? (
+              <ScrollView
+                ref={scrollViewRef}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onMomentumScrollEnd={(event) => {
+                  const index = Math.round(event.nativeEvent.contentOffset.x / screenWidth);
+                  setCurrentIndex(index);
+                }}
+                style={styles.scrollView}
+              >
+                {imageUris.map((imageUri, index) => (
+                  <View key={index} style={styles.imageContainer}>
+                    <Image
+                      source={{ uri: imageUri }}
+                      style={styles.image}
+                      resizeMode="contain"
+                    />
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <Image
+                source={{ uri: imageUris[0] }}
+                style={styles.image}
+                resizeMode="contain"
+              />
+            )}
+            {showMultiple && (
+              <View style={styles.indicatorContainer}>
+                <Text style={styles.indicatorText}>
+                  {currentIndex + 1} / {imageUris.length}
+                </Text>
+              </View>
+            )}
+          </>
         ) : (
           visible && <ModalVideoPlayer uri={uri} onClose={onClose} />
         )}
@@ -116,5 +172,28 @@ const styles = StyleSheet.create({
   video: {
     width: screenWidth,
     height: screenHeight,
+  },
+  scrollView: {
+    width: screenWidth,
+    height: screenHeight,
+  },
+  imageContainer: {
+    width: screenWidth,
+    height: screenHeight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  indicatorContainer: {
+    position: 'absolute',
+    bottom: 50,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  indicatorText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

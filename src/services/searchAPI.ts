@@ -42,7 +42,7 @@ export interface RiderResult {
   name: string;
   avatar?: string;
   rating: number;
-  vehicleType: string;
+  vehicleType: 'bike' | 'car' | 'wheelbarrow';
   totalDeliveries: number;
   isOnline: boolean;
   distance?: number;
@@ -51,7 +51,7 @@ export interface RiderResult {
   avgDeliveryTime?: number;
   verified?: boolean;
   recentActivity?: string;
-  mediaAspectRatio?: string;
+  mediaAspectRatio?: 'landscape' | 'portrait' | 'square';
   customerSatisfaction?: number;
 }
 

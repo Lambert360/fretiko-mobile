@@ -149,7 +149,7 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
         <View style={styles.actionButtons}>
           {onBookmark && (
             <TouchableOpacity 
-              style={styles.actionButton}
+              style={styles.iconActionButton}
               onPress={() => onBookmark(service)}
             >
               <Ionicons 
@@ -187,31 +187,31 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
             }} 
             style={styles.providerAvatar} 
           />
-          <View style={styles.providerDetails}>
-            <Text style={styles.providerName}>{service.provider?.name || 'Unknown Provider'}</Text>
-            {service.provider?.verified && (
-              <Ionicons name="checkmark-circle" size={12} color="#1DA1F2" />
+          <View style={styles.providerRow}>
+            <Text style={styles.providerName}>{service?.provider?.name || 'Unknown'}</Text>
+            {!!service?.provider?.verified && (
+              <Ionicons name="checkmark-circle" size={14} color="#1DA1F2" />
             )}
           </View>
-          {service.provider?.completedJobs && (
-            <Text style={styles.completedJobs}>{service.provider?.completedJobs} jobs</Text>
+          {!!service?.provider?.completedJobs && (
+            <Text style={styles.completedJobs}>{String(service?.provider?.completedJobs)} jobs</Text>
           )}
         </TouchableOpacity>
 
         {/* Service details */}
-        <Text style={styles.serviceTitle} numberOfLines={2}>{service.title}</Text>
+        <Text style={styles.serviceTitle} numberOfLines={2}>{service?.title || 'Untitled Service'}</Text>
         
-        {service.description && (
+        {!!service?.description && (
           <Text style={styles.description} numberOfLines={2}>{service.description}</Text>
         )}
 
-        {service.category && (
+        {!!service?.category && (
           <Text style={styles.category}>{service.category}</Text>
         )}
 
         <View style={styles.priceRow}>
           <Text style={styles.price}>{getPriceDisplay()}</Text>
-          {service.isUrgent && (
+          {!!service.isUrgent && (
             <View style={styles.urgentBadge}>
               <Ionicons name="time" size={12} color="#FF5722" />
               <Text style={styles.urgentText}>Urgent</Text>
@@ -220,23 +220,23 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
         </View>
 
         {/* Rating and reviews */}
-        {service.rating && (
+        {!!service?.rating && (
           <View style={styles.ratingRow}>
             <View style={styles.rating}>
               <Ionicons name="star" size={12} color="#FFD700" />
               <Text style={styles.ratingText}>{service.rating.toFixed(1)}</Text>
             </View>
-            {service.reviews && (
-              <Text style={styles.reviewsText}>({service.reviews} reviews)</Text>
+            {!!service?.reviews && (
+              <Text style={styles.reviewsText}>({String(service.reviews)} reviews)</Text>
             )}
-            {service.responseTime && (
+            {!!service?.responseTime && (
               <Text style={styles.responseTime}>{service.responseTime}</Text>
             )}
           </View>
         )}
 
         {/* Skills */}
-        {service.skills && service.skills.length > 0 && (
+        {!!service.skills && service.skills.length > 0 && (
           <View style={styles.skillsContainer}>
             {service.skills.slice(0, 3).map((skill, index) => (
               <View key={index} style={styles.skillTag}>
@@ -259,28 +259,28 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
                   size={14} 
                   color={service.isLiked ? "#E91E63" : "rgba(255,255,255,0.6)"} 
                 />
-                {service.likes && <Text style={styles.engagementText}>{service.likes}</Text>}
+                {!!service?.likes && <Text style={styles.engagementText}>{String(service?.likes)}</Text>}
               </TouchableOpacity>
             )}
             
-            {service.views && (
+            {!!service.views && (
               <View style={styles.engagementButton}>
                 <Ionicons name="eye" size={14} color="rgba(255,255,255,0.6)" />
-                <Text style={styles.engagementText}>{service.views}</Text>
+                <Text style={styles.engagementText}>{String(service.views)}</Text>
               </View>
             )}
             
-            {service.bookings && (
+            {!!service.bookings && (
               <View style={styles.engagementButton}>
                 <Ionicons name="calendar" size={14} color="rgba(255,255,255,0.6)" />
-                <Text style={styles.engagementText}>{service.bookings}</Text>
+                <Text style={styles.engagementText}>{String(service.bookings)}</Text>
               </View>
             )}
             
-            {service.purchases && (
+            {!!service.purchases && (
               <View style={styles.engagementButton}>
                 <Ionicons name="bag" size={14} color="rgba(255,255,255,0.6)" />
-                <Text style={styles.engagementText}>{service.purchases}</Text>
+                <Text style={styles.engagementText}>{String(service.purchases)}</Text>
               </View>
             )}
           </View>
@@ -317,10 +317,10 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
     <TouchableOpacity style={styles.gridCard} onPress={() => onPress?.(service)}>
       {renderMedia()}
       <View style={styles.gridContent}>
-        <Text style={styles.gridTitle} numberOfLines={2}>{service.title}</Text>
+        <Text style={styles.gridTitle} numberOfLines={2}>{String(service.title || 'Untitled Service')}</Text>
         <Text style={styles.gridProvider}>{service.provider?.name || 'Unknown Provider'}</Text>
         <Text style={styles.gridPrice}>{getPriceDisplay()}</Text>
-        {service.rating && (
+        {!!service?.rating && (
           <View style={styles.gridRating}>
             <Ionicons name="star" size={10} color="#FFD700" />
             <Text style={styles.gridRatingText}>{service.rating.toFixed(1)}</Text>
@@ -334,10 +334,10 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
     <TouchableOpacity style={styles.listCard} onPress={() => onPress?.(service)}>
       {renderMedia()}
       <View style={styles.listContent}>
-        <Text style={styles.listTitle} numberOfLines={1}>{service.title}</Text>
-        <Text style={styles.listProvider}>{service.provider?.name || 'Unknown Provider'}</Text>
+        <Text style={styles.listTitle} numberOfLines={1}>{service?.title || 'Untitled Service'}</Text>
+        <Text style={styles.listProvider}>{service?.provider?.name || 'Unknown Provider'}</Text>
         <Text style={styles.listPrice}>{getPriceDisplay()}</Text>
-        {service.rating && (
+        {!!service?.rating && (
           <View style={styles.listRating}>
             <Ionicons name="star" size={10} color="#FFD700" />
             <Text style={styles.listRatingText}>{service.rating.toFixed(1)}</Text>
@@ -415,7 +415,7 @@ const styles = StyleSheet.create({
     top: 12,
     right: 12,
   },
-  actionButton: {
+  iconActionButton: {
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -451,11 +451,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginRight: 8,
   },
-  providerDetails: {
+  providerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    flex: 1,
   },
   providerName: {
     color: '#1DA1F2',

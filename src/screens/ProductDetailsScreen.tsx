@@ -232,7 +232,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
         chatId: conversation.id,
         chatName: `Product: ${product.name}`, // Use product name as chat name
         chatAvatar: product.images[0] || 'https://via.placeholder.com/50', // Use product image as avatar
-        chatType: chatType as const,
+        chatType,
         isOnline: true, // Assume online for now
         verified: false, // Set based on user verification status if available
         isAI: false,
@@ -709,6 +709,8 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
         onClose={() => setMediaViewerVisible(false)}
         type={mediaViewerType}
         uri={mediaViewerUri}
+        uris={mediaViewerType === 'image' ? product.images : undefined}
+        initialIndex={mediaViewerType === 'image' ? currentImageIndex : 0}
       />
     </View>
   );

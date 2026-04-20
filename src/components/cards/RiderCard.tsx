@@ -141,28 +141,28 @@ export const RiderCard: React.FC<RiderCardProps> = ({
         </View>
         
         {/* Performance overlay */}
-        {rider.customerSatisfaction && (
+        {!!rider?.customerSatisfaction && (
           <View style={styles.performanceOverlay}>
             <Ionicons name="star" size={12} color="#FFD700" />
-            <Text style={styles.performanceText}>{rider.customerSatisfaction}%</Text>
+            <Text style={styles.performanceText}>{String(rider?.customerSatisfaction)}%</Text>
           </View>
         )}
       </View>
 
       <View style={styles.cardContent}>
         <View style={styles.cardHeader}>
-          <Text style={styles.riderName}>{rider.name}</Text>
+          <Text style={styles.riderName}>{rider?.name || 'Unknown'}</Text>
           <View style={styles.ratingBadge}>
             <Ionicons name="star" size={12} color="#FFD700" />
-            <Text style={styles.ratingText}>{rider.rating.toFixed(1)}</Text>
+            <Text style={styles.ratingText}>{rider?.rating ? rider.rating.toFixed(1) : '0.0'}</Text>
           </View>
         </View>
         
-        {rider.distance && (
-          <Text style={styles.distance}>{rider.distance.toFixed(1)}km away</Text>
+        {!!rider?.distance && (
+          <Text style={styles.distance}>{String(rider?.distance)}km away</Text>
         )}
         
-        <Text style={styles.deliveries}>{rider.totalDeliveries} deliveries</Text>
+        <Text style={styles.deliveries}>{String(rider?.totalDeliveries ?? 0)} deliveries</Text>
 
         {rider.specialties && rider.specialties.length > 0 && (
           <View style={styles.specialtiesContainer}>
@@ -172,12 +172,12 @@ export const RiderCard: React.FC<RiderCardProps> = ({
           </View>
         )}
 
-        {rider.completionRate && (
-          <Text style={styles.completionRate}>{rider.completionRate}% completion rate</Text>
+        {!!rider?.completionRate && (
+          <Text style={styles.completionRate}>{String(rider?.completionRate)}% completion rate</Text>
         )}
 
-        {rider.recentActivity && (
-          <Text style={styles.activity}>{rider.recentActivity}</Text>
+        {!!rider?.recentActivity && (
+          <Text style={styles.activity}>{rider?.recentActivity}</Text>
         )}
 
         {onSelect && (
@@ -209,17 +209,17 @@ export const RiderCard: React.FC<RiderCardProps> = ({
       
       <View style={styles.compactContent}>
         <View style={styles.compactHeader}>
-          <Text style={styles.compactName}>{rider.name}</Text>
+          <Text style={styles.compactName}>{rider?.name || 'Unknown'}</Text>
           <View style={styles.compactRating}>
             <Ionicons name="star" size={10} color="#FFD700" />
-            <Text style={styles.compactRatingText}>{rider.rating.toFixed(1)}</Text>
+            <Text style={styles.compactRatingText}>{rider?.rating ? rider.rating.toFixed(1) : '0.0'}</Text>
           </View>
         </View>
         
-        <Text style={styles.compactDeliveries}>{rider.totalDeliveries} deliveries</Text>
+        <Text style={styles.compactDeliveries}>{String(rider?.totalDeliveries ?? 0)} deliveries</Text>
         
-        {rider.distance && (
-          <Text style={styles.compactDistance}>{rider.distance.toFixed(1)}km away</Text>
+        {!!rider?.distance && (
+          <Text style={styles.compactDistance}>{String(rider?.distance)}km away</Text>
         )}
       </View>
       
@@ -245,7 +245,7 @@ export const RiderCard: React.FC<RiderCardProps> = ({
       
       <View style={styles.selectionContent}>
         <View style={styles.selectionHeader}>
-          <Text style={styles.selectionName}>{rider.name}</Text>
+          <Text style={styles.selectionName}>{rider?.name || 'Unknown'}</Text>
           <View style={styles.selectionBadges}>
             {rider.isOnline && <View style={styles.onlineIndicatorSmall} />}
             <View style={[styles.vehicleBadgeSmall, { backgroundColor: getServiceColor() }]}>
@@ -257,11 +257,11 @@ export const RiderCard: React.FC<RiderCardProps> = ({
         <View style={styles.selectionStats}>
           <View style={styles.selectionRating}>
             <Ionicons name="star" size={12} color="#FFD700" />
-            <Text style={styles.selectionRatingText}>{rider.rating.toFixed(1)}</Text>
+            <Text style={styles.selectionRatingText}>{rider?.rating ? rider.rating.toFixed(1) : '0.0'}</Text>
           </View>
-          <Text style={styles.selectionDeliveries}>{rider.totalDeliveries} orders</Text>
-          {rider.distance && (
-            <Text style={styles.selectionDistance}>{rider.distance.toFixed(1)}km</Text>
+          <Text style={styles.selectionDeliveries}>{String(rider?.totalDeliveries ?? 0)} orders</Text>
+          {!!rider?.distance && (
+            <Text style={styles.selectionDistance}>{String(rider?.distance)}km</Text>
           )}
         </View>
       </View>

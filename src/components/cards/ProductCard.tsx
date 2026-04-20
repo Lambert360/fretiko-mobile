@@ -220,7 +220,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               <Text style={styles.ratingText}>{product.rating.toFixed(1)}</Text>
             </View>
             {typeof product.reviews === 'number' && product.reviews > 0 && (
-              <Text style={styles.reviewsText}>({product.reviews} reviews)</Text>
+              <Text style={styles.reviewsText}>({String(product.reviews)} reviews)</Text>
             )}
           </View>
         )}
