@@ -68,7 +68,6 @@
       "expo-secure-store",
       "expo-audio",
       "expo-video",
-      "expo-dev-client",
       [
         "expo-camera",
         {
