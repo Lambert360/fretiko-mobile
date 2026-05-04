@@ -4,7 +4,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -16,25 +16,59 @@ import {
   TouchableOpacity,
   View,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { bankAccountAPI } from '../services/bankAccountAPI';
+import { bankAccountAPI, Bank, AccountPreview } from '../services/bankAccountAPI';
 
 interface AddBankAccountScreenProps {
   navigation: any;
 }
 
+// Supported countries for Flutterwave account resolution
+const SUPPORTED_COUNTRIES = [
+  { code: 'NG', name: 'Nigeria', currency: 'NGN' },
+  { code: 'GH', name: 'Ghana', currency: 'GHS' },
+  { code: 'KE', name: 'Kenya', currency: 'KES' },
+  { code: 'UG', name: 'Uganda', currency: 'UGX' },
+  { code: 'TZ', name: 'Tanzania', currency: 'TZS' },
+  { code: 'ZA', name: 'South Africa', currency: 'ZAR' },
+  { code: 'RW', name: 'Rwanda', currency: 'RWF' },
+  { code: 'ZM', name: 'Zambia', currency: 'ZMW' },
+  { code: 'MW', name: 'Malawi', currency: 'MWK' },
+  { code: 'BW', name: 'Botswana', currency: 'BWP' },
+  { code: 'MZ', name: 'Mozambique', currency: 'MZN' },
+];
+
 const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
   const insets = useSafeAreaInsets();
-  const [accountName, setAccountName] = useState('');
-  const [bankName, setBankName] = useState('');
+  const screenHeight = Dimensions.get('window').height;
+  
+  // Refs for measuring dropdown positions
+  const countryInputRef = useRef<View>(null);
+  const bankInputRef = useRef<View>(null);
+  
+  // Dropdown positioning state
+  const [countryDropdownPosition, setCountryDropdownPosition] = useState<'above' | 'below'>('below');
+  const [bankDropdownPosition, setBankDropdownPosition] = useState<'above' | 'below'>('below');
+  
+  // Form state
+  const [country, setCountry] = useState('NG');
+  const [banks, setBanks] = useState<Bank[]>([]);
+  const [selectedBank, setSelectedBank] = useState<Bank | null>(null);
   const [accountNumber, setAccountNumber] = useState('');
-  const [bankCode, setBankCode] = useState('');
   const [accountType, setAccountType] = useState<'savings' | 'checking' | 'current'>('savings');
-  const [currency, setCurrency] = useState('NGN');
-  const [showCurrencyDropdown, setShowCurrencyDropdown] = useState(false);
-  const [currencySearch, setCurrencySearch] = useState('');
+  
+  // UI state
+  const [showCountryDropdown, setShowCountryDropdown] = useState(false);
+  const [showBankDropdown, setShowBankDropdown] = useState(false);
+  const [bankSearch, setBankSearch] = useState('');
   const [loading, setLoading] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  
+  // Verification state
+  const [verifiedAccount, setVerifiedAccount] = useState<AccountPreview | null>(null);
+  const [verificationError, setVerificationError] = useState('');
 
   const accountTypes = [
     { id: 'savings', label: 'Savings' },
@@ -42,91 +76,110 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
     { id: 'current', label: 'Current' },
   ];
 
-  const currencies = [
-    // Major International Currencies (most common)
-    'USD', // United States Dollar
-    'EUR', // Euro
-    'GBP', // British Pound Sterling
-    'CAD', // Canadian Dollar
-    'AUD', // Australian Dollar
-    
-    // African Currencies (Flutterwave's primary market)
-    'NGN', // Nigerian Naira
-    'GHS', // Ghanaian Cedi
-    'KES', // Kenyan Shilling
-    'ZAR', // South African Rand
-    'UGX', // Ugandan Shilling
-    'TZS', // Tanzanian Shilling
-    'RWF', // Rwandan Franc
-    'XAF', // Central African CFA Franc
-    'XOF', // West African CFA Franc
-    'MWK', // Malawian Kwacha
-    'ZMW', // Zambian Kwacha
-    'EGP', // Egyptian Pound
-    'MAD', // Moroccan Dirham
-    'SLL', // Sierra Leonean Leone
-    'BWP', // Botswana Pula
-    'ETB', // Ethiopian Birr
-    'MZN', // Mozambican Metical
-    'MGA', // Malagasy Ariary
-    'AOA', // Angolan Kwanza
-    'SCR', // Seychellois Rupee
-    'MUR', // Mauritian Rupee
-    'SZL', // Swazi Lilangeni
-    'LSL', // Lesotho Loti
-    'NAD', // Namibian Dollar
-    'BIF', // Burundian Franc
-    'DJF', // Djiboutian Franc
-    'SOS', // Somali Shilling
-    'SDG', // Sudanese Pound
-    'SSP', // South Sudanese Pound
-    'STN', // São Tomé and Príncipe Dobra
-    'CDF', // Congolese Franc
-    'LRD', // Liberian Dollar
-    'GMD', // Gambian Dalasi
-    'GNF', // Guinean Franc
-    'TND', // Tunisian Dinar
-    'DZD', // Algerian Dinar
-    'MRU', // Mauritanian Ouguiya
-  ];
-
-  // Filter currencies based on search
-  const filteredCurrencies = currencies.filter(curr => 
-    curr.toLowerCase().includes(currencySearch.toLowerCase())
-  );
-
-  // Sort currencies: Major currencies first, then alphabetically
-  const majorCurrencies = ['USD', 'EUR', 'GBP', 'NGN', 'GHS', 'KES', 'ZAR'];
-  const sortedCurrencies = [
-    ...filteredCurrencies.filter(c => majorCurrencies.includes(c)),
-    ...filteredCurrencies.filter(c => !majorCurrencies.includes(c)).sort()
-  ];
-
-  const handleCurrencySelect = (selectedCurrency: string) => {
-    setCurrency(selectedCurrency);
-    setShowCurrencyDropdown(false);
-    setCurrencySearch('');
+  // Fetch banks when country changes
+  const fetchBanks = async (countryCode: string) => {
+    try {
+      setLoading(true);
+      const banksList = await bankAccountAPI.getBanks(countryCode);
+      setBanks(banksList);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to fetch banks');
+      setBanks([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleAddAccount = async () => {
-    // Validation
-    if (!accountName.trim()) {
-      Alert.alert('Error', 'Please enter account holder name');
-      return;
-    }
+  // Measure position and determine dropdown placement
+  const calculateDropdownPosition = (
+    ref: React.RefObject<View | null>,
+    dropdownHeight: number = 300,
+    setPosition: (pos: 'above' | 'below') => void,
+    showDropdown: () => void
+  ) => {
+    ref.current?.measureInWindow((x, y, width, height) => {
+      const spaceBelow = screenHeight - y - height;
+      const spaceAbove = y;
+      
+      // If there's more space below than above, or not enough space above
+      if (spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove) {
+        setPosition('below');
+      } else {
+        setPosition('above');
+      }
+      showDropdown();
+    });
+  };
 
-    if (!bankName.trim()) {
-      Alert.alert('Error', 'Please enter bank name');
-      return;
-    }
+  // Handle country selection
+  const handleCountrySelect = (selectedCountry: typeof SUPPORTED_COUNTRIES[0]) => {
+    setCountry(selectedCountry.code);
+    setSelectedBank(null);
+    setVerifiedAccount(null);
+    setVerificationError('');
+    setShowCountryDropdown(false);
+    fetchBanks(selectedCountry.code);
+  };
 
+  // Handle bank selection
+  const handleBankSelect = (bank: Bank) => {
+    setSelectedBank(bank);
+    setVerifiedAccount(null);
+    setVerificationError('');
+    setShowBankDropdown(false);
+    setBankSearch('');
+  };
+
+  // Verify account with Flutterwave
+  const handleVerifyAccount = async () => {
     if (!accountNumber.trim()) {
       Alert.alert('Error', 'Please enter account number');
       return;
     }
 
-    if (!bankCode.trim()) {
-      Alert.alert('Error', 'Please enter bank code');
+    if (!selectedBank) {
+      Alert.alert('Error', 'Please select a bank');
+      return;
+    }
+
+    if (accountNumber.length < 10) {
+      Alert.alert('Error', 'Account number must be at least 10 digits');
+      return;
+    }
+
+    setVerifying(true);
+    setVerificationError('');
+    setVerifiedAccount(null);
+
+    try {
+      const preview = await bankAccountAPI.previewAccount(
+        accountNumber.trim(),
+        selectedBank.code
+      );
+      setVerifiedAccount(preview);
+    } catch (error: any) {
+      setVerificationError(error.message || 'Account verification failed');
+      Alert.alert('Verification Failed', error.message || 'Could not verify account. Please check your details.');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // Add bank account after verification
+  const handleAddAccount = async () => {
+    // Validation
+    if (!verifiedAccount) {
+      Alert.alert('Error', 'Please verify your account first');
+      return;
+    }
+
+    if (!selectedBank) {
+      Alert.alert('Error', 'Please select a bank');
+      return;
+    }
+
+    if (!accountNumber.trim()) {
+      Alert.alert('Error', 'Please enter account number');
       return;
     }
 
@@ -137,13 +190,15 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
 
     setLoading(true);
     try {
+      const countryData = SUPPORTED_COUNTRIES.find(c => c.code === country);
       const newAccount = await bankAccountAPI.createBankAccount({
-        accountName: accountName.trim(),
-        bankName: bankName.trim(),
+        accountName: verifiedAccount.accountName, // From Flutterwave
+        bankName: selectedBank.name,
         accountNumber: accountNumber.trim(),
-        bankCode: bankCode.trim(),
+        bankCode: selectedBank.code,
         accountType,
-        currency,
+        currency: countryData?.currency || 'NGN',
+        country,
       });
 
       Alert.alert(
@@ -184,7 +239,7 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
       <ScrollView 
         style={styles.content} 
         showsVerticalScrollIndicator={false}
-        scrollEnabled={!showCurrencyDropdown}
+        scrollEnabled={!showCountryDropdown && !showBankDropdown}
       >
         {/* Info Card */}
         <View style={styles.infoCard}>
@@ -196,30 +251,137 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
 
         {/* Form */}
         <View style={styles.formCard}>
-          {/* Account Holder Name */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Account Holder Name *</Text>
-            <TextInput
-              style={styles.input}
-              value={accountName}
-              onChangeText={setAccountName}
-              placeholder="John Doe"
-              placeholderTextColor="#666"
-              autoCapitalize="words"
-            />
+          {/* Country Selector */}
+          <View style={styles.inputGroup} ref={countryInputRef}>
+            <Text style={styles.inputLabel}>Country *</Text>
+            <TouchableOpacity
+              style={styles.currencyPicker}
+              onPress={() => {
+                if (showCountryDropdown) {
+                  setShowCountryDropdown(false);
+                } else {
+                  calculateDropdownPosition(
+                    countryInputRef,
+                    300,
+                    setCountryDropdownPosition,
+                    () => setShowCountryDropdown(true)
+                  );
+                }
+              }}
+            >
+              <Text style={styles.currencyText}>
+                {SUPPORTED_COUNTRIES.find(c => c.code === country)?.name || country}
+              </Text>
+              <Ionicons 
+                name={showCountryDropdown ? "chevron-up" : "chevron-down"} 
+                size={16} 
+                color="#999" 
+              />
+            </TouchableOpacity>
+            
+            {/* Country Dropdown */}
+            {showCountryDropdown && (
+              <View style={[
+                styles.currencyDropdown,
+                countryDropdownPosition === 'below' ? styles.dropdownBelow : styles.dropdownAbove,
+              ]}>
+                <ScrollView 
+                  style={styles.currencyDropdownScroll}
+                  nestedScrollEnabled={true}
+                  showsVerticalScrollIndicator={true}
+                >
+                  {SUPPORTED_COUNTRIES.map((c) => (
+                    <TouchableOpacity
+                      key={c.code}
+                      style={[
+                        styles.currencyOption,
+                        country === c.code && styles.currencyOptionActive
+                      ]}
+                      onPress={() => handleCountrySelect(c)}
+                    >
+                      <Text style={[
+                        styles.currencyOptionText,
+                        country === c.code && styles.currencyOptionTextActive
+                      ]}>
+                        {c.name} ({c.code})
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
           </View>
 
-          {/* Bank Name */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Bank Name *</Text>
-            <TextInput
-              style={styles.input}
-              value={bankName}
-              onChangeText={setBankName}
-              placeholder="GTBank, Access Bank, etc."
-              placeholderTextColor="#666"
-              autoCapitalize="words"
-            />
+          {/* Bank Selector */}
+          <View style={styles.inputGroup} ref={bankInputRef}>
+            <Text style={styles.inputLabel}>Bank *</Text>
+            <TouchableOpacity
+              style={[styles.currencyPicker, !banks.length && styles.inputDisabled]}
+              onPress={() => {
+                if (!banks.length) return;
+                if (showBankDropdown) {
+                  setShowBankDropdown(false);
+                } else {
+                  calculateDropdownPosition(
+                    bankInputRef,
+                    350,
+                    setBankDropdownPosition,
+                    () => setShowBankDropdown(true)
+                  );
+                }
+              }}
+              disabled={!banks.length}
+            >
+              <Text style={[styles.currencyText, !selectedBank && styles.placeholderText]}>
+                {selectedBank?.name || (banks.length ? 'Select your bank' : 'Select country first...')}
+              </Text>
+              <Ionicons 
+                name={showBankDropdown ? "chevron-up" : "chevron-down"} 
+                size={16} 
+                color={banks.length ? "#999" : "#666"} 
+              />
+            </TouchableOpacity>
+            
+            {/* Bank Dropdown */}
+            {showBankDropdown && banks.length > 0 && (
+              <View style={[
+                styles.currencyDropdown,
+                bankDropdownPosition === 'below' ? styles.dropdownBelow : styles.dropdownAbove,
+              ]}>
+                <TextInput
+                  style={styles.searchInput}
+                  value={bankSearch}
+                  onChangeText={setBankSearch}
+                  placeholder="Search banks..."
+                  placeholderTextColor="#666"
+                />
+                <ScrollView 
+                  style={styles.currencyDropdownScroll}
+                  nestedScrollEnabled={true}
+                  showsVerticalScrollIndicator={true}
+                >
+                  {banks
+                    .filter(b => b.name.toLowerCase().includes(bankSearch.toLowerCase()))
+                    .map((bank) => (
+                    <TouchableOpacity
+                      key={bank.id}
+                      style={[
+                        styles.currencyOption,
+                        selectedBank?.id === bank.id && styles.currencyOptionActive
+                      ]}
+                      onPress={() => handleBankSelect(bank)}
+                    >
+                      <Text style={[
+                        styles.currencyOptionText,
+                        selectedBank?.id === bank.id && styles.currencyOptionTextActive
+                      ]}>
+                        {bank.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
           </View>
 
           {/* Account Number */}
@@ -228,27 +390,16 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
             <TextInput
               style={styles.input}
               value={accountNumber}
-              onChangeText={setAccountNumber}
+              onChangeText={(text) => {
+                setAccountNumber(text);
+                setVerifiedAccount(null);
+                setVerificationError('');
+              }}
               placeholder="0123456789"
               placeholderTextColor="#666"
               keyboardType="numeric"
               maxLength={20}
             />
-          </View>
-
-          {/* Bank Code */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Bank Code *</Text>
-            <TextInput
-              style={styles.input}
-              value={bankCode}
-              onChangeText={setBankCode}
-              placeholder="058"
-              placeholderTextColor="#666"
-              keyboardType="numeric"
-              maxLength={10}
-            />
-            <Text style={styles.inputHint}>Bank sort code or routing number</Text>
           </View>
 
           {/* Account Type */}
@@ -277,54 +428,48 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
             </View>
           </View>
 
-          {/* Currency */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Currency</Text>
-            <TouchableOpacity
-              style={styles.currencyPicker}
-              onPress={() => setShowCurrencyDropdown(!showCurrencyDropdown)}
-            >
-              <Text style={styles.currencyText}>{currency}</Text>
-              <Ionicons 
-                name={showCurrencyDropdown ? "chevron-up" : "chevron-down"} 
-                size={16} 
-                color="#999" 
-              />
-            </TouchableOpacity>
-            
-            {/* Currency Dropdown */}
-            {showCurrencyDropdown && (
-              <View style={styles.currencyDropdown}>
-                <ScrollView 
-                  style={styles.currencyDropdownScroll}
-                  nestedScrollEnabled={true}
-                  showsVerticalScrollIndicator={true}
-                  maximumZoomScale={1}
-                >
-                  {sortedCurrencies.map((curr) => (
-                    <TouchableOpacity
-                      key={curr}
-                      style={[
-                        styles.currencyOption,
-                        currency === curr && styles.currencyOptionActive
-                      ]}
-                      onPress={() => handleCurrencySelect(curr)}
-                    >
-                      <Text style={[
-                        styles.currencyOptionText,
-                        currency === curr && styles.currencyOptionTextActive
-                      ]}>
-                        {curr}
-                      </Text>
-                      {currency === curr && (
-                        <Ionicons name="checkmark" size={16} color="#F39C12" />
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
+          {/* Verify Account Button */}
+          <TouchableOpacity
+            style={[
+              styles.verifyButton,
+              (!selectedBank || !accountNumber || verifying) && styles.verifyButtonDisabled,
+              verifiedAccount && styles.verifyButtonSuccess,
+            ]}
+            onPress={handleVerifyAccount}
+            disabled={!selectedBank || !accountNumber || verifying}
+          >
+            {verifying ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : verifiedAccount ? (
+              <>
+                <Ionicons name="checkmark-circle" size={20} color="#FFFFFF" />
+                <Text style={styles.verifyButtonText}>Verified</Text>
+              </>
+            ) : (
+              <>
+                <Ionicons name="shield-checkmark" size={20} color="#FFFFFF" />
+                <Text style={styles.verifyButtonText}>Verify Account</Text>
+              </>
             )}
-          </View>
+          </TouchableOpacity>
+
+          {/* Verification Result */}
+          {verifiedAccount && (
+            <View style={styles.verificationResult}>
+              <Ionicons name="checkmark-circle" size={24} color="#27AE60" />
+              <View style={styles.verificationText}>
+                <Text style={styles.verificationLabel}>Account Name:</Text>
+                <Text style={styles.verificationName}>{verifiedAccount.accountName}</Text>
+              </View>
+            </View>
+          )}
+
+          {verificationError && !verifiedAccount && (
+            <View style={styles.verificationError}>
+              <Ionicons name="close-circle" size={20} color="#E74C3C" />
+              <Text style={styles.verificationErrorText}>{verificationError}</Text>
+            </View>
+          )}
 
           {/* Note */}
           <View style={styles.noteCard}>
@@ -339,12 +484,20 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
       {/* Bottom Action */}
       <View style={styles.bottomAction}>
         <TouchableOpacity
-          style={[styles.addButton, loading && styles.addButtonDisabled]}
+          style={[
+            styles.addButton,
+            (loading || !verifiedAccount) && styles.addButtonDisabled,
+          ]}
           onPress={handleAddAccount}
-          disabled={loading}
+          disabled={loading || !verifiedAccount}
         >
           {loading ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : !verifiedAccount ? (
+            <>
+              <Ionicons name="lock-closed" size={18} color="#FFFFFF" />
+              <Text style={styles.addButtonText}>Verify Account to Continue</Text>
+            </>
           ) : (
             <Text style={styles.addButtonText}>Add Bank Account</Text>
           )}
@@ -425,10 +578,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#3A3A3A',
   },
+  inputDisabled: {
+    backgroundColor: '#0A0A0A',
+    borderColor: '#333',
+  },
   inputHint: {
     fontSize: 12,
-    color: '#999999',
-    marginTop: 6,
+    color: '#666',
+    marginTop: 4,
+  },
+  placeholderText: {
+    color: '#666',
+  },
+  searchInput: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 8,
+    padding: 12,
+    color: '#FFFFFF',
+    fontSize: 14,
+    marginBottom: 8,
   },
   optionsRow: {
     flexDirection: 'row',
@@ -473,19 +641,26 @@ const styles = StyleSheet.create({
   },
   currencyDropdown: {
     position: 'absolute',
-    bottom: '100%',  // Go UP instead of down
     left: 0,
     right: 0,
     backgroundColor: '#222',
     borderRadius: 12,
-    marginBottom: 4,  // Space above the input
     zIndex: 1000,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },  // Shadow goes up
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
     maxHeight: 300,
+  },
+  dropdownBelow: {
+    top: '100%',  // Position below the input
+    marginTop: 4,
+    shadowOffset: { width: 0, height: 4 },  // Shadow goes down
+  },
+  dropdownAbove: {
+    bottom: '100%',  // Position above the input
+    marginBottom: 4,
+    shadowOffset: { width: 0, height: -4 },  // Shadow goes up
   },
   currencyDropdownScroll: {
     maxHeight: 300,
@@ -550,6 +725,70 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  // New styles for verification flow
+  verifyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3498DB',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 8,
+    marginBottom: 16,
+    gap: 8,
+  },
+  verifyButtonDisabled: {
+    backgroundColor: '#1A3A5C',
+    opacity: 0.6,
+  },
+  verifyButtonSuccess: {
+    backgroundColor: '#27AE60',
+  },
+  verifyButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  verificationResult: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(39, 174, 96, 0.3)',
+    gap: 12,
+  },
+  verificationText: {
+    flex: 1,
+  },
+  verificationLabel: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 4,
+  },
+  verificationName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  verificationError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(231, 76, 60, 0.3)',
+    gap: 8,
+  },
+  verificationErrorText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#E74C3C',
   },
 });
 

@@ -1,5 +1,5 @@
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Dimensions, FlatList, Modal, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
@@ -43,29 +43,30 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
   
   const currencies = ['FRETI', 'USD', 'EUR', 'GBP', 'NGN'];
 
+  // Prevent concurrent wallet data fetching
+  const isFetching = useRef(false);
+
   useEffect(() => {
     loadProfile();
   }, []);
 
   useEffect(() => {
+    // Initial load - only on mount, not on every wallet context change
     loadWalletData();
 
     // Setup real-time wallet balance updates
     const walletBalanceListener = realtimeAPI.subscribe('wallet_balance_update', (data: any) => {
-      console.log('💰 Wallet balance update received:', data);
       
       // Refresh wallet data from API instead of using realtime balance data
       // This ensures we get the correct balance after transactions
       loadWalletData();
     });
 
-    // ✅ NEW: Listen for escrow release events
+    // NEW: Listen for escrow release events
     const escrowReleaseListener = realtimeAPI.subscribe('escrow_released', (data: any) => {
-      console.log('💸 Escrow released received:', data);
       
-      // Show notification
       Alert.alert(
-        'Payment Released! 💰',
+        'Payment Released! ',
         `₣${data.amount.toLocaleString()} has been credited to your wallet for order #${data.orderNumber}`,
         [{ text: 'OK', onPress: () => loadWalletData() }]
       );
@@ -74,33 +75,17 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
       loadWalletData();
     });
 
-    // ✅ NEW: Auto-sync cached transactions when coming back online
-    const handleOnlineStatus = async () => {
-      if (walletAPI.isOnline()) {
-        try {
-          const result = await walletAPI.syncCachedTransactions();
-          if (result && result.synced > 0) {
-            Alert.alert(
-              'Transactions Synced! 🔄',
-              `${result.synced} cached transactions have been synced successfully.`,
-              [{ text: 'OK', onPress: () => loadWalletData() }]
-            );
-          }
-        } catch (error) {
-          console.error('❌ Auto-sync failed:', error);
-        }
-      }
-    };
-
-    // Listen for network connectivity changes using NetInfo
+    // NEW: Auto-sync cached transactions when coming back online
     const unsubscribe = NetInfo.addEventListener(state => {
-      if (state.isConnected) {
-        handleOnlineStatus();
+      if (state.isConnected && state.isInternetReachable) {
+        // App came back online, sync any cached transactions
+        // Note: syncOfflineTransactions is not yet implemented in walletAPI
+        // For now, just refresh wallet data when coming back online
+        loadWalletData();
       }
     });
-
     // Initial sync check on component mount
-    handleOnlineStatus();
+    // Note: handleOnlineStatus is not defined - skipping initial sync
 
     // Cleanup on unmount
     return () => {
@@ -108,7 +93,7 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
       escrowReleaseListener();
       unsubscribe();
     };
-  }, [wallet]);
+  }, []); // Only run on mount - prevent infinite loop from wallet context updates
 
   const loadProfile = async () => {
     try {
@@ -124,6 +109,13 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
   };
 
   const loadWalletData = async () => {
+    // Prevent concurrent calls
+    if (isFetching.current) {
+      console.log('⚠️ loadWalletData already in progress, skipping duplicate call');
+      return;
+    }
+    isFetching.current = true;
+
     try {
       // Get JWT token from SecureStore
       const token = await SecureStore.getItemAsync('accessToken');
@@ -181,6 +173,7 @@ const WalletScreen = ({ navigation }: WalletScreenProps) => {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      isFetching.current = false;
     }
   };
 

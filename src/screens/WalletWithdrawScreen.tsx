@@ -388,7 +388,7 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
           
           {/* Amount Input */}
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Amount</Text>
+            <Text style={styles.inputLabel}>Amount (in FRETI)</Text>
             <View style={styles.amountInputContainer}>
               <Text style={styles.currencySymbol}>₣</Text>
               <TextInput
@@ -402,6 +402,9 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
               />
               <Text style={styles.currencyLabel}>FRETI</Text>
             </View>
+            <Text style={styles.inputHint}>
+              Enter amount in FRETI. Your balance will be converted to {localCurrency} automatically.
+            </Text>
           </View>
 
           {/* Quick Amount Buttons */}
@@ -775,6 +778,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#CCCCCC',
     marginLeft: 8,
+  },
+  inputHint: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 6,
   },
   quickAmounts: {
     flexDirection: 'row',

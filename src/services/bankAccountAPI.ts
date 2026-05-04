@@ -37,6 +37,7 @@ export interface CreateBankAccountDto {
   accountNumber: string;
   accountType?: 'savings' | 'checking' | 'current';
   currency?: string;
+  country?: string;
   swiftCode?: string;
   iban?: string;
   routingNumber?: string;
@@ -55,6 +56,18 @@ export interface UpdateBankAccountDto {
   isDefault?: boolean;
 }
 
+export interface Bank {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface AccountPreview {
+  accountName: string;
+  accountNumber: string;
+  bankCode: string;
+}
+
 class BankAccountAPIService {
   private baseURL = `${API_CONFIG.BASE_URL}/wallet/bank-accounts`;
 
@@ -67,6 +80,55 @@ class BankAccountAPIService {
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
     };
+  }
+
+  /**
+   * Get list of banks for a country from Flutterwave
+   */
+  async getBanks(country: string): Promise<Bank[]> {
+    try {
+      const headers = await this.getHeaders();
+      const response = await fetch(`${API_CONFIG.BASE_URL}/wallet/banks/${country.toUpperCase()}`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || `Failed to fetch banks for ${country}`);
+      }
+
+      const data = await response.json();
+      return data.data || [];
+    } catch (error: any) {
+      console.error('Error fetching banks:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Preview account name before creating bank account
+   */
+  async previewAccount(accountNumber: string, bankCode: string): Promise<AccountPreview> {
+    try {
+      const headers = await this.getHeaders();
+      const response = await fetch(`${API_CONFIG.BASE_URL}/wallet/bank-accounts/preview`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ accountNumber, bankCode }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to verify account');
+      }
+
+      const data = await response.json();
+      return data.data;
+    } catch (error: any) {
+      console.error('Error previewing account:', error);
+      throw error;
+    }
   }
 
   /**
