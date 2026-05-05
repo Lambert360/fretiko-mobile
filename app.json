@@ -2,7 +2,7 @@
   "expo": {
     "name": "fretiko-mobile",
     "slug": "fretiko-mobile",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/horse.png",
     "userInterfaceStyle": "light",
@@ -18,7 +18,7 @@
       "bundleIdentifier": "com.kinging.fretikomobile",
       "infoPlist": {
         "NSCameraUsageDescription": "This app needs access to the camera to take photos, videos, and for video calls.",
-        "NSPhotoLibraryUsageDescription": "This app needs access to the photo library to select profile pictures.",
+        "NSPhotoLibraryUsageDescription": "Fretiko uses your photo library to upload product images, share posts, send photos in chat, and set profile pictures.",
         "NSMicrophoneUsageDescription": "This app needs access to the microphone for video calls and real-time voice conversations with Iko AI.",
         "NSUserNotificationsUsageDescription": "This app needs access to send you notifications about orders, messages, deliveries, and other important updates.",
         "UIBackgroundModes": [
@@ -34,14 +34,16 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
+      "blockedPermissions": [
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
+      ],
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.POST_NOTIFICATIONS"
       ],
+      "versionCode": 3,
       "package": "com.kinging.fretikomobile",
       "googleServicesFile": "./google-services.json",
       "useNextNotificationsApi": true
