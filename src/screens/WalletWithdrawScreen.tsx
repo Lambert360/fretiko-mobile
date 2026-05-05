@@ -257,11 +257,11 @@ const WalletWithdrawScreen = ({ navigation }: WalletWithdrawScreenProps) => {
 
       Alert.alert(
         'Confirm Withdrawal',
-        `You are about to withdraw ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} which equals ${currencyAPI.formatCurrency(localValue, localCurrency)}.\n\nWithdraw to:\n${selectedAccount?.bankName} - ${selectedAccount?.accountNumber}\n\nFunds will be processed within ${processingTime}.`,
+        `You are about to withdraw ${currencyAPI.formatCurrency(fretiValue, 'FRETI')} which equals ${currencyAPI.formatCurrency(localValue, localCurrency)}.\n\nWithdraw to:\n${selectedAccount?.bankName} - ${selectedAccount?.accountNumber}\n\nFunds will be processed within ${processingTime}.\n\nNote: The final amount received may vary slightly after our payment provider processes the conversion.`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Verify with PIN', 
+          {
+            text: 'Verify with PIN',
             style: 'default',
             onPress: () => {
               setPendingWithdrawal({ fretiValue, localValue });
