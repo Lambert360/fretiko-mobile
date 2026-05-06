@@ -60,9 +60,9 @@ target 'fretikomobile' do
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
 
-    # Strip bitcode from framework binaries (required for App Store submission)
+    # Strip bitcode from Agora frameworks only (required for App Store submission)
     bitcode_strip_path = `xcrun --find bitcode_strip`.strip
-    puts "[Bitcode Strip] Starting bitcode removal..."
+    puts "[Bitcode Strip] Starting bitcode removal for Agora frameworks..."
 
     def strip_bitcode(bitcode_strip_path, file)
       return unless File.file?(file)
@@ -75,14 +75,17 @@ target 'fretikomobile' do
       system("#{bitcode_strip_path} -r #{file} -o #{file}")
     end
 
-    # Strip .framework binaries (main targets)
-    Dir.glob("#{Dir.pwd}/Pods/**/*.framework/**").each do |file|
-      strip_bitcode(bitcode_strip_path, file)
-    end
-
-    # Strip .xcframework binaries (nested)
-    Dir.glob("#{Dir.pwd}/Pods/**/*.xcframework/**").each do |file|
-      strip_bitcode(bitcode_strip_path, file)
+    # Only strip Agora frameworks
+    installer.pods_project.targets.each do |target|
+      if target.name.downcase.include?('agora')
+        framework_path = "#{Dir.pwd}/Pods/#{target.name}"
+        Dir.glob("#{framework_path}/**/*.framework/**").each do |file|
+          strip_bitcode(bitcode_strip_path, file)
+        end
+        Dir.glob("#{framework_path}/**/*.xcframework/**").each do |file|
+          strip_bitcode(bitcode_strip_path, file)
+        end
+      end
     end
 
     puts "[Bitcode Strip] Done"
