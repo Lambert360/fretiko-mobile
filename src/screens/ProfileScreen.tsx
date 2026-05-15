@@ -887,17 +887,15 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         )}
       </ScrollView>
 
-      {/* Upload Floating Action Button - Only for Vendors/Riders */}
-      {(profile?.isSeller || profile?.isRider) && (
-        <TouchableOpacity
-          style={styles.uploadFAB}
-          onPress={() => handleButtonPress(() => setIsUploadModalVisible(true))}
-        >
-          <Animated.View style={[styles.uploadIcon, { transform: [{ scale: springAnim }] }]}>
-            <Ionicons name="add" size={24} color="#FFFFFF" />
-          </Animated.View>
-        </TouchableOpacity>
-      )}
+      {/* Upload Floating Action Button - Available to all users for posts, vendors/riders for products/services */}
+      <TouchableOpacity
+        style={styles.uploadFAB}
+        onPress={() => handleButtonPress(() => setIsUploadModalVisible(true))}
+      >
+        <Animated.View style={[styles.uploadIcon, { transform: [{ scale: springAnim }] }]}>
+          <Ionicons name="add" size={24} color="#FFFFFF" />
+        </Animated.View>
+      </TouchableOpacity>
 
       {/* Enhanced Options Modal */}
       <Modal transparent visible={isOptionsVisible} animationType="fade" onRequestClose={() => setIsOptionsVisible(false)}>
@@ -908,6 +906,12 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                 <Ionicons name="settings-outline" size={20} color="#FFFFFF" />
               </View>
               <Text style={styles.modalText}>Settings</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalOption} onPress={() => handleButtonPress(() => { navigation.navigate('Bookmarks'); setIsOptionsVisible(false); })}>
+              <View style={styles.modalIconContainer}>
+                <Ionicons name="bookmark" size={20} color="#FFFFFF" />
+              </View>
+              <Text style={styles.modalText}>Bookmarks</Text>
             </TouchableOpacity>
             {(profile?.isSeller || profile?.isRider) && (
               <TouchableOpacity style={styles.modalOption} onPress={() => handleButtonPress(() => { navigation.navigate('PublicStore', { userId: user?.id, profile, isOwnStore: true }); setIsOptionsVisible(false); })}>
@@ -954,6 +958,24 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
               </View>
 
               <View style={styles.uploadOptions}>
+                {/* Create Post option - Available to all users */}
+                <TouchableOpacity
+                  style={styles.uploadOption}
+                  onPress={() => {
+                    setIsUploadModalVisible(false);
+                    navigation.navigate('CreatePost');
+                  }}
+                >
+                  <View style={[styles.uploadOptionIcon, { backgroundColor: '#9B59B6' }]}>
+                    <Ionicons name="create" size={28} color="#FFFFFF" />
+                  </View>
+                  <View style={styles.uploadOptionContent}>
+                    <Text style={styles.uploadOptionTitle}>Create Post</Text>
+                    <Text style={styles.uploadOptionDescription}>Share with your followers</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.6)" />
+                </TouchableOpacity>
+
                 {/* Show Product option for vendors/sellers */}
                 {profile?.isSeller && (
                   <TouchableOpacity

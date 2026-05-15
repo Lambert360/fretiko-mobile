@@ -48,6 +48,21 @@ class PushNotificationService {
   }
 
   /**
+   * Set the Expo push token (called from App.tsx on startup)
+   */
+  setExpoPushToken(token: string | null): void {
+    this.expoPushToken = token;
+    console.log('🔑 Push token stored locally:', token ? 'Token set' : 'Token cleared');
+  }
+
+  /**
+   * Get the current Expo push token
+   */
+  getStoredExpoPushToken(): string | null {
+    return this.expoPushToken;
+  }
+
+  /**
    * Request notification permissions from user
    */
   async requestPermissions(): Promise<boolean> {
@@ -125,6 +140,31 @@ class PushNotificationService {
         console.warn('⚠️ No push token to register');
         return false;
       }
+
+      // Register with backend
+      console.log('📤 Registering push token with backend...');
+      await notificationsAPI.registerPushToken(userToken, expoPushToken);
+      
+      console.log('✅ Push token registered successfully');
+      return true;
+    } catch (error) {
+      console.error('❌ Error registering push token:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Register a specific push token with backend (used when token is already cached)
+   */
+  async registerPushTokenWithToken(userToken: string, expoPushToken: string): Promise<boolean> {
+    try {
+      if (!expoPushToken) {
+        console.warn('⚠️ No push token provided');
+        return false;
+      }
+
+      // Store the token
+      this.expoPushToken = expoPushToken;
 
       // Register with backend
       console.log('📤 Registering push token with backend...');
@@ -223,6 +263,12 @@ class PushNotificationService {
     triggerSeconds?: number
   ): Promise<string | null> {
     try {
+      // Build trigger - null shows immediately, otherwise use seconds
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const trigger: any = triggerSeconds && triggerSeconds > 0 
+        ? { seconds: triggerSeconds } 
+        : null;
+      
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
           title,
@@ -230,9 +276,7 @@ class PushNotificationService {
           data: data || {},
           sound: true,
         },
-        trigger: triggerSeconds 
-          ? { seconds: triggerSeconds }
-          : null, // null = show immediately
+        trigger,
       });
 
       console.log('📅 Local notification scheduled:', notificationId);

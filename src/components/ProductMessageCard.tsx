@@ -74,7 +74,7 @@ const ProductMessageCard: React.FC<ProductMessageCardProps> = ({ product, isCurr
             )}
 
             {/* Price */}
-            <Text style={styles.priceValue}>₦{product.price.toLocaleString()}</Text>
+            <Text style={styles.priceValue}>₣{product.price.toLocaleString()}</Text>
           </View>
         </View>
       </TouchableOpacity>

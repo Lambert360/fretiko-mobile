@@ -67,6 +67,9 @@ export interface CreateConversationRequest {
 
 class ChatAPI {
   private token: string | null = null;
+  // Cache for conversation creation deduplication
+  private conversationCreationCache: Map<string, { conversationId: string; timestamp: number }> = new Map();
+  private readonly CACHE_TTL = 5000; // 5 seconds
 
   setAuthToken(token: string) {
     this.token = token;
@@ -213,12 +216,36 @@ class ChatAPI {
     chatType: 'friend' | 'vendor' | 'support' | 'ai' | 'rider'
   ): Promise<ChatConversation> {
     try {
+      // Create cache key from sorted participant IDs and chat type
+      const cacheKey = [...participantIds].sort().join(',') + `:${chatType}`;
+      const now = Date.now();
+      
+      // Check cache for recent duplicate call
+      const cached = this.conversationCreationCache.get(cacheKey);
+      if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
+        console.log('🔄 Using cached conversation creation result:', cached.conversationId);
+        // Return cached conversation by fetching it
+        const conversations = await this.getConversations(1, 50);
+        const existingConv = conversations.conversations.find(c => c.id === cached.conversationId);
+        if (existingConv) {
+          return existingConv;
+        }
+      }
+
       const response = await api.post('/chat/conversations/find-or-create', {
         participantIds,
         chatType,
       });
 
-      return response.data.data;
+      const conversation = response.data.data;
+      
+      // Cache the result to prevent duplicate creations
+      this.conversationCreationCache.set(cacheKey, {
+        conversationId: conversation.id,
+        timestamp: Date.now()
+      });
+
+      return conversation;
     } catch (error: any) {
       console.error('Error in findOrCreateConversation:', error);
       

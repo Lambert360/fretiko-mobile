@@ -598,6 +598,17 @@ class ServicesAPI {
     }
   }
 
+  // Get user's bookmarked services
+  async getBookmarkedServices(): Promise<Service[]> {
+    try {
+      const response = await api.get('/services/user/bookmarks/me');
+      return response.data || [];
+    } catch (error: any) {
+      console.error('Error fetching bookmarked services:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch bookmarked services');
+    }
+  }
+
   // Toggle bookmark with offline support
   async toggleBookmark(serviceId: string): Promise<{ bookmarked: boolean; saveCount: number }> {
     try {

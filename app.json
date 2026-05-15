@@ -86,7 +86,11 @@
           "sounds": [
             "./assets/sounds/notification_sound.MP3"
           ],
-          "mode": "production"
+          "mode": "production",
+          "ios": {
+            "bundleIdentifier": "com.kinging.fretikomobile",
+            "appleTeamId": "PAGWN825XT"
+          }
         }
       ],
       "expo-font",

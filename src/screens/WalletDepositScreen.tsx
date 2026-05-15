@@ -305,7 +305,17 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
               style: 'cancel',
               onPress: () => {
                 setPendingDepositId(null);
-                navigation.goBack();
+                // Show cancellation confirmation
+                Alert.alert(
+                  'Deposit Cancelled',
+                  'Your deposit has been cancelled. No funds have been charged.',
+                  [
+                    { 
+                      text: 'OK', 
+                      onPress: () => navigation.goBack()
+                    }
+                  ]
+                );
               }
             },
             { 

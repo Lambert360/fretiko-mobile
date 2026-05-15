@@ -139,6 +139,8 @@ import SharedWishlistScreen from './src/screens/SharedWishlistScreen';
 // Import gift screens
 import MyGiftsScreen from './src/screens/MyGiftsScreen';
 import GiftMarketplaceScreen from './src/screens/GiftMarketplaceScreen';
+import BookmarksScreen from './src/screens/BookmarksScreen';
+import CreatePostScreen from './src/screens/CreatePostScreen';
 
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
 
@@ -236,6 +238,39 @@ const AppNavigator: React.FC = () => {
   // Configure Android notification channels
   useEffect(() => {
     pushNotificationService.configureNotificationChannel();
+  }, []);
+
+  // Initialize push notifications - request permissions and generate token on app startup
+  useEffect(() => {
+    const initializePushNotifications = async () => {
+      try {
+        console.log('📱 Initializing push notifications on app startup...');
+        
+        // Request permissions immediately
+        const { status } = await Notifications.requestPermissionsAsync();
+        console.log('📱 Notification permission status:', status);
+        
+        if (status === 'granted') {
+          // Generate Expo push token immediately
+          const tokenData = await Notifications.getExpoPushTokenAsync();
+          const token = tokenData?.data;
+          
+          if (token) {
+            console.log('🔑 Expo push token generated:', token);
+            // Store token locally for later use
+            pushNotificationService.setExpoPushToken(token);
+          } else {
+            console.warn('⚠️ No push token generated');
+          }
+        } else {
+          console.warn('⚠️ Notification permission not granted');
+        }
+      } catch (error) {
+        console.error('❌ Error initializing push notifications:', error);
+      }
+    };
+    
+    initializePushNotifications();
   }, []);
 
   // Setup notification handlers
@@ -393,6 +428,7 @@ const AppNavigator: React.FC = () => {
           ) : (
             <>
               <Stack.Screen name="Main" component={BottomTabNavigator} />
+              <Stack.Screen name="CreatePost" component={CreatePostScreen} />
               <Stack.Screen name="EditProfile" component={EditProfileScreen as any} />
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
               <Stack.Screen name="RiderVerification" component={RiderVerificationScreen} />
@@ -430,6 +466,7 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="GroupedOrder" component={GroupedOrderScreen as any} />
               <Stack.Screen name="MyGifts" component={MyGiftsScreen} />
               <Stack.Screen name="GiftMarketplace" component={GiftMarketplaceScreen} />
+              <Stack.Screen name="Bookmarks" component={BookmarksScreen} />
               <Stack.Screen 
                 name="RateOrder" 
                 component={RateOrderScreen} 

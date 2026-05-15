@@ -409,7 +409,7 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
       </Text>
       <TouchableOpacity
         style={styles.shopButton}
-        onPress={() => navigation.navigate('Home', { screen: 'HomeTab' })}
+        onPress={() => navigation.navigate('Main', { screen: 'Home' })}
       >
         <Text style={styles.shopButtonText}>Start Shopping</Text>
       </TouchableOpacity>

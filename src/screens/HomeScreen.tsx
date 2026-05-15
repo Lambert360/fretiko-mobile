@@ -26,6 +26,10 @@ import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ProductCard from '../components/ProductCard';
 import VideoCard from '../components/VideoCard';
+import PostCard from '../components/PostCard';
+import GiftSelectorModal from '../components/GiftSelectorModal';
+import { postsAPI, Post, UnifiedFeedItem } from '../services/postsAPI';
+import { giftAPI, UserGift } from '../services/giftAPI';
 import CartModal from '../components/CartModal';
 import ServiceBookingModal from '../components/ServiceBookingModal';
 import CommentsDrawer from '../components/CommentsDrawer';
@@ -176,6 +180,12 @@ const HomeScreen = () => {
   const [bookingService, setBookingService] = useState<VideoFeedItem | null>(null);
   const [commentsServiceId, setCommentsServiceId] = useState<string | null>(null);
   const [likedServices, setLikedServices] = useState<Set<string>>(new Set());
+  
+  // Gift modal state for posts
+  const [showPostGiftModal, setShowPostGiftModal] = useState(false);
+  const [selectedPostForGift, setSelectedPostForGift] = useState<Post | null>(null);
+  const [userGifts, setUserGifts] = useState<UserGift[]>([]);
+  const [loadingGifts, setLoadingGifts] = useState(false);
   const [isFilterVisible, setFilterVisible] = useState(false);
   const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
   
@@ -186,6 +196,7 @@ const HomeScreen = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [videoFeedData, setVideoFeedData] = useState<VideoFeedItem[]>([]);
+  const [unifiedFeedData, setUnifiedFeedData] = useState<UnifiedFeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -262,13 +273,50 @@ const HomeScreen = () => {
         }
       );
       
-      // Load video data from API (non-blocking, doesn't fail entire load)
+      // Load video data and posts from API (non-blocking, doesn't fail entire load)
       try {
-        const videoData = await servicesAPI.getVideoFeed({ limit: 10 });
+        const [videoData, postsData] = await Promise.all([
+          servicesAPI.getVideoFeed({ limit: 10 }),
+          postsAPI.getFeed({ limit: 10 }).catch(() => []) // Gracefully handle posts API errors
+        ]);
 
         // Use real API data - remove mock data dependency
         const finalVideoData = videoData || [];
         setVideoFeedData(finalVideoData);
+
+        // Create unified feed mixing posts and services
+        const unifiedFeed: UnifiedFeedItem[] = [];
+        
+        // Add video services to unified feed
+        finalVideoData.forEach((service, index) => {
+          unifiedFeed.push({
+            id: `service-${service.id}`,
+            type: 'service',
+            itemId: service.id,
+            score: finalVideoData.length - index, // Simple scoring based on recency
+            isSeen: false,
+            createdAt: new Date().toISOString(),
+            serviceData: service,
+          });
+        });
+
+        // Add posts to unified feed
+        postsData.forEach((post, index) => {
+          unifiedFeed.push({
+            id: `post-${post.id}`,
+            type: 'post',
+            itemId: post.id,
+            score: post.score || (postsData.length - index),
+            isSeen: false,
+            createdAt: post.createdAt || new Date().toISOString(),
+            postData: post.postData,
+          });
+        });
+
+        // Sort by score (mix posts and services)
+        unifiedFeed.sort((a, b) => b.score - a.score);
+        
+        setUnifiedFeedData(unifiedFeed);
       } catch (videoError) {
         // Video feed errors are non-critical, log but don't block
         const videoErrorInfo = handleError(videoError, () => {
@@ -279,6 +327,7 @@ const HomeScreen = () => {
         });
         console.warn('🔴 Error loading video data, using empty array:', videoErrorInfo);
         setVideoFeedData([]);
+        setUnifiedFeedData([]);
       }
 
       // Load auctions (small batches for MVP)
@@ -785,6 +834,71 @@ const HomeScreen = () => {
       setBookingService(null);
     } catch (error) {
       console.error('Error booking service:', error);
+    }
+  };
+
+  // Gift handling for posts
+  const openPostGiftModal = async (post: Post) => {
+    setSelectedPostForGift(post);
+    setShowPostGiftModal(true);
+    await loadUserGifts();
+  };
+
+  const loadUserGifts = async () => {
+    try {
+      setLoadingGifts(true);
+      const response = await giftAPI.getUserGifts();
+      setUserGifts(response.gifts);
+    } catch (error) {
+      console.error('Error loading user gifts:', error);
+      setUserGifts([]);
+    } finally {
+      setLoadingGifts(false);
+    }
+  };
+
+  const sendPostGift = async (giftId: string, quantity: number) => {
+    if (!selectedPostForGift) return;
+
+    try {
+      // Find the selected gift details
+      const selectedGift = userGifts.find(g => g.gift_id === giftId);
+      if (!selectedGift) {
+        Alert.alert('Error', 'Gift not found');
+        return;
+      }
+
+      // Send gift via API using PostGiftRequest format
+      await postsAPI.sendGift({
+        postId: selectedPostForGift.id,
+        giftId: selectedGift.gift_id,
+        message: '',
+      });
+
+      // Update local state - increment gifts count and mark as gifted
+      setUnifiedFeedData(prev => prev.map(item => {
+        if (item.type === 'post' && item.postData?.id === selectedPostForGift.id) {
+          return {
+            ...item,
+            postData: {
+              ...item.postData,
+              giftsCount: (item.postData.giftsCount || 0) + quantity,
+              isGifted: true, // Mark that current user has gifted
+            }
+          };
+        }
+        return item;
+      }));
+
+      // Close modal
+      setShowPostGiftModal(false);
+      setSelectedPostForGift(null);
+
+      // Haptic feedback
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      console.error('Error sending gift:', error);
+      Alert.alert('Error', 'Failed to send gift. Please try again.');
     }
   };
 
@@ -1838,6 +1952,17 @@ const HomeScreen = () => {
           >
             <View style={{ width: 36, height: 36, backgroundColor: '#3498DB', borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}><Ionicons name="hammer-outline" size={18} color="white" /></View>
             <View style={{ flex: 1 }}><Text style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>Auctions</Text><Text style={{ color: '#888', fontSize: 11, marginTop: 1 }}>Bid on exclusive items</Text></View>
+            <Ionicons name="chevron-forward" size={14} color="#888" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: '#1a1a1a', marginHorizontal: 20, borderRadius: 10, marginBottom: 12 }}
+            onPress={() => {
+              toggleSidebar();
+              navigation.navigate('Bookmarks');
+            }}
+          >
+            <View style={{ width: 36, height: 36, backgroundColor: '#FFD700', borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}><Ionicons name="bookmark" size={18} color="white" /></View>
+            <View style={{ flex: 1 }}><Text style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>Bookmarks</Text><Text style={{ color: '#888', fontSize: 11, marginTop: 1 }}>Your saved posts</Text></View>
             <Ionicons name="chevron-forward" size={14} color="#888" />
           </TouchableOpacity>
           {(userProfile?.isSeller || userProfile?.isRider) && (
@@ -3085,7 +3210,9 @@ const HomeScreen = () => {
       );
     }
 
-    if (filteredServices.length === 0) {
+    const feedItems = unifiedFeedData.length > 0 ? unifiedFeedData : [];
+
+    if (feedItems.length === 0) {
       return (
         <View style={{ 
           flex: 1, 
@@ -3095,7 +3222,7 @@ const HomeScreen = () => {
         }}>
           <Ionicons name="videocam-outline" size={60} color="#888" />
           <Text style={{ color: '#888', fontSize: 18, fontWeight: 'bold', marginTop: 16 }}>
-            No Services Available
+            No Content Available
           </Text>
         </View>
       );
@@ -3168,13 +3295,126 @@ const HomeScreen = () => {
             showPlayButton(); // Show play button when switching videos
           }}
         >
-          {filteredServices.map((item, index) => {
-            // Only render videos within range of current index (±1)
-            const shouldRenderVideo = Math.abs(index - currentVideoIndex) <= 1;
+          {feedItems.map((item, index) => {
+            // Check if item is a post or service
+            const isPost = item.type === 'post';
+            const serviceItem = isPost ? undefined : (item as any).serviceData;
+            const postItem = isPost ? (item as any).postData : undefined;
+            
+            // For services tab, render all items (posts and services)
+            // For posts, use PostCard. For services, use VideoCard
+            const shouldRenderVideo = !isPost && Math.abs(index - currentVideoIndex) <= 1;
             const isCurrentVideo = index === currentVideoIndex;
             const shouldPlay = activeTab === 'services' && isPlaying && isCurrentVideo;
 
             try {
+              // Render PostCard for posts
+              if (isPost && postItem) {
+                return (
+                  <View key={`post-${item.id}-${index}`} style={{
+                    width: screenWidth,
+                    height: screenHeight,
+                    backgroundColor: '#000',
+                  }}>
+                    <PostCard
+                      post={postItem}
+                      isActive={index === currentVideoIndex}
+                      tabBarHeight={tabBarHeightFromContext}
+                      hasUserGifted={postItem.isGifted || false}
+                      onLike={async (postId) => {
+                        try {
+                          if (postItem.isLiked) {
+                            await postsAPI.unlikePost(postId);
+                          } else {
+                            await postsAPI.likePost(postId);
+                          }
+                          // Update local state
+                          setUnifiedFeedData(prev => prev.map(feedItem => 
+                            feedItem.id === item.id ? {
+                              ...feedItem,
+                              postData: feedItem.postData ? {
+                                ...feedItem.postData,
+                                isLiked: !feedItem.postData.isLiked,
+                                likesCount: feedItem.postData.isLiked 
+                                  ? feedItem.postData.likesCount - 1 
+                                  : feedItem.postData.likesCount + 1
+                              } : undefined
+                            } : feedItem
+                          ));
+                        } catch (error) {
+                          console.error('Error liking post:', error);
+                        }
+                      }}
+                      onComment={(postId) => {
+                        // Navigate to comments screen or show modal
+                        console.log('Comment on post:', postId);
+                      }}
+                      onGift={() => {
+                        // Legacy handler - kept for compatibility
+                        console.log('Gift on post (legacy):', postItem.id);
+                      }}
+                      onGiftPress={() => openPostGiftModal(postItem)}
+                      onBookmark={async (postId) => {
+                        try {
+                          const isBookmarked = await postsAPI.toggleBookmark(postId);
+                          setUnifiedFeedData(prev => prev.map(feedItem => 
+                            feedItem.id === item.id ? {
+                              ...feedItem,
+                              postData: feedItem.postData ? {
+                                ...feedItem.postData,
+                                isBookmarked
+                              } : undefined
+                            } : feedItem
+                          ));
+                        } catch (error) {
+                          console.error('Error bookmarking post:', error);
+                        }
+                      }}
+                      onShare={async (postId) => {
+                        try {
+                          // Get post content for sharing
+                          const shareContent = postItem.content || 'Check out this post on Fretiko!';
+                          const shareUrl = `https://fretiko.app/post/${postId}`;
+                          
+                          // Open native share sheet
+                          const result = await Share.share({
+                            message: `${shareContent}\n\nView on Fretiko: ${shareUrl}`,
+                            title: 'Share Post',
+                            url: shareUrl,
+                          });
+                          
+                          // If user completed share, call API
+                          if (result.action === Share.sharedAction) {
+                            await postsAPI.sharePost(postId);
+                            
+                            // Update local state
+                            setUnifiedFeedData(prev => prev.map(feedItem => 
+                              feedItem.id === item.id ? {
+                                ...feedItem,
+                                postData: feedItem.postData ? {
+                                  ...feedItem.postData,
+                                  sharesCount: (feedItem.postData.sharesCount || 0) + 1
+                                } : undefined
+                              } : feedItem
+                            ));
+                          }
+                        } catch (error: any) {
+                          if (error.message !== 'User dismissed share sheet') {
+                            console.error('Error sharing post:', error);
+                          }
+                        }
+                      }}
+                      onUserPress={(userId) => {
+                        navigation.navigate('PublicProfile', { userId });
+                      }}
+                    />
+                  </View>
+                );
+              }
+
+              // Render VideoCard for services
+              if (!serviceItem) return null;
+
               return (
                 <View key={`video-${item.id}-${index}`} style={{
                   width: screenWidth,
@@ -3198,9 +3438,9 @@ const HomeScreen = () => {
                     alignItems: 'center'
                   }}>
                     {/* Only render video player if within range */}
-                    {shouldRenderVideo && item.videoUri ? (
+                    {shouldRenderVideo && serviceItem?.videoUri ? (
                       <ServiceVideoPlayer
-                        videoUri={item.videoUri}
+                        videoUri={serviceItem.videoUri}
                         isCurrentVideo={isCurrentVideo}
                         shouldAutoPlay={shouldPlay}
                         onLoad={(status) => {
@@ -3215,7 +3455,7 @@ const HomeScreen = () => {
                     ) : (
                       // Show thumbnail for videos out of range or if no video URI
                       <Image
-                        source={{ uri: item.thumbnail || 'https://via.placeholder.com/400x600' }}
+                        source={{ uri: serviceItem?.thumbnail || 'https://via.placeholder.com/400x600' }}
                         style={{
                           width: screenWidth,
                           height: screenHeight,
@@ -3228,7 +3468,7 @@ const HomeScreen = () => {
                     )}
                     
                     {/* LIVE indicator for live services */}
-                    {item.id.startsWith('live-service-') && (
+                    {item.itemId?.startsWith('live-service-') && (
                       <View style={{
                         position: 'absolute',
                         top: insets.top + 60,
@@ -3308,11 +3548,11 @@ const HomeScreen = () => {
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}
                   onPress={() => {
-                    handleVendorPress(item.userId);
+                    handleVendorPress(serviceItem?.userId);
                   }}
                 >
                   <Image
-                    source={{ uri: item.userAvatar || 'https://via.placeholder.com/40x40' }}
+                    source={{ uri: serviceItem?.userAvatar || 'https://via.placeholder.com/40x40' }}
                     style={{
                       width: 36,
                       height: 36,
@@ -3324,26 +3564,26 @@ const HomeScreen = () => {
                   />
                   <View>
                     <Text style={{ color: 'white', fontSize: 15, fontWeight: 'bold' }}>
-                      @{String(item.username || '')}
+                      @{String(serviceItem?.username || '')}
                     </Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 1 }}>
                       <Ionicons name="star" size={11} color="#FFD700" />
                       <Text style={{ color: 'white', fontSize: 11, marginLeft: 3 }}>
-                        {Number(item.rating || 0).toFixed(1)}
+                        {Number(serviceItem?.rating || 0).toFixed(1)}
                       </Text>
                     </View>
                   </View>
                 </TouchableOpacity>
 
-                {item.description && String(item.description).trim() ? (
+                {serviceItem?.description && String(serviceItem.description).trim() ? (
                   <View style={{ marginBottom: 6 }}>
                     <Text 
                       style={{ color: 'white', fontSize: 13 }}
                       numberOfLines={expandedDescriptions.has(item.id) ? undefined : 2}
                     >
-                      {String(item.description)}
+                      {String(serviceItem.description)}
                     </Text>
-                    {String(item.description || '').length > 100 && (
+                    {String(serviceItem.description || '').length > 100 && (
                       <TouchableOpacity
                         onPress={() => {
                           const next = new Set(expandedDescriptions);
@@ -3368,7 +3608,7 @@ const HomeScreen = () => {
 
                 {/* Price - tight spacing */}
                 <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold', marginBottom: 8 }}>
-                  ₣{Number(item.price || 0).toFixed(2)}
+                  ₣{Number(serviceItem?.price || 0).toFixed(2)}
                 </Text>
 
                 {/* Action buttons - tight spacing */}
@@ -3383,7 +3623,7 @@ const HomeScreen = () => {
                       borderRadius: 18,
                       marginRight: 10
                     }}
-                    onPress={() => handleChatWithServiceProvider(item)}
+                    onPress={() => serviceItem && handleChatWithServiceProvider(serviceItem)}
                   >
                     <Ionicons name="chatbubble-outline" size={14} color="white" />
                     <Text style={{ color: 'white', fontSize: 13, fontWeight: 'bold', marginLeft: 5 }}>
@@ -3400,7 +3640,7 @@ const HomeScreen = () => {
                       paddingVertical: 8,
                       borderRadius: 18
                     }}
-                    onPress={() => handleBook(item.id)}
+                    onPress={() => handleBook(item.itemId)}
                   >
                     <Ionicons name="calendar-outline" size={14} color="white" />
                     <Text style={{ color: 'white', fontSize: 13, fontWeight: 'bold', marginLeft: 5 }}>
@@ -3497,9 +3737,13 @@ const HomeScreen = () => {
                       </Text>
                     </TouchableOpacity>
                   </View>
-                  <TouchableOpacity onPress={handleCartIconPress}>
-                    <View style={{ position: 'relative' }}>
-                      <Ionicons name="bag-outline" size={28} color="white" />
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity onPress={() => navigation.navigate('CreatePost')} style={{ padding: 8, marginRight: 8 }}>
+                      <Ionicons name="add-circle-outline" size={24} color="white" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={handleCartIconPress}>
+                      <View style={{ position: 'relative' }}>
+                        <Ionicons name="bag-outline" size={28} color="white" />
                       {itemCount > 0 ? (
                         <View style={{
                           position: 'absolute',
@@ -3519,9 +3763,10 @@ const HomeScreen = () => {
                       ) : null}
                     </View>
                   </TouchableOpacity>
+                </View>
               </View>
-                
-                
+
+
               {/* Right side actions - aligned with bottom cluster */}
               <View style={{
                   position: 'absolute',
@@ -3530,7 +3775,7 @@ const HomeScreen = () => {
                 }}>
                   <TouchableOpacity 
                     style={{ marginBottom: 24, alignItems: 'center' }}
-                    onPress={() => handleLike(item.id)}
+                    onPress={() => handleLike(item.itemId)}
                   >
                     <View style={{
                       width: 48,
@@ -3542,19 +3787,19 @@ const HomeScreen = () => {
                       marginBottom: 4
                     }}>
                       <Ionicons 
-                        name={item.isLiked ? 'heart' : 'heart-outline'} 
+                        name={serviceItem?.isLiked ? 'heart' : 'heart-outline'} 
                         size={28} 
-                        color={item.isLiked ? '#FF4757' : 'white'} 
+                        color={serviceItem?.isLiked ? '#FF4757' : 'white'} 
                       />
                     </View>
                     <Text style={{ color: 'white', fontSize: 12, fontWeight: '600' }}>
-                      {String(item.likes || '0')}
+                      {String(serviceItem?.likes || '0')}
                     </Text>
                   </TouchableOpacity>
                   
                   <TouchableOpacity 
                     style={{ marginBottom: 24, alignItems: 'center' }}
-                    onPress={() => handleComment(item.id)}
+                    onPress={() => handleComment(item.itemId)}
                   >
                     <View style={{
                       width: 48,
@@ -3568,13 +3813,13 @@ const HomeScreen = () => {
                       <Ionicons name="chatbubble-outline" size={28} color="white" />
                     </View>
                     <Text style={{ color: 'white', fontSize: 12, fontWeight: '600' }}>
-                      {String(item.comments || '0')}
+                      {String(serviceItem?.comments || '0')}
                     </Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity 
                     style={{ marginBottom: 24, alignItems: 'center' }}
-                    onPress={() => handleBookmark(item.id)}
+                    onPress={() => handleBookmark(item.itemId)}
                   >
                     <View style={{
                       width: 48,
@@ -3586,16 +3831,16 @@ const HomeScreen = () => {
                       marginBottom: 4
                     }}>
                       <Ionicons 
-                        name={item.isBookmarked ? 'bookmark' : 'bookmark-outline'} 
+                        name={serviceItem?.isBookmarked ? 'bookmark' : 'bookmark-outline'} 
                         size={28} 
-                        color={item.isBookmarked ? '#FFD700' : 'white'} 
+                        color={serviceItem?.isBookmarked ? '#FFD700' : 'white'} 
                       />
                     </View>
                   </TouchableOpacity>
                   
                   <TouchableOpacity 
                     style={{ alignItems: 'center' }}
-                    onPress={() => handleShare(item.id)}
+                    onPress={() => handleShare(item.itemId)}
                   >
                     <View style={{
                       width: 48,
@@ -3609,7 +3854,7 @@ const HomeScreen = () => {
                       <Ionicons name="share-outline" size={28} color="white" />
                     </View>
                     <Text style={{ color: 'white', fontSize: 12, fontWeight: '600' }}>
-                      {String(item.shares || '0')}
+                      {String(serviceItem?.shares || '0')}
                     </Text>
                   </TouchableOpacity>
               </View>
@@ -3673,6 +3918,10 @@ const HomeScreen = () => {
                 {selectedLocation.split(',')[0]}
               </Text>
               <Ionicons name="chevron-down" size={12} color="#888" style={{ marginLeft: 2 }} />
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => navigation.navigate('CreatePost')} style={{ padding: 8, marginRight: 8 }}>
+              <Ionicons name="add-circle-outline" size={24} color="white" />
             </TouchableOpacity>
 
             <TouchableOpacity onPress={handleCartIconPress} style={{ padding: 8, position: 'relative' }}>
@@ -3844,6 +4093,17 @@ const HomeScreen = () => {
         serviceId={commentsServiceId}
         onClose={() => setCommentsServiceId(null)}
         onCommentAdded={handleCommentAdded}
+      />
+
+      <GiftSelectorModal
+        visible={showPostGiftModal}
+        onClose={() => {
+          setShowPostGiftModal(false);
+          setSelectedPostForGift(null);
+        }}
+        gifts={userGifts}
+        loading={loadingGifts}
+        onSendGift={sendPostGift}
       />
 
       <LocationSelector

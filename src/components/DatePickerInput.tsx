@@ -30,6 +30,7 @@ export const DatePickerInput: React.FC<DatePickerInputProps> = ({
 }) => {
   const [showPicker, setShowPicker] = useState(false);
   const [mode, setMode] = useState<'date' | 'time'>('date');
+  const [tempDate, setTempDate] = useState<Date | null>(null);
 
   // Calculate maximum date (18 years ago) and minimum date (much earlier)
   const today = new Date();
@@ -82,16 +83,27 @@ export const DatePickerInput: React.FC<DatePickerInputProps> = ({
         // If validation fails, keep picker open for Android too
       }
     } else {
-      // iOS: always get selectedDate, handle validation
+      // iOS: Don't close picker immediately when user selects year/month/day
+      // Only close when user explicitly dismisses or we handle it differently
       if (selectedDate) {
-        if (validateAge(selectedDate)) {
-          onChange(formatDate(selectedDate));
-        }
-        setShowPicker(false); // Always close on iOS
-      } else {
-        setShowPicker(false);
+        setTempDate(selectedDate); // Store temporary selection
+        // Don't close picker or validate yet - let user continue selecting
       }
     }
+  };
+
+  const handleConfirmDate = () => {
+    if (tempDate && validateAge(tempDate)) {
+      onChange(formatDate(tempDate));
+      setShowPicker(false);
+      setTempDate(null);
+    }
+    // If validation fails, keep picker open
+  };
+
+  const handleCancelDate = () => {
+    setShowPicker(false);
+    setTempDate(null);
   };
 
   const showDatePicker = () => {
@@ -132,7 +144,37 @@ export const DatePickerInput: React.FC<DatePickerInputProps> = ({
         <Ionicons name="calendar-outline" size={20} color="#666" />
       </TouchableOpacity>
 
-      {showPicker && (
+      {showPicker && Platform.OS === 'ios' ? (
+        <Modal
+          transparent={true}
+          animationType="slide"
+          visible={showPicker}
+          onRequestClose={handleCancelDate}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <TouchableOpacity style={styles.cancelButton} onPress={handleCancelDate}>
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>Select Date</Text>
+                <TouchableOpacity style={styles.doneButton} onPress={handleConfirmDate}>
+                  <Text style={styles.doneButtonText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+              <DateTimePicker
+                value={tempDate || (value ? new Date(value) : maxDate)}
+                mode={mode}
+                display="spinner"
+                onChange={handleDateChange}
+                maximumDate={maxDate}
+                minimumDate={minDate}
+                style={styles.picker}
+              />
+            </View>
+          </View>
+        </Modal>
+      ) : showPicker && Platform.OS === 'android' ? (
         <DateTimePicker
           value={value ? new Date(value) : maxDate}
           mode={mode}
@@ -142,7 +184,7 @@ export const DatePickerInput: React.FC<DatePickerInputProps> = ({
           minimumDate={minDate}
           style={styles.picker}
         />
-      )}
+      ) : null}
     </View>
   );
 };

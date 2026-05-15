@@ -311,7 +311,10 @@ const KonnectScreen = () => {
             ? {
                 ...chat,
                 lastMessage: data.message?.content || data.message || chat.lastMessage,
-                unreadCount: chat.unreadCount + 1,
+                // Only increment unread count if message is from another user
+                unreadCount: data.message?.senderId === user?.id
+                  ? chat.unreadCount
+                  : chat.unreadCount + 1,
                 timestamp: new Date().toISOString()
               }
             : chat
@@ -696,7 +699,10 @@ const KonnectScreen = () => {
           matchesType = chat.chatType === activeFilter || (activeFilter === 'ai' && chat.isAI === true);
         }
 
-        return matchesSearch && matchesType;
+        // Filter out empty conversations (no messages) - only show AI or conversations with content
+        const hasContent = chat.isAI || (lastMessageText && lastMessageText.trim() !== '');
+
+        return matchesSearch && matchesType && hasContent;
       })
       .sort((a, b) => {
         // Always pin Iko (AI) to the top if showing all or AI filter

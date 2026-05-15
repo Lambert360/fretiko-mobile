@@ -412,12 +412,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (authState.isAuthenticated && authState.accessToken && authState.user) {
         try {
           console.log('📱 Registering push notification token for user:', authState.user.id);
-          const success = await pushNotificationService.registerPushToken(authState.accessToken);
           
-          if (success) {
-            console.log('✅ Push token registered successfully');
+          // Get the cached token from app startup (don't request permissions again)
+          const cachedToken = pushNotificationService.getStoredExpoPushToken();
+          
+          if (cachedToken) {
+            console.log('🔑 Using cached push token:', cachedToken);
+            // Register the cached token with backend
+            await pushNotificationService.registerPushTokenWithToken(authState.accessToken, cachedToken);
+            console.log('✅ Push token registered successfully with backend');
           } else {
-            console.log('⚠️ Push token registration skipped (not available on this device)');
+            console.log('⚠️ No cached push token available - will try to generate new one');
+            // Fallback: try to register (this will request permissions if needed)
+            const success = await pushNotificationService.registerPushToken(authState.accessToken);
+            if (success) {
+              console.log('✅ Push token registered successfully');
+            } else {
+              console.log('⚠️ Push token registration skipped (not available on this device)');
+            }
           }
         } catch (error) {
           console.error('❌ Error registering push token:', error);

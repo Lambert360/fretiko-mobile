@@ -45,6 +45,7 @@ import ScheduleMessageCard from '../components/ScheduleMessageCard';
 import ScheduleModal, { ScheduleActivityData } from '../components/ScheduleModal';
 import { WishlistShareModal } from '../components/WishlistShareModal';
 import WishlistMessageCard from '../components/WishlistMessageCard';
+import DocumentMessageCard from '../components/DocumentMessageCard';
 
 // Global WebSocket manager to persist across component remounts
 class GeminiWebSocketManager {
@@ -4761,23 +4762,16 @@ const IndividualChatScreen = () => {
           })()}
           
           {item.messageType === 'file' && item.fileData && (
-            <TouchableOpacity
-              style={styles.fileContainer}
-              onPress={() => handleOpenFile(item.fileData?.url || item.mediaUrl || '', item.fileData?.name || 'file')}
-            >
-              <View style={styles.fileIcon}>
-                <Ionicons name="document" size={24} color="#FFFFFF" />
-              </View>
-              <View style={styles.fileInfo}>
-                <Text style={[styles.fileName, isCurrentUser ? styles.currentUserText : styles.otherUserText]}>
-                  {item.fileData.name}
-                </Text>
-                <Text style={[styles.fileSize, isCurrentUser ? styles.currentUserTime : styles.otherUserTime]}>
-                  {item.fileData.size}
-                </Text>
-              </View>
-              <Ionicons name="download" size={20} color="#FFFFFF" />
-            </TouchableOpacity>
+            <DocumentMessageCard
+              fileData={{
+                name: item.fileData.name,
+                size: item.fileData.size,
+                type: item.fileData.type,
+                url: item.fileData.url || item.mediaUrl,
+              }}
+              isCurrentUser={isCurrentUser}
+              onPress={handleOpenFile}
+            />
           )}
           
           {item.messageType === 'livestream' && item.livestreamData && (
@@ -6666,33 +6660,6 @@ const styles = StyleSheet.create({
   },
   audioWaveBarActive: {
     backgroundColor: '#FFFFFF',
-  },
-  fileContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 12,
-    minWidth: 200,
-  },
-  fileIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  fileInfo: {
-    flex: 1,
-  },
-  fileName: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  fileSize: {
-    fontSize: 12,
-    marginTop: 2,
   },
   livestreamContainer: {
     width: screenWidth * 0.65,

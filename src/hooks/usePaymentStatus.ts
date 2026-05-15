@@ -38,7 +38,7 @@ export const usePaymentStatus = (options: UsePaymentStatusOptions): UsePaymentSt
   const [error, setError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
 
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollAttemptsRef = useRef(0);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
@@ -51,6 +51,13 @@ export const usePaymentStatus = (options: UsePaymentStatusOptions): UsePaymentSt
 
       if (!foundDeposit) {
         setError('Deposit not found');
+        stopPolling();
+        // Trigger failure callback with error info
+        onFailure?.({
+          id: depositId,
+          status: 'failed',
+          failureReason: 'Deposit record not found. Please check your transaction history.',
+        } as any);
         return;
       }
 

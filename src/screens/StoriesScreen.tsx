@@ -11,14 +11,14 @@ import {
   SafeAreaView,
   StatusBar,
   Alert,
-  PanGestureHandler,
-  State,
   ActivityIndicator,
 } from 'react-native';
+import { PanGestureHandler, State } from 'react-native-gesture-handler';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { storiesAPI, Story, StoryComment } from '../services/storiesAPI';
 import { storyNotificationAPI } from '../services/storyNotificationAPI';
@@ -40,6 +40,7 @@ const StoriesScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const { stories = [], initialIndex = 0, userInfo, canAddMore = false } = route.params as StoriesScreenProps;
 
@@ -54,15 +55,15 @@ const StoriesScreen = () => {
   const [isMediaLoaded, setIsMediaLoaded] = useState(false);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
 
-  const progressTimer = useRef<NodeJS.Timeout>();
-  const hideControlsTimer = useRef<NodeJS.Timeout>();
+  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentStory = stories[currentIndex];
 
   const player = useVideoPlayer(currentStory?.media_url || '', (player) => {
     if (currentStory?.media_type === 'video') {
       player.loop = false;
-      player.play(); // Auto-start video playback
+      // Don't play here - wait for proper initialization in useEffect
     }
   });
 
@@ -70,10 +71,13 @@ const StoriesScreen = () => {
   useEffect(() => {
     if (currentStory?.media_type === 'video' && player) {
       const subscription = player.addListener('statusChange', (status) => {
-        if (status.status === 'readyToPlay' || status.status === 'loaded') {
+        if (status.status === 'readyToPlay') {
           console.log('✅ Video loaded successfully');
           setIsMediaLoaded(true);
           setIsMediaLoading(false);
+        } else if (status.status === 'error') {
+          console.log('❌ Video load error:', status.error);
+          setIsMediaLoading(false); // Hide loading on error too
         }
       });
 
@@ -277,7 +281,7 @@ const StoriesScreen = () => {
   };
 
   const handleShare = () => {
-    navigation.navigate('ShareStory', {
+    (navigation as any).navigate('ShareStory', {
       storyId: currentStory.id,
       storyData: {
         id: currentStory.id,
@@ -297,21 +301,21 @@ const StoriesScreen = () => {
     const commentText = newComment.trim();
     console.log('📝 Adding comment:', commentText);
 
-    try {
-      // Optimistically add comment to UI
-      const optimisticComment = {
-        id: `temp-${Date.now()}`,
-        story_id: currentStory.id,
-        user_id: user?.id || '',
-        content: commentText,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        user_profiles: {
-          username: user?.username || 'You',
-          avatar_url: user?.avatar_url
-        }
-      };
+    // Optimistically add comment to UI - declare outside try for catch block access
+    const optimisticComment = {
+      id: `temp-${Date.now()}`,
+      story_id: currentStory.id,
+      user_id: user?.id || '',
+      content: commentText,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      user_profiles: {
+        username: user?.username || 'You',
+        avatar_url: user?.avatar_url || ''
+      }
+    };
 
+    try {
       setComments([...comments, optimisticComment]);
       setNewComment('');
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -334,8 +338,8 @@ const StoriesScreen = () => {
           storyId: currentStory.id,
           storyPosterId: currentStory.user_profiles.id,
           commenterId: user.id,
-          commenterUsername: user.username,
-          commenterAvatarUrl: user.avatar_url,
+          commenterUsername: user.username || '',
+          commenterAvatarUrl: user.avatar_url || '',
           commentText: commentText,
           storyThumbnail: currentStory.media_type === 'image' ? currentStory.media_url : currentStory.thumbnail_url,
           storyCaption: currentStory.caption,
@@ -405,10 +409,8 @@ const StoriesScreen = () => {
         <VideoView
           style={styles.media}
           player={player}
-          fullscreenOptions={{
-            allowFullscreen: false,
-            allowPictureInPicture: false,
-          }}
+          allowsFullscreen={false}
+          allowsPictureInPicture={false}
           nativeControls={false}
           contentFit="cover"
         />
@@ -507,7 +509,7 @@ const StoriesScreen = () => {
         colors={['transparent', 'rgba(0,0,0,0.6)']}
         style={styles.controlsGradient}
       >
-        <View style={styles.controls}>
+        <View style={[styles.controls, { paddingBottom: Math.max(40, insets.bottom + 20) }]}>
           {currentStory?.caption && (
             <Text style={styles.caption}>{currentStory.caption}</Text>
           )}
@@ -541,11 +543,15 @@ const StoriesScreen = () => {
     if (!showComments) return null;
 
     return (
-      <View style={styles.commentsOverlay}>
-        <View style={styles.commentsContainer}>
+      <View style={styles.commentsOverlay} pointerEvents="box-none">
+        <View style={styles.commentsContainer} pointerEvents="auto">
           <View style={styles.commentsHeader}>
             <Text style={styles.commentsTitle}>Comments</Text>
-            <TouchableOpacity onPress={() => setShowComments(false)}>
+            <TouchableOpacity
+              onPress={() => setShowComments(false)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.closeButton}
+            >
               <Ionicons name="close" size={24} color="white" />
             </TouchableOpacity>
           </View>
@@ -570,7 +576,7 @@ const StoriesScreen = () => {
             )}
           />
 
-          <View style={styles.commentInput}>
+          <View style={[styles.commentInput, { paddingBottom: Math.max(20, insets.bottom + 8) }]}>
             <TextInput
               style={styles.commentTextInput}
               placeholder="Add a comment..."

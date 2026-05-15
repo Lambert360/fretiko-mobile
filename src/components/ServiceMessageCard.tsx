@@ -33,7 +33,7 @@ const ServiceMessageCard: React.FC<ServiceMessageCardProps> = ({ service, isCurr
   };
 
   const getPriceDisplay = () => {
-    const price = `₦${service.price.toLocaleString()}`;
+    const price = `₣${service.price.toLocaleString()}`;
     
     switch (service.priceType) {
       case 'hourly':

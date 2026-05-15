@@ -2,8 +2,7 @@ import { StorageClient } from '@supabase/storage-js';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-// Import Supabase configuration from centralized config (keys now loaded from env variables)
+import { supabaseAuth } from '../config/supabase';
 import { supabaseStorage } from '../config/supabase';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -15,18 +14,27 @@ export interface UploadResult {
   error?: string;
 }
 
-// Get current user from mobile app's auth system
+// Get current user and Supabase session token
 const getCurrentUser = async () => {
   try {
-    const userDataString = await AsyncStorage.getItem('userData');
-    const accessToken = await SecureStore.getItemAsync('accessToken');
+    // Get Supabase session (contains the proper JWT for storage)
+    const { data: { session }, error: sessionError } = await supabaseAuth.getSession();
     
-    if (!userDataString || !accessToken) {
-      throw new Error('User not authenticated');
+    if (sessionError || !session) {
+      console.error('No Supabase session:', sessionError);
+      throw new Error('No active Supabase session');
     }
-    
+
+    const userDataString = await AsyncStorage.getItem('userData');
+    if (!userDataString) {
+      throw new Error('User data not found');
+    }
+
     const userData = JSON.parse(userDataString);
-    return { user: userData, token: accessToken };
+    console.log('✅ Got Supabase session for user:', userData.id);
+    
+    // Use Supabase access_token for storage operations
+    return { user: userData, token: session.access_token };
   } catch (error) {
     console.error('Error getting current user:', error);
     throw new Error('User not authenticated');
@@ -61,11 +69,12 @@ class FileUploadService {
    * @param fileUri Local file URI from device
    * @param fileName Original file name or custom name
    * @param fileType MIME type (e.g., 'image/jpeg', 'video/mp4')
+   * @param bucketName Optional bucket name (defaults to 'media')
    * @returns Promise with upload result
    */
-  async uploadFile(fileUri: string, fileName: string, fileType: string): Promise<UploadResult> {
+  async uploadFile(fileUri: string, fileName: string, fileType: string, bucketName?: string): Promise<UploadResult> {
     try {
-      console.log('📤 Starting file upload:', { fileUri, fileName, fileType });
+      console.log('📤 Starting file upload:', { fileUri, fileName, fileType, bucketName });
 
       // Check if Supabase Storage is configured
       if (!isSupabaseConfigured()) {
@@ -76,6 +85,7 @@ class FileUploadService {
       const { user, token } = await getCurrentUser();
       console.log('👤 Current user for upload:', user.id);
 
+      const targetBucket = bucketName || this.bucketName;
       const fileExtension = this.getFileExtension(fileName, fileType);
       const uniqueFileName = `${user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExtension}`;
 
@@ -99,7 +109,7 @@ class FileUploadService {
       // Upload to Supabase Storage
       console.log('☁️ Uploading to Supabase Storage...');
       const { data, error } = await storageClient
-        .from(this.bucketName)
+        .from(targetBucket)
         .upload(uniqueFileName, byteArray, {
           contentType: fileType,
           cacheControl: '3600',
@@ -118,7 +128,7 @@ class FileUploadService {
 
       // Get public URL
       const { data: publicUrlData } = storageClient
-        .from(this.bucketName)
+        .from(targetBucket)
         .getPublicUrl(data.path);
 
       console.log('✅ Upload successful:', publicUrlData.publicUrl);

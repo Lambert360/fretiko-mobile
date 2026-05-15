@@ -225,7 +225,8 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
   return (
     <KeyboardAvoidingView
       style={[styles.container, { paddingTop: insets.top }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'position' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
       {/* Header */}
       <View style={styles.header}>
@@ -562,6 +563,7 @@ const styles = StyleSheet.create({
   },
   inputGroup: {
     marginBottom: 20,
+    zIndex: 1,
   },
   inputLabel: {
     fontSize: 16,
@@ -645,11 +647,11 @@ const styles = StyleSheet.create({
     right: 0,
     backgroundColor: '#222',
     borderRadius: 12,
-    zIndex: 1000,
+    zIndex: 9999,
     shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 20,
     maxHeight: 300,
   },
   dropdownBelow: {
