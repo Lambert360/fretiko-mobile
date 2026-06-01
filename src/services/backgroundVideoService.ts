@@ -19,6 +19,40 @@ export class BackgroundVideoService {
   private baseUrl = `${API_BASE_URL}/api/video-processing`;
 
   /**
+   * Get processing status for a specific entity (service/product/post_media)
+   */
+  async getEntityStatus(
+    entityType: 'service' | 'product' | 'post_media',
+    entityId: string,
+  ): Promise<{ success: boolean; data?: any; error?: string }> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('User not authenticated');
+      }
+
+      const response = await fetch(
+        `${this.baseUrl}/entity-status/${entityType}/${entityId}`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error('Failed to get entity status:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
    * Add video to background processing queue
    */
   async addVideoToQueue(videoUrl: string, options: {

@@ -9,7 +9,7 @@ import {
   Dimensions,
   FlatList,
   Image,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   StyleSheet,
   Text,
@@ -46,6 +46,7 @@ import ScheduleModal, { ScheduleActivityData } from '../components/ScheduleModal
 import { WishlistShareModal } from '../components/WishlistShareModal';
 import WishlistMessageCard from '../components/WishlistMessageCard';
 import DocumentMessageCard from '../components/DocumentMessageCard';
+import * as Sharing from 'expo-sharing';
 
 // Global WebSocket manager to persist across component remounts
 class GeminiWebSocketManager {
@@ -92,11 +93,13 @@ import {
 } from 'expo-audio';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import * as Speech from 'expo-speech';
 import { AI_ASSISTANT_UUID, AI_ASSISTANT_NAME, AI_ASSISTANT_AVATAR } from '../constants/chat';
 import { useAuth } from '../contexts/AuthContext';
+import { useCallContext } from '../contexts/CallContext';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -202,6 +205,11 @@ interface ChatParams {
     image: string;
     vendor_username?: string;
   };
+  pendingIncomingCall?: {
+    callSessionId: string;
+    callerName: string;
+    callType: 'audio' | 'video';
+  };
 }
 
 const IndividualChatScreen = () => {
@@ -213,6 +221,7 @@ const IndividualChatScreen = () => {
   const isFocused = useIsFocused(); // 🔥 Track screen focus to prevent unnecessary remounts
   const flatListRef = useRef<FlatList>(null);
   const { user, accessToken } = useAuth();
+  const { registerActiveChatId, unregisterActiveChatId } = useCallContext();
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   // Get chat params from navigation
@@ -232,6 +241,8 @@ const IndividualChatScreen = () => {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [recordingInterval, setRecordingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
+  // url → download progress (0–1). Presence in map = currently downloading.
+  const [downloadingFiles, setDownloadingFiles] = useState<Map<string, number>>(new Map());
   const [showWishlistShareModal, setShowWishlistShareModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [selectedScheduleData, setSelectedScheduleData] = useState<any>(null);
@@ -255,6 +266,7 @@ const IndividualChatScreen = () => {
   const [callStatus, setCallStatus] = useState<'calling' | 'connecting' | 'ringing' | 'connected' | 'ending' | 'reconnecting'>('calling');
   const [incomingCall, setIncomingCall] = useState<{callSessionId: string, callerName: string, callType: 'audio' | 'video'} | null>(null);
   const incomingCallRef = useRef<{callSessionId: string, callerName: string, callType: 'audio' | 'video'} | null>(null); // 🔥 Persist across remounts
+  const pendingCallHandledRef = useRef(false); // Prevent double-handling pendingIncomingCall param
   const isAcceptingCallRef = useRef<boolean>(false); // Prevent duplicate accept calls
   const currentCallSessionIdRef = useRef<string | null>(null); // 🔥 Persist call session ID across remounts
   const isReinitializingRef = useRef<boolean>(false); // Track if we're reinitializing to prevent premature call end
@@ -330,13 +342,41 @@ const IndividualChatScreen = () => {
   // Audio recorder for voice messages (use the same one for AI calls too)
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
-  // Configure audio mode on mount for iOS recording
+  // Register this chat as the currently active chat so CallContext knows NOT to show
+  // the incoming-call banner for calls that belong to this very conversation.
+  useEffect(() => {
+    registerActiveChatId(chatId);
+    return () => {
+      unregisterActiveChatId();
+    };
+  }, [chatId]);
+
+  // If the user tapped Accept on the global incoming-call banner while on a different screen,
+  // the banner navigates here with a pendingIncomingCall param. Detect it once and show the
+  // full-screen incoming-call modal so the user can confirm before the call starts.
+  useEffect(() => {
+    const pending = chatParams.pendingIncomingCall;
+    if (pending && !pendingCallHandledRef.current) {
+      pendingCallHandledRef.current = true;
+      const callInfo = {
+        callSessionId: pending.callSessionId,
+        callerName: pending.callerName,
+        callType: pending.callType,
+      };
+      incomingCallRef.current = callInfo;
+      setIncomingCall(callInfo);
+      playCallSound('ringing');
+    }
+  }, []); // Run once on mount
+
+  // Configure audio mode on mount for recording
   useEffect(() => {
     const configureAudio = async () => {
       try {
         await setAudioModeAsync({
           allowsRecording: true,
           playsInSilentMode: true,
+          allowsBackgroundRecording: true,
           shouldPlayInBackground: false,
         });
         console.log('✅ Audio mode configured on mount');
@@ -347,6 +387,34 @@ const IndividualChatScreen = () => {
 
     configureAudio();
   }, []);
+
+  const keyboardOffset = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const keyboardShowSub = Keyboard.addListener(showEvent, (e) => {
+      Animated.timing(keyboardOffset, {
+        toValue: e.endCoordinates.height,
+        duration: Platform.OS === 'ios' ? 250 : 200,
+        useNativeDriver: false,
+      }).start();
+    });
+
+    const keyboardHideSub = Keyboard.addListener(hideEvent, () => {
+      Animated.timing(keyboardOffset, {
+        toValue: 0,
+        duration: Platform.OS === 'ios' ? 250 : 200,
+        useNativeDriver: false,
+      }).start();
+    });
+
+    return () => {
+      keyboardShowSub.remove();
+      keyboardHideSub.remove();
+    };
+  }, [keyboardOffset]);
 
   // Check for existing WebSocket on component mount (in case of remount during call)
   useEffect(() => {
@@ -804,19 +872,19 @@ const IndividualChatScreen = () => {
           if (msg.id === updatedMessage.id) {
             console.log('✅ Updating message:', updatedMessage.id);
             return {
-              id: updatedMessage.id,
-              conversationId: updatedMessage.conversation_id || updatedMessage.conversationId || chatId,
-              senderId: updatedMessage.sender_id || updatedMessage.senderId,
-              senderName: updatedMessage.senderName || msg.senderName,
+              ...msg, // Preserve ALL existing fields (wishlistData, invoiceData, productData, etc.)
+              id: updatedMessage.id || msg.id,
+              messageType: updatedMessage.message_type || updatedMessage.messageType || msg.messageType,
               content: updatedMessage.content || msg.content,
               text: updatedMessage.content || msg.text,
-              messageType: updatedMessage.message_type || updatedMessage.messageType || msg.messageType,
-              status: 'sent',
-              mediaUrl: updatedMessage.media_url || updatedMessage.mediaUrl,
+              mediaUrl: updatedMessage.media_url || updatedMessage.mediaUrl || msg.mediaUrl,
+              status: 'sent' as const,
               timestamp: new Date(updatedMessage.created_at || updatedMessage.createdAt || msg.timestamp),
               createdAt: updatedMessage.created_at || updatedMessage.createdAt || msg.createdAt,
-              updatedAt: updatedMessage.updated_at || updatedMessage.updatedAt || new Date().toISOString(),
-              fileData: msg.fileData, // Keep existing fileData
+              updatedAt: updatedMessage.updated_at || updatedMessage.updatedAt || msg.updatedAt,
+              // Let backend win only if it actually provides the data (not null/undefined)
+              metadata: updatedMessage.metadata !== undefined ? updatedMessage.metadata : msg.metadata,
+              fileData: (updatedMessage.metadata?.fileData ?? updatedMessage.fileData) !== undefined ? (updatedMessage.metadata?.fileData ?? updatedMessage.fileData) : msg.fileData,
             };
           }
           return msg;
@@ -2324,18 +2392,15 @@ const IndividualChatScreen = () => {
 
   const toggleSpeaker = async () => {
     try {
-      setIsSpeakerOn(!isSpeakerOn);
+      const newSpeakerState = !isSpeakerOn;
+      setIsSpeakerOn(newSpeakerState);
 
-      // Delegate speaker control to system
-      // The system will handle audio routing automatically
-      console.log(isSpeakerOn ? '🔊 Speaker turned off (delegated to system)' : '🔊 Speaker turned on (delegated to system)');
-
-      // Send speaker status via WebSocket for UI synchronization
-      if (currentCallSessionId && realtimeAPI.isConnected()) {
-        realtimeAPI.sendCallSignal(currentCallSessionId, 'speaker_toggle', {
-          isSpeakerOn: !isSpeakerOn
-        }, chatId);
+      // Actually route audio to speaker or earpiece via Agora engine
+      if (agoraCallService.isServiceInitialized()) {
+        await agoraCallService.setSpeakerphone(newSpeakerState);
       }
+
+      console.log(`🔊 Speaker ${newSpeakerState ? 'on' : 'off'}`);
     } catch (error) {
       console.error('Error toggling speaker:', error);
     }
@@ -2466,17 +2531,16 @@ const IndividualChatScreen = () => {
       setRingbackTimeout(timeout);
       console.log('⏱️ Call timeout set for 60 seconds');
       
-      // Delegate microphone permissions to system
-      try {
-        // Let the system handle audio permissions when the call actually starts
-        // This avoids API compatibility issues with different expo-audio versions
-        console.log('📱 Audio permissions will be handled by system during call');
-
-        // The system will automatically prompt for permissions when audio is needed
-      } catch (audioError) {
-        console.warn('Audio permission delegation warning:', audioError);
-        // System will still handle permissions automatically
+      // Explicitly request microphone permission before starting the call.
+      // Production builds do NOT get this automatically — Agora silently fails without it.
+      const { granted: micGranted } = await requestRecordingPermissionsAsync();
+      if (!micGranted) {
+        Alert.alert('Permission Required', 'Microphone permission is required to make calls.');
+        setShowCallModal(false);
+        stopCallSounds();
+        return;
       }
+      console.log('✅ Microphone permission granted');
 
       // For video calls, request camera permission and start preview
       if (type === 'video') {
@@ -2495,21 +2559,6 @@ const IndividualChatScreen = () => {
         setShowVideoUI(true);
       }
 
-      // Delegate audio mode configuration to system
-      try {
-        // Let the system handle audio mode configuration automatically
-        // This avoids compatibility issues with different expo-audio versions
-        console.log('🔊 Audio mode will be configured by system during call');
-
-        // System will automatically handle:
-        // - Recording permissions
-        // - Audio routing (speaker/earpiece)
-        // - Background audio
-        // - Audio session management
-      } catch (audioModeError) {
-        console.warn('Audio mode delegation warning:', audioModeError);
-        // System will handle audio configuration automatically
-      }
       
       // Start call via API with participants
       const participantIds = (otherUserId ? [user?.id, otherUserId] : [user?.id]).filter((id): id is string => Boolean(id));
@@ -3016,11 +3065,10 @@ const IndividualChatScreen = () => {
         return;
       }
 
-      // Ensure audio mode is configured for recording
+      // Ensure audio mode is configured for recording (voice notes do not require background recording)
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
-        shouldPlayInBackground: false,
       });
 
       // Prepare and start recording
@@ -3932,7 +3980,7 @@ const IndividualChatScreen = () => {
         await sendMediaMessage('image', asset.uri, {
           name: asset.fileName || 'photo.jpg',
           size: (asset.fileSize || 0).toString(),
-          type: asset.type || 'image/jpeg',
+          type: asset.mimeType || 'image/jpeg',
         });
       }
     } catch (error) {
@@ -4075,54 +4123,103 @@ const IndividualChatScreen = () => {
     }
   };
 
-  // Handle opening/downloading file
-  const handleOpenFile = async (fileUrl: string, fileName: string) => {
-    console.log('📄 Opening file:', { fileUrl, fileName });
+  // Derive MIME type from stored type field or file extension
+  const getMimeType = (storedType: string, fileName: string): string => {
+    if (storedType && storedType !== 'application/octet-stream') return storedType;
+    const ext = fileName.split('.').pop()?.toLowerCase() || '';
+    const map: Record<string, string> = {
+      pdf: 'application/pdf',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xls: 'application/vnd.ms-excel',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      ppt: 'application/vnd.ms-powerpoint',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      txt: 'text/plain',
+      csv: 'text/csv',
+      json: 'application/json',
+      zip: 'application/zip',
+      jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+      gif: 'image/gif', webp: 'image/webp',
+      mp4: 'video/mp4', mov: 'video/quicktime',
+      mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav',
+    };
+    return map[ext] || 'application/octet-stream';
+  };
 
-    // Check if running in Expo Go on iOS (has limitations)
-    const isExpoGo = __DEV__ && Platform.OS === 'ios';
+  // Handle opening/downloading file — download to local cache then show native "Open With" sheet
+  const handleOpenFile = async (fileUrl: string, fileName: string, fileType = '') => {
+    if (!fileUrl) {
+      Alert.alert('Error', 'File URL not available.');
+      return;
+    }
 
-    if (isExpoGo) {
-      Alert.alert(
-        'Limited Support in Expo Go',
-        'File downloads have limited support in Expo Go on iOS. The file will open in your browser.',
-        [
-          {
-            text: 'Open in Browser',
-            onPress: async () => {
-              try {
-                await Linking.openURL(fileUrl);
-              } catch (error) {
-                console.error('Error opening file:', error);
-                Alert.alert('Error', 'Failed to open file.');
-              }
-            }
-          },
-          { text: 'Cancel', style: 'cancel' }
-        ]
-      );
+    // Debounce — ignore tap if already downloading this file
+    if (downloadingFiles.has(fileUrl)) return;
+
+    const mimeType = getMimeType(fileType, fileName);
+    // Sanitise filename so the local path is valid
+    const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const localUri = `${FileSystem.cacheDirectory}${safeFileName}`;
+
+    console.log('📄 Opening file:', { fileUrl, fileName, mimeType });
+
+    // Ensure native sharing / "Open With" is available before proceeding
+    const isSharingAvailable = await Sharing.isAvailableAsync().catch(() => false);
+    if (!isSharingAvailable) {
+      Alert.alert('Error', 'Opening files is not supported on this device.');
       return;
     }
 
     try {
-      const supported = await Linking.canOpenURL(fileUrl);
-
-      if (supported) {
-        await Linking.openURL(fileUrl);
-      } else {
-        Alert.alert(
-          'File Access',
-          'Unable to open this file. The file URL may not be accessible.',
-          [{ text: 'OK' }]
-        );
+      // Check if file is already cached
+      const info = await FileSystem.getInfoAsync(localUri);
+      if (info.exists) {
+        console.log('✅ File already cached, opening directly');
+        await Sharing.shareAsync(localUri, { mimeType, dialogTitle: 'Open with…' });
+        return;
       }
-    } catch (error) {
-      console.error('Error opening file:', error);
-      Alert.alert(
-        'Error',
-        'Failed to open file. Please try again.',
-        [{ text: 'OK' }]
+
+      // Mark as downloading
+      setDownloadingFiles(prev => new Map(prev).set(fileUrl, 0));
+
+      const downloadResumable = FileSystem.createDownloadResumable(
+        fileUrl,
+        localUri,
+        {},
+        ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
+          const progress =
+            totalBytesExpectedToWrite > 0
+              ? totalBytesWritten / totalBytesExpectedToWrite
+              : 0;
+          setDownloadingFiles(prev => new Map(prev).set(fileUrl, progress));
+        },
       );
+
+      const result = await downloadResumable.downloadAsync();
+
+      // Clear download state
+      setDownloadingFiles(prev => {
+        const next = new Map(prev);
+        next.delete(fileUrl);
+        return next;
+      });
+
+      if (!result || result.status !== 200) {
+        Alert.alert('Error', 'Failed to download file. Please try again.');
+        return;
+      }
+
+      console.log('✅ Downloaded, opening with system picker');
+      await Sharing.shareAsync(result.uri, { mimeType, dialogTitle: 'Open with…' });
+    } catch (error) {
+      console.error('❌ Error opening file:', error);
+      setDownloadingFiles(prev => {
+        const next = new Map(prev);
+        next.delete(fileUrl);
+        return next;
+      });
+      Alert.alert('Error', 'Failed to open file. Please try again.');
     }
   };
 
@@ -4247,28 +4344,41 @@ const IndividualChatScreen = () => {
       // Update optimistic message with real data
       // Convert snake_case from backend to camelCase for frontend
       const finalMessageId = updatedMessage.id;
-      setMessages(prev =>
-        prev.map(msg =>
-          msg.id === tempId
-            ? {
-                id: finalMessageId,
-                conversationId: (updatedMessage as any).conversation_id || updatedMessage.conversationId || chatId,
-                senderId: (updatedMessage as any).sender_id || updatedMessage.senderId || user?.id || '',
-                senderName: 'You',
-                content: updatedMessage.content || '',
-                text: updatedMessage.content || tempMessage.text,
-                messageType: ((updatedMessage as any).message_type || updatedMessage.messageType || messageType) as Message['messageType'],
-                status: 'sent' as const,
-                mediaUrl: (updatedMessage as any).media_url || updatedMessage.mediaUrl,
-                timestamp: new Date((updatedMessage as any).created_at || updatedMessage.createdAt),
-                createdAt: (updatedMessage as any).created_at || updatedMessage.createdAt,
-                updatedAt: (updatedMessage as any).updated_at || updatedMessage.updatedAt,
-                fileData: messageType === 'file' ? uploadResult.fileData : undefined,
-                metadata: tempMessage.metadata || (updatedMessage as any).metadata,
-              }
-            : msg
-        )
-      );
+      const finalMessage: Message = {
+        ...tempMessage, // Preserve ALL existing fields from optimistic message
+        id: finalMessageId,
+        conversationId: (updatedMessage as any).conversation_id || updatedMessage.conversationId || chatId,
+        senderId: (updatedMessage as any).sender_id || updatedMessage.senderId || user?.id || '',
+        senderName: 'You',
+        content: updatedMessage.content || tempMessage.content,
+        text: updatedMessage.content || tempMessage.text,
+        messageType: ((updatedMessage as any).message_type || updatedMessage.messageType || messageType) as Message['messageType'],
+        status: 'sent' as const,
+        mediaUrl: (updatedMessage as any).media_url || updatedMessage.mediaUrl || tempMessage.mediaUrl,
+        timestamp: new Date((updatedMessage as any).created_at || updatedMessage.createdAt || tempMessage.timestamp),
+        createdAt: (updatedMessage as any).created_at || updatedMessage.createdAt || tempMessage.createdAt,
+        updatedAt: (updatedMessage as any).updated_at || updatedMessage.updatedAt || tempMessage.updatedAt,
+        // Let backend win only if it actually provides the data (not null/undefined)
+        metadata: (updatedMessage as any).metadata !== undefined ? (updatedMessage as any).metadata : tempMessage.metadata,
+        fileData: messageType === 'file' ? uploadResult.fileData : tempMessage.fileData,
+      };
+
+      setMessages(prev => {
+        // Remove any duplicate entry with the real ID that may have been injected
+        // by a chat_message socket event reaching the sender before exclusion took effect
+        const withoutDuplicate = prev.filter(msg => msg.id !== finalMessageId);
+        // Replace the temp entry in-place to preserve list order
+        let replaced = false;
+        const updated = withoutDuplicate.map(msg => {
+          if (msg.id === tempId) {
+            replaced = true;
+            return finalMessage;
+          }
+          return msg;
+        });
+        // Fallback: tempId already gone (e.g. loadMessages ran mid-upload) — append
+        return replaced ? updated : [...updated, finalMessage];
+      });
       
       // Update duration state with final message ID
       if (messageType === 'audio' && audioDurationSeconds) {
@@ -4312,7 +4422,7 @@ const IndividualChatScreen = () => {
         await sendMediaMessage('image', asset.uri, {
           name: asset.fileName || 'image.jpg',
           size: (asset.fileSize || 0).toString(),
-          type: asset.type || 'image/jpeg',
+          type: asset.mimeType || 'image/jpeg',
         });
       }
     } catch (error) {
@@ -4770,7 +4880,9 @@ const IndividualChatScreen = () => {
                 url: item.fileData.url || item.mediaUrl,
               }}
               isCurrentUser={isCurrentUser}
-              onPress={handleOpenFile}
+              onPress={(url, name) => handleOpenFile(url, name, item.fileData?.type || '')}
+              isDownloading={downloadingFiles.has(item.fileData?.url || item.mediaUrl || '')}
+              downloadProgress={downloadingFiles.get(item.fileData?.url || item.mediaUrl || '') ?? 0}
             />
           )}
           
@@ -6139,10 +6251,8 @@ const IndividualChatScreen = () => {
   );
 
   return (
-    <KeyboardAvoidingView
+    <View
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={0}
     >
       {renderHeader()}
 
@@ -6167,6 +6277,7 @@ const IndividualChatScreen = () => {
       </View>
 
       {renderMessageInput()}
+      <Animated.View style={{ height: keyboardOffset }} />
       {renderAttachmentModal()}
       {renderCallModal()}
       {renderInCallOverlay()}
@@ -6254,7 +6365,7 @@ const IndividualChatScreen = () => {
           onSchedule={handleScheduleActivity}
         />
       )}
-    </KeyboardAvoidingView>
+    </View>
   );
 };
 

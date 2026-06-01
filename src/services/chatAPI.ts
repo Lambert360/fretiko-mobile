@@ -118,7 +118,18 @@ class ChatAPI {
           id: conv.id,
           name: conversationName,
           avatar: conv.avatarUrl || 'https://via.placeholder.com/56',
-          lastMessage: conv.lastMessage?.content || conv.lastMessage || '',
+          lastMessage: (() => {
+            const msg = conv.lastMessage;
+            if (!msg) return '';
+            if (typeof msg === 'string') return msg;
+            if (msg.content) return msg.content;
+            const typeLabels: Record<string, string> = {
+              image: '📷 Image', video: '🎥 Video', audio: '🎤 Voice message',
+              file: '📄 Document', invoice: '🧾 Invoice', wishlist: '🛍️ Wishlist',
+              auction: '🔨 Auction', livestream: '📡 Live stream', system: '🔔 System message',
+            };
+            return typeLabels[msg.messageType] || '📎 Attachment';
+          })(),
           timestamp: conv.lastMessageAt || conv.createdAt,
           unreadCount: conv.unreadCount || 0,
           isOnline: conv.isOnline || false,
@@ -597,7 +608,18 @@ class ChatAPI {
           id: conv.id,
           name: conversationName,
           avatar: conv.avatarUrl || 'https://via.placeholder.com/56', // Map avatarUrl to avatar
-          lastMessage: conv.lastMessage?.content || conv.lastMessage || '',
+          lastMessage: (() => {
+            const msg = conv.lastMessage;
+            if (!msg) return '';
+            if (typeof msg === 'string') return msg;
+            if (msg.content) return msg.content;
+            const typeLabels: Record<string, string> = {
+              image: '📷 Image', video: '🎥 Video', audio: '🎤 Voice message',
+              file: '📄 Document', invoice: '🧾 Invoice', wishlist: '🛍️ Wishlist',
+              auction: '🔨 Auction', livestream: '📡 Live stream', system: '🔔 System message',
+            };
+            return typeLabels[msg.messageType] || '📎 Attachment';
+          })(),
           timestamp: conv.lastMessageAt || conv.createdAt, // Map lastMessageAt to timestamp
           unreadCount: conv.unreadCount || 0,
           isOnline: conv.isOnline || false,

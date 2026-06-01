@@ -14,6 +14,8 @@ import {
   RenderModeType,
   ConnectionStateType,
   ConnectionChangedReasonType,
+  AudioProfileType,
+  AudioScenarioType,
 } from 'react-native-agora';
 import { getAgoraConfig } from '../config/agora';
 
@@ -96,6 +98,12 @@ class AgoraCallService {
       if (initResult !== 0) {
         throw new Error(`Engine initialization failed with code: ${initResult}`);
       }
+
+      // Set audio profile and scenario for voice/video calls
+      // SpeechStandard optimises for voice; ChatRoom scenario handles mic routing correctly
+      this.engine.setAudioProfile(AudioProfileType.AudioProfileSpeechStandard);
+      this.engine.setAudioScenario(AudioScenarioType.AudioScenarioChatroom);
+      console.log('✅ Audio profile and scenario configured for calls');
 
       console.log('✅ Agora engine initialized with Communication profile');
 
@@ -240,6 +248,10 @@ class AgoraCallService {
         this.currentChannelName = channelName;
         this.currentUid = config.uid;
         console.log('✅ Successfully joined call channel');
+
+        // Ensure microphone capture volume is at 100% (production default can be near-zero)
+        await this.engine.adjustRecordingSignalVolume(100);
+        console.log('✅ Recording signal volume set to 100');
         
         // Ensure preview is still running after join (in case it wasn't started before)
         if (isVideoCall) {
@@ -338,6 +350,22 @@ class AgoraCallService {
       return result;
     } catch (error) {
       console.error('❌ Error muting video:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Route audio to speaker or earpiece
+   */
+  async setSpeakerphone(enabled: boolean): Promise<void> {
+    try {
+      if (!this.engine) {
+        throw new Error('Engine not initialized');
+      }
+      await this.engine.setDefaultAudioRouteToSpeakerphone(enabled);
+      console.log(`🔊 Speakerphone ${enabled ? 'on' : 'off'}`);
+    } catch (error) {
+      console.error('❌ Error setting speakerphone:', error);
       throw error;
     }
   }

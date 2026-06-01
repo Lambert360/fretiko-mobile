@@ -12,6 +12,8 @@ export interface Service {
   duration?: string;
   images: string[];
   videos: string[];
+  processed_videos?: string[];
+  video_processing_status?: any;
   primary_media_url?: string;
   media_type: 'image' | 'video';
   location?: string;

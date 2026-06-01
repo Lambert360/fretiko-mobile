@@ -18,6 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { userAPI, UserStats } from '../services/userAPI';
 import { productsAPI, Product } from '../services/productsAPI';
 import { servicesAPI, VideoFeedItem, Service } from '../services/servicesAPI';
+import { postsAPI, Post } from '../services/postsAPI';
 import { chatAPI } from '../services/chatAPI';
 import ProductCard from '../components/ProductCard';
 import VideoCard from '../components/VideoCard';
@@ -60,7 +61,9 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
   const [refreshing, setRefreshing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'none' | 'pending' | 'accepted' | 'blocked'>('none');
   const [connectionId, setConnectionId] = useState<string | undefined>();
-  const [activeTab, setActiveTab] = useState<'products' | 'services'>('services');
+  const [activeTab, setActiveTab] = useState<'posts' | 'products' | 'services'>('posts');
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [postsLoading, setPostsLoading] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
@@ -106,11 +109,7 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
   }, [userId]);
 
   useEffect(() => {
-    if (profile?.isSeller && !profile?.isRider) {
-      setActiveTab('products');
-    } else {
-      setActiveTab('services');
-    }
+    setActiveTab('posts');
   }, [profile]);
 
   useEffect(() => {
@@ -162,6 +161,20 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
   };
 
   const loadUserContent = async () => {
+    // Load posts for all user types
+    if (activeTab === 'posts') {
+      setPostsLoading(true);
+      try {
+        const userPosts = await postsAPI.getPostsByUser(userId);
+        setPosts(userPosts);
+      } catch (error) {
+        console.error('Error loading user posts:', error);
+        setPosts([]);
+      } finally {
+        setPostsLoading(false);
+      }
+    }
+
     // Load products if user is a seller
     if (activeTab === 'products') {
       setProductsLoading(true);
@@ -274,7 +287,7 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
         chatId: conversation.id,
         chatName: profile.username || 'User', // Use username as chat name
         chatAvatar: profile.avatarUrl || 'https://via.placeholder.com/50', // Use user avatar
-        chatType: chatType as const,
+        chatType: chatType,
         isOnline: true, // Assume online for now
         verified: false, // Set based on user verification status if available
         isAI: false,
@@ -286,7 +299,7 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
     }
   };
 
-  const handleTabPress = (tab: 'products' | 'services') => {
+  const handleTabPress = (tab: 'posts' | 'products' | 'services') => {
     setActiveTab(tab);
     // Content will be loaded automatically by useEffect when activeTab changes
   };
@@ -312,99 +325,6 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
     );
   }
 
-  const isRegularUser = !profile?.isSeller && !profile?.isRider;
-
-  // If viewing a regular user, show WhatsApp-style interface
-  if (isRegularUser) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.whatsappHeader}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          <Text style={styles.whatsappHeaderTitle}>Profile</Text>
-        </View>
-
-        <ScrollView style={styles.whatsappContent}>
-          {/* Avatar Section */}
-          <View style={styles.whatsappAvatarSection}>
-            {profile?.avatarUrl ? (
-              <TouchableOpacity activeOpacity={0.85} onPress={() => openImageViewer(profile.avatarUrl)}>
-                <Image source={{ uri: profile.avatarUrl }} style={styles.whatsappAvatar} />
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.whatsappDefaultAvatar}>
-                <Ionicons name="person" size={60} color="#B0B0B0" />
-              </View>
-            )}
-            <Text style={styles.whatsappName}>
-              {profile?.username || 'User'}
-            </Text>
-            <Text style={styles.whatsappPhone}>
-              Citizen
-            </Text>
-          </View>
-
-          {/* Action Buttons */}
-          <View style={styles.whatsappActions}>
-            <TouchableOpacity
-              style={[
-                styles.whatsappActionButton,
-                connectionStatus === 'accepted' && { backgroundColor: '#27AE60' },
-                connectionStatus === 'pending' && { backgroundColor: '#FFA500' },
-                connectionStatus === 'blocked' && { backgroundColor: '#666', opacity: 0.5 }
-              ]}
-              onPress={handleConnect}
-              disabled={connectionStatus === 'blocked'}
-            >
-              <Ionicons
-                name={
-                  connectionStatus === 'accepted' ? "checkmark-circle" :
-                  connectionStatus === 'pending' ? "time" :
-                  connectionStatus === 'blocked' ? "ban" : "person-add"
-                }
-                size={24}
-                color="#FFFFFF"
-              />
-              <Text style={styles.whatsappActionText}>
-                {connectionStatus === 'accepted' ? 'Plugged' :
-                 connectionStatus === 'pending' ? 'Pending' :
-                 connectionStatus === 'blocked' ? 'Blocked' : 'Plug'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.whatsappActionButton} onPress={handleChatWithUser}>
-              <Ionicons name="chatbubble" size={24} color="#FFFFFF" />
-              <Text style={styles.whatsappActionText}>Chat</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Info Section */}
-          <View style={styles.whatsappInfoSection}>
-            <Text style={styles.whatsappSectionTitle}>About</Text>
-            <Text style={styles.whatsappBio}>
-              {profile?.bio || 'No bio available'}
-            </Text>
-            
-            <Text style={styles.whatsappSectionTitle}>Location</Text>
-            <Text style={styles.whatsappInfo}>
-              📍 {profile?.location || 'Not specified'}
-            </Text>
-
-            <Text style={styles.whatsappSectionTitle}>Member Since</Text>
-            <Text style={styles.whatsappInfo}>
-              📅 {profile?.createdAt ? new Date(profile.createdAt).getFullYear() : 'Unknown'}
-            </Text>
-          </View>
-        </ScrollView>
-        {renderImageViewer()}
-      </SafeAreaView>
-    );
-  }
-
-  // For vendors/riders, show sophisticated social media profile design
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
@@ -530,6 +450,29 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
 
         {/* Content Tabs */}
         <View style={styles.tabsContainer}>
+          {/* Posts — visible for ALL users */}
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'posts' && styles.activeTab]}
+            onPress={() => handleTabPress('posts')}
+          >
+            <Text style={[styles.tabText, activeTab === 'posts' && styles.activeTabText]}>
+              Posts
+            </Text>
+          </TouchableOpacity>
+
+          {/* Services — visible for vendors and riders */}
+          {(profile?.isSeller || profile?.isRider) && (
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'services' && styles.activeTab]}
+              onPress={() => handleTabPress('services')}
+            >
+              <Text style={[styles.tabText, activeTab === 'services' && styles.activeTabText]}>
+                {profile?.isRider ? 'Videos' : 'Services'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Products — visible for vendors only (not riders) */}
           {profile?.isSeller && (
             <TouchableOpacity
               style={[styles.tab, activeTab === 'products' && styles.activeTab]}
@@ -540,19 +483,52 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
               </Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'services' && styles.activeTab]}
-            onPress={() => handleTabPress('services')}
-          >
-            <Text style={[styles.tabText, activeTab === 'services' && styles.activeTabText]}>
-              {profile?.isRider ? 'Videos' : 'Services'}
-            </Text>
-          </TouchableOpacity>
         </View>
 
         {/* Content Area */}
         <View style={styles.contentArea}>
-          {activeTab === 'products' ? (
+          {activeTab === 'posts' ? (
+            postsLoading ? (
+              <View style={styles.loadingContentContainer}>
+                <ActivityIndicator size="large" color="#007AFF" />
+                <Text style={styles.loadingContentText}>Loading posts...</Text>
+              </View>
+            ) : posts.length > 0 ? (
+              <View style={styles.postsGrid}>
+                {posts.map((item) => (
+                  <View key={item.id} style={styles.gridItem}>
+                    {item.mediaType === 'text' || !item.mediaUrls || item.mediaUrls.length === 0 ? (
+                      <TouchableOpacity
+                        style={styles.textPostCard}
+                        onPress={() => navigation.navigate('PostDetails', { postId: item.id })}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="document-text-outline" size={28} color="#B0B0B0" />
+                        <Text style={styles.textPostPreview} numberOfLines={3}>
+                          {item.content || ''}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <GridMediaCard
+                        imageUrl={item.processedMediaUrls?.[0] || item.mediaUrls[0]}
+                        onPress={() => navigation.navigate('PostDetails', { postId: item.id })}
+                        onLongPress={() => {}}
+                        isVideo={item.mediaType === 'video' || item.mediaType === 'mixed'}
+                      />
+                    )}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyContentContainer}>
+                <Text style={styles.emptyContentIcon}>📝</Text>
+                <Text style={styles.emptyContentTitle}>No Posts Yet</Text>
+                <Text style={styles.emptyContentText}>
+                  {profile?.username || 'This user'} hasn't posted anything yet
+                </Text>
+              </View>
+            )
+          ) : activeTab === 'products' ? (
             productsLoading ? (
               <View style={styles.loadingContentContainer}>
                 <ActivityIndicator size="large" color="#007AFF" />
@@ -648,96 +624,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   
-  // WhatsApp Style Components
-  whatsappHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  whatsappHeaderTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginLeft: 20,
-  },
-  whatsappContent: {
-    flex: 1,
-  },
-  whatsappAvatarSection: {
-    alignItems: 'center',
-    paddingVertical: 40,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  whatsappAvatar: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-  },
-  whatsappDefaultAvatar: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: '#333',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  whatsappName: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginTop: 20,
-    textAlign: 'center',
-  },
-  whatsappPhone: {
-    fontSize: 16,
-    color: '#B0B0B0',
-    marginTop: 8,
-  },
-  whatsappActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 30,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  whatsappActionButton: {
-    alignItems: 'center',
-    padding: 15,
-    backgroundColor: '#007AFF',
-    borderRadius: 12,
-    minWidth: 80,
-  },
-  whatsappActionText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    marginTop: 8,
-  },
-  whatsappInfoSection: {
-    padding: 20,
-  },
-  whatsappSectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#007AFF',
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  whatsappBio: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    lineHeight: 24,
-  },
-  whatsappInfo: {
-    fontSize: 16,
-    color: '#B0B0B0',
-    lineHeight: 24,
-  },
-
-  // Store Style Components (modern social media design)
+  // Hero / Social Media Profile Style Components
   heroSection: {
     height: 400,
     position: 'relative',
@@ -1028,12 +915,37 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
   },
+  postsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    gap: 4,
+  },
+  textPostCard: {
+    width: (SCREEN_WIDTH - 48) / 3,
+    height: (SCREEN_WIDTH - 48) / 3,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 8,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  textPostPreview: {
+    color: '#B0B0B0',
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 14,
+  },
   productsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     paddingHorizontal: 20,
     paddingBottom: 20,
-    gap: 4, // Space between items
+    gap: 4,
   },
   gridItem: {
     width: (SCREEN_WIDTH - 48) / 3, // 3 items per row with padding and gap

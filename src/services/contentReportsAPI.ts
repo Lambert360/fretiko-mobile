@@ -1,10 +1,11 @@
 import { API_CONFIG } from '../config/api';
 
-export type ReportCategory = 'product' | 'service' | 'chat' | 'user';
-export type ReportType = 
+export type ReportCategory = 'product' | 'service' | 'chat' | 'user' | 'post';
+export type ReportType =
   | 'inappropriate_content' | 'spam' | 'fraudulent_listing' | 'copyright_violation' | 'misleading_information'
   | 'harassment' | 'spam_messages' | 'inappropriate_language' | 'threats'
   | 'suspicious_activity' | 'fake_account' | 'scam_attempt'
+  | 'hate_speech' | 'misinformation'
   | 'other';
 
 export interface CreateContentReportRequest {
@@ -12,6 +13,7 @@ export interface CreateContentReportRequest {
   productId?: string;
   serviceId?: string;
   chatId?: string;
+  postId?: string;
   reportedUserId?: string;
   reportType: ReportType;
   reason: string;

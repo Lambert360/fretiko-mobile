@@ -14,6 +14,8 @@ export interface Product {
   images: string[];
   primary_image_url?: string;
   videos?: string[];
+  processed_videos?: string[];
+  video_processing_status?: any;
   primary_video_url?: string;
   media_type?: 'image' | 'video';
   location?: string;
@@ -255,6 +257,33 @@ class ProductsAPI {
 
       // No fallback to mock data - throw error for real database requirement
       throw new Error('Unable to fetch products from database');
+    }
+  }
+
+
+  // Get trending products based on real order activity
+  async getTrending(params?: { limit?: number; region?: string }): Promise<Product[]> {
+    try {
+      const response = await api.get('/products/trending', {
+        params,
+        timeout: 5000,
+      });
+      return response.data;
+    } catch (error) {
+      return this.handleError(error, 'Failed to fetch trending products', false);
+    }
+  }
+
+  // Get seasonal products based on current season/holidays
+  async getSeasonal(params?: { limit?: number; region?: string }): Promise<Product[]> {
+    try {
+      const response = await api.get('/products/seasonal', {
+        params,
+        timeout: 5000,
+      });
+      return response.data;
+    } catch (error) {
+      return this.handleError(error, 'Failed to fetch seasonal products', false);
     }
   }
 

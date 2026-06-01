@@ -18,6 +18,7 @@ export interface Post {
   user?: UserInfo;
   content: string | null;
   mediaUrls: string[];
+  processedMediaUrls?: string[];
   mediaType: MediaType;
   privacyLevel: PrivacyLevel;
   likesCount: number;
@@ -351,6 +352,20 @@ class PostsAPI {
     } catch (error: any) {
       console.error('Error reporting post:', error);
       throw new Error(error.response?.data?.message || 'Failed to report post');
+    }
+  }
+
+  // Get related posts (more from user)
+  async getRelatedPosts(postId: string, limit: number = 10): Promise<Post[]> {
+    try {
+      const response = await api.get<ApiResponse<Post[]>>(
+        `${this.baseUrl}/${postId}/related`,
+        { params: { limit } }
+      );
+      return response.data.data;
+    } catch (error: any) {
+      console.error('Error fetching related posts:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch related posts');
     }
   }
 

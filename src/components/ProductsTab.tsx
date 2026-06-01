@@ -13,13 +13,14 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ProductCard as ModernProductCard } from './cards/ProductCard';
 import ProductVideoPlayer from './ProductVideoPlayer';
 import AuctionCard from './AuctionCard';
-import { Product, ProductCategory } from '../services/productsAPI';
+import { Product, ProductCategory, productsAPI } from '../services/productsAPI';
 import { AuctionWithDetails } from '../services/auctionsAPI';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
@@ -34,6 +35,7 @@ const { width: screenWidth } = Dimensions.get('window');
 const HEADER_FULL_HEIGHT = 60;
 const SUB_HEADER_HEIGHT = 44;
 const TAB_BAR_HEIGHT = 70;
+const PRODUCTS_PAGE_SIZE = 40;
 
 // Category icon mapping
 const categoryIconMap: Record<string, string> = {
@@ -87,6 +89,11 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
   const [errorState, setErrorState] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [heroIndex, setHeroIndex] = useState(0);
+  const [trendingProducts, setTrendingProducts] = useState<Product[]>([]);
+  const [seasonalProducts, setSeasonalProducts] = useState<Product[]>([]);
+  const [productsOffset, setProductsOffset] = useState(0);
+  const [hasMoreProducts, setHasMoreProducts] = useState(true);
+  const [loadingMoreProducts, setLoadingMoreProducts] = useState(false);
 
   // Video visibility tracking - FIXED: proper cleanup
   const [visibleVideoId, setVisibleVideoId] = useState<string | null>(null);
@@ -120,18 +127,25 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
     setErrorState(null);
 
     try {
-      const [{ productsAPI }, { auctionsAPI }] = await Promise.all([
-        import('../services/productsAPI'),
+      const [{ auctionsAPI }] = await Promise.all([
         import('../services/auctionsAPI')
       ]);
 
-      const [productsData, categoriesData] = await Promise.all([
-        productsAPI.getProducts(),
-        productsAPI.getCategories()
+      const [productsData, categoriesData, trendingData, seasonalData] = await Promise.all([
+        productsAPI.getProducts({ limit: PRODUCTS_PAGE_SIZE, offset: 0 }),
+        productsAPI.getCategories(),
+        productsAPI.getTrending({ limit: 12 }),
+        productsAPI.getSeasonal({ limit: 12 }),
       ]);
 
-      setProducts(productsData || []);
+      const initialProducts = productsData || [];
+      setProducts(initialProducts);
       setCategories(categoriesData || []);
+      setTrendingProducts(trendingData || []);
+      setSeasonalProducts(seasonalData || []);
+      setProductsOffset(initialProducts.length);
+      setHasMoreProducts(initialProducts.length >= PRODUCTS_PAGE_SIZE);
+      setLoadingMoreProducts(false);
 
       // Load auctions
       try {
@@ -163,6 +177,8 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
   // Refresh handler
   const refreshData = useCallback(async () => {
     setRefreshing(true);
+    setProductsOffset(0);
+    setHasMoreProducts(true);
     await loadData(false);
   }, [loadData]);
 
@@ -232,6 +248,37 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
     return count;
   }, [productFilters]);
 
+  const loadMoreProducts = useCallback(async () => {
+    if (loadingMoreProducts || !hasMoreProducts) return;
+
+    try {
+      setLoadingMoreProducts(true);
+      const moreProducts = await productsAPI.getProducts({
+        limit: PRODUCTS_PAGE_SIZE,
+        offset: productsOffset,
+      });
+
+      const newItems = moreProducts || [];
+      if (newItems.length > 0) {
+        setProducts(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const deduped = newItems.filter(p => !existingIds.has(p.id));
+          return [...prev, ...deduped];
+        });
+        setProductsOffset(prevOffset => prevOffset + newItems.length);
+        if (newItems.length < PRODUCTS_PAGE_SIZE) {
+          setHasMoreProducts(false);
+        }
+      } else {
+        setHasMoreProducts(false);
+      }
+    } catch (error) {
+      console.error('Error loading more products:', error);
+    } finally {
+      setLoadingMoreProducts(false);
+    }
+  }, [loadingMoreProducts, hasMoreProducts, productsOffset]);
+
   // Scroll handler - FIXED: stable callback
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const scrollY = event.nativeEvent.contentOffset.y;
@@ -257,9 +304,16 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
     // Check video visibility - throttled
     checkVideoVisibilityThrottled();
 
+    // Infinite scroll trigger - load more products when near bottom
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const distanceFromBottom = contentSize.height - (layoutMeasurement.height + contentOffset.y);
+    if (distanceFromBottom < 400) {
+      loadMoreProducts();
+    }
+
     // Call parent scroll handler
     onScroll?.(event);
-  }, [headerOpacity, subHeaderOpacity, onScroll]);
+  }, [headerOpacity, subHeaderOpacity, onScroll, loadMoreProducts]);
 
   // Throttled video visibility check - FIXED: no state updates during layout
   const visibilityTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -453,7 +507,7 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
         >
           {item.primary_video_url ? (
             <ProductVideoPlayer
-              videoUri={item.primary_video_url}
+              videoUri={item.processed_videos?.[0] || item.primary_video_url}
               shouldAutoPlay={isVisible}
               containerWidth={screenWidth - 24}
             />
@@ -600,7 +654,9 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
   };
 
   const renderAuctionSection = () => {
-    const allAuctions = [...activeAuctions, ...upcomingAuctions];
+    const allAuctions = [...activeAuctions, ...upcomingAuctions].filter(
+      auction => auction.time_status === 'active' || auction.time_status === 'upcoming'
+    );
     if (allAuctions.length === 0) return null;
 
     return (
@@ -632,28 +688,95 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
     if (forYouProducts.length === 0) return null;
 
     // Separate video and regular products
-    const videoProducts = forYouProducts.filter(p => p.media_type === 'video' && p.primary_video_url);
-    const regularProducts = forYouProducts.filter(p => !(p.media_type === 'video' && p.primary_video_url));
+    const videoProducts = forYouProducts.filter(
+      p => p.media_type === 'video' && (p.processed_videos?.[0] || p.primary_video_url)
+    );
+    const regularProducts = forYouProducts.filter(
+      p => !(p.media_type === 'video' && (p.processed_videos?.[0] || p.primary_video_url))
+    );
+
+    // Local mutable pools so products are not reused across blocks
+    let remainingVideos = [...videoProducts];
+    let remainingRegular = [...regularProducts];
+
+    // Helpers for sorting
+    const sortByRatingDesc = (a: Product, b: Product) => {
+      const ratingA = a.average_rating || 0;
+      const ratingB = b.average_rating || 0;
+      return ratingB - ratingA;
+    };
+
+    const sortByNewestDesc = (a: Product, b: Product) => {
+      const dateA = new Date(a.created_at).getTime();
+      const dateB = new Date(b.created_at).getTime();
+      return dateB - dateA;
+    };
+
+    const blocks: JSX.Element[] = [];
+    let round = 0; // 0 = rating, 1 = newest, then repeat
+    let bannerIndex = 0;
+
+    while (remainingRegular.length > 0 || remainingVideos.length > 0) {
+      const useRating = round % 2 === 0;
+
+      // Pick up to 4 regular products for this round
+      let roundRegular: Product[] = [];
+      if (remainingRegular.length > 0) {
+        const sortedRegular = [...remainingRegular].sort(useRating ? sortByRatingDesc : sortByNewestDesc);
+        roundRegular = sortedRegular.slice(0, 4);
+        const usedIds = new Set(roundRegular.map(p => p.id));
+        remainingRegular = remainingRegular.filter(p => !usedIds.has(p.id));
+      }
+
+      // Pick up to 1 video product for this round
+      let roundVideo: Product | null = null;
+      if (remainingVideos.length > 0) {
+        const sortedVideos = [...remainingVideos].sort(useRating ? sortByRatingDesc : sortByNewestDesc);
+        roundVideo = sortedVideos[0];
+        remainingVideos = remainingVideos.filter(p => p.id !== roundVideo!.id);
+      }
+
+      // If nothing to show in this round, stop
+      if (roundRegular.length === 0 && !roundVideo) {
+        break;
+      }
+
+      const heroForBlock = heroImages.length > 0
+        ? heroImages[(bannerIndex + round) % heroImages.length]
+        : null;
+
+      blocks.push(
+        <View key={`for-you-block-${round}`} style={{ marginTop: round === 0 ? 0 : 16 }}>
+          {/* Regular products - grid */}
+          {roundRegular.length > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+              {roundRegular.map((item) => (
+                <View key={item.id} style={{ width: '48%', marginBottom: 16 }}>
+                  <TouchableOpacity onPress={() => handleProductPress(item.id)}>
+                    {renderProductCard(item)}
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Video products - full width */}
+          {roundVideo && renderVideoProductCard(roundVideo, round)}
+
+          {heroForBlock && renderHeroBanner(heroForBlock, round)}
+        </View>
+      );
+
+      bannerIndex++;
+      round++;
+    }
 
     return (
       <View style={{ paddingHorizontal: 12, marginTop: 12 }}>
         <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 8 }}>
           For You 🎯
         </Text>
-
-        {/* Video products - full width */}
-        {videoProducts.map((item, index) => renderVideoProductCard(item, index))}
-
-        {/* Regular products - grid */}
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-          {regularProducts.map((item) => (
-            <View key={item.id} style={{ width: '48%', marginBottom: 16 }}>
-              <TouchableOpacity onPress={() => handleProductPress(item.id)}>
-                {renderProductCard(item)}
-              </TouchableOpacity>
-            </View>
-          ))}
-        </View>
+        {blocks}
       </View>
     );
   };
@@ -761,13 +884,26 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
           // Mixed content for "All" category
           <>
             {renderHeroBanner(heroImages[heroIndex % Math.max(heroImages.length, 1)], 0)}
-            {renderHorizontalSection('Trending Now 🔥', 'Hot products everyone\'s talking about', memoizedSections.trending)}
+            {renderHorizontalSection(
+              'Trending Now 🔥',
+              'Hot products everyone\'s buying right now',
+              trendingProducts.length > 0 ? trendingProducts : memoizedSections.trending
+            )}
             {renderHorizontalSection('Hot Picks ⭐', 'Featured products you\'ll love', memoizedSections.hotPicks)}
-            {renderHorizontalSection('Seasonal Rave 🎄', 'Perfect for the season', memoizedSections.seasonalRave)}
+            {renderHorizontalSection(
+              'Seasonal Rave 🎄',
+              'Perfect for the current season & holidays',
+              seasonalProducts.length > 0 ? seasonalProducts : memoizedSections.seasonalRave
+            )}
             {renderHorizontalSection('Combo Deals 💰', 'Bundle and save', memoizedSections.combodeals)}
             {renderHorizontalSection('Flash Sales ⚡', 'Limited time offers', memoizedSections.flashSales)}
             {renderAuctionSection()}
             {renderForYouSection()}
+            {loadingMoreProducts && (
+              <View style={{ paddingVertical: 16 }}>
+                <ActivityIndicator color="#3498DB" />
+              </View>
+            )}
           </>
         ) : (
           // Category-specific grid
@@ -780,7 +916,7 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
             </View>
             <View style={{ paddingHorizontal: 12 }}>
               {filteredProducts.map((item) => (
-                item.media_type === 'video' && item.primary_video_url ? (
+                item.media_type === 'video' && (item.processed_videos?.[0] || item.primary_video_url) ? (
                   renderVideoProductCard(item, 0)
                 ) : (
                   <View key={item.id} style={{ width: '48%', marginBottom: 16 }}>

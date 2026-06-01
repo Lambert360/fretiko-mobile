@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { wishlistAPI, WishlistItem } from '../services/wishlistAPI';
 
 interface WishlistShareModalProps {
@@ -28,6 +29,7 @@ export const WishlistShareModal: React.FC<WishlistShareModalProps> = ({
   onClose,
   onShareSuccess,
 }) => {
+  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
   const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
@@ -125,7 +127,8 @@ export const WishlistShareModal: React.FC<WishlistShareModalProps> = ({
           <Text style={styles.productName} numberOfLines={2}>
             {item.productName}
           </Text>
-          <Text style={styles.productPrice}>₦{item.price.toFixed(2)}</Text>
+          {/* Use Freti currency symbol to match wallet/invoice UI */}
+          <Text style={styles.productPrice}>₣{item.price.toFixed(2)}</Text>
         </View>
       </TouchableOpacity>
     );
@@ -139,7 +142,7 @@ export const WishlistShareModal: React.FC<WishlistShareModalProps> = ({
       onRequestClose={onClose}
     >
       <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+        <View style={[styles.modalContent, { paddingBottom: 20 + insets.bottom }]}>
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Share Wishlist</Text>
@@ -287,7 +290,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     height: '90%',
-    paddingBottom: 20,
   },
   header: {
     flexDirection: 'row',

@@ -76,6 +76,8 @@ const HEADER_MIN_HEIGHT = 50; // Minimum height
 const SUB_HEADER_HEIGHT = 44; // New sub-header for Products/Services
 const TAB_BAR_HEIGHT = 70;
 
+const SERVICE_VIDEOS_PAGE_SIZE = 10;
+
 // Category icon mapping - connects backend categories to UI icons
 const categoryIconMap: Record<string, string> = {
   'electronics': 'tv-outline',
@@ -197,6 +199,9 @@ const HomeScreen = () => {
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [videoFeedData, setVideoFeedData] = useState<VideoFeedItem[]>([]);
   const [unifiedFeedData, setUnifiedFeedData] = useState<UnifiedFeedItem[]>([]);
+  const [serviceVideoOffset, setServiceVideoOffset] = useState(0);
+  const [hasMoreServiceVideos, setHasMoreServiceVideos] = useState(true);
+  const [loadingMoreServiceVideos, setLoadingMoreServiceVideos] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -283,39 +288,69 @@ const HomeScreen = () => {
         // Use real API data - remove mock data dependency
         const finalVideoData = videoData || [];
         setVideoFeedData(finalVideoData);
+        setServiceVideoOffset(finalVideoData.length);
+        setHasMoreServiceVideos(finalVideoData.length === SERVICE_VIDEOS_PAGE_SIZE);
+        setLoadingMoreServiceVideos(false);
 
-        // Create unified feed mixing posts and services
+        // Prepare posts in their existing high-interaction order
+        const postItems: UnifiedFeedItem[] = (postsData || []).filter(
+          (item: UnifiedFeedItem) => item.type === 'post' && item.postData
+        );
+
+        // Build unified feed in repeating blocks: 3 posts, then 1 service video
         const unifiedFeed: UnifiedFeedItem[] = [];
-        
-        // Add video services to unified feed
-        finalVideoData.forEach((service, index) => {
+        let postIndex = 0;
+        let serviceIndex = 0;
+
+        while (postIndex < postItems.length || serviceIndex < finalVideoData.length) {
+          // Add up to 3 posts
+          let postsAdded = 0;
+          while (postsAdded < 3 && postIndex < postItems.length) {
+            unifiedFeed.push(postItems[postIndex]);
+            postIndex += 1;
+            postsAdded += 1;
+          }
+
+          // Add 1 service video card
+          if (serviceIndex < finalVideoData.length) {
+            const service = finalVideoData[serviceIndex];
+            unifiedFeed.push({
+              id: `service-${service.id}`,
+              type: 'service',
+              itemId: service.id,
+              score: finalVideoData.length - serviceIndex, // Keep simple recency-based score
+              isSeen: false,
+              createdAt: new Date().toISOString(),
+              serviceData: service,
+            });
+            serviceIndex += 1;
+          }
+
+          if (postIndex >= postItems.length && serviceIndex >= finalVideoData.length) {
+            break;
+          }
+        }
+
+        // Append any remaining posts or services if one type ran out earlier
+        while (postIndex < postItems.length) {
+          unifiedFeed.push(postItems[postIndex]);
+          postIndex += 1;
+        }
+
+        while (serviceIndex < finalVideoData.length) {
+          const service = finalVideoData[serviceIndex];
           unifiedFeed.push({
             id: `service-${service.id}`,
             type: 'service',
             itemId: service.id,
-            score: finalVideoData.length - index, // Simple scoring based on recency
+            score: finalVideoData.length - serviceIndex,
             isSeen: false,
             createdAt: new Date().toISOString(),
             serviceData: service,
           });
-        });
+          serviceIndex += 1;
+        }
 
-        // Add posts to unified feed
-        postsData.forEach((post, index) => {
-          unifiedFeed.push({
-            id: `post-${post.id}`,
-            type: 'post',
-            itemId: post.id,
-            score: post.score || (postsData.length - index),
-            isSeen: false,
-            createdAt: post.createdAt || new Date().toISOString(),
-            postData: post.postData,
-          });
-        });
-
-        // Sort by score (mix posts and services)
-        unifiedFeed.sort((a, b) => b.score - a.score);
-        
         setUnifiedFeedData(unifiedFeed);
       } catch (videoError) {
         // Video feed errors are non-critical, log but don't block
@@ -328,6 +363,9 @@ const HomeScreen = () => {
         console.warn('🔴 Error loading video data, using empty array:', videoErrorInfo);
         setVideoFeedData([]);
         setUnifiedFeedData([]);
+        setServiceVideoOffset(0);
+        setHasMoreServiceVideos(false);
+        setLoadingMoreServiceVideos(false);
       }
 
       // Load auctions (small batches for MVP)
@@ -3293,6 +3331,78 @@ const HomeScreen = () => {
             }
 
             showPlayButton(); // Show play button when switching videos
+
+            // Lazy-load more service videos when user approaches end of current batch
+            if (!loadingMoreServiceVideos && hasMoreServiceVideos) {
+              let servicesSeen = 0;
+              for (let i = 0; i <= newIndex && i < feedItems.length; i++) {
+                if (feedItems[i].type === 'service') {
+                  servicesSeen++;
+                }
+              }
+
+              // Trigger loading more when the user has reached roughly (offset - 2) services
+              const threshold = Math.max(0, serviceVideoOffset - 2);
+              if (servicesSeen >= threshold && serviceVideoOffset > 0) {
+                (async () => {
+                  try {
+                    setLoadingMoreServiceVideos(true);
+
+                    const moreVideos = await servicesAPI.getVideoFeed({
+                      limit: SERVICE_VIDEOS_PAGE_SIZE,
+                      offset: serviceVideoOffset,
+                    });
+
+                    const newItems = moreVideos || [];
+                    if (newItems.length === 0) {
+                      setHasMoreServiceVideos(false);
+                      return;
+                    }
+
+                    setVideoFeedData(prev => {
+                      const existingIds = new Set(prev.map(v => v.id));
+                      const deduped = newItems.filter(v => !existingIds.has(v.id));
+                      return [...prev, ...deduped];
+                    });
+
+                    setUnifiedFeedData(prevUnified => {
+                      const existingServiceIds = new Set(
+                        prevUnified
+                          .filter(item => item.type === 'service')
+                          .map(item => item.itemId)
+                      );
+
+                      const newServiceItems: UnifiedFeedItem[] = newItems
+                        .filter(service => !existingServiceIds.has(service.id))
+                        .map(service => ({
+                          id: `service-${service.id}`,
+                          type: 'service',
+                          itemId: service.id,
+                          score: 0,
+                          isSeen: false,
+                          createdAt: new Date().toISOString(),
+                          serviceData: service,
+                        }));
+
+                      if (newServiceItems.length === 0) {
+                        return prevUnified;
+                      }
+
+                      return [...prevUnified, ...newServiceItems];
+                    });
+
+                    setServiceVideoOffset(prev => prev + newItems.length);
+                    if (newItems.length < SERVICE_VIDEOS_PAGE_SIZE) {
+                      setHasMoreServiceVideos(false);
+                    }
+                  } catch (error) {
+                    console.error('Error loading more service videos:', error);
+                  } finally {
+                    setLoadingMoreServiceVideos(false);
+                  }
+                })();
+              }
+            }
           }}
         >
           {feedItems.map((item, index) => {
@@ -3406,6 +3516,9 @@ const HomeScreen = () => {
                       }}
                       onUserPress={(userId) => {
                         navigation.navigate('PublicProfile', { userId });
+                      }}
+                      onDoubleTap={(post) => {
+                        navigation.navigate('PostDetails', { postId: post.id });
                       }}
                     />
                   </View>
@@ -3650,121 +3763,7 @@ const HomeScreen = () => {
                 </View>
               </View>
 
-              {/* Progress Bar - positioned at bottom just above tab bar */}
-              <View style={{
-                  position: 'absolute',
-                  bottom: tabBarHeightFromContext + 4, // Slightly lower than UI cluster
-                  left: 16,
-                  right: 16,
-                  height: 4
-                }}>
-                  <TouchableOpacity
-                    style={{
-                      height: 20,
-                      width: '100%',
-                      justifyContent: 'center',
-                      paddingVertical: 8
-                    }}
-                    onPress={(e) => handleProgressBarPress(e, item.id)}
-                    activeOpacity={1}
-                  >
-                    <View style={{
-                      height: 2,
-                      backgroundColor: 'rgba(255,255,255,0.3)',
-                      borderRadius: 1
-                    }}>
-                      <View style={{
-                        height: '100%',
-                        width: `${Math.max(0, Math.min(100, videoProgress * 100))}%`,
-                        backgroundColor: 'white',
-                        borderRadius: 1
-                      }} />
-                    </View>
-                    {/* Progress indicator dot */}
-                    <View style={{
-                      position: 'absolute',
-                      left: `${Math.max(0, Math.min(95, videoProgress * 100))}%`,
-                      top: 6,
-                      width: 8,
-                      height: 8,
-                      backgroundColor: 'white',
-                      borderRadius: 4,
-                      shadowColor: '#000',
-                      shadowOffset: { width: 0, height: 1 },
-                      shadowOpacity: 0.3,
-                      shadowRadius: 2,
-                    }} />
-                  </TouchableOpacity>
-              </View>
-                
-              {/* Services Header - always visible */}
-              <View style={{
-                  position: 'absolute',
-                  top: insets.top + 10,
-                  left: 0,
-                  right: 0,
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingHorizontal: 16
-                }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <TouchableOpacity onPress={toggleSidebar} style={{ marginRight: 12, padding: 8 }}>
-                      <Ionicons name="menu-outline" size={20} color="white" />
-                    </TouchableOpacity>
-                    <Text style={{
-                      color: 'white',
-                      fontSize: 24,
-                      fontWeight: 'bold'
-                    }}>
-                      fretiko
-                    </Text>
-                    {/* Debug play button */}
-                    <TouchableOpacity
-                      onPress={() => {
-                        setIsPlaying(true);
-                      }}
-                      style={{
-                        marginLeft: 12,
-                        backgroundColor: isPlaying ? '#4CAF50' : '#FF4757',
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 4
-                      }}
-                    >
-                      <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>
-                        {isPlaying ? 'PLAYING' : 'PAUSED'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <TouchableOpacity onPress={() => navigation.navigate('CreatePost')} style={{ padding: 8, marginRight: 8 }}>
-                      <Ionicons name="add-circle-outline" size={24} color="white" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={handleCartIconPress}>
-                      <View style={{ position: 'relative' }}>
-                        <Ionicons name="bag-outline" size={28} color="white" />
-                      {itemCount > 0 ? (
-                        <View style={{
-                          position: 'absolute',
-                          top: -8,
-                          right: -8,
-                          backgroundColor: '#FF4757',
-                          borderRadius: 10,
-                          width: 20,
-                          height: 20,
-                          justifyContent: 'center',
-                          alignItems: 'center'
-                        }}>
-                          <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
-                            {itemCount > 99 ? '99+' : String(itemCount || 0)}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  </TouchableOpacity>
-                </View>
-              </View>
+
 
 
               {/* Right side actions - aligned with bottom cluster */}
@@ -3869,6 +3868,56 @@ const HomeScreen = () => {
             }
           })}
         </PagerView>
+
+        {/* Services Header - rendered once here, visible over ALL items (posts and videos) */}
+        <View style={{
+          position: 'absolute',
+          top: insets.top + 10,
+          left: 0,
+          right: 0,
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          paddingHorizontal: 16,
+          zIndex: 2000,
+          pointerEvents: 'box-none',
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <TouchableOpacity onPress={toggleSidebar} style={{ marginRight: 12, padding: 8 }}>
+              <Ionicons name="menu-outline" size={20} color="white" />
+            </TouchableOpacity>
+            <Text style={{ color: 'white', fontSize: 24, fontWeight: 'bold' }}>
+              fretiko
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <TouchableOpacity onPress={() => navigation.navigate('CreatePost')} style={{ padding: 8, marginRight: 8 }}>
+              <Ionicons name="add-circle-outline" size={24} color="white" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleCartIconPress}>
+              <View style={{ position: 'relative' }}>
+                <Ionicons name="bag-outline" size={28} color="white" />
+                {itemCount > 0 ? (
+                  <View style={{
+                    position: 'absolute',
+                    top: -8,
+                    right: -8,
+                    backgroundColor: '#FF4757',
+                    borderRadius: 10,
+                    width: 20,
+                    height: 20,
+                    justifyContent: 'center',
+                    alignItems: 'center'
+                  }}>
+                    <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
+                      {itemCount > 99 ? '99+' : String(itemCount || 0)}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
     );
   };

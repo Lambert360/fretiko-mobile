@@ -419,6 +419,16 @@ class PushNotificationService {
             importance: Notifications.AndroidImportance.DEFAULT,
             description: 'General notifications',
           },
+          {
+            name: 'calls',
+            importance: Notifications.AndroidImportance.MAX,
+            description: 'Incoming call alerts',
+            sound: 'default',
+            vibrationPattern: [0, 500, 250, 500],
+            lightColor: '#FF27AE60',
+            enableVibrate: true,
+            showBadge: false,
+          },
         ];
 
         for (const channel of channels) {

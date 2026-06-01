@@ -86,14 +86,19 @@ export const getFlashSales = (products: Product[], limit: number = 8): Product[]
 /**
  * Get "For You" products (chronological - newest first)
  */
-export const getForYou = (products: Product[], limit: number = 20): Product[] => {
+export const getForYou = (products: Product[], limit?: number): Product[] => {
   // Sort by created_at descending (newest first)
   const sorted = [...products].sort((a, b) => {
     const dateA = new Date(a.created_at).getTime();
     const dateB = new Date(b.created_at).getTime();
     return dateB - dateA; // Newest first
   });
-  return sorted.slice(0, limit);
+
+  if (typeof limit === 'number') {
+    return sorted.slice(0, limit);
+  }
+
+  return sorted;
 };
 
 /**

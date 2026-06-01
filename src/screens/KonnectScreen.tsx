@@ -22,7 +22,6 @@ import * as Haptics from 'expo-haptics';
 import { chatAPI, ChatConversation } from '../services/chatAPI';
 import { realtimeAPI } from '../services/realtimeAPI';
 import { storiesAPI, Story } from '../services/storiesAPI';
-import { userAPI } from '../services/userAPI';
 import { useAuth } from '../contexts/AuthContext';
 import { AI_ASSISTANT_UUID, AI_ASSISTANT_NAME, AI_ASSISTANT_AVATAR } from '../constants/chat';
 
@@ -57,7 +56,6 @@ const KonnectScreen = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMoreConversations, setHasMoreConversations] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [userProfile, setUserProfile] = useState<{ isSeller: boolean; isRider: boolean } | null>(null);
 
   // Refs for cleanup functions
   const cleanupFnRef = useRef<(() => void) | null>(null);
@@ -68,27 +66,12 @@ const KonnectScreen = () => {
   const slideAnim = useRef(new Animated.Value(30)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   
-  // Scroll-based animations for stories section
+  // Scroll-based animations for stories section (currently unused but kept for future enhancements)
   const scrollY = useRef(new Animated.Value(0)).current;
   const storiesHeightAnim = useRef(new Animated.Value(200)).current; // Full height
   const cardScaleAnim = useRef(new Animated.Value(1)).current; // Full card size
   const titleOpacityAnim = useRef(new Animated.Value(1)).current;
   const textOverlayOpacityAnim = useRef(new Animated.Value(1)).current;
-
-  // Load user profile to check if seller/rider
-  const loadUserProfile = async () => {
-    try {
-      const profile = await userAPI.getProfile();
-      setUserProfile({
-        isSeller: profile.isSeller,
-        isRider: profile.isRider || false,
-      });
-    } catch (error) {
-      console.error('Error loading user profile:', error);
-      // Default to regular user if profile load fails
-      setUserProfile({ isSeller: false, isRider: false });
-    }
-  };
 
   // Load stories from API
   const loadStories = async () => {
@@ -112,32 +95,24 @@ const KonnectScreen = () => {
         })
       ]);
 
-      // Only create "My Story" section if user is a seller or rider
-      const canCreateStories = userProfile?.isSeller || userProfile?.isRider;
-
       let allStoriesGroups: StoriesGroup[];
 
-      if (canCreateStories) {
-        // Create "My Story" section with user's own stories
-        const myStorySection: StoriesGroup = {
-          user: {
-            id: user.id,
-            username: 'Your Story',
-            avatar_url: user.avatar_url,
-          },
-          stories: myStories,
-          hasUnviewed: false, // User's own stories don't have "unviewed" state
-        };
+      // Always create "My Story" section so every user can create and view their own stories
+      const myStorySection: StoriesGroup = {
+        user: {
+          id: user.id,
+          username: 'Your Story',
+          avatar_url: user.avatar_url,
+        },
+        stories: myStories,
+        hasUnviewed: false, // User's own stories don't have "unviewed" state
+      };
 
-        // Combine with discovery stories
-        allStoriesGroups = [
-          myStorySection,
-          ...groupedStories,
-        ];
-      } else {
-        // Regular users only see discovery stories (from their plugs)
-        allStoriesGroups = groupedStories;
-      }
+      // Combine "Your Story" with discovery stories
+      allStoriesGroups = [
+        myStorySection,
+        ...groupedStories,
+      ];
 
       setStoriesGroups(allStoriesGroups);
     } catch (error) {
@@ -374,9 +349,6 @@ const KonnectScreen = () => {
       // Set auth token for chat API
       chatAPI.setAuthToken(accessToken);
 
-      // Load user profile first to check seller/rider status
-      await loadUserProfile();
-
       // Load conversations first (don't wait for real-time)
       await loadConversations();
 
@@ -556,7 +528,8 @@ const KonnectScreen = () => {
       (navigation as any).navigate('IndividualChatScreen', {
         chatId: chatItem.id,
         chatName: chatItem.name,
-        chatAvatar: chatItem.avatar,
+        // Always use the dedicated AI avatar so it matches IndividualChatScreen
+        chatAvatar: AI_ASSISTANT_AVATAR,
         chatType: chatItem.chatType,
         isAI: true,
       });
@@ -699,8 +672,10 @@ const KonnectScreen = () => {
           matchesType = chat.chatType === activeFilter || (activeFilter === 'ai' && chat.isAI === true);
         }
 
-        // Filter out empty conversations (no messages) - only show AI or conversations with content
-        const hasContent = chat.isAI || (lastMessageText && lastMessageText.trim() !== '');
+        // Filter out truly empty conversations — a chat has content if it has any message (any type)
+        // or if it is the AI conversation (always shown). Use the timestamp as the signal
+        // because lastMessage is now always a string (could be an emoji label for media messages).
+        const hasContent = chat.isAI || !!chat.timestamp;
 
         return matchesSearch && matchesType && hasContent;
       })
@@ -770,259 +745,113 @@ const KonnectScreen = () => {
     </View>
   );
 
-  // Handle scroll to animate stories section
-  const handleScroll = (event: any) => {
-    const offsetY = event.nativeEvent.contentOffset.y;
-    
-    // Animate stories height: shrink from 200px to 80px when scrolling up
-    const heightValue = Math.max(80, Math.min(200, 200 - offsetY * 0.6));
-    Animated.timing(storiesHeightAnim, {
-      toValue: heightValue,
-      duration: 100,
-      useNativeDriver: false,
-    }).start();
-    
-    // Animate card scale: shrink from 1 to 0.55 (card to circle)
-    const scaleValue = Math.max(0.55, Math.min(1, 1 - offsetY * 0.003));
-    Animated.timing(cardScaleAnim, {
-      toValue: scaleValue,
-      duration: 100,
-      useNativeDriver: false,
-    }).start();
-    
-    // Animate title opacity: fade out when scrolling
-    const titleOpacity = Math.max(0, Math.min(1, 1 - offsetY * 0.01));
-    Animated.timing(titleOpacityAnim, {
-      toValue: titleOpacity,
-      duration: 100,
-      useNativeDriver: true,
-    }).start();
-    
-    // Animate text overlay opacity: fade out when scrolling
-    const textOpacity = Math.max(0, Math.min(1, 1 - offsetY * 0.008));
-    Animated.timing(textOverlayOpacityAnim, {
-      toValue: textOpacity,
-      duration: 100,
-      useNativeDriver: true,
-    }).start();
-  };
+  // Handle scroll — kept for FlatList onScroll prop compatibility
+  const handleScroll = (_event: any) => {};
 
   const renderStories = () => {
-    // Interpolate values for animations
-    const storiesHeight = storiesHeightAnim.interpolate({
-      inputRange: [80, 200],
-      outputRange: [80, 200],
-      extrapolate: 'clamp',
-    });
-    
-    const cardWidth = cardScaleAnim.interpolate({
-      inputRange: [0.55, 1],
-      outputRange: [50, 90],
-      extrapolate: 'clamp',
-    });
-    
-    const cardHeight = cardScaleAnim.interpolate({
-      inputRange: [0.55, 1],
-      outputRange: [50, 140],
-      extrapolate: 'clamp',
-    });
-    
-    const cardBorderRadius = cardScaleAnim.interpolate({
-      inputRange: [0.55, 1],
-      outputRange: [25, 12], // Circle to rounded rectangle
-      extrapolate: 'clamp',
-    });
-    
-    const cardMargin = cardScaleAnim.interpolate({
-      inputRange: [0.55, 1],
-      outputRange: [8, 12],
-      extrapolate: 'clamp',
-    });
-    
-    const canCreateStories = !!(userProfile?.isSeller || userProfile?.isRider);
     const hasAnyStories = storiesGroups.some(group => (group.stories?.length || 0) > 0);
 
-    // Regular users: only show this section when there are stories
-    if (!storiesLoading && !canCreateStories && !hasAnyStories) {
-      return null;
-    }
-
-    // For vendors/riders with no stories, use minimal height (just title + button)
-    const isEmptyState = canCreateStories && !hasAnyStories && !storiesLoading;
-    const containerHeight = isEmptyState ? undefined : storiesHeight;
+    const myStoryGroup = storiesGroups.find(g => g.user.username === 'Your Story');
+    const hasMyStories = (myStoryGroup?.stories?.length || 0) > 0;
+    const myFirstStory = myStoryGroup?.stories?.[0];
+    const myMediaSrc = myFirstStory?.thumbnail_url || myFirstStory?.media_url;
+    const discoveryGroups = storiesGroups.filter(
+      g => g.user.username !== 'Your Story' && (g.stories?.length || 0) > 0
+    );
 
     return (
-      <Animated.View 
-        style={[
-          isEmptyState ? styles.storiesStickyContainerMinimal : styles.storiesStickyContainer,
-          containerHeight && { height: containerHeight }
-        ]}
-      >
-        {/* Plugs Stories */}
-        <Animated.View 
-          style={[
-            styles.storiesContainer,
-            { opacity: titleOpacityAnim }
-          ]}
-        >
-          <Animated.Text style={styles.storiesTitle}>My Plugs  🔌</Animated.Text>
+      <View style={styles.storiesStickyContainer}>
+        <Text style={styles.storiesTitle}>My Plugs  🔌</Text>
         {storiesLoading ? (
           <View style={styles.storiesLoadingContainer}>
             <Text style={styles.storiesLoadingText}>Loading stories...</Text>
           </View>
         ) : (
-          canCreateStories && !hasAnyStories ? (
-            <View style={styles.uploadOnlyContainer}>
-              <TouchableOpacity
-                style={styles.uploadStoryButton}
-                onPress={() => {
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.storiesListContent}
+          >
+            {/* Create Story card — always first, available to all users */}
+            <TouchableOpacity
+              style={styles.createStoryCard}
+              onPress={() => {
+                if (hasMyStories && myStoryGroup && user) {
+                  (navigation as any).navigate('Stories', {
+                    stories: myStoryGroup.stories,
+                    initialIndex: 0,
+                    userInfo: { username: user.username || 'You', avatar_url: user.avatar_url },
+                    canAddMore: true,
+                  });
+                } else {
                   (navigation as any).navigate('StoryUpload');
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }}
-              >
-                <Ionicons name="add-circle" size={44} color="#3498DB" />
-                <Text style={styles.uploadStoryButtonText}>Upload story</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.storiesList}
-              contentContainerStyle={styles.storiesListContent}
+                }
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
             >
-              {storiesGroups.map((group, index) => {
-                const isMyStory = group.user.username === 'Your Story';
-                const hasStories = group.stories.length > 0;
-                const hasUnviewed = group.hasUnviewed;
-
-                // Calculate time since last story
-                const latestStoryTime = hasStories && group.stories.length > 0
-                  ? new Date(group.stories[0].created_at).getTime()
-                  : null;
-                const storyAge = latestStoryTime
-                  ? formatTimestamp(new Date(latestStoryTime).toISOString())
-                  : null;
-
-                return (
-                  <Animated.View
-                    key={isMyStory ? `my-story-${group.user.id}` : `discovery-${group.user.id}`}
-                    style={{
-                      marginRight: cardMargin,
-                      width: cardWidth,
-                    }}
-                  >
-                    <TouchableOpacity
-                      onPress={() => {
-                      if (isMyStory) {
-                        if (hasStories && user) {
-                          // User has stories - view them (backend provides user_profiles)
-                          (navigation as any).navigate('Stories', {
-                            stories: group.stories,
-                            initialIndex: 0,
-                            userInfo: {
-                              username: user.username || 'You',
-                              avatar_url: user.avatar_url,
-                            },
-                            canAddMore: true, // Allow user to add more stories
-                          });
-                        } else if (user) {
-                          // User has no stories - navigate to upload
-                          (navigation as any).navigate('StoryUpload');
-                        }
-                      } else {
-                        // Navigate to stories viewer with this user's stories
-                        (navigation as any).navigate('Stories', {
-                          stories: group.stories,
-                          initialIndex: 0,
-                          userInfo: group.user,
-                        });
-                      }
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }}
-                    >
-                    {/* Picture Frame Design - Animated */}
-                    <Animated.View style={[
-                      {
-                        width: cardWidth,
-                        height: cardHeight,
-                        borderRadius: cardBorderRadius,
-                        overflow: 'hidden',
-                        position: 'relative',
-                      },
-                      isMyStory && hasStories ? styles.myStoryFrame :
-                      isMyStory && !hasStories ? styles.myStoryEmptyFrame :
-                      hasStories && hasUnviewed ? styles.unviewedStoryFrame :
-                      hasStories && !hasUnviewed ? styles.viewedStoryFrame : styles.noStoryFrame
-                    ]}>
-                      <Image
-                        source={{
-                          uri: group.user.avatar_url || 'https://via.placeholder.com/80x120'
-                        }}
-                        style={styles.storyImage}
-                      />
-                      {isMyStory && (
-                        <Animated.View 
-                          style={[
-                            styles.addStoryIconFrame,
-                            {
-                              opacity: cardScaleAnim.interpolate({
-                                inputRange: [0.55, 1],
-                                outputRange: [0, 1],
-                                extrapolate: 'clamp',
-                              }),
-                            }
-                          ]}
-                        >
-                          <Ionicons
-                            name="add"
-                            size={16}
-                            color="#FFFFFF"
-                          />
-                        </Animated.View>
-                      )}
-                      {/* Overlay gradient for better text visibility - Animated */}
-                      <Animated.View 
-                        style={[
-                          styles.storyOverlay,
-                          {
-                            opacity: textOverlayOpacityAnim,
-                          }
-                        ]} 
-                      />
-                      {/* Username at bottom - Animated */}
-                      <Animated.View 
-                        style={[
-                          styles.storyTextContainer,
-                          {
-                            opacity: textOverlayOpacityAnim,
-                          }
-                        ]}
-                      >
-                        <Text style={styles.storyNameFrame} numberOfLines={1}>
-                          {group.user.username}
-                        </Text>
-                        {hasStories && storyAge && !isMyStory && (
-                          <Text style={styles.storyAgeFrame}>
-                            {storyAge}
-                          </Text>
-                        )}
-                        {isMyStory && hasStories && (
-                          <Text style={styles.storyCountFrame}>
-                            {group.stories.length} stories
-                          </Text>
-                        )}
-                      </Animated.View>
-                    </Animated.View>
-                  </TouchableOpacity>
-                  </Animated.View>
-                );
-              })}
-            </ScrollView>
-          )
+              {hasMyStories && myMediaSrc && (
+                <Image
+                  source={{ uri: myMediaSrc }}
+                  style={styles.createStoryMedia}
+                />
+              )}
+              <View style={styles.createStoryAvatarWrapper}>
+                <View>
+                  <Image
+                    source={{ uri: user?.avatar_url || 'https://via.placeholder.com/64' }}
+                    style={styles.createStoryAvatar}
+                  />
+                  <View style={styles.createStoryPlusBadge}>
+                    <Ionicons name="add" size={16} color="#FFFFFF" />
+                  </View>
+                </View>
+              </View>
+              <View style={styles.createStoryLabel}>
+                <Text style={styles.createStoryLabelText} numberOfLines={2}>
+                  {hasMyStories ? 'Your Story' : 'Create story'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+            {/* Discovery story cards */}
+            {discoveryGroups.map((group) => {
+              const firstStory = group.stories[0];
+              const mediaSrc = firstStory?.thumbnail_url || firstStory?.media_url;
+              const hasUnviewed = group.hasUnviewed;
+              return (
+                <TouchableOpacity
+                  key={`story-${group.user.id}`}
+                  style={styles.storyCard}
+                  onPress={() => {
+                    (navigation as any).navigate('Stories', {
+                      stories: group.stories,
+                      initialIndex: 0,
+                      userInfo: group.user,
+                    });
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                >
+                  <Image
+                    source={{ uri: mediaSrc || group.user.avatar_url || 'https://via.placeholder.com/110' }}
+                    style={styles.storyCardMedia}
+                  />
+                  <View style={[styles.storyAvatarRingWrapper, hasUnviewed ? styles.storyAvatarRingUnviewed : styles.storyAvatarRingViewed]}>
+                    <Image
+                      source={{ uri: group.user.avatar_url || 'https://via.placeholder.com/36' }}
+                      style={styles.storyCardAvatar}
+                    />
+                  </View>
+                  <View style={styles.storyCardOverlay} />
+                  <View style={styles.storyCardTextContainer}>
+                    <Text style={styles.storyCardName} numberOfLines={2}>
+                      {group.user.username}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         )}
-        </Animated.View>
-      </Animated.View>
+      </View>
     );
   };
 
@@ -1175,6 +1004,13 @@ const KonnectScreen = () => {
       },
     });
 
+    // Use the correct avatar for AI assistant; fall back to backend avatar for others
+    const avatarSource = (item.isAI || item.chatType === 'ai')
+      ? AI_ASSISTANT_AVATAR
+      : typeof item.avatar === 'string'
+        ? { uri: item.avatar }
+        : item.avatar;
+
     return (
       <Animated.View
         style={[
@@ -1227,7 +1063,7 @@ const KonnectScreen = () => {
             activeOpacity={0.8}
           >
             <View style={styles.avatarContainer}>
-              <Image source={typeof item.avatar === 'string' ? { uri: item.avatar } : item.avatar} style={styles.avatar} />
+              <Image source={avatarSource} style={styles.avatar} />
 
               {/* Online indicator */}
             {item.isOnline && (
@@ -1420,7 +1256,7 @@ const KonnectScreen = () => {
             renderItem={renderChatItem}
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={[styles.chatsListContent, { paddingBottom: insets.bottom + 100 }]}
+            contentContainerStyle={[styles.chatsListContent, { paddingBottom: insets.bottom + 154 }]}
             onScroll={handleScroll}
             scrollEventThrottle={16}
             refreshControl={
@@ -1454,7 +1290,7 @@ const KonnectScreen = () => {
 
       {/* Floating Action Button - Connections (stacked above Iko) */}
       <TouchableOpacity
-        style={[styles.connectionsFab, { bottom: insets.bottom + 136 }]}
+        style={[styles.connectionsFab, { bottom: insets.bottom + 82 }]}
         onPress={() => {
           (navigation as any).navigate('ConnectionsList', {
             type: 'plugs',
@@ -1468,7 +1304,7 @@ const KonnectScreen = () => {
 
       {/* Floating Action Button - Quick Access to Iko */}
       <TouchableOpacity
-        style={[styles.fab, { bottom: insets.bottom + 70 }]}
+        style={[styles.fab, { bottom: insets.bottom + 16 }]}
         onPress={async () => {
           const ikoChat = chats.find(c => c.isAI || c.chatType === 'ai');
           if (ikoChat) {
@@ -1568,40 +1404,35 @@ const styles = StyleSheet.create({
   },
   storiesStickyContainer: {
     backgroundColor: 'rgba(0,0,0,0.95)',
-    paddingHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 4,
+    paddingTop: 10,
+    paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.1)',
-    overflow: 'hidden',
   },
   storiesStickyContainerMinimal: {
     backgroundColor: 'rgba(0,0,0,0.95)',
-    paddingHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 4,
+    paddingTop: 10,
+    paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.1)',
-    overflow: 'hidden',
   },
-  storiesContainer: {
-    // marginBottom removed since it's now in sticky container
-  },
+  storiesContainer: {},
   storiesTitle: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    marginBottom: 8,
+    marginBottom: 10,
+    paddingHorizontal: 14,
   },
-  storiesList: {
-    flexDirection: 'row',
-    paddingVertical: 2,
-  },
+  storiesList: {},
   storiesListContent: {
-    paddingRight: 20, // Add padding at the end of scroll
+    paddingLeft: 14,
+    paddingRight: 14,
+    gap: 10,
   },
   storiesLoadingContainer: {
     paddingVertical: 8,
+    paddingHorizontal: 14,
     alignItems: 'center',
   },
   storiesLoadingText: {
@@ -1610,6 +1441,7 @@ const styles = StyleSheet.create({
   },
   uploadOnlyContainer: {
     paddingVertical: 8,
+    paddingHorizontal: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1631,6 +1463,7 @@ const styles = StyleSheet.create({
   },
   noStoriesContainer: {
     paddingVertical: 20,
+    paddingHorizontal: 14,
     alignItems: 'center',
   },
   noStoriesText: {
@@ -1665,141 +1498,105 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  storyItem: {
-    marginRight: 12,
-    width: 90,
-  },
-  storyRing: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    padding: 2,
-    marginBottom: 6,
+  // ── Facebook-style story card styles ─────────────────────────────────────
+  createStoryCard: {
+    width: 110,
+    height: 200,
+    borderRadius: 16,
+    backgroundColor: '#1C1C1E',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    overflow: 'hidden',
     position: 'relative',
+    justifyContent: 'space-between',
   },
-  unviewedStoryRing: {
-    backgroundColor: '#E91E63',
+  createStoryMedia: {
+    ...StyleSheet.absoluteFillObject,
+    resizeMode: 'cover',
   },
-  viewedStoryRing: {
-    backgroundColor: '#666666',
+  createStoryAvatarWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  noStoryRing: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
-  },
-  myStoryRing: {
-    backgroundColor: '#3498DB', // Blue ring for user's own stories
-  },
-  myStoryEmptyRing: {
-    backgroundColor: 'rgba(52, 152, 219, 0.3)', // Lighter blue for empty "Your Story"
-    borderWidth: 2,
+  createStoryAvatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 3,
     borderColor: '#3498DB',
-    borderStyle: 'dashed',
   },
-  storyAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 2,
-    borderColor: '#000000',
-  },
-  addStoryIcon: {
+  createStoryPlusBadge: {
     position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#3498DB',
+    bottom: -2,
+    right: -2,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#1877F2',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: '#000000',
+    borderColor: '#1C1C1E',
   },
-  storyNameContainer: {
+  createStoryLabel: {
+    paddingHorizontal: 8,
+    paddingBottom: 10,
     alignItems: 'center',
-    width: '100%',
   },
-  storyName: {
+  createStoryLabelText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
   },
-  storyAge: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 10,
-    fontWeight: '500',
-    marginTop: 2,
-  },
-  storyCount: {
-    color: '#3498DB',
-    fontSize: 10,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  // Picture Frame Styles (Facebook-like)
-  storyFrame: {
-    width: 90,
-    height: 140,
-    borderRadius: 12,
+  storyCard: {
+    width: 110,
+    height: 200,
+    borderRadius: 16,
     overflow: 'hidden',
     position: 'relative',
   },
-  unviewedStoryFrame: {
-    borderWidth: 3,
-    borderColor: '#E91E63',
-  },
-  viewedStoryFrame: {
-    borderWidth: 3,
-    borderColor: '#666666',
-  },
-  noStoryFrame: {
-    borderWidth: 3,
-    borderColor: 'rgba(255,255,255,0.2)',
-  },
-  myStoryFrame: {
-    borderWidth: 3,
-    borderColor: '#3498DB',
-  },
-  myStoryEmptyFrame: {
-    borderWidth: 3,
-    borderColor: '#3498DB',
-    borderStyle: 'dashed',
-    backgroundColor: 'rgba(52, 152, 219, 0.1)',
-  },
-  storyImage: {
+  storyCardMedia: {
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
   },
-  addStoryIconFrame: {
+  storyAvatarRingWrapper: {
     position: 'absolute',
     top: 8,
     left: 8,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#3498DB',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    padding: 2,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
+  },
+  storyAvatarRingUnviewed: { backgroundColor: '#1877F2' },
+  storyAvatarRingViewed: { backgroundColor: '#555555' },
+  storyCardAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1.5,
     borderColor: '#FFFFFF',
   },
-  storyOverlay: {
+  storyCardOverlay: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: '40%',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    height: '42%',
+    backgroundColor: 'rgba(0,0,0,0.55)',
   },
-  storyTextContainer: {
+  storyCardTextContainer: {
     position: 'absolute',
     bottom: 8,
     left: 8,
     right: 8,
   },
-  storyNameFrame: {
+  storyCardName: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
@@ -1807,24 +1604,33 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
-  storyAgeFrame: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: 9,
-    fontWeight: '500',
-    marginTop: 2,
-    textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  storyCountFrame: {
-    color: '#3498DB',
-    fontSize: 9,
-    fontWeight: '700',
-    marginTop: 2,
-    textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
+  // ── Legacy ring/frame styles (preserved to avoid unused-key errors) ──────
+  storyItem: { marginRight: 12, width: 90 },
+  storyRing: { width: 60, height: 60, borderRadius: 30, padding: 2, marginBottom: 6, position: 'relative' },
+  unviewedStoryRing: { backgroundColor: '#E91E63' },
+  viewedStoryRing: { backgroundColor: '#666666' },
+  noStoryRing: { backgroundColor: 'rgba(255,255,255,0.1)' },
+  myStoryRing: { backgroundColor: '#3498DB' },
+  myStoryEmptyRing: { backgroundColor: 'rgba(52, 152, 219, 0.3)', borderWidth: 2, borderColor: '#3498DB' },
+  storyAvatar: { width: 56, height: 56, borderRadius: 28, borderWidth: 2, borderColor: '#000000' },
+  addStoryIcon: { position: 'absolute', bottom: 0, right: 0, width: 20, height: 20, borderRadius: 10, backgroundColor: '#3498DB', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#000000' },
+  storyNameContainer: { alignItems: 'center', width: '100%' },
+  storyName: { color: '#FFFFFF', fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  storyAge: { color: 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: '500', marginTop: 2 },
+  storyCount: { color: '#3498DB', fontSize: 10, fontWeight: '600', marginTop: 2 },
+  storyFrame: { width: 90, height: 140, borderRadius: 12, overflow: 'hidden', position: 'relative' },
+  unviewedStoryFrame: { borderWidth: 3, borderColor: '#E91E63' },
+  viewedStoryFrame: { borderWidth: 3, borderColor: '#666666' },
+  noStoryFrame: { borderWidth: 3, borderColor: 'rgba(255,255,255,0.2)' },
+  myStoryFrame: { borderWidth: 3, borderColor: '#3498DB' },
+  myStoryEmptyFrame: { borderWidth: 3, borderColor: '#3498DB', backgroundColor: 'rgba(52, 152, 219, 0.1)' },
+  storyImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  addStoryIconFrame: { position: 'absolute', top: 8, left: 8, width: 28, height: 28, borderRadius: 14, backgroundColor: '#3498DB', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFFFFF' },
+  storyOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '40%', backgroundColor: 'rgba(0,0,0,0.5)' },
+  storyTextContainer: { position: 'absolute', bottom: 8, left: 8, right: 8 },
+  storyNameFrame: { color: '#FFFFFF', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  storyAgeFrame: { color: 'rgba(255,255,255,0.9)', fontSize: 9, fontWeight: '500', marginTop: 2, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  storyCountFrame: { color: '#3498DB', fontSize: 9, fontWeight: '700', marginTop: 2, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
   quickActionsContainer: {
     paddingVertical: 0,
     marginVertical: 0,

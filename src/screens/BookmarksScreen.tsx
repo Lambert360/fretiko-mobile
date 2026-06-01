@@ -112,7 +112,10 @@ const BookmarksScreen: React.FC = () => {
   };
 
   const renderPostItem = ({ item }: { item: Post }) => (
-    <View style={styles.itemContainer}>
+    <TouchableOpacity 
+      style={styles.itemContainer} 
+      onPress={() => (navigation as any).navigate('PostDetails', { postId: item.id })}
+    >
       <View style={styles.itemHeader}>
         <TouchableOpacity 
           style={styles.userInfo}
@@ -145,7 +148,7 @@ const BookmarksScreen: React.FC = () => {
         <View style={styles.stat}><Ionicons name="share" size={16} color="#27AE60" /><Text style={styles.statText}>{item.sharesCount}</Text></View>
         <View style={styles.stat}><Ionicons name="gift" size={16} color="#9B59B6" /><Text style={styles.statText}>{item.giftsCount}</Text></View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 
   const renderServiceItem = ({ item }: { item: Service }) => (

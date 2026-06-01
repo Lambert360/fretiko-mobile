@@ -9,6 +9,7 @@ import { ordersAPI, Order } from '../services/ordersAPI';
 import { giftAPI, UserGift } from '../services/giftAPI';
 import { fileUploadService } from '../services/fileUploadService';
 import { productsAPI, Product } from '../services/productsAPI';
+import { postsAPI } from '../services/postsAPI';
 import { searchAPI, SearchType } from '../services/searchAPI';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeImage } from '../components/SafeImage';
@@ -42,6 +43,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [gifts, setGifts] = useState<UserGift[]>([]);
   const [trendingProducts, setTrendingProducts] = useState<Product[]>([]);
+  const [postsCount, setPostsCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isOptionsVisible, setIsOptionsVisible] = useState(false);
@@ -149,6 +151,19 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
       setGifts(giftsData.gifts.slice(0, 10));
       // Set trending products from featured content
       setTrendingProducts(featuredData.products || []);
+
+      // Load posts count for the current user (used in profile stats)
+      try {
+        if (profileData?.id) {
+          const userPosts = await postsAPI.getPostsByUser(profileData.id);
+          setPostsCount(userPosts.length);
+        } else {
+          setPostsCount(0);
+        }
+      } catch (postsError) {
+        console.error('Error loading posts count:', postsError);
+        setPostsCount(0);
+      }
     } catch (error: any) {
       console.error('Error loading profile:', error);
       
@@ -380,7 +395,8 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
     name: `${user?.firstName} ${user?.lastName}`,
     email: user?.email,
     plugs: stats.plugsCount,
-    clients: (profile.isSeller || profile.isRider) ? stats.clientsCount : undefined,
+    clients: stats.clientsCount,
+    posts: postsCount ?? 0,
     connectionRequests: stats.connectionRequestsCount,
     // Real wallet data from API
     fretiBalance: wallet.availableBalance,
@@ -550,6 +566,15 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                   <Text style={styles.statNumber}>{userData.plugs}</Text>
                   <Text style={styles.statLabel}>Plugs</Text>
                 </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.statItem}
+                  onPress={() => navigation.navigate('MyPosts')}
+                >
+                  <Text style={styles.statNumber}>{userData.posts}</Text>
+                  <Text style={styles.statLabel}>Posts</Text>
+                </TouchableOpacity>
+
                 {userData.clients !== undefined && (
                   <TouchableOpacity 
                     style={styles.statItem}
@@ -887,7 +912,17 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         )}
       </ScrollView>
 
-      {/* Upload Floating Action Button - Available to all users for posts, vendors/riders for products/services */}
+      {/* Create Post FAB — smaller, standalone, above Upload FAB */}
+      <TouchableOpacity
+        style={styles.createPostFAB}
+        onPress={() => handleButtonPress(() => navigation.navigate('CreatePost'))}
+      >
+        <Animated.View style={[styles.createPostIcon, { transform: [{ scale: springAnim }] }]}>
+          <Ionicons name="create" size={20} color="#FFFFFF" />
+        </Animated.View>
+      </TouchableOpacity>
+
+      {/* Upload Floating Action Button — products/services listing */}
       <TouchableOpacity
         style={styles.uploadFAB}
         onPress={() => handleButtonPress(() => setIsUploadModalVisible(true))}
@@ -912,6 +947,12 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                 <Ionicons name="bookmark" size={20} color="#FFFFFF" />
               </View>
               <Text style={styles.modalText}>Bookmarks</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalOption} onPress={() => handleButtonPress(() => { navigation.navigate('MyPosts'); setIsOptionsVisible(false); })}>
+              <View style={styles.modalIconContainer}>
+                <Ionicons name="document-text-outline" size={20} color="#FFFFFF" />
+              </View>
+              <Text style={styles.modalText}>My Posts</Text>
             </TouchableOpacity>
             {(profile?.isSeller || profile?.isRider) && (
               <TouchableOpacity style={styles.modalOption} onPress={() => handleButtonPress(() => { navigation.navigate('PublicStore', { userId: user?.id, profile, isOwnStore: true }); setIsOptionsVisible(false); })}>
@@ -958,24 +999,6 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
               </View>
 
               <View style={styles.uploadOptions}>
-                {/* Create Post option - Available to all users */}
-                <TouchableOpacity
-                  style={styles.uploadOption}
-                  onPress={() => {
-                    setIsUploadModalVisible(false);
-                    navigation.navigate('CreatePost');
-                  }}
-                >
-                  <View style={[styles.uploadOptionIcon, { backgroundColor: '#9B59B6' }]}>
-                    <Ionicons name="create" size={28} color="#FFFFFF" />
-                  </View>
-                  <View style={styles.uploadOptionContent}>
-                    <Text style={styles.uploadOptionTitle}>Create Post</Text>
-                    <Text style={styles.uploadOptionDescription}>Share with your followers</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.6)" />
-                </TouchableOpacity>
-
                 {/* Show Product option for vendors/sellers */}
                 {profile?.isSeller && (
                   <TouchableOpacity
@@ -1651,6 +1674,27 @@ const styles = StyleSheet.create({
     zIndex: 1000,
   },
   uploadIcon: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  createPostFAB: {
+    position: 'absolute',
+    bottom: 96,
+    right: 26,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#9B59B6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 6,
+    shadowColor: '#9B59B6',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    zIndex: 1000,
+  },
+  createPostIcon: {
     justifyContent: 'center',
     alignItems: 'center',
   },

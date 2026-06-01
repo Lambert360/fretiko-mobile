@@ -21,6 +21,8 @@ interface GiftSelectorModalProps {
   gifts: UserGift[];
   loading: boolean;
   onSendGift: (giftId: string, quantity: number) => void;
+  title?: string;
+  subtitle?: string;
 }
 
 const GiftSelectorModal: React.FC<GiftSelectorModalProps> = ({
@@ -29,6 +31,8 @@ const GiftSelectorModal: React.FC<GiftSelectorModalProps> = ({
   gifts,
   loading,
   onSendGift,
+  title = 'Send a Gift',
+  subtitle = 'Select a gift to send to this post',
 }) => {
   const slideAnim = React.useRef(new Animated.Value(screenHeight)).current;
   const [selectedGift, setSelectedGift] = useState<UserGift | null>(null);
@@ -153,15 +157,13 @@ const GiftSelectorModal: React.FC<GiftSelectorModalProps> = ({
           <View style={styles.handle} />
           
           <View style={styles.header}>
-            <Text style={styles.headerTitle}>Send a Gift</Text>
+            <Text style={styles.headerTitle}>{title}</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <Ionicons name="close" size={24} color="#FFF" />
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.subtitle}>
-            Select a gift to send to this post
-          </Text>
+          <Text style={styles.subtitle}>{subtitle}</Text>
 
           {renderContent()}
 

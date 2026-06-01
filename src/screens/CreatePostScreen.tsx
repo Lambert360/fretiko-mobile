@@ -19,7 +19,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { postsAPI, PostMedia, MediaType, PrivacyLevel } from '../services/postsAPI';
 import { useAuth } from '../contexts/AuthContext';
 import SafeImage from '../components/SafeImage';
@@ -35,14 +35,26 @@ const PRIVACY_OPTIONS: { value: PrivacyLevel; label: string; icon: string }[] = 
   { value: 'private', label: 'Private', icon: 'lock-closed' },
 ];
 
+type CreatePostRouteProp = RouteProp<{
+  CreatePost: {
+    postId?: string;
+    initialContent?: string;
+    initialPrivacy?: PrivacyLevel;
+  };
+}, 'CreatePost'>;
+
 const CreatePostScreen: React.FC = () => {
   const navigation = useNavigation();
+  const route = useRoute<CreatePostRouteProp>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+
+  const editPostId = route.params?.postId;
+  const isEditMode = !!editPostId;
   
-  const [content, setContent] = useState('');
+  const [content, setContent] = useState(route.params?.initialContent || '');
   const [media, setMedia] = useState<PostMedia[]>([]);
-  const [privacyLevel, setPrivacyLevel] = useState<PrivacyLevel>('public');
+  const [privacyLevel, setPrivacyLevel] = useState<PrivacyLevel>(route.params?.initialPrivacy || 'public');
   const [isLoading, setIsLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showPrivacySelector, setShowPrivacySelector] = useState(false);
@@ -50,13 +62,15 @@ const CreatePostScreen: React.FC = () => {
   
   const contentInputRef = useRef<TextInput>(null);
 
-  // Reset state when screen mounts
+  // Reset state when screen mounts (only for create mode)
   useEffect(() => {
-    setContent('');
-    setMedia([]);
-    setPrivacyLevel('public');
-    setUploadProgress(0);
-    setPreviewMode(false);
+    if (!isEditMode) {
+      setContent('');
+      setMedia([]);
+      setPrivacyLevel('public');
+      setUploadProgress(0);
+      setPreviewMode(false);
+    }
   }, []);
 
   // Pick images from gallery
@@ -251,18 +265,25 @@ const CreatePostScreen: React.FC = () => {
         uploadedMedia = await uploadMedia();
       }
 
-      const post = await postsAPI.createPost({
-        content: content.trim() || undefined,
-        media: uploadedMedia.length > 0 ? uploadedMedia : undefined,
-        mediaType: determineMediaType(uploadedMedia),
-        privacyLevel,
-      });
-
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      
-      navigation.goBack();
-      
-      Alert.alert('Success', 'Your post has been created!');
+      if (isEditMode && editPostId) {
+        await postsAPI.updatePost(editPostId, {
+          content: content.trim() || undefined,
+          privacyLevel,
+        });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        navigation.goBack();
+        Alert.alert('Updated', 'Your post has been updated!');
+      } else {
+        await postsAPI.createPost({
+          content: content.trim() || undefined,
+          media: uploadedMedia.length > 0 ? uploadedMedia : undefined,
+          mediaType: determineMediaType(uploadedMedia),
+          privacyLevel,
+        });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        navigation.goBack();
+        Alert.alert('Success', 'Your post has been created!');
+      }
     } catch (error: any) {
       console.error('Error creating post:', error);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -402,7 +423,7 @@ const VideoPreview = ({ uri }: { uri: string }) => {
         </TouchableOpacity>
         
         <Text style={styles.headerTitle}>
-          {previewMode ? 'Preview' : 'Create Post'}
+          {previewMode ? 'Preview' : isEditMode ? 'Edit Post' : 'Create Post'}
         </Text>
         
         <View style={styles.headerRight}>

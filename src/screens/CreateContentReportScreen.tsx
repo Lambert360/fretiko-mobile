@@ -56,6 +56,16 @@ const USER_REPORT_TYPES: Array<{ value: ReportType; label: string }> = [
   { value: 'other', label: 'Other' },
 ];
 
+const POST_REPORT_TYPES: Array<{ value: ReportType; label: string }> = [
+  { value: 'inappropriate_content', label: 'Inappropriate Content' },
+  { value: 'spam', label: 'Spam' },
+  { value: 'harassment', label: 'Harassment' },
+  { value: 'hate_speech', label: 'Hate Speech' },
+  { value: 'misinformation', label: 'Misinformation' },
+  { value: 'copyright_violation', label: 'Copyright Violation' },
+  { value: 'other', label: 'Other' },
+];
+
 interface EvidenceItem {
   uri: string;
   type: 'image' | 'document';
@@ -73,14 +83,16 @@ const CreateContentReportScreen = () => {
     productId?: string;
     serviceId?: string;
     chatId?: string;
+    postId?: string;
     reportedUserId?: string;
     reportCategory?: ReportCategory;
   }) || {};
 
   // Determine report category from params
-  const reportCategory: ReportCategory = params.reportCategory || 
-    (params.productId ? 'product' : 
+  const reportCategory: ReportCategory = params.reportCategory ||
+    (params.productId ? 'product' :
      params.serviceId ? 'service' :
+     params.postId ? 'post' :
      params.chatId ? 'chat' :
      params.reportedUserId ? 'user' :
      'product');
@@ -90,6 +102,7 @@ const CreateContentReportScreen = () => {
     switch (reportCategory) {
       case 'product': return PRODUCT_REPORT_TYPES;
       case 'service': return SERVICE_REPORT_TYPES;
+      case 'post': return POST_REPORT_TYPES;
       case 'chat': return CHAT_REPORT_TYPES;
       case 'user': return USER_REPORT_TYPES;
       default: return PRODUCT_REPORT_TYPES;
@@ -167,6 +180,10 @@ const CreateContentReportScreen = () => {
     }
     if (reportCategory === 'service' && !params.serviceId) {
       Alert.alert('Error', 'Service reference is missing');
+      return;
+    }
+    if (reportCategory === 'post' && !params.postId) {
+      Alert.alert('Error', 'Post reference is missing');
       return;
     }
     if (reportCategory === 'chat' && !params.chatId) {
@@ -250,6 +267,7 @@ const CreateContentReportScreen = () => {
         evidence: uploadedEvidence.length > 0 ? uploadedEvidence : undefined,
         productId: params.productId,
         serviceId: params.serviceId,
+        postId: params.postId,
         chatId: params.chatId,
         reportedUserId: params.reportedUserId,
       };
@@ -282,6 +300,7 @@ const CreateContentReportScreen = () => {
     switch (reportCategory) {
       case 'product': return 'Report Product';
       case 'service': return 'Report Service';
+      case 'post': return 'Report Post';
       case 'chat': return 'Report Chat';
       case 'user': return 'Report User';
       default: return 'Report Content';
@@ -318,6 +337,7 @@ const CreateContentReportScreen = () => {
                 <Text style={styles.infoText}>
                   {reportCategory === 'product' && 'Reporting a product listing'}
                   {reportCategory === 'service' && 'Reporting a service listing'}
+                  {reportCategory === 'post' && 'Reporting a post'}
                   {reportCategory === 'chat' && 'Reporting inappropriate chat behavior'}
                   {reportCategory === 'user' && 'Reporting a user account'}
                 </Text>

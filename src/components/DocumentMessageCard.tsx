@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 interface FileData {
@@ -14,6 +14,8 @@ interface DocumentMessageCardProps {
   isCurrentUser: boolean;
   onPress: (fileUrl: string, fileName: string) => void;
   messageText?: string;
+  isDownloading?: boolean;
+  downloadProgress?: number; // 0–1
 }
 
 /**
@@ -169,14 +171,48 @@ const DocumentMessageCard: React.FC<DocumentMessageCardProps> = ({
   isCurrentUser,
   onPress,
   messageText,
+  isDownloading = false,
+  downloadProgress = 0,
 }) => {
   const fileIcon = getFileIcon(fileData.type, fileData.name);
   const iconColor = getFileIconColor(fileData.type, fileData.name);
   const formattedSize = formatFileSize(fileData.size);
   const fileExtension = getFileExtension(fileData.name);
-  
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  const spinAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: downloadProgress,
+      duration: 150,
+      useNativeDriver: false,
+    }).start();
+  }, [downloadProgress]);
+
+  useEffect(() => {
+    if (isDownloading) {
+      Animated.loop(
+        Animated.timing(spinAnim, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        })
+      ).start();
+    } else {
+      spinAnim.stopAnimation();
+      spinAnim.setValue(0);
+    }
+  }, [isDownloading]);
+
+  const spin = spinAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
   const handlePress = () => {
-    onPress(fileData.url || '', fileData.name);
+    if (!isDownloading) {
+      onPress(fileData.url || '', fileData.name);
+    }
   };
 
   return (
@@ -220,16 +256,47 @@ const DocumentMessageCard: React.FC<DocumentMessageCardProps> = ({
             <Text style={styles.fileSize}>{formattedSize}</Text>
           </View>
 
-          {/* Download Icon */}
+          {/* Download / Spinner Icon */}
           <View style={styles.downloadIcon}>
-            <Ionicons name="download-outline" size={24} color="rgba(255, 255, 255, 0.8)" />
+            {isDownloading ? (
+              <Animated.View style={{ transform: [{ rotate: spin }] }}>
+                <Ionicons name="sync-outline" size={24} color="rgba(255, 255, 255, 0.9)" />
+              </Animated.View>
+            ) : (
+              <Ionicons name="download-outline" size={24} color="rgba(255, 255, 255, 0.8)" />
+            )}
           </View>
         </View>
 
+        {/* Progress bar (visible while downloading) */}
+        {isDownloading && (
+          <View style={styles.progressTrack}>
+            <Animated.View
+              style={[
+                styles.progressFill,
+                {
+                  width: progressAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['0%', '100%'],
+                  }),
+                },
+              ]}
+            />
+          </View>
+        )}
+
         {/* Action Hint */}
         <View style={styles.actionHint}>
-          <Ionicons name="open-outline" size={12} color="rgba(255, 255, 255, 0.6)" />
-          <Text style={styles.actionHintText}>Tap to open</Text>
+          <Ionicons
+            name={isDownloading ? 'cloud-download-outline' : 'open-outline'}
+            size={12}
+            color="rgba(255, 255, 255, 0.6)"
+          />
+          <Text style={styles.actionHintText}>
+            {isDownloading
+              ? `Downloading… ${Math.round(downloadProgress * 100)}%`
+              : 'Tap to open'}
+          </Text>
         </View>
       </TouchableOpacity>
 
@@ -343,6 +410,18 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.6)',
     fontSize: 11,
     fontStyle: 'italic',
+  },
+  progressTrack: {
+    height: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 2,
+    marginTop: 8,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 3,
+    backgroundColor: '#27AE60',
+    borderRadius: 2,
   },
   messageTextContainer: {
     paddingHorizontal: 12,

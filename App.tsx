@@ -20,6 +20,10 @@ import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { RegistrationProvider } from './src/contexts/RegistrationContext';
 import { CartProvider } from './src/contexts/CartContext';
 import { FilterProvider } from './src/contexts/FilterContext';
+import { CallProvider } from './src/contexts/CallContext';
+
+// Import global call UI
+import GlobalIncomingCallBanner from './src/components/GlobalIncomingCallBanner';
 
 // Import services
 import { pushNotificationService } from './src/services/pushNotificationService';
@@ -141,6 +145,8 @@ import MyGiftsScreen from './src/screens/MyGiftsScreen';
 import GiftMarketplaceScreen from './src/screens/GiftMarketplaceScreen';
 import BookmarksScreen from './src/screens/BookmarksScreen';
 import CreatePostScreen from './src/screens/CreatePostScreen';
+import PostDetailsScreen from './src/screens/PostDetailsScreen';
+import MyPostsScreen from './src/screens/MyPostsScreen';
 
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
 
@@ -234,6 +240,7 @@ class ErrorBoundary extends React.Component<
 const AppNavigator: React.FC = () => {
   const { isAuthenticated, isLoading, isNewUser, isSuspended, isDeleted, isCheckingSuspension } = useAuth();
   const navigationRef = useRef<any>(null);
+  const rootViewRef = useRef<any>(null);
 
   // Configure Android notification channels
   useEffect(() => {
@@ -332,6 +339,22 @@ const AppNavigator: React.FC = () => {
           }
           break;
 
+        case 'call_incoming':
+          if (data.conversationId) {
+            navigationRef.current?.navigate('IndividualChatScreen', {
+              chatId: data.conversationId,
+              chatName: data.callerName || 'Unknown',
+              chatAvatar: data.callerAvatar || null,
+              chatType: 'friend',
+              pendingIncomingCall: {
+                callSessionId: data.callSessionId,
+                callerName: data.callerName || 'Unknown',
+                callType: data.callType || 'audio',
+              },
+            });
+          }
+          break;
+
         case 'delivery_update':
         case 'rider_assigned':
           if (orderId) {
@@ -411,6 +434,8 @@ const AppNavigator: React.FC = () => {
   }
 
   return (
+    <CallProvider navigationRef={navigationRef}>
+    <View style={{ flex: 1 }} ref={rootViewRef}>
     <NavigationContainer ref={navigationRef} linking={linking}>
       <Stack.Navigator
         screenOptions={{
@@ -429,6 +454,8 @@ const AppNavigator: React.FC = () => {
             <>
               <Stack.Screen name="Main" component={BottomTabNavigator} />
               <Stack.Screen name="CreatePost" component={CreatePostScreen} />
+              <Stack.Screen name="PostDetails" component={PostDetailsScreen} />
+              <Stack.Screen name="MyPosts" component={MyPostsScreen} />
               <Stack.Screen name="EditProfile" component={EditProfileScreen as any} />
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
               <Stack.Screen name="RiderVerification" component={RiderVerificationScreen} />
@@ -527,6 +554,9 @@ const AppNavigator: React.FC = () => {
         )}
       </Stack.Navigator>
     </NavigationContainer>
+    <GlobalIncomingCallBanner navigationRef={navigationRef} />
+    </View>
+    </CallProvider>
   );
 };
 

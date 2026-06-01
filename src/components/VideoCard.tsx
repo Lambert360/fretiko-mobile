@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import React, { useRef, useState, useEffect } from 'react';
 import {
@@ -272,152 +273,148 @@ const VideoCard: React.FC<VideoCardProps> = ({
           </Animated.View>
         )}
 
-        {/* 2. User Information - Bottom Left */}
+        {/* 2, 3 & 4. Bottom UI Cluster — single absolute anchor for both columns */}
         <Animated.View style={[
-          styles.userInfoContainer,
+          styles.bottomCluster,
           {
             bottom: tabBarHeight + insets.bottom + 10,
             opacity: uiOpacity
           }
         ]}>
-          <TouchableOpacity 
-            style={styles.userInfo}
-            onPress={() => onVendorPress?.(item.userId)}
-          >
-            <SafeImage
-              source={{ uri: item.userAvatar }}
-              fallbackText=""
-              showFallbackIcon={false}
-              style={styles.userAvatar}
-            />
-            <View style={styles.userDetails}>
-              <Text style={styles.username}>@{item.username || 'user'}</Text>
-              <View style={styles.userBadgeContainer}>
-                <View style={styles.proBadge}>
-                  <Text style={styles.proText}>Pro</Text>
-                </View>
-                <View style={styles.ratingContainer}>
-                  <Ionicons name="star" size={12} color="#FFD700" />
-                  <Text style={styles.ratingText}>{item.rating ? item.rating.toFixed(1) : '0.0'}</Text>
-                </View>
-              </View>
-            </View>
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* 3. Video Description - Below User Info */}
-        <Animated.View style={[
-          styles.descriptionContainer,
-          {
-            bottom: tabBarHeight + insets.bottom + 10,
-            opacity: uiOpacity
-          }
-        ]}>
-          <Text style={styles.description} numberOfLines={3}>
-            {String(item.description || '')}
-          </Text>
-          
-          {/* Service Details */}
-          <View style={styles.serviceTagsContainer}>
-            <View style={styles.serviceTag}>
-              <Ionicons name="checkmark-circle-outline" size={14} color="#27AE60" />
-              <Text style={styles.serviceTagText}>{String(item.completedJobs || 0)} jobs</Text>
-            </View>
-            <View style={styles.serviceTag}>
-              <Ionicons name="location-outline" size={14} color="#B0B0B0" />
-              <Text style={styles.serviceTagText}>{String(item.location || 'Unknown')}</Text>
-            </View>
-          </View>
-
-          {/* Price and Action Buttons */}
-          <View style={styles.actionButtonsRow}>
-            <View style={styles.priceContainer}>
-              {item.originalPrice && Number(item.originalPrice) > Number(item.price) ? (
-                <>
-                  <Text style={styles.originalPrice}>₣{Number(item.originalPrice).toFixed(2)}</Text>
-                  <Text style={styles.currentPrice}>₣{Number(item.price || 0).toFixed(2)}</Text>
-                </>
-              ) : (
-                <Text style={styles.currentPrice}>₣{Number(item.price || 0).toFixed(2)}</Text>
-              )}
-            </View>
-            
+          {/* Gradient shade so content stays readable on any background */}
+          <LinearGradient
+            colors={['transparent', 'rgba(0,0,0,0.55)']}
+            style={styles.bottomGradient}
+            pointerEvents="none"
+          />
+          {/* Left Column: User Info + Description + Actions */}
+          <View style={styles.leftColumnContainer}>
+            {/* User Info */}
             <TouchableOpacity 
-              style={styles.chatButton}
+              style={styles.userInfo}
               onPress={() => onVendorPress?.(item.userId)}
             >
-              <Ionicons name="chatbubble-outline" size={16} color="white" />
-              <Text style={styles.chatButtonText}>Chat</Text>
+              <SafeImage
+                source={{ uri: item.userAvatar }}
+                fallbackText=""
+                showFallbackIcon={false}
+                style={styles.userAvatar}
+              />
+              <View style={styles.userDetails}>
+                <Text style={styles.username}>@{item.username || 'user'}</Text>
+                <View style={styles.userBadgeContainer}>
+                  <View style={styles.proBadge}>
+                    <Text style={styles.proText}>Pro</Text>
+                  </View>
+                  <View style={styles.ratingContainer}>
+                    <Ionicons name="star" size={12} color="#FFD700" />
+                    <Text style={styles.ratingText}>{item.rating ? item.rating.toFixed(1) : '0.0'}</Text>
+                  </View>
+                </View>
+              </View>
             </TouchableOpacity>
-            
+
+            {/* Description */}
+            <Text style={styles.description} numberOfLines={3}>
+              {String(item.description || '')}
+            </Text>
+
+            {/* Service Details */}
+            <View style={styles.serviceTagsContainer}>
+              <View style={styles.serviceTag}>
+                <Ionicons name="checkmark-circle-outline" size={14} color="#27AE60" />
+                <Text style={styles.serviceTagText}>{String(item.completedJobs || 0)} jobs</Text>
+              </View>
+              <View style={styles.serviceTag}>
+                <Ionicons name="location-outline" size={14} color="#B0B0B0" />
+                <Text style={styles.serviceTagText}>{String(item.location || 'Unknown')}</Text>
+              </View>
+            </View>
+
+            {/* Price and Action Buttons */}
+            <View style={styles.actionButtonsRow}>
+              <View style={styles.priceContainer}>
+                {item.originalPrice && Number(item.originalPrice) > Number(item.price) ? (
+                  <>
+                    <Text style={styles.originalPrice}>₣{Number(item.originalPrice).toFixed(2)}</Text>
+                    <Text style={styles.currentPrice}>₣{Number(item.price || 0).toFixed(2)}</Text>
+                  </>
+                ) : (
+                  <Text style={styles.currentPrice}>₣{Number(item.price || 0).toFixed(2)}</Text>
+                )}
+              </View>
+
+              <TouchableOpacity 
+                style={styles.chatButton}
+                onPress={() => onVendorPress?.(item.userId)}
+              >
+                <Ionicons name="chatbubble-outline" size={16} color="white" />
+                <Text style={styles.chatButtonText}>Chat</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.bookButton}
+                onPress={handleBook}
+              >
+                <Ionicons name="calendar-outline" size={16} color="white" />
+                <Text style={styles.bookButtonText}>Book</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Right Column: Reaction Icons */}
+          <View style={styles.rightActionsContainer}>
+            {/* Like Button */}
             <TouchableOpacity 
-              style={styles.bookButton}
-              onPress={handleBook}
+              style={styles.rightActionButton} 
+              onPress={handleLike}
             >
-              <Ionicons name="calendar-outline" size={16} color="white" />
-              <Text style={styles.bookButtonText}>Book</Text>
+              <View style={styles.iconBackground}>
+                <Ionicons 
+                  name={item.isLiked ? 'heart' : 'heart-outline'} 
+                  size={28} 
+                  color={item.isLiked ? '#FF4757' : 'white'} 
+                />
+              </View>
+              <Text style={styles.rightActionText}>{String(item.likes || 0)}</Text>
+            </TouchableOpacity>
+
+            {/* Comment Button */}
+            <TouchableOpacity 
+              style={styles.rightActionButton} 
+              onPress={handleComment}
+            >
+              <View style={styles.iconBackground}>
+                <Ionicons name="chatbubble-outline" size={28} color="white" />
+              </View>
+              <Text style={styles.rightActionText}>{String(item.comments || 0)}</Text>
+            </TouchableOpacity>
+
+            {/* Bookmark Button */}
+            <TouchableOpacity 
+              style={styles.rightActionButton} 
+              onPress={handleBookmark}
+            >
+              <View style={styles.iconBackground}>
+                <Ionicons 
+                  name={item.isBookmarked ? 'bookmark' : 'bookmark-outline'} 
+                  size={28} 
+                  color={item.isBookmarked ? '#FFD700' : 'white'} 
+                />
+              </View>
+            </TouchableOpacity>
+
+            {/* Share Button */}
+            <TouchableOpacity 
+              style={styles.rightActionButton} 
+              onPress={handleShare}
+            >
+              <View style={styles.iconBackground}>
+                <Ionicons name="share-outline" size={28} color="white" />
+              </View>
+              <Text style={styles.rightActionText}>{String(item.shares || 0)}</Text>
             </TouchableOpacity>
           </View>
-        </Animated.View>
-
-        {/* 4. Interactive Icons - Bottom Right (TikTok Style) */}
-        <Animated.View style={[
-          styles.rightActionsContainer,
-          {
-            bottom: tabBarHeight + insets.bottom + 10,
-            opacity: uiOpacity
-          }
-        ]}>
-          {/* Like Button */}
-          <TouchableOpacity 
-            style={styles.rightActionButton} 
-            onPress={handleLike}
-          >
-            <View style={styles.iconBackground}>
-              <Ionicons 
-                name={item.isLiked ? 'heart' : 'heart-outline'} 
-                size={28} 
-                color={item.isLiked ? '#FF4757' : 'white'} 
-              />
-            </View>
-            <Text style={styles.rightActionText}>{String(item.likes || 0)}</Text>
-          </TouchableOpacity>
-
-          {/* Comment Button */}
-          <TouchableOpacity 
-            style={styles.rightActionButton} 
-            onPress={handleComment}
-          >
-            <View style={styles.iconBackground}>
-              <Ionicons name="chatbubble-outline" size={28} color="white" />
-            </View>
-            <Text style={styles.rightActionText}>{String(item.comments || 0)}</Text>
-          </TouchableOpacity>
-
-          {/* Bookmark Button */}
-          <TouchableOpacity 
-            style={styles.rightActionButton} 
-            onPress={handleBookmark}
-          >
-            <View style={styles.iconBackground}>
-              <Ionicons 
-                name={item.isBookmarked ? 'bookmark' : 'bookmark-outline'} 
-                size={28} 
-                color={item.isBookmarked ? '#FFD700' : 'white'} 
-              />
-            </View>
-          </TouchableOpacity>
-
-          {/* Share Button */}
-          <TouchableOpacity 
-            style={styles.rightActionButton} 
-            onPress={handleShare}
-          >
-            <View style={styles.iconBackground}>
-              <Ionicons name="share-outline" size={28} color="white" />
-            </View>
-            <Text style={styles.rightActionText}>{String(item.shares || 0)}</Text>
-          </TouchableOpacity>
         </Animated.View>
       </View>
     </TouchableWithoutFeedback>
@@ -586,10 +583,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
-  userInfoContainer: {
+  bottomCluster: {
     position: 'absolute',
-    left: 12,
-    maxWidth: '70%',
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+  },
+  bottomGradient: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 220,
+  },
+  leftColumnContainer: {
+    flex: 1,
+    flexDirection: 'column',
+    marginRight: 12,
   },
   userInfo: {
     flexDirection: 'row',
@@ -622,9 +635,7 @@ const styles = StyleSheet.create({
     marginLeft: 2,
   },
   descriptionContainer: {
-    position: 'absolute',
-    left: 12,
-    maxWidth: '70%',
+    maxWidth: '100%',
   },
   serviceTagsContainer: {
     flexDirection: 'row',
@@ -646,8 +657,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   rightActionsContainer: {
-    position: 'absolute',
-    right: 12,
     alignItems: 'center',
   },
   rightActionButton: {

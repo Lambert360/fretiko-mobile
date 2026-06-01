@@ -280,7 +280,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
               pointerEvents="none"
             >
               <ProductVideoPlayer
-                videoUri={product.primary_video_url!}
+                videoUri={product.processed_videos?.[0] || product.primary_video_url!}
                 shouldAutoPlay={true}
                 containerWidth={screenWidth}
                 maxHeight={screenHeight * 0.4}
@@ -296,7 +296,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
                 activeOpacity={1}
                 onPress={() => {
                   setMediaViewerType('video');
-                  setMediaViewerUri(product.primary_video_url!);
+                  setMediaViewerUri(product.processed_videos?.[0] || product.primary_video_url!);
                   setMediaViewerVisible(true);
                 }}
               />
