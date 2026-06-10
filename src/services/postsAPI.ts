@@ -216,6 +216,34 @@ class PostsAPI {
     }
   }
 
+  // Get users who liked a post
+  async getPostLikers(postId: string, limit: number = 50, offset: number = 0): Promise<UserInfo[]> {
+    try {
+      const response = await api.get<ApiResponse<UserInfo[]>>(
+        `${this.baseUrl}/${postId}/likes`,
+        { params: { limit, offset } }
+      );
+      return response.data.data;
+    } catch (error: any) {
+      console.error('Error fetching post likers:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch likers');
+    }
+  }
+
+  // Get users who gifted a post
+  async getPostGifters(postId: string, limit: number = 50, offset: number = 0): Promise<UserInfo[]> {
+    try {
+      const response = await api.get<ApiResponse<UserInfo[]>>(
+        `${this.baseUrl}/${postId}/gifts`,
+        { params: { limit, offset } }
+      );
+      return response.data.data;
+    } catch (error: any) {
+      console.error('Error fetching post gifters:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch gifters');
+    }
+  }
+
   // Add comment to post
   async addComment(postId: string, content: string, parentCommentId?: string): Promise<PostInteraction> {
     try {

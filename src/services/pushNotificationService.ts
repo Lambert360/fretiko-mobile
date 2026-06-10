@@ -7,14 +7,41 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { notificationsAPI } from './notificationsAPI';
+import { realtimeAPI } from './realtimeAPI';
 
 // Configure how notifications should be handled when app is in foreground
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
+  handleNotification: async (notification: Notifications.Notification) => {
+    try {
+      const data = notification.request?.content?.data as NotificationData | undefined;
+      const type = data?.type;
+      const isCallIncoming = type === 'call_incoming';
+
+      if (isCallIncoming) {
+        const isRealtimeConnected =
+          typeof realtimeAPI.isConnected === 'function' ? realtimeAPI.isConnected() : false;
+
+        return {
+          shouldShowAlert: !isRealtimeConnected,
+          shouldPlaySound: !isRealtimeConnected,
+          shouldSetBadge: true,
+        };
+      }
+
+      return {
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      };
+    } catch (error) {
+      console.error('❌ Error in notification handler:', error);
+      return {
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      };
+    }
+  },
 });
 
 export interface NotificationData {

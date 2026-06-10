@@ -329,6 +329,25 @@ class StoriesAPI {
   }
 
   /**
+   * Get users who liked a story
+   */
+  async getStoryLikers(storyId: string, limit: number = 50, offset: number = 0): Promise<{ id: string; username: string; avatarUrl: string | null; isVerified: boolean }[]> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(
+        `${API_BASE_URL}/stories/${storyId}/likes?limit=${limit}&offset=${offset}`,
+        { method: 'GET', headers },
+      );
+      if (!response.ok) throw new Error(`Failed to fetch story likers: ${response.status}`);
+      const json = await response.json();
+      return json.data || [];
+    } catch (error) {
+      console.error('Get story likers error:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Add comment to a story
    */
   async addComment(storyId: string, content: string): Promise<StoryComment> {

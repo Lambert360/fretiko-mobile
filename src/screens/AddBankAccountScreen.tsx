@@ -4,10 +4,12 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   Alert,
+  FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -16,7 +18,6 @@ import {
   TouchableOpacity,
   View,
   ActivityIndicator,
-  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { bankAccountAPI, Bank, AccountPreview } from '../services/bankAccountAPI';
@@ -42,15 +43,6 @@ const SUPPORTED_COUNTRIES = [
 
 const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
   const insets = useSafeAreaInsets();
-  const screenHeight = Dimensions.get('window').height;
-  
-  // Refs for measuring dropdown positions
-  const countryInputRef = useRef<View>(null);
-  const bankInputRef = useRef<View>(null);
-  
-  // Dropdown positioning state
-  const [countryDropdownPosition, setCountryDropdownPosition] = useState<'above' | 'below'>('below');
-  const [bankDropdownPosition, setBankDropdownPosition] = useState<'above' | 'below'>('below');
   
   // Form state
   const [country, setCountry] = useState('NG');
@@ -88,27 +80,6 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Measure position and determine dropdown placement
-  const calculateDropdownPosition = (
-    ref: React.RefObject<View | null>,
-    dropdownHeight: number = 300,
-    setPosition: (pos: 'above' | 'below') => void,
-    showDropdown: () => void
-  ) => {
-    ref.current?.measureInWindow((x, y, width, height) => {
-      const spaceBelow = screenHeight - y - height;
-      const spaceAbove = y;
-      
-      // If there's more space below than above, or not enough space above
-      if (spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove) {
-        setPosition('below');
-      } else {
-        setPosition('above');
-      }
-      showDropdown();
-    });
   };
 
   // Handle country selection
@@ -224,165 +195,66 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top }]}
-      behavior={Platform.OS === 'ios' ? 'position' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
     >
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Add Bank Account</Text>
-        <View style={styles.headerSpacer} />
-      </View>
-
-      <ScrollView 
-        style={styles.content} 
-        showsVerticalScrollIndicator={false}
-        scrollEnabled={!showCountryDropdown && !showBankDropdown}
-      >
-        {/* Info Card */}
-        <View style={styles.infoCard}>
-          <Ionicons name="information-circle" size={24} color="#3498DB" />
-          <Text style={styles.infoText}>
-            Add your bank account details to receive withdrawals. Your information is securely encrypted.
-          </Text>
+      <View style={{ flex: 1, paddingTop: insets.top }}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Add Bank Account</Text>
+          <View style={styles.headerSpacer} />
         </View>
 
-        {/* Form */}
-        <View style={styles.formCard}>
+        <ScrollView 
+          style={styles.content} 
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Info Card */}
+          <View style={styles.infoCard}>
+            <Ionicons name="information-circle" size={24} color="#3498DB" />
+            <Text style={styles.infoText}>
+              Add your bank account details to receive withdrawals. Your information is securely encrypted.
+            </Text>
+          </View>
+
+          {/* Form */}
+          <View style={styles.formCard}>
           {/* Country Selector */}
-          <View style={styles.inputGroup} ref={countryInputRef}>
+          <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Country *</Text>
             <TouchableOpacity
               style={styles.currencyPicker}
-              onPress={() => {
-                if (showCountryDropdown) {
-                  setShowCountryDropdown(false);
-                } else {
-                  calculateDropdownPosition(
-                    countryInputRef,
-                    300,
-                    setCountryDropdownPosition,
-                    () => setShowCountryDropdown(true)
-                  );
-                }
-              }}
+              onPress={() => setShowCountryDropdown(true)}
             >
               <Text style={styles.currencyText}>
                 {SUPPORTED_COUNTRIES.find(c => c.code === country)?.name || country}
               </Text>
-              <Ionicons 
-                name={showCountryDropdown ? "chevron-up" : "chevron-down"} 
-                size={16} 
-                color="#999" 
-              />
+              <Ionicons name="chevron-down" size={16} color="#999" />
             </TouchableOpacity>
-            
-            {/* Country Dropdown */}
-            {showCountryDropdown && (
-              <View style={[
-                styles.currencyDropdown,
-                countryDropdownPosition === 'below' ? styles.dropdownBelow : styles.dropdownAbove,
-              ]}>
-                <ScrollView 
-                  style={styles.currencyDropdownScroll}
-                  nestedScrollEnabled={true}
-                  showsVerticalScrollIndicator={true}
-                >
-                  {SUPPORTED_COUNTRIES.map((c) => (
-                    <TouchableOpacity
-                      key={c.code}
-                      style={[
-                        styles.currencyOption,
-                        country === c.code && styles.currencyOptionActive
-                      ]}
-                      onPress={() => handleCountrySelect(c)}
-                    >
-                      <Text style={[
-                        styles.currencyOptionText,
-                        country === c.code && styles.currencyOptionTextActive
-                      ]}>
-                        {c.name} ({c.code})
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-            )}
           </View>
 
           {/* Bank Selector */}
-          <View style={styles.inputGroup} ref={bankInputRef}>
+          <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Bank *</Text>
             <TouchableOpacity
               style={[styles.currencyPicker, !banks.length && styles.inputDisabled]}
-              onPress={() => {
-                if (!banks.length) return;
-                if (showBankDropdown) {
-                  setShowBankDropdown(false);
-                } else {
-                  calculateDropdownPosition(
-                    bankInputRef,
-                    350,
-                    setBankDropdownPosition,
-                    () => setShowBankDropdown(true)
-                  );
-                }
-              }}
+              onPress={() => { if (banks.length) setShowBankDropdown(true); }}
               disabled={!banks.length}
             >
               <Text style={[styles.currencyText, !selectedBank && styles.placeholderText]}>
                 {selectedBank?.name || (banks.length ? 'Select your bank' : 'Select country first...')}
               </Text>
-              <Ionicons 
-                name={showBankDropdown ? "chevron-up" : "chevron-down"} 
-                size={16} 
-                color={banks.length ? "#999" : "#666"} 
+              <Ionicons
+                name="chevron-down"
+                size={16}
+                color={banks.length ? '#999' : '#666'}
               />
             </TouchableOpacity>
-            
-            {/* Bank Dropdown */}
-            {showBankDropdown && banks.length > 0 && (
-              <View style={[
-                styles.currencyDropdown,
-                bankDropdownPosition === 'below' ? styles.dropdownBelow : styles.dropdownAbove,
-              ]}>
-                <TextInput
-                  style={styles.searchInput}
-                  value={bankSearch}
-                  onChangeText={setBankSearch}
-                  placeholder="Search banks..."
-                  placeholderTextColor="#666"
-                />
-                <ScrollView 
-                  style={styles.currencyDropdownScroll}
-                  nestedScrollEnabled={true}
-                  showsVerticalScrollIndicator={true}
-                >
-                  {banks
-                    .filter(b => b.name.toLowerCase().includes(bankSearch.toLowerCase()))
-                    .map((bank) => (
-                    <TouchableOpacity
-                      key={bank.id}
-                      style={[
-                        styles.currencyOption,
-                        selectedBank?.id === bank.id && styles.currencyOptionActive
-                      ]}
-                      onPress={() => handleBankSelect(bank)}
-                    >
-                      <Text style={[
-                        styles.currencyOptionText,
-                        selectedBank?.id === bank.id && styles.currencyOptionTextActive
-                      ]}>
-                        {bank.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-            )}
           </View>
 
           {/* Account Number */}
@@ -472,37 +344,115 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
             </View>
           )}
 
-          {/* Note */}
-          <View style={styles.noteCard}>
-            <Ionicons name="shield-checkmark" size={20} color="#27AE60" />
-            <Text style={styles.noteText}>
-              Your bank details are encrypted and stored securely. We never share your information.
-            </Text>
+            {/* Note */}
+            <View style={styles.noteCard}>
+              <Ionicons name="shield-checkmark" size={20} color="#27AE60" />
+              <Text style={styles.noteText}>
+                Your bank details are encrypted and stored securely. We never share your information.
+              </Text>
+            </View>
           </View>
-        </View>
-      </ScrollView>
+        </ScrollView>
 
-      {/* Bottom Action */}
-      <View style={styles.bottomAction}>
-        <TouchableOpacity
-          style={[
-            styles.addButton,
-            (loading || !verifiedAccount) && styles.addButtonDisabled,
-          ]}
-          onPress={handleAddAccount}
-          disabled={loading || !verifiedAccount}
-        >
-          {loading ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : !verifiedAccount ? (
-            <>
-              <Ionicons name="lock-closed" size={18} color="#FFFFFF" />
-              <Text style={styles.addButtonText}>Verify Account to Continue</Text>
-            </>
-          ) : (
-            <Text style={styles.addButtonText}>Add Bank Account</Text>
-          )}
-        </TouchableOpacity>
+      {/* Country Picker Modal */}
+      <Modal
+        visible={showCountryDropdown}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCountryDropdown(false)}
+      >
+        <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowCountryDropdown(false)} />
+        <View style={styles.pickerSheet}>
+          <View style={styles.pickerHandle} />
+          <View style={styles.pickerHeader}>
+            <Text style={styles.pickerTitle}>Select Country</Text>
+            <TouchableOpacity onPress={() => setShowCountryDropdown(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={SUPPORTED_COUNTRIES}
+            keyExtractor={(item) => item.code}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={[styles.pickerOption, country === item.code && styles.pickerOptionActive]}
+                onPress={() => handleCountrySelect(item)}
+              >
+                <Text style={[styles.pickerOptionText, country === item.code && styles.pickerOptionTextActive]}>
+                  {item.name} ({item.code})
+                </Text>
+                {country === item.code && <Ionicons name="checkmark" size={18} color="#F39C12" />}
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      </Modal>
+
+      {/* Bank Picker Modal */}
+      <Modal
+        visible={showBankDropdown}
+        transparent
+        animationType="slide"
+        onRequestClose={() => { setShowBankDropdown(false); setBankSearch(''); }}
+      >
+        <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => { setShowBankDropdown(false); setBankSearch(''); }} />
+        <View style={styles.pickerSheet}>
+          <View style={styles.pickerHandle} />
+          <View style={styles.pickerHeader}>
+            <Text style={styles.pickerTitle}>Select Bank</Text>
+            <TouchableOpacity onPress={() => { setShowBankDropdown(false); setBankSearch(''); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+          <TextInput
+            style={styles.pickerSearch}
+            value={bankSearch}
+            onChangeText={setBankSearch}
+            placeholder="Search banks..."
+            placeholderTextColor="#666"
+            autoFocus
+          />
+          <FlatList
+            data={banks.filter(b => b.name.toLowerCase().includes(bankSearch.toLowerCase()))}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={[styles.pickerOption, selectedBank?.id === item.id && styles.pickerOptionActive]}
+                onPress={() => handleBankSelect(item)}
+              >
+                <Text style={[styles.pickerOptionText, selectedBank?.id === item.id && styles.pickerOptionTextActive]}>
+                  {item.name}
+                </Text>
+                {selectedBank?.id === item.id && <Ionicons name="checkmark" size={18} color="#F39C12" />}
+              </TouchableOpacity>
+            )}
+            keyboardShouldPersistTaps="handled"
+          />
+        </View>
+      </Modal>
+
+        {/* Bottom Action */}
+        <View style={styles.bottomAction}>
+          <TouchableOpacity
+            style={[
+              styles.addButton,
+              (loading || !verifiedAccount) && styles.addButtonDisabled,
+            ]}
+            onPress={handleAddAccount}
+            disabled={loading || !verifiedAccount}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : !verifiedAccount ? (
+              <>
+                <Ionicons name="lock-closed" size={18} color="#FFFFFF" />
+                <Text style={styles.addButtonText}>Verify Account to Continue</Text>
+              </>
+            ) : (
+              <Text style={styles.addButtonText}>Add Bank Account</Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
@@ -592,14 +542,6 @@ const styles = StyleSheet.create({
   placeholderText: {
     color: '#666',
   },
-  searchInput: {
-    backgroundColor: '#2A2A2A',
-    borderRadius: 8,
-    padding: 12,
-    color: '#FFFFFF',
-    fontSize: 14,
-    marginBottom: 8,
-  },
   optionsRow: {
     flexDirection: 'row',
     gap: 8,
@@ -641,33 +583,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  currencyDropdown: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    backgroundColor: '#222',
-    borderRadius: 12,
-    zIndex: 9999,
-    shadowColor: '#000',
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 20,
-    maxHeight: 300,
-  },
-  dropdownBelow: {
-    top: '100%',  // Position below the input
-    marginTop: 4,
-    shadowOffset: { width: 0, height: 4 },  // Shadow goes down
-  },
-  dropdownAbove: {
-    bottom: '100%',  // Position above the input
-    marginBottom: 4,
-    shadowOffset: { width: 0, height: -4 },  // Shadow goes up
-  },
-  currencyDropdownScroll: {
-    maxHeight: 300,
-  },
-  currencyOption: {
+  pickerOption: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -676,17 +592,59 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.05)',
   },
-  currencyOptionActive: {
+  pickerOptionActive: {
     backgroundColor: 'rgba(243, 156, 18, 0.1)',
   },
-  currencyOptionText: {
+  pickerOptionText: {
     fontSize: 14,
     fontWeight: '500',
     color: '#CCCCCC',
   },
-  currencyOptionTextActive: {
+  pickerOptionTextActive: {
     color: '#F39C12',
     fontWeight: '600',
+  },
+  pickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  pickerSheet: {
+    backgroundColor: '#1a1a1a',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '70%',
+    paddingBottom: 20,
+  },
+  pickerHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  pickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  pickerTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  pickerSearch: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 8,
+    padding: 12,
+    color: '#FFFFFF',
+    fontSize: 14,
+    margin: 12,
   },
   noteCard: {
     flexDirection: 'row',

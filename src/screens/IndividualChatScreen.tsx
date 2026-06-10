@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute, useIsFocused } from '@react-navigation/native';
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   Alert,
   Animated,
@@ -19,7 +19,6 @@ import {
   Modal,
   ScrollView,
   Linking,
-  PanResponder,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { chatAPI, ChatMessage } from '../services/chatAPI';
@@ -86,10 +85,10 @@ const geminiWsManager = new GeminiWebSocketManager();
 import * as DocumentPicker from 'expo-document-picker';
 import {
   useAudioRecorder,
-  useAudioPlayer,
   RecordingPresets,
   requestRecordingPermissionsAsync,
-  setAudioModeAsync
+  setAudioModeAsync,
+  createAudioPlayer
 } from 'expo-audio';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import * as MediaLibrary from 'expo-media-library';
@@ -100,6 +99,7 @@ import * as Speech from 'expo-speech';
 import { AI_ASSISTANT_UUID, AI_ASSISTANT_NAME, AI_ASSISTANT_AVATAR } from '../constants/chat';
 import { useAuth } from '../contexts/AuthContext';
 import { useCallContext } from '../contexts/CallContext';
+import RichText from '../components/RichText';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -326,6 +326,10 @@ const IndividualChatScreen = () => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedMessageForReaction, setSelectedMessageForReaction] = useState<string | null>(null);
 
+  const [mentionSuggestions, setMentionSuggestions] = useState<Partial<UserProfile>[]>([]);
+  const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
+  const mentionSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Video player hook
   const videoPlayer = useVideoPlayer(selectedVideoUrl || '', player => {
     if (selectedVideoUrl) {
@@ -335,12 +339,16 @@ const IndividualChatScreen = () => {
 
   // Audio player for voice messages
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
-  const audioPlayer = useAudioPlayer('');
+  const audioPlayersRef = useRef<{ [messageId: string]: any }>({});
   // Store audio durations for messages (keyed by messageId)
   const [audioDurations, setAudioDurations] = useState<{ [messageId: string]: number }>({});
 
   // Audio recorder for voice messages (use the same one for AI calls too)
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdHintOpacity = useRef(new Animated.Value(0)).current;
+  const holdHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 
   // Register this chat as the currently active chat so CallContext knows NOT to show
   // the incoming-call banner for calls that belong to this very conversation.
@@ -598,6 +606,88 @@ const IndividualChatScreen = () => {
       console.error('Error loading user profile:', error);
     }
   };
+
+  const handleMentionDetection = useCallback(
+    (text: string) => {
+      if (isAI || chatType === 'ai') {
+        if (mentionSearchTimeoutRef.current) {
+          clearTimeout(mentionSearchTimeoutRef.current);
+          mentionSearchTimeoutRef.current = null;
+        }
+        setShowMentionSuggestions(false);
+        setMentionSuggestions([]);
+        return;
+      }
+
+      const match = text.match(/(^|\s)@([A-Za-z0-9_.]{0,100})$/);
+      if (!match) {
+        if (mentionSearchTimeoutRef.current) {
+          clearTimeout(mentionSearchTimeoutRef.current);
+          mentionSearchTimeoutRef.current = null;
+        }
+        setShowMentionSuggestions(false);
+        setMentionSuggestions([]);
+        return;
+      }
+
+      const query = match[2] || '';
+      if (!query) {
+        if (mentionSearchTimeoutRef.current) {
+          clearTimeout(mentionSearchTimeoutRef.current);
+          mentionSearchTimeoutRef.current = null;
+        }
+        setShowMentionSuggestions(false);
+        setMentionSuggestions([]);
+        return;
+      }
+
+      if (mentionSearchTimeoutRef.current) {
+        clearTimeout(mentionSearchTimeoutRef.current);
+      }
+
+      mentionSearchTimeoutRef.current = setTimeout(async () => {
+        try {
+          const results = await userAPI.searchUsers(query, 10);
+          setMentionSuggestions(results || []);
+          setShowMentionSuggestions(!!results && results.length > 0);
+        } catch (error) {
+          console.error('Error searching users for mentions:', error);
+          setMentionSuggestions([]);
+          setShowMentionSuggestions(false);
+        }
+      }, 250);
+    },
+    [isAI, chatType],
+  );
+
+  const handleSelectMention = useCallback(
+    (user: Partial<UserProfile>) => {
+      if (!user.username) return;
+      const username = user.username;
+      const replaced = messageText.replace(
+        /(^|\s)@[A-Za-z0-9_.]{0,100}$/,
+        `$1@${username} `,
+      );
+
+      if (replaced === messageText) {
+        const needsSpace =
+          messageText.length > 0 && !messageText.endsWith(' ');
+        setMessageText(
+          `${messageText}${needsSpace ? ' ' : ''}@${username} `,
+        );
+      } else {
+        setMessageText(replaced);
+      }
+
+      if (mentionSearchTimeoutRef.current) {
+        clearTimeout(mentionSearchTimeoutRef.current);
+        mentionSearchTimeoutRef.current = null;
+      }
+      setShowMentionSuggestions(false);
+      setMentionSuggestions([]);
+    },
+    [messageText],
+  );
 
   // Load messages from API
   const loadMessages = async (refresh = false) => {
@@ -1075,8 +1165,17 @@ const IndividualChatScreen = () => {
           setIncomingCall(null);
           incomingCallRef.current = null;
           stopCallSounds();
-          // End active call - pass fromRemote=true to prevent sending duplicate signal
-          endCall('completed', true);
+
+          // Map server-provided reason (if any) to local endCall reason types
+          {
+            const serverReason = (callData && (callData as any).reason) as string | undefined;
+            let mappedReason: 'completed' | 'declined' | 'missed' | 'cancelled' = 'completed';
+            if (serverReason === 'declined' || serverReason === 'missed' || serverReason === 'cancelled') {
+              mappedReason = serverReason;
+            }
+            // End active call - pass fromRemote=true to prevent sending duplicate signal
+            endCall(mappedReason, true);
+          }
           break;
 
         case 'participant_joined':
@@ -1449,6 +1548,13 @@ const IndividualChatScreen = () => {
 
     setMessages(prev => [...prev, newMessage]);
     setMessageText('');
+
+    if (mentionSearchTimeoutRef.current) {
+      clearTimeout(mentionSearchTimeoutRef.current);
+      mentionSearchTimeoutRef.current = null;
+    }
+    setShowMentionSuggestions(false);
+    setMentionSuggestions([]);
 
     try {
       if (isAI || chatType === 'ai') {
@@ -1978,6 +2084,10 @@ const IndividualChatScreen = () => {
           if (callType === 'video') {
             setShowVideoUI(true);
             setShowCameraPreview(true);
+            setIsSpeakerOn(true);
+            if (agoraCallService.isServiceInitialized()) {
+              agoraCallService.setSpeakerphone(true);
+            }
           }
           // Don't start the timer yet - wait for recipient to join
           // Keep playing ringback sound until recipient joins
@@ -2101,7 +2211,11 @@ const IndividualChatScreen = () => {
         onRemoteAudioStateChanged: (uid, state, reason, elapsed) => {
           console.log('📞 Remote audio state changed:', { uid, state, reason });
           // state: 0 = stopped, 2 = starting, 1 = decoded
-          setRemoteMuted(state === 0);
+          if (state === 0 && reason === 0) {
+            setRemoteMuted(true);
+          } else if (state !== 0) {
+            setRemoteMuted(false);
+          }
         },
         onError: (err, msg) => {
           console.error('❌ Agora call error:', err, msg);
@@ -2259,11 +2373,11 @@ const IndividualChatScreen = () => {
               setRingbackTimeout(null);
             }
 
-            setCallStatus('connected');
+            // Mark call as connecting; we'll treat media join (Agora onUserJoined)
+            // as the true "connected" moment for duration tracking.
+            setCallStatus('connecting');
             setIsInCall(true);
             setShowCallModal(false);
-            setCallStartTime(Date.now());
-            setCallDuration(0);
 
             // For video calls, transition to full video UI (remove mask)
             if (callType === 'video') {
@@ -2303,11 +2417,7 @@ const IndividualChatScreen = () => {
 
         case 'call_ended':
           console.log('📞 Call ended by remote participant (from call_signal)');
-          setTimeout(() => {
-            const reason = data.data?.reason || 'completed';
-            // Pass fromRemote=true to prevent sending duplicate signal
-            endCall(reason, true);
-          }, 0);
+          // Ignore here - authoritative call end handling is done via call_event
           break;
 
         default:
@@ -2329,15 +2439,21 @@ const IndividualChatScreen = () => {
       }
       
       // Send mute status via WebSocket
-      if (currentCallSessionId && realtimeAPI.isConnected()) {
-        realtimeAPI.sendCallSignal(currentCallSessionId, 'mute_toggle', {
+      const activeCallSessionId =
+        currentCallSessionId ||
+        currentCallSessionIdRef.current ||
+        incomingCallRef.current?.callSessionId ||
+        null;
+
+      if (activeCallSessionId && realtimeAPI.isConnected()) {
+        realtimeAPI.sendCallSignal(activeCallSessionId, 'mute_toggle', {
           isMuted: newMuteState
         }, chatId);
       }
 
       // Update call settings via API
-      if (currentCallSessionId) {
-        await chatAPI.updateCallSettings(currentCallSessionId, {
+      if (activeCallSessionId) {
+        await chatAPI.updateCallSettings(activeCallSessionId, {
           isMuted: newMuteState
         });
       }
@@ -2358,16 +2474,23 @@ const IndividualChatScreen = () => {
         await agoraCallService.muteVideo(!newVideoState); // muteVideo takes muted state
       }
 
+      // Resolve active call session ID from state or ref (handles remounts)
+      const activeCallSessionId =
+        currentCallSessionId ||
+        currentCallSessionIdRef.current ||
+        incomingCallRef.current?.callSessionId ||
+        null;
+
       // Send video status via WebSocket
-      if (currentCallSessionId && realtimeAPI.isConnected()) {
-        realtimeAPI.sendCallSignal(currentCallSessionId, 'video_toggle', {
+      if (activeCallSessionId && realtimeAPI.isConnected()) {
+        realtimeAPI.sendCallSignal(activeCallSessionId, 'video_toggle', {
           isVideoEnabled: newVideoState
         }, chatId); // Pass conversationId to avoid backend lookup
       }
 
       // Update call settings via API
-      if (currentCallSessionId) {
-        await chatAPI.updateCallSettings(currentCallSessionId, {
+      if (activeCallSessionId) {
+        await chatAPI.updateCallSettings(activeCallSessionId, {
           isVideoEnabled: newVideoState
         });
       }
@@ -2683,14 +2806,6 @@ const IndividualChatScreen = () => {
       setIncomingCall(null);
       incomingCallRef.current = null; // Clear ref too
 
-      // Send call accepted signal
-      if (realtimeAPI.isConnected()) {
-        realtimeAPI.sendCallSignal(callToAccept.callSessionId, 'call_accepted', {
-          acceptedBy: user?.id,
-          timestamp: new Date().toISOString(),
-        }, chatId); // Pass conversationId to avoid backend lookup
-      }
-
       // Get Agora configuration from backend for joining the call
       const agoraCallConfig = joinResult.agoraConfig || joinResult.rtcConfiguration;
       
@@ -2741,9 +2856,17 @@ const IndividualChatScreen = () => {
       // Note: Agora handles connection automatically - no SDP/ICE exchange needed
 
       // Start call UI
-      setCallStatus('ringing'); // Will change to 'connected' when recipient joins
+      setCallStatus('connecting'); // Will change to 'connected' when media is fully established
       setIsInCall(true);
       setShowCallModal(false);
+
+      // Send call accepted signal only after permissions and Agora initialization succeed
+      if (realtimeAPI.isConnected()) {
+        realtimeAPI.sendCallSignal(callToAccept.callSessionId, 'call_accepted', {
+          acceptedBy: user?.id,
+          timestamp: new Date().toISOString(),
+        }, chatId); // Pass conversationId to avoid backend lookup
+      }
 
       playCallSound('connected');
       
@@ -2957,7 +3080,14 @@ const IndividualChatScreen = () => {
       // Stop any call sounds and haptics
       stopCallSounds();
 
-      // Show call result message to user
+      // Determine active call session ID using state or refs (handles remounts)
+      const activeCallSessionId =
+        currentCallSessionId ||
+        currentCallSessionIdRef.current ||
+        incomingCallRef.current?.callSessionId ||
+        null;
+
+      // Show call result message to user (only for non-completed outcomes)
       const contactName = chatName || 'Contact';
       const reasonMessages = {
         completed: 'Call completed',
@@ -2966,7 +3096,9 @@ const IndividualChatScreen = () => {
         cancelled: 'Call cancelled'
       };
 
-      Alert.alert('Call Ended', reasonMessages[reason]);
+      if (reason !== 'completed') {
+        Alert.alert('Call Ended', reasonMessages[reason]);
+      }
 
       // Clean up Agora call connection
       console.log('🔌 Closing Agora call connection...');
@@ -2978,25 +3110,25 @@ const IndividualChatScreen = () => {
 
       // Send call end signal with reason (only if we're not ending due to remote signal)
       // This prevents sending duplicate signals when we receive call_ended from the other participant
-      if (!fromRemote && currentCallSessionId && realtimeAPI.isConnected()) {
+      if (!fromRemote && activeCallSessionId && realtimeAPI.isConnected()) {
         console.log('📤 Sending call ended signal to other participants');
-        realtimeAPI.sendCallSignal(currentCallSessionId, 'call_ended', {
+        realtimeAPI.sendCallSignal(activeCallSessionId, 'call_ended', {
           reason,
           endedBy: user?.id,
           timestamp: new Date().toISOString(),
         }, chatId);
         
         // Also send WebRTC call ended signal
-        realtimeAPI.sendCallEnded(currentCallSessionId, reason);
+        realtimeAPI.sendCallEnded(activeCallSessionId, reason);
       } else if (fromRemote) {
         console.log('📥 Received call_ended from remote, not sending duplicate signal');
       }
 
       // End call on backend (only if we're not ending due to remote signal)
       // The other participant already called the backend, so we don't need to do it again
-      if (!fromRemote && currentCallSessionId) {
+      if (!fromRemote && activeCallSessionId) {
         console.log('📡 Ending call on backend');
-        await chatAPI.endCall(currentCallSessionId, reason);
+        await chatAPI.endCall(activeCallSessionId, reason);
       } else if (fromRemote) {
         console.log('📥 Received call_ended from remote, skipping backend call (already handled by other participant)');
       }
@@ -3040,6 +3172,14 @@ const IndividualChatScreen = () => {
       // Reset ending flag
       isEndingCallRef.current = false;
     }
+  };
+
+  const showHoldHint = () => {
+    if (holdHintTimerRef.current) clearTimeout(holdHintTimerRef.current);
+    Animated.timing(holdHintOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+    holdHintTimerRef.current = setTimeout(() => {
+      Animated.timing(holdHintOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start();
+    }, 1500);
   };
 
   const startRecording = async () => {
@@ -3094,9 +3234,9 @@ const IndividualChatScreen = () => {
       // Start timer
       const interval = setInterval(() => {
         setRecordingDuration(prev => {
-          if (prev >= 60) { // Max 60 seconds
-            stopRecording();
-            return 60;
+          if (prev >= 300) { // Max 60 seconds
+            stopRecording(false);
+            return 300;
           }
           return prev + 1;
         });
@@ -3111,7 +3251,7 @@ const IndividualChatScreen = () => {
     }
   };
 
-  const stopRecording = async () => {
+  const stopRecording = async (shouldCancel: boolean = false) => {
     if (!isRecording) return;
 
     try {
@@ -3168,13 +3308,15 @@ const IndividualChatScreen = () => {
 
       console.log('✅ Recording saved:', uri);
 
-      // Only send if recording is at least 1 second
-      if (recordingDuration > 0) {
+      // Only send if recording is at least 1 second and not canceled
+      if (!shouldCancel && recordingDuration > 0) {
         await sendMediaMessage('audio', uri, {
           name: `voice-message-${Date.now()}.m4a`,
           size: '0', // File size will be determined by the upload
           type: 'audio/m4a',
         });
+      } else if (shouldCancel) {
+        console.log('⚠️ Recording canceled, not sending');
       } else {
         console.warn('⚠️ Recording too short, not sending');
       }
@@ -4050,26 +4192,44 @@ const IndividualChatScreen = () => {
     console.log('🔊 Playing audio:', audioUrl);
 
     try {
+      // Configure audio for loudspeaker playback (no recording, no earpiece routing)
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        shouldPlayInBackground: false,
+        shouldRouteThroughEarpiece: false,
+      });
+
+      let currentPlayer = audioPlayersRef.current[messageId];
+
       // If already playing this audio, pause it
-      if (playingAudioId === messageId && audioPlayer.playing) {
-        audioPlayer.pause();
+      if (playingAudioId === messageId && currentPlayer?.playing) {
+        currentPlayer.pause();
         setPlayingAudioId(null);
         return;
       }
 
-      // Stop any currently playing audio
-      if (audioPlayer.playing) {
-        audioPlayer.pause();
+      // Pause any other currently playing audio
+      if (playingAudioId && playingAudioId !== messageId) {
+        const previousPlayer = audioPlayersRef.current[playingAudioId];
+        if (previousPlayer?.playing) {
+          previousPlayer.pause();
+        }
       }
 
-      // Play the new audio
-      audioPlayer.replace(audioUrl);
-      audioPlayer.play();
+      // Create player for this message if it doesn't exist yet
+      if (!currentPlayer) {
+        currentPlayer = createAudioPlayer(audioUrl);
+        audioPlayersRef.current[messageId] = currentPlayer;
+      } else {
+        currentPlayer.replace(audioUrl);
+      }
+
+      currentPlayer.play();
       setPlayingAudioId(messageId);
 
       // Listen for status changes to get duration and handle playback
-      // @ts-expect-error - expo-audio event types vary by version
-      const statusListener = audioPlayer.addListener('statusChange', (status: any) => {
+      const statusListener = currentPlayer.addListener('statusChange', (status: any) => {
         // Extract duration if available and not already stored
         if (status.isLoaded && status.duration) {
           const durationSeconds = Math.floor(status.duration / 1000); // Convert ms to seconds
@@ -4109,8 +4269,7 @@ const IndividualChatScreen = () => {
       // Cleanup: remove listener after a delay to allow it to capture duration
       setTimeout(() => {
         try {
-          // @ts-expect-error - expo-audio event types vary by version
-          audioPlayer.removeListener(statusListener);
+          currentPlayer.removeListener(statusListener);
         } catch (e) {
           // Ignore cleanup errors
         }
@@ -4572,7 +4731,48 @@ const IndividualChatScreen = () => {
     </Animated.View>
   );
 
+  type MessageListItem = Message | { type: 'date_separator'; id: string; label: string };
+
+  const getDateLabel = (date: Date): string => {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isSameDay = (a: Date, b: Date) =>
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+    if (isSameDay(date, today)) return 'Today';
+    if (isSameDay(date, yesterday)) return 'Yesterday';
+    const daysAgo = Math.floor((today.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysAgo < 7) return date.toLocaleDateString('en-US', { weekday: 'long' });
+    return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  const messagesWithSeparators = useMemo((): MessageListItem[] => {
+    const result: MessageListItem[] = [];
+    let lastDateKey = '';
+    messages.forEach((msg) => {
+      const msgDate = msg.timestamp instanceof Date ? msg.timestamp : new Date(msg.timestamp);
+      const dateKey = `${msgDate.getFullYear()}-${msgDate.getMonth()}-${msgDate.getDate()}`;
+      if (dateKey !== lastDateKey) {
+        result.push({ type: 'date_separator', id: `sep-${dateKey}`, label: getDateLabel(msgDate) });
+        lastDateKey = dateKey;
+      }
+      result.push(msg);
+    });
+    return result;
+  }, [messages]);
+
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
+    if ((item as any).type === 'date_separator') {
+      return (
+        <View style={styles.dateSeparator}>
+          <View style={styles.dateSeparatorLine} />
+          <Text style={styles.dateSeparatorLabel}>{(item as any).label}</Text>
+          <View style={styles.dateSeparatorLine} />
+        </View>
+      );
+    }
     // 🔥 FIX: For wishlist messages, also check if current user is the wishlist owner
     const isCurrentUser = item.senderId === user?.id || 
                           (item.messageType === 'wishlist' && item.wishlistData?.ownerId === user?.id);
@@ -4592,8 +4792,10 @@ const IndividualChatScreen = () => {
       });
     }
     
-    const isFirstInGroup = index === 0 || messages[index - 1]?.senderId !== item.senderId;
-    const isLastInGroup = index === messages.length - 1 || messages[index + 1]?.senderId !== item.senderId;
+    const prevItem = messagesWithSeparators[index - 1] as any;
+    const nextItem = messagesWithSeparators[index + 1] as any;
+    const isFirstInGroup = index === 0 || prevItem?.type === 'date_separator' || prevItem?.senderId !== item.senderId;
+    const isLastInGroup = index === messagesWithSeparators.length - 1 || nextItem?.type === 'date_separator' || nextItem?.senderId !== item.senderId;
 
     // Render system messages (like call notifications) differently
     if (item.messageType === 'system') {
@@ -4723,11 +4925,17 @@ const IndividualChatScreen = () => {
           )}
           
           {/* Text message */}
-          <View style={[
-            styles.messageBubble,
-            isCurrentUser ? styles.currentUserBubble : styles.otherUserBubble,
-          ]}>
-            <Text style={styles.messageText}>{item.text}</Text>
+          <View
+            style={[
+              styles.messageBubble,
+              isCurrentUser ? styles.currentUserBubble : styles.otherUserBubble,
+            ]}
+          >
+            <RichText
+              style={styles.messageText as any}
+            >
+              {item.text || ''}
+            </RichText>
             <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
           </View>
 
@@ -4780,12 +4988,14 @@ const IndividualChatScreen = () => {
         >
           {/* Render different message types */}
           {item.messageType === 'text' && (
-            <Text style={[
-              styles.messageText,
-              isCurrentUser ? styles.currentUserText : styles.otherUserText,
-            ]}>
+            <RichText
+              style={[
+                styles.messageText,
+                isCurrentUser ? styles.currentUserText : styles.otherUserText,
+              ] as any}
+            >
               {item.text}
-            </Text>
+            </RichText>
           )}
           
           {item.messageType === 'image' && item.mediaUrl && (
@@ -4796,9 +5006,11 @@ const IndividualChatScreen = () => {
                 resizeMode="cover"
               />
               {item.text && (
-                <Text style={[styles.messageText, isCurrentUser ? styles.currentUserText : styles.otherUserText]}>
+                <RichText
+                  style={[styles.messageText, isCurrentUser ? styles.currentUserText : styles.otherUserText] as any}
+                >
                   {item.text}
-                </Text>
+                </RichText>
               )}
             </TouchableOpacity>
           )}
@@ -4985,6 +5197,44 @@ const IndividualChatScreen = () => {
       ]}
     >
       {/* Product Preview Card for Bargain Mode */}
+      {showMentionSuggestions && mentionSuggestions.length > 0 && (
+        <View style={styles.mentionSuggestionsContainer}>
+          {mentionSuggestions.map(user => (
+            <TouchableOpacity
+              key={user.id || user.username}
+              style={styles.mentionSuggestionItem}
+              onPress={() => handleSelectMention(user)}
+            >
+              <View style={styles.mentionSuggestionAvatar}>
+                {user.avatarUrl ? (
+                  <Image
+                    source={{ uri: user.avatarUrl }}
+                    style={styles.mentionSuggestionAvatarImage}
+                  />
+                ) : (
+                  <View style={styles.mentionSuggestionAvatarPlaceholder}>
+                    <Text style={styles.mentionSuggestionAvatarText}>
+                      {user.username?.[0]?.toUpperCase() || '?'}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <View style={styles.mentionSuggestionInfo}>
+                <Text style={styles.mentionSuggestionUsername}>@{user.username}</Text>
+                {user.bio ? (
+                  <Text
+                    style={styles.mentionSuggestionBio}
+                    numberOfLines={1}
+                  >
+                    {user.bio}
+                  </Text>
+                ) : null}
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
       {bargainMode && productData && (
         <View style={styles.productPreviewContainer}>
           <View style={styles.productPreviewHeader}>
@@ -5029,6 +5279,7 @@ const IndividualChatScreen = () => {
             value={messageText}
             onChangeText={(text) => {
               setMessageText(text);
+              handleMentionDetection(text);
               
               // Send typing indicator
               if (realtimeAPI.isConnected()) {
@@ -5077,8 +5328,21 @@ const IndividualChatScreen = () => {
               styles.recordButton,
               isRecording ? styles.recordButtonActive : styles.recordButtonInactive
             ]}
-            onPressIn={startRecording}
-            onPressOut={stopRecording}
+            onPressIn={() => {
+              holdTimerRef.current = setTimeout(() => {
+                holdTimerRef.current = null;
+                startRecording();
+              }, 300);
+            }}
+            onPressOut={() => {
+              if (holdTimerRef.current !== null) {
+                clearTimeout(holdTimerRef.current);
+                holdTimerRef.current = null;
+                showHoldHint();
+                return;
+              }
+              stopRecording();
+            }}
           >
             <Ionicons 
               name="mic" 
@@ -5089,6 +5353,11 @@ const IndividualChatScreen = () => {
         )}
       </View>
 
+      {/* Hold to record hint */}
+      <Animated.View style={[styles.holdHintContainer, { opacity: holdHintOpacity }]} pointerEvents="none">
+        <Text style={styles.holdHintText}>Hold to record</Text>
+      </Animated.View>
+
       {/* Recording indicator */}
       {isRecording && (
         <View style={styles.recordingIndicator}>
@@ -5096,7 +5365,9 @@ const IndividualChatScreen = () => {
           <Text style={styles.recordingText}>
             Recording... {recordingDuration}s
           </Text>
-          <Text style={styles.recordingHint}>Release to send</Text>
+          <Text style={styles.recordingHint}>
+            Release to send
+          </Text>
         </View>
       )}
 
@@ -5573,7 +5844,7 @@ const IndividualChatScreen = () => {
                   colors={['#FF3B30', '#FF1744']}
                   style={styles.modernEndCallGradient}
                 >
-                  <Ionicons name="call" size={26} color="#FFFFFF" />
+                  <Ionicons name="call" size={26} color="#FFFFFF" style={styles.endCallIcon} />
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -5612,17 +5883,12 @@ const IndividualChatScreen = () => {
   }, [isInCall, callStatus]);
 
   // Render In-Call Overlay
-  const renderInCallOverlay = () => (
-    <Modal
-      visible={isInCall}
-      transparent={true}
-      animationType="none"
-      onRequestClose={() => endCall()}
-    >
-      <TouchableOpacity
+  const renderInCallOverlay = () => {
+    if (!isInCall) return null;
+
+    return (
+      <View
         style={styles.inCallOverlay}
-        activeOpacity={1}
-        onPress={callType === 'video' && showVideoUI ? handleVideoCallTap : undefined}
       >
         {/* Gift Animations - Render above video */}
         {activeGiftAnimations.length > 0 && (
@@ -5986,13 +6252,13 @@ const IndividualChatScreen = () => {
                 endCall('completed');
               }}
             >
-              <Ionicons name="call" size={24} color="#FFFFFF" />
+              <Ionicons name="call" size={24} color="#FFFFFF" style={styles.endCallIcon} />
             </TouchableOpacity>
           </View>
         )}
-      </TouchableOpacity>
-    </Modal>
-  );
+      </View>
+    );
+  };
 
   // Camera utility functions
   const toggleCamera = () => {
@@ -6260,9 +6526,9 @@ const IndividualChatScreen = () => {
         {messages.length > 0 ? (
           <FlatList
             ref={flatListRef}
-            data={messages}
+            data={messagesWithSeparators as Message[]}
             renderItem={renderMessage}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => (item as any).type === 'date_separator' ? (item as any).id : (item as Message).id}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.messagesContent}
             onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
@@ -6542,6 +6808,54 @@ const styles = StyleSheet.create({
   messageStatus: {
     marginLeft: 4,
   },
+  mentionSuggestionsContainer: {
+    marginBottom: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 12,
+    paddingVertical: 4,
+    maxHeight: 160,
+  },
+  mentionSuggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  mentionSuggestionAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginRight: 8,
+  },
+  mentionSuggestionAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 16,
+  },
+  mentionSuggestionAvatarPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  mentionSuggestionAvatarText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  mentionSuggestionInfo: {
+    flex: 1,
+  },
+  mentionSuggestionUsername: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  mentionSuggestionBio: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+    marginTop: 2,
+  },
   // System message styles
   systemMessageContainer: {
     alignItems: 'center',
@@ -6680,6 +6994,20 @@ const styles = StyleSheet.create({
   recordingHint: {
     color: 'rgba(255,255,255,0.6)',
     fontSize: 12,
+  },
+  holdHintContainer: {
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  holdHintText: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 12,
+    fontStyle: 'italic',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 10,
+    overflow: 'hidden',
   },
   emojiPickerContainer: {
     backgroundColor: 'rgba(30, 30, 30, 0.95)',
@@ -7092,6 +7420,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  endCallIcon: {
+    transform: [{ rotate: '135deg' }],
+  },
   callModal: {
     alignItems: 'center',
     padding: 40,
@@ -7129,7 +7460,12 @@ const styles = StyleSheet.create({
   },
   // In-call overlay styles
   inCallOverlay: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 100,
     backgroundColor: 'rgba(39, 174, 96, 0.9)',
   },
   // Audio call UI styles
@@ -8030,6 +8366,29 @@ const styles = StyleSheet.create({
     color: '#27AE60',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  dateSeparator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 12,
+    paddingHorizontal: 16,
+  },
+  dateSeparatorLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  dateSeparatorLabel: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 11,
+    fontWeight: '600',
+    marginHorizontal: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderRadius: 10,
+    overflow: 'hidden',
+    letterSpacing: 0.3,
   },
 });
 

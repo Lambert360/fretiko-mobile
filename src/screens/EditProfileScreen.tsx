@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -50,7 +50,9 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
     isRider: initialProfile?.isRider || false,
   });
   const [showGenderPicker, setShowGenderPicker] = useState(false);
-  
+  const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'error'>('idle');
+  const usernameDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [loading, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [backgroundUrl, setBackgroundUrl] = useState<string | undefined>(initialProfile?.bgPicUrl);
@@ -82,12 +84,52 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
 
   const updateFormData = (field: string, value: string | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    
+
+    if (field === 'username') {
+      setUsernameStatus('idle');
+    }
+
     // Clear error when user starts typing
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: '' }));
     }
   };
+
+  useEffect(() => {
+    const username = formData.username.trim().toLowerCase();
+    const initialUsername = (initialProfile?.username || '').toLowerCase();
+
+    if (!username || username === initialUsername) {
+      setUsernameStatus('idle');
+      return;
+    }
+
+    if (username.length < 3 || username.length > 50 || !/^[a-z0-9_]+$/.test(username)) {
+      setUsernameStatus('idle');
+      return;
+    }
+
+    if (usernameDebounceRef.current) {
+      clearTimeout(usernameDebounceRef.current);
+    }
+
+    setUsernameStatus('checking');
+
+    usernameDebounceRef.current = setTimeout(async () => {
+      try {
+        const result = await userAPI.checkUsernameAvailability(username);
+        setUsernameStatus(result.available ? 'available' : 'taken');
+      } catch {
+        setUsernameStatus('error');
+      }
+    }, 500);
+
+    return () => {
+      if (usernameDebounceRef.current) {
+        clearTimeout(usernameDebounceRef.current);
+      }
+    };
+  }, [formData.username]);
 
   const handleLocationSelect = (selectedLocation: string) => {
     updateFormData('location', selectedLocation);
@@ -106,6 +148,10 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
       newErrors.username = 'Username must be 50 characters or less';
     } else if (!/^[a-zA-Z0-9_]+$/.test(formData.username)) {
       newErrors.username = 'Username can only contain letters, numbers, and underscores';
+    } else if (usernameStatus === 'taken') {
+      newErrors.username = 'Username is already taken';
+    } else if (usernameStatus === 'checking') {
+      newErrors.username = 'Please wait while we check username availability';
     }
 
     // Bio validation
@@ -137,6 +183,10 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
   };
 
   const handleSave = async () => {
+    if (usernameStatus === 'checking') {
+      Alert.alert('Please wait', 'Username availability is still being checked.');
+      return;
+    }
     if (!validateForm()) {
       Alert.alert('Validation Error', 'Please fix the errors in the form');
       return;
@@ -275,7 +325,11 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Username *</Text>
             <TextInput
-              style={[styles.input, errors.username && styles.inputError]}
+              style={[
+                styles.input,
+                errors.username && styles.inputError,
+                usernameStatus === 'available' && styles.inputAvailable,
+              ]}
               value={formData.username}
               onChangeText={(value) => updateFormData('username', value)}
               placeholder="Enter your username"
@@ -283,6 +337,15 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
               autoCapitalize="none"
               autoCorrect={false}
             />
+            {usernameStatus === 'checking' && (
+              <Text style={styles.usernameChecking}>Checking availability...</Text>
+            )}
+            {usernameStatus === 'available' && !errors.username && (
+              <Text style={styles.usernameAvailable}>✓ Username is available</Text>
+            )}
+            {usernameStatus === 'taken' && !errors.username && (
+              <Text style={styles.usernameTaken}>✗ Username is already taken</Text>
+            )}
             {errors.username && <Text style={styles.errorText}>{errors.username}</Text>}
           </View>
 
@@ -345,7 +408,7 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
               onChange={(value) => updateFormData('dateOfBirth', value)}
               placeholder="Select your date of birth"
               label="Date of Birth"
-              minimumAge={18}
+              minimumAge={13}
               required={false}
             />
           </View>
@@ -606,6 +669,24 @@ const styles = StyleSheet.create({
   },
   inputError: {
     borderColor: '#FF3B30',
+  },
+  inputAvailable: {
+    borderColor: '#34C759',
+  },
+  usernameChecking: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 4,
+  },
+  usernameAvailable: {
+    fontSize: 12,
+    color: '#34C759',
+    marginTop: 4,
+  },
+  usernameTaken: {
+    fontSize: 12,
+    color: '#FF3B30',
+    marginTop: 4,
   },
   textArea: {
     height: 100,

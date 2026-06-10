@@ -27,6 +27,7 @@ import GlobalIncomingCallBanner from './src/components/GlobalIncomingCallBanner'
 
 // Import services
 import { pushNotificationService } from './src/services/pushNotificationService';
+import { callkeepService } from './src/services/callkeepService';
 
 // Import auth screens
 import { SplashScreen } from './src/screens/SplashScreen';
@@ -136,6 +137,7 @@ import { SuspensionScreen } from './src/screens/SuspensionScreen';
 
 // Import notification settings screen
 import NotificationSettingsScreen from './src/screens/NotificationSettingsScreen';
+import MentionsScreen from './src/screens/MentionsScreen';
 
 // Import shared wishlist screen
 import SharedWishlistScreen from './src/screens/SharedWishlistScreen';
@@ -154,7 +156,12 @@ const Stack = createStackNavigator();
 
 // Deep linking configuration
 const linking: any = {
-  prefixes: [Linking.createURL('/'), 'fretiko://', 'https://fretiko.com', 'http://fretiko.com'],
+  prefixes: [
+    Linking.createURL('/'),
+    'fretiko://',
+    'https://fretiko.com',
+    'http://fretiko.com',
+  ],
   config: {
     screens: {
       EmailVerification: {
@@ -200,6 +207,12 @@ const linking: any = {
           orderId: (orderId: string) => orderId,
         },
       },
+      PostDetails: {
+        path: 'post/:postId',
+        parse: {
+          postId: (postId: string) => postId,
+        },
+      },
     },
   },
 };
@@ -241,6 +254,7 @@ const AppNavigator: React.FC = () => {
   const { isAuthenticated, isLoading, isNewUser, isSuspended, isDeleted, isCheckingSuspension } = useAuth();
   const navigationRef = useRef<any>(null);
   const rootViewRef = useRef<any>(null);
+  const hasHandledInitialNotificationRef = useRef(false);
 
   // Configure Android notification channels
   useEffect(() => {
@@ -300,6 +314,14 @@ const AppNavigator: React.FC = () => {
         
         // Handle navigation based on notification data
         const data = response.notification.request.content.data;
+
+        // If we've already processed an initial notification response on cold
+        // start, avoid handling the same intent twice.
+        if (hasHandledInitialNotificationRef.current) {
+          console.log('🔁 Notification tap ignored - already handled initial response');
+          hasHandledInitialNotificationRef.current = false;
+          return;
+        }
         
         if (navigationRef.current) {
           handleNotificationNavigation(data);
@@ -312,6 +334,25 @@ const AppNavigator: React.FC = () => {
       console.log('🔇 Cleaning up notification listeners...');
       pushNotificationService.removeNotificationListeners();
     };
+  }, []);
+
+  // Handle cold-start launches from a notification tap
+  useEffect(() => {
+    const checkInitialNotification = async () => {
+      try {
+        const lastResponse = await Notifications.getLastNotificationResponseAsync();
+        if (lastResponse && lastResponse.notification?.request?.content?.data && navigationRef.current) {
+          console.log('🚀 Handling initial notification response on app start:', lastResponse.notification.request.content);
+          hasHandledInitialNotificationRef.current = true;
+          const data = lastResponse.notification.request.content.data;
+          handleNotificationNavigation(data);
+        }
+      } catch (error) {
+        console.error('❌ Error checking initial notification response:', error);
+      }
+    };
+
+    checkInitialNotification();
   }, []);
 
   // Handle navigation based on notification data
@@ -339,21 +380,37 @@ const AppNavigator: React.FC = () => {
           }
           break;
 
-        case 'call_incoming':
-          if (data.conversationId) {
+        case 'call_incoming': {
+          const convId = data.conversationId;
+          const callSessionId = data.callSessionId;
+
+          if (convId && callSessionId) {
+            // Show the native system call UI when the user taps an incoming
+            // call notification from the tray. This ensures the global call
+            // card and system ringtone are presented even when the app was
+            // backgrounded or killed.
+            callkeepService.displayIncomingCall({
+              uuid: callSessionId,
+              callerName: data.callerName || 'Unknown',
+              callType: data.callType || 'audio',
+              conversationId: convId,
+              callSessionId,
+            });
+
             navigationRef.current?.navigate('IndividualChatScreen', {
-              chatId: data.conversationId,
+              chatId: convId,
               chatName: data.callerName || 'Unknown',
               chatAvatar: data.callerAvatar || null,
               chatType: 'friend',
               pendingIncomingCall: {
-                callSessionId: data.callSessionId,
+                callSessionId,
                 callerName: data.callerName || 'Unknown',
                 callType: data.callType || 'audio',
               },
             });
           }
           break;
+        }
 
         case 'delivery_update':
         case 'rider_assigned':
@@ -460,6 +517,7 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
               <Stack.Screen name="RiderVerification" component={RiderVerificationScreen} />
               <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} />
+              <Stack.Screen name="Mentions" component={MentionsScreen} />
               <Stack.Screen name="AccountStatus" component={AccountStatusScreen} />
               <Stack.Screen name="Suspension" component={SuspensionScreen} />
               <Stack.Screen name="RoleSelection" component={RoleSelectionScreen as any} />

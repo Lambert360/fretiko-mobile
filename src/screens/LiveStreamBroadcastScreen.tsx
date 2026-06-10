@@ -332,16 +332,30 @@ const LiveStreamBroadcastScreen = () => {
     }
 
     // Cleanup Agora engine
-    if (agoraEngine) {
+    const engine = agoraEngineRef.current || agoraEngine;
+    if (engine) {
       try {
         console.log('🎥 Cleaning up Agora engine...');
 
+        const engineAny = engine as any;
+
+        // Stop preview and mute local tracks before leaving the channel
+        if (typeof engineAny.stopPreview === 'function') {
+          await engineAny.stopPreview();
+        }
+        if (typeof engineAny.muteLocalVideoStream === 'function') {
+          await engineAny.muteLocalVideoStream(true);
+        }
+        if (typeof engineAny.muteLocalAudioStream === 'function') {
+          await engineAny.muteLocalAudioStream(true);
+        }
+
         // Remove all listeners
-        agoraEngine.removeAllListeners();
+        engine.removeAllListeners();
 
         // Leave channel first, then release
-        await agoraEngine.leaveChannel();
-        await agoraEngine.release();
+        await engine.leaveChannel();
+        await engine.release();
 
         console.log('✅ Agora engine cleaned up');
       } catch (cleanupError: any) {

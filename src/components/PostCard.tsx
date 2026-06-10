@@ -18,6 +18,7 @@ import { Post, PostMedia } from '../services/postsAPI';
 import ReactionButton, { GiftButton } from './ReactionButton';
 import SafeImage from './SafeImage';
 import PostCommentsModal from './PostCommentsModal';
+import RichText from './RichText';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -35,6 +36,8 @@ interface PostCardProps {
   hasUserGifted?: boolean; // New: true if current user sent a gift
   onGiftPress?: () => void; // New: opens gift selector modal
   onDoubleTap?: (post: Post) => void; // New: navigate to post details on double-tap
+  onLikesPress?: (postId: string) => void;
+  onGiftersPress?: (postId: string) => void;
 }
 
 const PostCard: React.FC<PostCardProps> = ({
@@ -51,6 +54,8 @@ const PostCard: React.FC<PostCardProps> = ({
   hasUserGifted = false,
   onGiftPress,
   onDoubleTap,
+  onLikesPress,
+  onGiftersPress,
 }) => {
   const insets = useSafeAreaInsets();
   const [isUIVisible, setIsUIVisible] = useState(true);
@@ -213,6 +218,7 @@ const PostCard: React.FC<PostCardProps> = ({
             allowsPictureInPicture
             nativeControls={false}
             pointerEvents="none"
+            contentFit="contain"
           />
         </View>
       );
@@ -224,7 +230,7 @@ const PostCard: React.FC<PostCardProps> = ({
           <Image
             source={{ uri: effectiveMediaUrls[0] }}
             style={styles.singleImage}
-            resizeMode="cover"
+            resizeMode="contain"
           />
         );
       }
@@ -241,7 +247,7 @@ const PostCard: React.FC<PostCardProps> = ({
                 effectiveMediaUrls.length === 2 && styles.gridImageTwo,
                 effectiveMediaUrls.length >= 3 && styles.gridImageMulti,
               ]}
-              resizeMode="cover"
+              resizeMode="contain"
             />
           ))}
           {effectiveMediaUrls.length > 4 && (
@@ -271,7 +277,7 @@ const PostCard: React.FC<PostCardProps> = ({
             <Image
               source={{ uri: effectiveMediaUrls[0] }}
               style={styles.singleImage}
-              resizeMode="cover"
+              resizeMode="contain"
             />
           )}
           {effectiveMediaUrls.length > 1 && (
@@ -407,12 +413,12 @@ const PostCard: React.FC<PostCardProps> = ({
 
               {post.content && (
                 <View style={styles.descriptionBox}>
-                  <Text
-                    style={styles.postText}
+                  <RichText
+                    style={styles.postText as any}
                     numberOfLines={isDescriptionExpanded ? undefined : 3}
                   >
-                    {post.content}
-                  </Text>
+                    {post.content || ''}
+                  </RichText>
 
                   {hasLongCaption && !isDescriptionExpanded && (
                     <TouchableOpacity
@@ -447,6 +453,7 @@ const PostCard: React.FC<PostCardProps> = ({
               isActive={post.isLiked}
               activeColor="#FF4757"
               onPress={() => onLike(post.id)}
+              onCountPress={post.likesCount > 0 ? () => onLikesPress?.(post.id) : undefined}
             />
 
             <ReactionButton
@@ -459,6 +466,7 @@ const PostCard: React.FC<PostCardProps> = ({
               count={post.giftsCount}
               onPress={onGiftPress || (() => onGift(post.id))}
               isActive={hasUserGifted}
+              onCountPress={post.giftsCount > 0 ? () => onGiftersPress?.(post.id) : undefined}
             />
 
             <ReactionButton

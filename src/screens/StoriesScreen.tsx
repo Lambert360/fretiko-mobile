@@ -21,6 +21,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { storiesAPI, Story, StoryComment } from '../services/storiesAPI';
+import RichText from '../components/RichText';
+import LikesListModal from '../components/LikesListModal';
 import { storyNotificationAPI } from '../services/storyNotificationAPI';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -51,6 +53,7 @@ const StoriesScreen = () => {
   const [newComment, setNewComment] = useState('');
   const [comments, setComments] = useState<StoryComment[]>([]);
   const [isLiked, setIsLiked] = useState(false);
+  const [showLikesModal, setShowLikesModal] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isMediaLoaded, setIsMediaLoaded] = useState(false);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
@@ -280,6 +283,38 @@ const StoriesScreen = () => {
     loadComments();
   };
 
+  const handleDeleteStory = () => {
+    Alert.alert(
+      'Delete Story',
+      'Are you sure you want to delete this story? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await storiesAPI.deleteStory(currentStory.id);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              try {
+                if (navigation.canGoBack()) {
+                  navigation.goBack();
+                } else {
+                  (navigation as any).navigate('KonnectScreen');
+                }
+              } catch {
+                (navigation as any).navigate('KonnectScreen');
+              }
+            } catch (error) {
+              console.error('❌ Error deleting story:', error);
+              Alert.alert('Error', 'Failed to delete story. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleShare = () => {
     (navigation as any).navigate('ShareStory', {
       storyId: currentStory.id,
@@ -412,7 +447,7 @@ const StoriesScreen = () => {
           allowsFullscreen={false}
           allowsPictureInPicture={false}
           nativeControls={false}
-          contentFit="cover"
+          contentFit="contain"
         />
       );
     } else {
@@ -420,7 +455,7 @@ const StoriesScreen = () => {
         <Image
           source={{ uri: currentStory.media_url }}
           style={styles.media}
-          resizeMode="cover"
+          resizeMode="contain"
         />
       );
     }
@@ -478,6 +513,14 @@ const StoriesScreen = () => {
                 <Ionicons name="add" size={24} color="white" />
               </TouchableOpacity>
             )}
+            {currentStory.user_id === user?.id && (
+              <TouchableOpacity
+                style={styles.deleteStoryButton}
+                onPress={handleDeleteStory}
+              >
+                <Ionicons name="trash-outline" size={20} color="#FF4458" />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={styles.closeButton}
               onPress={() => {
@@ -511,18 +554,24 @@ const StoriesScreen = () => {
       >
         <View style={[styles.controls, { paddingBottom: Math.max(40, insets.bottom + 20) }]}>
           {currentStory?.caption && (
-            <Text style={styles.caption}>{currentStory.caption}</Text>
+            <RichText style={styles.caption as any}>
+              {currentStory.caption || ''}
+            </RichText>
           )}
 
           <View style={styles.actionButtons}>
-            <TouchableOpacity style={styles.actionButton} onPress={handleLike}>
-              <Ionicons
-                name={isLiked ? "heart" : "heart-outline"}
-                size={24}
-                color={isLiked ? "#FF4458" : "white"}
-              />
-              <Text style={styles.actionButtonText}>{currentStory.like_count}</Text>
-            </TouchableOpacity>
+            <View style={styles.actionButton}>
+              <TouchableOpacity onPress={handleLike}>
+                <Ionicons
+                  name={isLiked ? "heart" : "heart-outline"}
+                  size={24}
+                  color={isLiked ? "#FF4458" : "white"}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => currentStory.like_count > 0 && setShowLikesModal(true)}>
+                <Text style={styles.actionButtonText}>{currentStory.like_count}</Text>
+              </TouchableOpacity>
+            </View>
 
             <TouchableOpacity style={styles.actionButton} onPress={handleShowComments}>
               <Ionicons name="chatbubble-outline" size={24} color="white" />
@@ -570,7 +619,9 @@ const StoriesScreen = () => {
                   <Text style={styles.commentUsername}>
                     {item.user_profiles.username}
                   </Text>
-                  <Text style={styles.commentText}>{item.content}</Text>
+                  <RichText style={styles.commentText as any}>
+                    {item.content || ''}
+                  </RichText>
                 </View>
               </View>
             )}
@@ -634,6 +685,13 @@ const StoriesScreen = () => {
       {renderHeader()}
       {renderControls()}
       {renderComments()}
+
+      <LikesListModal
+        visible={showLikesModal}
+        onClose={() => setShowLikesModal(false)}
+        likesCount={currentStory?.like_count || 0}
+        fetchLikers={() => storiesAPI.getStoryLikers(currentStory.id)}
+      />
     </View>
   );
 };
@@ -710,6 +768,11 @@ const styles = StyleSheet.create({
   addStoryButton: {
     padding: 8,
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 20,
+  },
+  deleteStoryButton: {
+    padding: 8,
+    backgroundColor: 'rgba(255, 68, 88, 0.2)',
     borderRadius: 20,
   },
   closeButton: {

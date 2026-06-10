@@ -21,7 +21,7 @@ import { liveSalesAPI, LiveStream, Comment } from '../services/liveSalesAPI';
 import { auctionSounds } from '../utils/auctionSounds';
 import { WinnerAnnouncementAnimation } from '../components/WinnerAnnouncementAnimation';
 import { auctionsAPI, auctionSocket } from '../services/auctionsAPI';
-import AgoraUIKit from 'agora-rn-uikit';
+import { createAgoraRtcEngine, ChannelProfileType, ClientRoleType, IRtcEngine, ChannelMediaOptions, RtcSurfaceView, RenderModeType } from 'react-native-agora';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -217,9 +217,13 @@ const LiveStreamHostScreen = () => {
   const [showWinnerAnimation, setShowWinnerAnimation] = useState(false);
   const [winnerData, setWinnerData] = useState<any>(null);
 
-  // Agora UIKit state
+  // Agora state
   const [agoraConfig, setAgoraConfig] = useState<any>(initialAgoraConfig);
-  const [showAgoraUI, setShowAgoraUI] = useState(!!initialAgoraConfig);
+  const [agoraEngine, setAgoraEngine] = useState<IRtcEngine | null>(null);
+  const agoraEngineRef = useRef<IRtcEngine | null>(null);
+  const [isAgoraInitialized, setIsAgoraInitialized] = useState(false);
+  const [isPreviewStarted, setIsPreviewStarted] = useState(false);
+  const [isJoined, setIsJoined] = useState(false);
 
   // Initialize auction sounds and WebSocket when entering auction stream
   useEffect(() => {
@@ -292,6 +296,105 @@ const LiveStreamHostScreen = () => {
       setLoading(false);
     }
   };
+
+  const initializeAgoraEngine = useCallback(async () => {
+    if (isAgoraInitialized || agoraEngineRef.current || !agoraConfig) {
+      return;
+    }
+
+    try {
+      const engine = createAgoraRtcEngine();
+      agoraEngineRef.current = engine;
+      setAgoraEngine(engine);
+
+      const initResult = engine.initialize({
+        appId: agoraConfig.appId,
+        channelProfile: ChannelProfileType.ChannelProfileLiveBroadcasting,
+      });
+
+      if (initResult !== 0) {
+        throw new Error(`Engine initialization failed with code: ${initResult}`);
+      }
+
+      setIsAgoraInitialized(true);
+
+      await engine.setClientRole(ClientRoleType.ClientRoleBroadcaster);
+      await engine.enableVideo();
+      await engine.enableAudio();
+
+      await engine.startPreview();
+      setIsPreviewStarted(true);
+
+      engine.addListener('onJoinChannelSuccess', () => {
+        setIsJoined(true);
+      });
+
+      engine.addListener('onLeaveChannel', () => {
+        setIsJoined(false);
+        setIsPreviewStarted(false);
+      });
+
+      engine.addListener('onError', (err: number, msg: string) => {
+        console.error('Agora error in LiveStreamHostScreen:', { err, msg });
+      });
+
+      const mediaOptions = new ChannelMediaOptions();
+      mediaOptions.publishCameraTrack = true;
+      mediaOptions.publishMicrophoneTrack = true;
+
+      const joinResult = await (engine as any).joinChannel(
+        agoraConfig.token || '',
+        agoraConfig.channel,
+        agoraConfig.uid ?? 0,
+        mediaOptions
+      );
+
+      if (joinResult !== 0) {
+        throw new Error(`joinChannel failed with error code: ${joinResult}`);
+      }
+    } catch (error: any) {
+      console.error('Failed to initialize Agora engine in LiveStreamHostScreen:', error);
+      setIsPreviewStarted(false);
+      setIsJoined(false);
+      Alert.alert('Stream Error', 'Failed to start camera. Please try again.');
+    }
+  }, [agoraConfig, isAgoraInitialized]);
+
+  const cleanupAgoraEngine = useCallback(async () => {
+    const engine = agoraEngineRef.current;
+
+    if (engine) {
+      try {
+        engine.removeAllListeners();
+        await engine.leaveChannel();
+        await engine.release();
+      } catch (error) {
+        console.warn('Agora cleanup warning in LiveStreamHostScreen:', error);
+      } finally {
+        agoraEngineRef.current = null;
+        setAgoraEngine(null);
+        setIsJoined(false);
+        setIsPreviewStarted(false);
+        setIsAgoraInitialized(false);
+      }
+    }
+
+    setAgoraConfig(null);
+  }, []);
+
+  useEffect(() => {
+    if (agoraConfig) {
+      initializeAgoraEngine();
+    }
+  }, [agoraConfig, initializeAgoraEngine]);
+
+  useEffect(() => {
+    return () => {
+      cleanupAgoraEngine().catch((error) => {
+        console.error('Error during Agora cleanup on unmount in LiveStreamHostScreen:', error);
+      });
+    };
+  }, [cleanupAgoraEngine]);
 
   // Pulse animation for live indicator
   useEffect(() => {
@@ -465,6 +568,7 @@ const LiveStreamHostScreen = () => {
           style: 'destructive',
           onPress: async () => {
             try {
+              await cleanupAgoraEngine();
               await liveSalesAPI.endStream(streamId);
               navigation.goBack();
             } catch (error) {
@@ -563,16 +667,13 @@ const LiveStreamHostScreen = () => {
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Stream Preview / Agora Video UI */}
         <View style={styles.previewContainer}>
-          {showAgoraUI && agoraConfig ? (
-            <AgoraUIKit
-              connectionData={agoraConfig}
-              rtcCallbacks={{
-                EndCall: () => {
-                  console.log('AgoraUIKit EndCall triggered');
-                  setShowAgoraUI(false);
-                  setAgoraConfig(null);
-                  navigation.goBack();
-                }
+          {isPreviewStarted && agoraConfig ? (
+            <RtcSurfaceView
+              style={styles.videoView}
+              canvas={{
+                uid: 0,
+                renderMode: RenderModeType.RenderModeFit,
+                mirrorMode: 1,
               }}
             />
           ) : (
@@ -584,20 +685,18 @@ const LiveStreamHostScreen = () => {
             </View>
           )}
 
-          {/* Stream Controls - Only show when not using AgoraUIKit */}
-          {!showAgoraUI && (
-            <View style={styles.streamControls}>
-              {isLive ? (
-                <TouchableOpacity
-                  style={styles.endStreamButton}
-                  onPress={handleEndStream}
-                >
-                  <Ionicons name="stop" size={24} color="white" />
-                  <Text style={styles.endStreamText}>End Stream</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          )}
+          {/* Stream Controls */}
+          <View style={styles.streamControls}>
+            {isLive ? (
+              <TouchableOpacity
+                style={styles.endStreamButton}
+                onPress={handleEndStream}
+              >
+                <Ionicons name="stop" size={24} color="white" />
+                <Text style={styles.endStreamText}>End Stream</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
 
         {/* Analytics Dashboard */}
@@ -897,6 +996,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#1a1a1a',
+  },
+  videoView: {
+    width: '100%',
+    height: 200,
+    backgroundColor: '#000',
   },
   previewText: {
     color: '#666',

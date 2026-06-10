@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   Animated,
@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { searchAPI, SearchType, UserResult, RiderResult } from '../services/searchAPI';
+import { api } from '../services/api';
 import { useSearch, useDiscoverContent, useSearchSuggestions } from '../hooks/useSearch';
 import {
   PersonCard,
@@ -39,6 +40,7 @@ import {
 const SearchScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('For You');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -54,6 +56,7 @@ const SearchScreen = () => {
     priceRange: 'all', // 'all', 'under50', '50to200', 'over200'
     sortBy: 'relevance', // 'relevance', 'price_low', 'price_high', 'newest', 'rating'
   });
+  const [trendingTags, setTrendingTags] = useState<Array<{ id: string; name: string; display_name: string; usage_count: number }>>([]);
   
   // Debounce timer
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -134,6 +137,21 @@ const SearchScreen = () => {
         clearTimeout(debounceTimer.current);
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const loadTrendingTags = async () => {
+      try {
+        const response = await api.get('/tags/trending', {
+          params: { limit: 12 },
+        });
+        setTrendingTags(response.data || []);
+      } catch (error) {
+        console.warn('Failed to load trending tags', error);
+      }
+    };
+
+    loadTrendingTags();
   }, []);
 
   useEffect(() => {
@@ -234,6 +252,16 @@ const SearchScreen = () => {
       performSearch(query);
     }, 500);
   };
+
+  useEffect(() => {
+    const params = (route as any)?.params;
+    const initialQuery = params?.initialQuery;
+
+    if (initialQuery && typeof initialQuery === 'string') {
+      setSearchQuery(initialQuery);
+      handleSearch(initialQuery);
+    }
+  }, [route, handleSearch]);
 
   const renderHeader = () => (
     <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
@@ -685,6 +713,35 @@ const SearchScreen = () => {
                   )}
                   keyExtractor={(item) => item.id}
                   scrollEnabled={false}
+                />
+              </View>
+            )}
+
+            {trendingTags.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Trending Tags</Text>
+                </View>
+                <FlatList
+                  data={trendingTags}
+                  horizontal
+                  keyExtractor={(item) => item.id}
+                  showsHorizontalScrollIndicator={false}
+                  renderItem={({ item }) => {
+                    const label = item.display_name || item.name;
+                    const tagQuery = `#${label}`;
+                    return (
+                      <TouchableOpacity
+                        style={styles.tagChip}
+                        onPress={() => {
+                          setSearchQuery(tagQuery);
+                          handleSearch(tagQuery);
+                        }}
+                      >
+                        <Text style={styles.tagChipText}>#{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  }}
                 />
               </View>
             )}
@@ -1513,6 +1570,20 @@ const styles = StyleSheet.create({
   seeAllText: {
     color: '#1DA1F2',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  tagChip: {
+    backgroundColor: 'rgba(29, 161, 242, 0.15)',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(29, 161, 242, 0.6)',
+  },
+  tagChipText: {
+    color: '#1DA1F2',
+    fontSize: 14,
     fontWeight: '600',
   },
   trendingItem: {

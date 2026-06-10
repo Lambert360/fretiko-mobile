@@ -28,6 +28,8 @@ import { contentReportsAPI, ReportCategory } from '../services/contentReportsAPI
 import { giftAPI, UserGift } from '../services/giftAPI';
 import { userAPI } from '../services/userAPI';
 import GiftSelectorModal from '../components/GiftSelectorModal';
+import RichText from '../components/RichText';
+import LikesListModal from '../components/LikesListModal';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const COMMENTS_PAGE_SIZE = 20;
@@ -57,6 +59,8 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [isLiked, setIsLiked] = useState(false);
+  const [showLikesModal, setShowLikesModal] = useState(false);
+  const [showGiftersModal, setShowGiftersModal] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [showGiftModal, setShowGiftModal] = useState(false);
@@ -338,9 +342,11 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
     if (!post) return;
 
     try {
+      const shareUrl = `https://fretiko.com/post/${post.id}`;
+
       await RNShare.share({
-        message: `Check out this post on Fretiko!`,
-        url: `fretiko://post/${post.id}`,
+        message: `Check out this post on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
+        url: shareUrl,
       });
     } catch (error) {
       console.error('Error sharing post:', error);
@@ -587,7 +593,7 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
 
     return (
       <View style={styles.captionContainer}>
-        <Text style={styles.caption}>{post.content}</Text>
+        <RichText style={styles.caption as any}>{post.content}</RichText>
       </View>
     );
   };
@@ -597,19 +603,27 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
 
     return (
       <View style={styles.engagementBar}>
-        <TouchableOpacity onPress={handleLike} style={styles.engagementButton}>
-          <Ionicons
-            name={isLiked ? 'heart' : 'heart-outline'}
-            size={24}
-            color={isLiked ? '#E74C3C' : '#666'}
-          />
-          <Text style={styles.engagementCount}>{postsAPI.formatCount(post.likesCount)}</Text>
-        </TouchableOpacity>
+        <View style={styles.engagementButton}>
+          <TouchableOpacity onPress={handleLike}>
+            <Ionicons
+              name={isLiked ? 'heart' : 'heart-outline'}
+              size={24}
+              color={isLiked ? '#E74C3C' : '#666'}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => post.likesCount > 0 && setShowLikesModal(true)}>
+            <Text style={styles.engagementCount}>{postsAPI.formatCount(post.likesCount)}</Text>
+          </TouchableOpacity>
+        </View>
 
-        <TouchableOpacity style={styles.engagementButton} onPress={handleGiftToPost}>
-          <Ionicons name="gift-outline" size={24} color="#666" />
-          <Text style={styles.engagementCount}>{postsAPI.formatCount(post.giftsCount)}</Text>
-        </TouchableOpacity>
+        <View style={styles.engagementButton}>
+          <TouchableOpacity onPress={handleGiftToPost}>
+            <Ionicons name="gift-outline" size={24} color="#666" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => post.giftsCount > 0 && setShowGiftersModal(true)}>
+            <Text style={styles.engagementCount}>{postsAPI.formatCount(post.giftsCount)}</Text>
+          </TouchableOpacity>
+        </View>
 
         <TouchableOpacity onPress={handleShare} style={styles.engagementButton}>
           <Ionicons name="share-outline" size={24} color="#666" />
@@ -642,7 +656,7 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
         </View>
         <View style={styles.commentContent}>
           <Text style={styles.commentUsername}>{item.user?.username}</Text>
-          <Text style={styles.commentText}>{item.content}</Text>
+          <RichText style={styles.commentText as any}>{item.content || ''}</RichText>
           <View style={styles.commentActions}>
             <Text style={styles.commentTime}>{postsAPI.formatPostTime(item.createdAt)}</Text>
             <TouchableOpacity
@@ -719,7 +733,7 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
                 </View>
                 <View style={styles.replyContent}>
                   <Text style={styles.replyUsername}>{reply.user?.username}</Text>
-                  <Text style={styles.replyText}>{reply.content}</Text>
+                  <RichText style={styles.replyText as any}>{reply.content || ''}</RichText>
                   <View style={styles.replyActions}>
                     <Text style={styles.replyTime}>{postsAPI.formatPostTime(reply.createdAt)}</Text>
                     <TouchableOpacity
@@ -928,6 +942,25 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
         {renderFloatingCommentInput()}
         <Animated.View style={{ height: keyboardOffset }} />
       </View>
+
+      <LikesListModal
+        visible={showLikesModal}
+        onClose={() => setShowLikesModal(false)}
+        likesCount={post?.likesCount || 0}
+        fetchLikers={() => postsAPI.getPostLikers(post!.id)}
+        onUserPress={(userId) => { setShowLikesModal(false); (navigation || navigationHook)?.navigate('UserProfile' as never, { userId } as never); }}
+      />
+
+      <LikesListModal
+        visible={showGiftersModal}
+        onClose={() => setShowGiftersModal(false)}
+        likesCount={post?.giftsCount || 0}
+        fetchLikers={() => postsAPI.getPostGifters(post!.id)}
+        title={`Gifted by${post?.giftsCount ? ` ${post.giftsCount}` : ''}`}
+        emptyIcon="gift-outline"
+        emptyText="No gifts yet"
+        onUserPress={(userId) => { setShowGiftersModal(false); (navigation || navigationHook)?.navigate('UserProfile' as never, { userId } as never); }}
+      />
 
       <Modal
         visible={showMoreOptions}

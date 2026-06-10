@@ -19,10 +19,6 @@ class CallkeepService {
   private endHandler: EndHandler | null = null;
 
   setup() {
-    if (Platform.OS !== 'ios') {
-      return;
-    }
-
     if (this.isSetup) return;
 
     try {
@@ -89,10 +85,6 @@ class CallkeepService {
   }
 
   displayIncomingCall(info: CallkeepCallInfo) {
-    if (Platform.OS !== 'ios') {
-      return;
-    }
-
     if (!this.isSetup) {
       this.setup();
     }
@@ -113,10 +105,6 @@ class CallkeepService {
   }
 
   endCallkeepCall(uuid: string) {
-    if (Platform.OS !== 'ios') {
-      return;
-    }
-
     try {
       RNCallKeep.endCall(uuid);
       this.pendingCalls.delete(uuid);
@@ -130,10 +118,6 @@ class CallkeepService {
   }
 
   setAvailable(available: boolean) {
-    if (Platform.OS !== 'ios') {
-      return;
-    }
-
     try {
       RNCallKeep.setAvailable(available);
     } catch (error) {
@@ -142,10 +126,6 @@ class CallkeepService {
   }
 
   teardown() {
-    if (Platform.OS !== 'ios') {
-      return;
-    }
-
     try {
       RNCallKeep.removeEventListener('answerCall');
       RNCallKeep.removeEventListener('endCall');

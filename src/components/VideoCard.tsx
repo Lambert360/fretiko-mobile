@@ -29,6 +29,7 @@ interface VideoCardProps {
   onVideoTouch?: () => void;
   onTogglePlay?: (itemId: string) => void;
   onLike?: (itemId: string) => void;
+  onLikesPress?: (itemId: string) => void;
   onComment?: (itemId: string) => void;
   onBookmark?: (itemId: string) => void;
   onShare?: (itemId: string) => void;
@@ -45,6 +46,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
   onVideoTouch,
   onTogglePlay,
   onLike,
+  onLikesPress,
   onComment,
   onBookmark,
   onShare,
@@ -365,19 +367,20 @@ const VideoCard: React.FC<VideoCardProps> = ({
           {/* Right Column: Reaction Icons */}
           <View style={styles.rightActionsContainer}>
             {/* Like Button */}
-            <TouchableOpacity 
-              style={styles.rightActionButton} 
-              onPress={handleLike}
-            >
-              <View style={styles.iconBackground}>
-                <Ionicons 
-                  name={item.isLiked ? 'heart' : 'heart-outline'} 
-                  size={28} 
-                  color={item.isLiked ? '#FF4757' : 'white'} 
-                />
-              </View>
-              <Text style={styles.rightActionText}>{String(item.likes || 0)}</Text>
-            </TouchableOpacity>
+            <View style={styles.rightActionButton}>
+              <TouchableOpacity onPress={handleLike}>
+                <View style={styles.iconBackground}>
+                  <Ionicons 
+                    name={item.isLiked ? 'heart' : 'heart-outline'} 
+                    size={28} 
+                    color={item.isLiked ? '#FF4757' : 'white'} 
+                  />
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => Number(item.likes) > 0 ? onLikesPress?.(item.id) : undefined}>
+                <Text style={styles.rightActionText}>{String(item.likes || 0)}</Text>
+              </TouchableOpacity>
+            </View>
 
             {/* Comment Button */}
             <TouchableOpacity 

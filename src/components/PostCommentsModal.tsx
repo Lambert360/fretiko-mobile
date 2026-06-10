@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { postsAPI, PostInteraction } from '../services/postsAPI';
 import { giftAPI, UserGift } from '../services/giftAPI';
+import RichText from './RichText';
 import CommentReactionBar from './CommentReactionBar';
 import GiftSelectorModal from './GiftSelectorModal';
 import * as Haptics from 'expo-haptics';
@@ -246,9 +247,9 @@ const PostCommentsModal: React.FC<PostCommentsModalProps> = ({
   }) => (
     <View style={[styles.commentItem, isReply && styles.replyItem]}>
       <View style={styles.commentAvatar}>
-        {item.user?.avatar_url ? (
+        {item.user?.avatarUrl ? (
           <Image
-            source={{ uri: item.user.avatar_url }}
+            source={{ uri: item.user.avatarUrl }}
             style={styles.avatarImage}
             resizeMode="cover"
           />
@@ -263,7 +264,7 @@ const PostCommentsModal: React.FC<PostCommentsModalProps> = ({
           <Text style={styles.username}>@{item.user?.username || 'Unknown'}</Text>
           <Text style={styles.timestamp}>{formatTime(item.createdAt)}</Text>
         </View>
-        <Text style={styles.commentText}>{item.content}</Text>
+        <RichText style={styles.commentText as any}>{item.content || ''}</RichText>
 
         {/* Reaction Bar - Heart + Gift */}
         <CommentReactionBar

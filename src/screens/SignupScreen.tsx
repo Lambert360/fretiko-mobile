@@ -297,7 +297,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                 onChange={(value) => updateFormData('dateOfBirth', value)}
                 placeholder="Select your date of birth"
                 label="Date of Birth"
-                minimumAge={18}
+                minimumAge={13}
                 required={true}
               />
 

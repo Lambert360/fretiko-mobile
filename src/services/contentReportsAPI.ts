@@ -28,6 +28,7 @@ export interface ContentReport {
   productId?: string;
   serviceId?: string;
   chatId?: string;
+  postId?: string;
   reportedUserId?: string;
   reportType: ReportType;
   status: 'pending' | 'under_review' | 'approved' | 'action_taken' | 'dismissed';

@@ -28,6 +28,7 @@ import ProductCard from '../components/ProductCard';
 import VideoCard from '../components/VideoCard';
 import PostCard from '../components/PostCard';
 import GiftSelectorModal from '../components/GiftSelectorModal';
+import LikesListModal from '../components/LikesListModal';
 import { postsAPI, Post, UnifiedFeedItem } from '../services/postsAPI';
 import { giftAPI, UserGift } from '../services/giftAPI';
 import CartModal from '../components/CartModal';
@@ -183,6 +184,17 @@ const HomeScreen = () => {
   const [commentsServiceId, setCommentsServiceId] = useState<string | null>(null);
   const [likedServices, setLikedServices] = useState<Set<string>>(new Set());
   
+  // Likes viewer state
+  const [showLikesModal, setShowLikesModal] = useState(false);
+  const [likesModalPostId, setLikesModalPostId] = useState<string | null>(null);
+  const [likesModalCount, setLikesModalCount] = useState(0);
+  const [likesModalType, setLikesModalType] = useState<'post' | 'service'>('post');
+
+  // Gifters viewer state
+  const [showGiftersModal, setShowGiftersModal] = useState(false);
+  const [giftersModalPostId, setGiftersModalPostId] = useState<string | null>(null);
+  const [giftersModalCount, setGiftersModalCount] = useState(0);
+
   // Gift modal state for posts
   const [showPostGiftModal, setShowPostGiftModal] = useState(false);
   const [selectedPostForGift, setSelectedPostForGift] = useState<Post | null>(null);
@@ -817,13 +829,13 @@ const HomeScreen = () => {
       }
 
       // Prepare share content
-      const shareMessage = `Check out this service: ${service.title}\n\nPrice: ₣${service.price}\nProvider: @${service.username}\n\nView on Fretiko: https://fretiko.app/service/${itemId}`;
+      const shareMessage = `Check out this service: ${service.title}\n\nPrice: ₣${service.price}\nProvider: @${service.username}\n\nView on Fretiko: https://fretiko.com/service/${itemId}`;
 
       // Open native share sheet
       const shareResult = await Share.share({
         message: shareMessage,
         title: service.title,
-        url: `https://fretiko.app/service/${itemId}`, // Deep link URL
+        url: `https://fretiko.com/service/${itemId}`, // Deep link URL
       });
 
       // If user completed share (not dismissed)
@@ -3122,6 +3134,13 @@ const HomeScreen = () => {
       headerHeight={activeTab === 'services' ? 0 : HEADER_FULL_HEIGHT + SUB_HEADER_HEIGHT}
       onVideoTouch={handleVideoTouch}
       onLike={handleLike}
+      onLikesPress={(serviceId) => {
+        const serviceItem = item;
+        setLikesModalPostId(serviceId);
+        setLikesModalCount(Number(serviceItem.likes) || 0);
+        setLikesModalType('service');
+        setShowLikesModal(true);
+      }}
       onComment={handleComment}
       onBookmark={handleBookmark}
       onShare={handleShare}
@@ -3484,7 +3503,7 @@ const HomeScreen = () => {
                         try {
                           // Get post content for sharing
                           const shareContent = postItem.content || 'Check out this post on Fretiko!';
-                          const shareUrl = `https://fretiko.app/post/${postId}`;
+                          const shareUrl = `https://fretiko.com/post/${postId}`;
                           
                           // Open native share sheet
                           const result = await Share.share({
@@ -3519,6 +3538,17 @@ const HomeScreen = () => {
                       }}
                       onDoubleTap={(post) => {
                         navigation.navigate('PostDetails', { postId: post.id });
+                      }}
+                      onLikesPress={(postId) => {
+                        setLikesModalPostId(postId);
+                        setLikesModalCount(postItem.likesCount || 0);
+                        setLikesModalType('post');
+                        setShowLikesModal(true);
+                      }}
+                      onGiftersPress={(postId) => {
+                        setGiftersModalPostId(postId);
+                        setGiftersModalCount(postItem.giftsCount || 0);
+                        setShowGiftersModal(true);
                       }}
                     />
                   </View>
@@ -4123,6 +4153,31 @@ const HomeScreen = () => {
           onPress={toggleSidebar}
         />
       ) : null}
+
+      {/* Gifters viewer modal */}
+      <LikesListModal
+        visible={showGiftersModal}
+        onClose={() => setShowGiftersModal(false)}
+        likesCount={giftersModalCount}
+        fetchLikers={() => postsAPI.getPostGifters(giftersModalPostId!)}
+        title={`Gifted by${giftersModalCount > 0 ? ` ${giftersModalCount}` : ''}`}
+        emptyIcon="gift-outline"
+        emptyText="No gifts yet"
+        onUserPress={(userId) => { setShowGiftersModal(false); navigation.navigate('PublicProfile', { userId }); }}
+      />
+
+      {/* Likes viewer modal */}
+      <LikesListModal
+        visible={showLikesModal}
+        onClose={() => setShowLikesModal(false)}
+        likesCount={likesModalCount}
+        fetchLikers={() =>
+          likesModalType === 'service'
+            ? servicesAPI.getServiceLikers(likesModalPostId!)
+            : postsAPI.getPostLikers(likesModalPostId!)
+        }
+        onUserPress={(userId) => { setShowLikesModal(false); navigation.navigate('PublicProfile', { userId }); }}
+      />
 
       {/* Modals */}
       <CartModal

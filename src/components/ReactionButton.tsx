@@ -17,6 +17,7 @@ export interface ReactionButtonProps {
   activeColor?: string;
   inactiveColor?: string;
   onPress: () => void;
+  onCountPress?: () => void;
   size?: number;
   showCount?: boolean;
   style?: any;
@@ -29,6 +30,7 @@ const ReactionButton: React.FC<ReactionButtonProps> = ({
   activeColor = '#FF4757',
   inactiveColor = 'white',
   onPress,
+  onCountPress,
   size = 28,
   showCount = true,
   style,
@@ -69,29 +71,33 @@ const ReactionButton: React.FC<ReactionButtonProps> = ({
   const iconColor = isActive ? activeColor : inactiveColor;
 
   return (
-    <TouchableOpacity
-      style={[styles.container, style]}
-      onPress={handlePress}
-      activeOpacity={0.7}
-    >
-      <Animated.View
-        style={[
-          styles.iconBackground,
-          { transform: [{ scale: scaleAnim }] }
-        ]}
-      >
-        <Ionicons
-          name={getIconName() as any}
-          size={size}
-          color={iconColor}
-        />
-      </Animated.View>
+    <View style={[styles.container, style]}>
+      <TouchableOpacity onPress={handlePress} activeOpacity={0.7}>
+        <Animated.View
+          style={[
+            styles.iconBackground,
+            { transform: [{ scale: scaleAnim }] }
+          ]}
+        >
+          <Ionicons
+            name={getIconName() as any}
+            size={size}
+            color={iconColor}
+          />
+        </Animated.View>
+      </TouchableOpacity>
       {showCount && (
-        <Text style={styles.countText}>
-          {formatCount(count)}
-        </Text>
+        <TouchableOpacity
+          onPress={onCountPress || handlePress}
+          activeOpacity={onCountPress ? 0.7 : 1}
+          hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+        >
+          <Text style={styles.countText}>
+            {formatCount(count)}
+          </Text>
+        </TouchableOpacity>
       )}
-    </TouchableOpacity>
+    </View>
   );
 };
 
@@ -99,6 +105,7 @@ const ReactionButton: React.FC<ReactionButtonProps> = ({
 export interface GiftButtonProps {
   count: number;
   onPress: () => void;
+  onCountPress?: () => void;
   size?: number;
   showCount?: boolean;
   style?: any;
@@ -108,6 +115,7 @@ export interface GiftButtonProps {
 export const GiftButton: React.FC<GiftButtonProps> = ({
   count,
   onPress,
+  onCountPress,
   size = 28,
   showCount = true,
   style,
@@ -141,32 +149,36 @@ export const GiftButton: React.FC<GiftButtonProps> = ({
   const countColor = isActive ? '#FFD700' : '#FFFFFF';
 
   return (
-    <TouchableOpacity
-      style={[styles.container, style]}
-      onPress={handlePress}
-      activeOpacity={0.7}
-    >
-      <Animated.View
-        style={[
-          styles.giftIconBackground,
-          { 
-            transform: [{ scale: scaleAnim }],
-            backgroundColor
-          }
-        ]}
-      >
-        <Ionicons
-          name="gift"
-          size={size}
-          color={iconColor}
-        />
-      </Animated.View>
+    <View style={[styles.container, style]}>
+      <TouchableOpacity onPress={handlePress} activeOpacity={0.7}>
+        <Animated.View
+          style={[
+            styles.giftIconBackground,
+            { 
+              transform: [{ scale: scaleAnim }],
+              backgroundColor
+            }
+          ]}
+        >
+          <Ionicons
+            name="gift"
+            size={size}
+            color={iconColor}
+          />
+        </Animated.View>
+      </TouchableOpacity>
       {showCount && (
-        <Text style={[styles.countText, { color: countColor }]}>
-          {formatCount(count)}
-        </Text>
+        <TouchableOpacity
+          onPress={onCountPress || handlePress}
+          activeOpacity={onCountPress ? 0.7 : 1}
+          hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+        >
+          <Text style={[styles.countText, { color: countColor }]}>
+            {formatCount(count)}
+          </Text>
+        </TouchableOpacity>
       )}
-    </TouchableOpacity>
+    </View>
   );
 };
 

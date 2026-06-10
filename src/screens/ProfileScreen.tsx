@@ -7,7 +7,6 @@ import { userAPI, UserStats } from '../services/userAPI';
 import { walletAPI, Wallet, WalletStats } from '../services/walletAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
 import { giftAPI, UserGift } from '../services/giftAPI';
-import { fileUploadService } from '../services/fileUploadService';
 import { productsAPI, Product } from '../services/productsAPI';
 import { postsAPI } from '../services/postsAPI';
 import { searchAPI, SearchType } from '../services/searchAPI';
@@ -237,25 +236,17 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         const asset = result.assets[0];
         
         console.log('📸 Uploading avatar image...');
-        const fileName = `avatar_${user?.id}_${Date.now()}.jpg`;
-        const uploadResult = await fileUploadService.uploadFile(asset.uri, fileName, 'image/jpeg');
+        const avatarUrl = await userAPI.uploadAvatar(asset.uri);
         
-        if (uploadResult.success) {
-          console.log('✅ Avatar uploaded:', uploadResult.publicUrl);
-          
-          // Update profile with new avatar URL
-          await userAPI.updateProfile({ avatarUrl: uploadResult.publicUrl });
-          
-          // Refresh auth context with updated user data
-          await refreshUserProfile();
-          
-          // Reload profile to show updated avatar
-          await loadProfile();
-          
-          Alert.alert('Success', 'Profile picture updated successfully!');
-        } else {
-          throw new Error(uploadResult.error || 'Upload failed');
-        }
+        console.log('✅ Avatar uploaded:', avatarUrl);
+        
+        // Refresh auth context with updated user data
+        await refreshUserProfile();
+        
+        // Reload profile to show updated avatar
+        await loadProfile();
+        
+        Alert.alert('Success', 'Profile picture updated successfully!');
       }
     } catch (error) {
       console.error('❌ Avatar upload failed:', error);
@@ -285,25 +276,17 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         const asset = result.assets[0];
         
         console.log('🖼️ Uploading background image...');
-        const fileName = `background_${user?.id}_${Date.now()}.jpg`;
-        const uploadResult = await fileUploadService.uploadFile(asset.uri, fileName, 'image/jpeg');
+        const bgUrl = await userAPI.uploadBackground(asset.uri);
         
-        if (uploadResult.success) {
-          console.log('✅ Background uploaded:', uploadResult.publicUrl);
-          
-          // Update profile with new background URL
-          await userAPI.updateProfile({ bgPicUrl: uploadResult.publicUrl });
-          
-          // Refresh auth context with updated user data
-          await refreshUserProfile();
-          
-          // Reload profile to show updated background
-          await loadProfile();
-          
-          Alert.alert('Success', 'Background image updated successfully!');
-        } else {
-          throw new Error(uploadResult.error || 'Upload failed');
-        }
+        console.log('✅ Background uploaded:', bgUrl);
+        
+        // Refresh auth context with updated user data
+        await refreshUserProfile();
+        
+        // Reload profile to show updated background
+        await loadProfile();
+        
+        Alert.alert('Success', 'Background image updated successfully!');
       }
     } catch (error) {
       console.error('❌ Background upload failed:', error);
@@ -467,17 +450,6 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
       <Animated.View style={[styles.gradientBackground, { opacity: 1 }]}>
         <Image source={{ uri: profile?.bgPicUrl || 'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?auto=format&fit=crop&w=2000&q=80' }} style={styles.backgroundImage} />
         <View style={[styles.gradientOverlay]} />
-        <TouchableOpacity
-          style={styles.backgroundUploadButton}
-          onPress={handleBackgroundUpload}
-          disabled={uploadingBackground}
-        >
-          {uploadingBackground ? (
-            <Ionicons name="cloud-upload" size={20} color="rgba(255,255,255,0.8)" />
-          ) : (
-            <Ionicons name="camera" size={20} color="rgba(255,255,255,0.8)" />
-          )}
-        </TouchableOpacity>
       </Animated.View>
 
       {renderFloatingParticles()}
@@ -912,9 +884,9 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         )}
       </ScrollView>
 
-      {/* Create Post FAB — smaller, standalone, above Upload FAB */}
+      {/* Create Post FAB — smaller, standalone, above Upload FAB (if visible) */}
       <TouchableOpacity
-        style={styles.createPostFAB}
+        style={[styles.createPostFAB, !(profile?.isSeller || profile?.isRider) && styles.createPostFABAlone]}
         onPress={() => handleButtonPress(() => navigation.navigate('CreatePost'))}
       >
         <Animated.View style={[styles.createPostIcon, { transform: [{ scale: springAnim }] }]}>
@@ -922,15 +894,17 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         </Animated.View>
       </TouchableOpacity>
 
-      {/* Upload Floating Action Button — products/services listing */}
-      <TouchableOpacity
-        style={styles.uploadFAB}
-        onPress={() => handleButtonPress(() => setIsUploadModalVisible(true))}
-      >
-        <Animated.View style={[styles.uploadIcon, { transform: [{ scale: springAnim }] }]}>
-          <Ionicons name="add" size={24} color="#FFFFFF" />
-        </Animated.View>
-      </TouchableOpacity>
+      {/* Upload Floating Action Button — products/services listing (vendors & riders only) */}
+      {(profile?.isSeller || profile?.isRider) && (
+        <TouchableOpacity
+          style={styles.uploadFAB}
+          onPress={() => handleButtonPress(() => setIsUploadModalVisible(true))}
+        >
+          <Animated.View style={[styles.uploadIcon, { transform: [{ scale: springAnim }] }]}>
+            <Ionicons name="add" size={24} color="#FFFFFF" />
+          </Animated.View>
+        </TouchableOpacity>
+      )}
 
       {/* Enhanced Options Modal */}
       <Modal transparent visible={isOptionsVisible} animationType="fade" onRequestClose={() => setIsOptionsVisible(false)}>
@@ -1676,6 +1650,13 @@ const styles = StyleSheet.create({
   uploadIcon: {
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  createPostFABAlone: {
+    bottom: 30,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
   },
   createPostFAB: {
     position: 'absolute',

@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { disputesAPI, CreateDisputeRequest } from '../services/disputesAPI';
 import { ordersAPI } from '../services/ordersAPI';
-import { fileUploadService } from '../services/fileUploadService';
+import { userAPI } from '../services/userAPI';
 
 // Dispute types by category
 const ORDER_DISPUTE_TYPES = [
@@ -246,21 +246,12 @@ const CreateDisputeScreen = () => {
               ? 'image/jpeg' 
               : 'application/pdf';
 
-            const uploadResult = await fileUploadService.uploadFile(
-              item.uri,
-              item.name,
-              mimeType
-            );
-
-            if (uploadResult.success) {
-              uploadedEvidence.push({
-                type: item.type,
-                url: uploadResult.publicUrl,
-                description: item.name,
-              });
-            } else {
-              console.warn(`Failed to upload evidence ${item.name}:`, uploadResult.error);
-            }
+            const uploadedUrl = await userAPI.uploadEvidence(item.uri, item.name, mimeType);
+            uploadedEvidence.push({
+              type: item.type,
+              url: uploadedUrl,
+              description: item.name,
+            });
           } catch (uploadError) {
             console.error(`Error uploading evidence ${item.name}:`, uploadError);
             // Continue with other files

@@ -93,8 +93,6 @@ export const CallProvider: React.FC<{
 
   // Initialise CallKeep once and register system-UI handlers
   useEffect(() => {
-    callkeepService.setup();
-
     // Native UI → Accept: navigate to the chat and show the full-screen modal
     callkeepService.onAnswerCall((callUUID) => {
       const info = callkeepService.getCallInfo(callUUID);
@@ -150,14 +148,10 @@ export const CallProvider: React.FC<{
         // Ignore if the current user is the one initiating the call
         if (callData?.initiator?.id === userIdRef.current) return;
 
-        // Ignore if we already have a pending banner call
+        // Ignore if we already have a pending incoming call (banner or native UI)
         if (incomingCallRef.current) return;
 
         const callConvId = conversationId || callData?.conversationId;
-
-        // If IndividualChatScreen for this exact conversation is currently open,
-        // let it handle it with its own full-screen modal — don't show a banner
-        if (activeChatIdRef.current && activeChatIdRef.current === callConvId) return;
 
         const info: IncomingCallInfo = {
           callSessionId: callData.callSessionId,
@@ -172,7 +166,12 @@ export const CallProvider: React.FC<{
         };
 
         incomingCallRef.current = info;
-        setIncomingCallForBanner(info);
+        // Only show the in-app banner when the relevant chat is NOT already open.
+        // The native system UI (CallKeep) will still be shown for all incoming calls
+        // so the device's regular ringtone is used consistently.
+        if (!activeChatIdRef.current || activeChatIdRef.current !== callConvId) {
+          setIncomingCallForBanner(info);
+        }
 
         // Also show the native system call UI (handles lock-screen / background)
         callkeepService.displayIncomingCall({
@@ -184,9 +183,9 @@ export const CallProvider: React.FC<{
         });
 
       } else if (eventType === 'call_ended') {
-        // Dismiss banner and native call UI if the ended call matches
-        if (incomingCallRef.current?.callSessionId === callData?.callSessionId) {
-          callkeepService.endCallkeepCall(callData.callSessionId);
+        // Dismiss banner and native call UI for any active incoming call
+        if (incomingCallRef.current) {
+          callkeepService.endCallkeepCall(incomingCallRef.current.callSessionId);
           incomingCallRef.current = null;
           setIncomingCallForBanner(null);
         }

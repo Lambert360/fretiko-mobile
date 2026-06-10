@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import LikesListModal from '../LikesListModal';
+import { servicesAPI } from '../../services/servicesAPI';
 import { Ionicons } from '@expo/vector-icons';
 
 export interface ServiceData {
@@ -54,6 +56,7 @@ interface ServiceCardProps {
   variant?: 'featured' | 'grid' | 'list';
   onPress?: (service: ServiceData) => void;
   onLike?: (service: ServiceData) => void;
+  onLikesPress?: (serviceId: string) => void;
   onBookmark?: (service: ServiceData) => void;
   onProviderPress?: (providerId: string) => void;
   onBookNow?: (service: ServiceData) => void;
@@ -65,11 +68,22 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
   variant = 'featured',
   onPress,
   onLike,
+  onLikesPress,
   onBookmark,
   onProviderPress,
   onBookNow,
   onAddToCart,
 }) => {
+  const [showLikesModal, setShowLikesModal] = useState(false);
+
+  const handleLikesPress = () => {
+    if (onLikesPress) {
+      onLikesPress(service.id);
+    } else {
+      setShowLikesModal(true);
+    }
+  };
+
   const getMediaHeight = () => {
     if (variant === 'grid') return 140;
     if (variant === 'list') return 80;
@@ -249,18 +263,21 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
         {/* Engagement and action */}
         <View style={styles.bottomRow}>
           <View style={styles.engagementRow}>
-            {onLike && (
-              <TouchableOpacity 
-                style={styles.engagementButton}
-                onPress={() => onLike(service)}
-              >
-                <Ionicons 
-                  name={service.isLiked ? "heart" : "heart-outline"} 
-                  size={14} 
-                  color={service.isLiked ? "#E91E63" : "rgba(255,255,255,0.6)"} 
-                />
-                {!!service?.likes && <Text style={styles.engagementText}>{String(service?.likes)}</Text>}
-              </TouchableOpacity>
+{onLike && (
+              <View style={styles.engagementButton}>
+                <TouchableOpacity onPress={() => onLike(service)}>
+                  <Ionicons
+                    name={service.isLiked ? "heart" : "heart-outline"}
+                    size={14}
+                    color={service.isLiked ? "#E91E63" : "rgba(255,255,255,0.6)"}
+                  />
+                </TouchableOpacity>
+                {!!service?.likes && (
+                  <TouchableOpacity onPress={handleLikesPress}>
+                    <Text style={styles.engagementText}>{String(service.likes)}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             )}
             
             {!!service.views && (
@@ -347,11 +364,22 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
     </TouchableOpacity>
   );
 
-  switch (variant) {
-    case 'grid': return renderGridCard();
-    case 'list': return renderListCard();
-    default: return renderFeaturedCard();
-  }
+  const card =
+    variant === 'grid' ? renderGridCard() :
+    variant === 'list' ? renderListCard() :
+    renderFeaturedCard();
+
+  return (
+    <>
+      {card}
+      <LikesListModal
+        visible={showLikesModal}
+        onClose={() => setShowLikesModal(false)}
+        likesCount={service.likes || 0}
+        fetchLikers={() => servicesAPI.getServiceLikers(service.id)}
+      />
+    </>
+  );
 };
 
 const styles = StyleSheet.create({

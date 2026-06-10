@@ -760,6 +760,12 @@ const NotificationsScreen = () => {
           </TouchableOpacity>
           <TouchableOpacity 
             style={styles.headerAction}
+            onPress={() => (navigation as any).navigate('Mentions')}
+          >
+            <Ionicons name="at-outline" size={22} color="#1DA1F2" />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.headerAction}
             onPress={() => setIsSearchModalVisible(true)}
           >
             <Ionicons name="search" size={22} color="#FFFFFF" />

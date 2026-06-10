@@ -123,6 +123,16 @@ export const userAPI = {
     }
   },
 
+  // Get public profile by username (for @mention navigation)
+  getPublicProfileByUsername: async (username: string): Promise<Partial<UserProfile>> => {
+    try {
+      const response = await api.get(`/users/profile/by-username/${encodeURIComponent(username)}`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to get public profile by username');
+    }
+  },
+
   // Update current user's profile
   updateProfile: async (updateData: UpdateProfileData): Promise<UserProfile> => {
     try {
@@ -259,6 +269,37 @@ export const userAPI = {
       }
       
       throw new Error(error.response?.data?.message || 'Failed to upload background image');
+    }
+  },
+
+  // Upload evidence file (image or document) via NestJS backend
+  uploadEvidence: async (fileUri: string, fileName: string, mimeType: string): Promise<string> => {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      const formData = new FormData();
+      formData.append('file', {
+        uri: fileUri,
+        type: mimeType,
+        name: fileName,
+      } as any);
+
+      const response = await fetch(`${API_CONFIG.BASE_URL}/posts/upload-media`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Evidence upload failed');
+      }
+
+      const data = await response.json();
+      return data.data.url;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to upload evidence file');
     }
   },
 
@@ -406,6 +447,22 @@ export const userAPI = {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to get categorized connections');
+    }
+  },
+
+  // Check if a username is available (case-insensitive)
+  checkUsernameAvailability: async (username: string): Promise<{ available: boolean; message: string }> => {
+    try {
+      const response = await api.get('/auth/check-username-availability', {
+        params: { username },
+        timeout: 5000,
+      });
+      return {
+        available: response.data.available,
+        message: response.data.message,
+      };
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to check username availability');
     }
   },
 

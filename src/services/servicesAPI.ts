@@ -501,6 +501,17 @@ class ServicesAPI {
     }
   }
 
+  // Get users who liked a service
+  async getServiceLikers(serviceId: string, limit: number = 50, offset: number = 0): Promise<{ id: string; username: string; avatarUrl: string | null; isVerified: boolean }[]> {
+    try {
+      const response = await api.get(`/services/${serviceId}/likes`, { params: { limit, offset } });
+      return response.data.data || [];
+    } catch (error: any) {
+      console.error('Error fetching service likers:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch likers');
+    }
+  }
+
   // Like/unlike a service with offline support
   async toggleLike(serviceId: string): Promise<{ liked: boolean; likeCount: number }> {
     try {
