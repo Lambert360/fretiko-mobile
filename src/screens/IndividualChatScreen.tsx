@@ -25,6 +25,7 @@ import { chatAPI, ChatMessage } from '../services/chatAPI';
 import { realtimeAPI } from '../services/realtimeAPI';
 import { userAPI, UserProfile } from '../services/userAPI';
 import { geminiAPI } from '../services/geminiAPI';
+import { aiAssistantAPI } from '../services/aiAssistantAPI';
 import { ikoAPI } from '../services/ikoAPI';
 import { realTimeAudioService } from '../services/realTimeAudioService';
 import { invoiceAPI, Invoice, InvoiceStatus } from '../services/invoiceAPI';
@@ -1558,7 +1559,7 @@ const IndividualChatScreen = () => {
 
     try {
       if (isAI || chatType === 'ai') {
-        // Handle AI conversation - direct Gemini API, backend watches via WebSocket
+        // Handle AI conversation via backend RAG assistant
 
         // 1. Update user message status (frontend only)
         setMessages(prev =>
@@ -1570,9 +1571,10 @@ const IndividualChatScreen = () => {
           )
         );
 
-        // 2. Get AI response from Gemini directly (no backend dependency)
-        // sendTextMessage() handles session persistence internally - no need to initialize here
-        const response = await geminiAPI.sendTextMessage(messageContent, user?.id || 'unknown');
+        // 2. Get AI response from the backend RAG assistant (product/vendor
+        // search, comparisons, trending, general chat). Conversation ID is
+        // persisted internally per Fretiko chatId.
+        const response = await aiAssistantAPI.sendMessage(chatId, messageContent);
 
         // Check for error first, then use text or errorMessage
         let aiResponseText: string;
@@ -1597,12 +1599,9 @@ const IndividualChatScreen = () => {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           // Include IKO recommendations if available (skip if error)
-          ikoRecommendations: (!response.error && (response.recommendedProducts || response.recommendedServices)) ? {
+          ikoRecommendations: (!response.error && response.recommendedProducts) ? {
             products: response.recommendedProducts,
-            services: response.recommendedServices,
           } : undefined,
-          // Include IKO schedule card if available (skip if error)
-          ikoScheduleCard: !response.error ? response.scheduleCard : undefined,
         };
 
         setMessages(prev => [...prev, aiMessage]);
@@ -1627,11 +1626,11 @@ const IndividualChatScreen = () => {
           console.log('⚠️ Skipping backend save for error response');
         }
 
-        // Handle function calls if any (this is where backend interaction happens)
-        // Skip function calls when there's an error
-        if (!response.error && response.functionCalls && response.functionCalls.length > 0) {
-          console.log('Function calls received:', response.functionCalls);
-          // Function calls will be handled by the Gemini service and may call backend APIs
+        // Suggested safe actions (save/follow/alert/compare/view) from the
+        // backend AI, if any, are available on response.actions for future
+        // UI affordances (e.g. quick-action chips).
+        if (!response.error && response.actions && response.actions.length > 0) {
+          console.log('AI suggested actions received:', response.actions);
         }
 
       } else {
