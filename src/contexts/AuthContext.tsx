@@ -280,7 +280,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   // Function to clear authentication data
-  const clearAuthData = async () => {
+  const clearAuthData = useCallback(async () => {
     try {
       console.log('Clearing auth data...');
       
@@ -318,7 +318,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch (error) {
       console.error('Error clearing auth data:', error);
     }
-  };
+  }, []);
 
   // Load saved auth data on app start
   useEffect(() => {
@@ -596,7 +596,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return () => clearInterval(checkInterval);
   }, [authState.isAuthenticated, authState.accessToken]);
 
-  const saveAuthData = async (user: User, accessToken: string, refreshToken: string) => {
+  const saveAuthData = useCallback(async (user: User, accessToken: string, refreshToken: string) => {
     try {
       console.log('💾 Saving auth data:');
       console.log('  - User ID:', user.id);
@@ -657,7 +657,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.error('❌ Error saving auth data:', error);
       throw error;
     }
-  };
+  }, []);
 
   const clearAuthDataDuplicate = async () => {
     try {
@@ -697,16 +697,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const checkAccountStatus = async () => {
+  const checkAccountStatus = useCallback(async () => {
     // Don't check if we're not authenticated
-    if (!authState.isAuthenticated || !authState.accessToken) {
+    if (!authStateRef.current.isAuthenticated || !authStateRef.current.accessToken) {
       setAuthState(prev => ({ ...prev, isCheckingSuspension: false }));
       return;
     }
 
     try {
       setAuthState(prev => ({ ...prev, isCheckingSuspension: true }));
-      const accountStatus = await warningsAPI.getAccountStatus(authState.accessToken);
+      const accountStatus = await warningsAPI.getAccountStatus(authStateRef.current.accessToken);
       
       const isSuspended = accountStatus.accountStatus === 'suspended' || 
                          accountStatus.suspension.isSuspended;
@@ -735,9 +735,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isCheckingSuspension: false 
       }));
     }
-  };
+  }, []);
 
-  const signin = async (email: string, password: string) => {
+  const signin = useCallback(async (email: string, password: string) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
 
@@ -840,9 +840,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
       throw new UnauthorizedException('Invalid email or password');
     }
-  };
+  }, [saveAuthData, checkAccountStatus]);
 
-  const signup = async (
+  const signup = useCallback(async (
     email: string,
     password: string,
     firstName: string,
@@ -916,9 +916,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setAuthState(prev => ({ ...prev, isLoading: false }));
       throw error; // Re-throw so UI can handle it
     }
-  };
+  }, [saveAuthData]);
 
-  const socialSignIn = async (provider: 'google' | 'apple', accessToken: string, idToken?: string) => {
+  const socialSignIn = useCallback(async (provider: 'google' | 'apple', accessToken: string, idToken?: string) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
 
@@ -958,9 +958,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setAuthState(prev => ({ ...prev, isLoading: false }));
       throw error;
     }
-  };
+  }, [saveAuthData]);
 
-  const migrate = async (email: string, newPassword: string) => {
+  const migrate = useCallback(async (email: string, newPassword: string) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
       
@@ -987,9 +987,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setAuthState(prev => ({ ...prev, isLoading: false }));
       throw error; // Re-throw so the UI can handle it
     }
-  };
+  }, [saveAuthData, checkAccountStatus]);
 
-  const signout = async () => {
+  const signout = useCallback(async () => {
     try {
       // Get refresh token for logout
       let refreshToken = null;
@@ -1035,10 +1035,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
 
       // Unregister push token before signing out
-      if (authState.accessToken) {
+      if (authStateRef.current.accessToken) {
         try {
           console.log('📱 Unregistering push notification token...');
-          await pushNotificationService.unregisterPushToken(authState.accessToken);
+          await pushNotificationService.unregisterPushToken(authStateRef.current.accessToken);
           console.log('✅ Push token unregistered');
         } catch (pushError) {
           console.error('⚠️ Error unregistering push token:', pushError);
@@ -1071,14 +1071,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isCheckingSuspension: false,
       });
     }
-  };
+  }, [clearAuthData]);
 
-  const clearNewUserFlag = () => {
+  const clearNewUserFlag = useCallback(() => {
     setAuthState(prev => ({ ...prev, isNewUser: false }));
-  };
+  }, []);
 
-  const refreshUserProfile = async () => {
-    if (!authState.accessToken) {
+  const refreshUserProfile = useCallback(async () => {
+    if (!authStateRef.current.accessToken) {
       console.warn('Cannot refresh profile: No access token');
       return;
     }
@@ -1087,7 +1087,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.log('🔄 Refreshing user profile from API...');
       const response = await fetch(`${API_CONFIG.BASE_URL}/users/profile`, {
         headers: {
-          'Authorization': `Bearer ${authState.accessToken}`,
+          'Authorization': `Bearer ${authStateRef.current.accessToken}`,
           'Content-Type': 'application/json',
         },
       });
@@ -1119,11 +1119,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch (error) {
       console.error('Error refreshing profile:', error);
     }
-  };
+  }, []);
 
-  const acceptTerms = async () => {
+  const acceptTerms = useCallback(async () => {
     try {
-      console.log('📋 Accepting terms for user:', authState.user?.id);
+      console.log('📋 Accepting terms for user:', authStateRef.current.user?.id);
 
       // TODO: Call backend API to accept terms
       // This will update user_profiles.terms_accepted_at, terms_accepted_ip, etc.
@@ -1135,7 +1135,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.error('❌ Error accepting terms:', error);
       throw error;
     }
-  };
+  }, []);
 
   // Memoize context value to prevent unnecessary re-renders
   const value = useMemo<AuthContextType>(() => ({

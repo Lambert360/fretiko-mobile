@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { VideoFeedItem } from '../services/servicesAPI';
 import SafeImage from './SafeImage';
+import AdaptiveText from './AdaptiveText';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const TAB_BAR_HEIGHT = 70;
@@ -303,7 +304,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
                 style={styles.userAvatar}
               />
               <View style={styles.userDetails}>
-                <Text style={styles.username}>@{item.username || 'user'}</Text>
+                <AdaptiveText style={styles.username} baseFontSize={16} maxChars={15} numberOfLines={1}>@{item.username || 'user'}</AdaptiveText>
                 <View style={styles.userBadgeContainer}>
                   <View style={styles.proBadge}>
                     <Text style={styles.proText}>Pro</Text>

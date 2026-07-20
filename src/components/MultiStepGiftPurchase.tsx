@@ -16,6 +16,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { wishlistAPI } from '../services/wishlistAPI';
 import { walletAPI } from '../services/walletAPI';
+import { riderSelectionBridge } from '../utils/riderSelectionBridge';
 
 interface Rider {
   id: string;
@@ -68,6 +69,7 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
     postalCode: '',
   });
   const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>('pickup'); // Default to self-pickup
+  const riderCallbackKeyRef = React.useRef<string | null>(null);
 
   useEffect(() => {
     if (visible) {
@@ -307,11 +309,14 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
                   return;
                 }
                 // Navigate to rider selection
+                // Use delivery address state/city as pickup location hint for backend rider filtering
                 navigation.navigate('RiderSelection', {
                   pickupLocation: {
-                    latitude: 6.5244, // TODO: Get vendor location from product
+                    latitude: 6.5244,
                     longitude: 3.3792,
-                    address: 'Vendor Location',
+                    address: deliveryAddress.city ? `Vendor Location, ${deliveryAddress.city}` : 'Vendor Location',
+                    state: deliveryAddress.state || undefined,
+                    city: deliveryAddress.city || undefined,
                   },
                   deliveryLocation: {
                     latitude: 6.5244, // TODO: Geocode delivery address
@@ -323,9 +328,13 @@ const MultiStepGiftPurchase: React.FC<MultiStepGiftPurchaseProps> = ({
                     itemCount: validationResult?.availableItems?.length || 1,
                     distance: 5, // TODO: Calculate actual distance
                   },
-                  onRiderSelected: (rider: Rider) => {
-                    setSelectedRider(rider);
-                  },
+                  callbackKey: (() => {
+                    if (riderCallbackKeyRef.current) riderSelectionBridge.clear(riderCallbackKeyRef.current);
+                    const key = `multi_gift_rider_${Date.now()}`;
+                    riderCallbackKeyRef.current = key;
+                    riderSelectionBridge.register(key, (rider: Rider) => setSelectedRider(rider));
+                    return key;
+                  })(),
                 });
               }}
             >

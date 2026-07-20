@@ -143,19 +143,21 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
           const holdParams = { ...params, type: 'purchase_hold' };
           const releaseParams = { ...params, type: 'escrow_release' };
           const refundParams = { ...params, type: 'escrow_refund' };
+          const releaseToPlatformParams = { ...params, type: 'escrow_release_to_platform' };
           const vendorSaleParams = { ...params, type: 'vendor_sale' };
           const riderDeliveryParams = { ...params, type: 'rider_delivery' };
           
-          const [holdData, releaseData, refundData, vendorSaleData, riderDeliveryData] = await Promise.all([
+          const [holdData, releaseData, refundData, releaseToPlatformData, vendorSaleData, riderDeliveryData] = await Promise.all([
             walletAPI.getTransactionHistory(holdParams),
             walletAPI.getTransactionHistory(releaseParams),
             walletAPI.getTransactionHistory(refundParams),
+            walletAPI.getTransactionHistory(releaseToPlatformParams),
             walletAPI.getTransactionHistory(vendorSaleParams),
             walletAPI.getTransactionHistory(riderDeliveryParams)
           ]);
           
           // Merge and sort by date, removing duplicates by ID
-          const allTransactions = [...holdData, ...releaseData, ...refundData, ...vendorSaleData, ...riderDeliveryData];
+          const allTransactions = [...holdData, ...releaseData, ...refundData, ...releaseToPlatformData, ...vendorSaleData, ...riderDeliveryData];
           
           // Deduplicate by transaction ID to prevent duplicate key errors
           const uniqueTransactionsMap = new Map();
@@ -192,7 +194,7 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
           }
           
           setOffset(currentOffset + mergedData.length);
-          setHasMore(holdData.length === 50 || releaseData.length === 50 || refundData.length === 50 || vendorSaleData.length === 50 || riderDeliveryData.length === 50);
+          setHasMore(holdData.length === 50 || releaseData.length === 50 || refundData.length === 50 || releaseToPlatformData.length === 50 || vendorSaleData.length === 50 || riderDeliveryData.length === 50);
           
           // Skip the normal data fetch below
           setLoading(false);
@@ -576,11 +578,19 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
     const isHold = item.transactionType === 'purchase_hold';
     const isRelease = item.transactionType === 'escrow_release';
     const isRefund = item.transactionType === 'escrow_refund';
+    const isReleaseToPlatform = item.transactionType === 'escrow_release_to_platform';
+    const isResolvedByAdmin = (item.description || '').toLowerCase().includes('resolved by support');
     const date = new Date(item.createdAt);
-    const title = isHold ? 'Escrow Hold' : isRelease ? 'Escrow Released' : 'Escrow Refunded';
-    const color = isHold ? '#3B82F6' : isRelease ? '#27AE60' : '#E74C3C';
-    const icon = isHold ? 'lock-closed' : isRelease ? 'checkmark-done' : 'refresh';
-    const amount = isHold ? (item.escrowDelta || Math.abs(item.availableDelta || 0)) : Math.abs(item.availableDelta || 0);
+    const title = isHold
+      ? 'Escrow Hold'
+      : isRelease
+      ? 'Escrow Released'
+      : isReleaseToPlatform
+      ? 'Dispute Amount Resolved'
+      : 'Escrow Refunded';
+    const color = isHold ? '#3B82F6' : isRelease ? '#27AE60' : isReleaseToPlatform ? '#9B59B6' : '#E74C3C';
+    const icon = isHold ? 'lock-closed' : isRelease ? 'checkmark-done' : isReleaseToPlatform ? 'shield-checkmark' : 'refresh';
+    const amount = isHold ? (item.escrowDelta || Math.abs(item.availableDelta || 0)) : Math.abs(item.availableDelta || item.escrowDelta || 0);
 
     const handleDispute = async () => {
       if (!item.referenceId) {
@@ -654,7 +664,7 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
         <View style={styles.escrowDetails}>
           <View style={styles.escrowHeaderRow}>
             <Text style={styles.escrowTitle}>{title}</Text>
-            <Text style={[styles.escrowAmount, { color }]}>{(isRelease || isRefund) ? '+' : ''}{walletAPI.formatFreti(amount)}</Text>
+            <Text style={[styles.escrowAmount, { color }]}>{(isRelease || isRefund) ? '+' : isReleaseToPlatform ? '-' : ''}{walletAPI.formatFreti(amount)}</Text>
           </View>
           <View style={styles.escrowMetaRow}>
             <Text style={styles.transactionDate}>
@@ -671,8 +681,16 @@ const WalletHistoryScreen = ({ navigation }: WalletHistoryScreenProps) => {
             {isRelease && (
               <Text style={[styles.escrowBadge, { backgroundColor: 'rgba(39,174,96,0.12)', color: '#27AE60', borderColor: 'rgba(39,174,96,0.35)' }]}>Released</Text>
             )}
+            {isReleaseToPlatform && (
+              <Text style={[styles.escrowBadge, { backgroundColor: 'rgba(155,89,182,0.12)', color: '#9B59B6', borderColor: 'rgba(155,89,182,0.35)' }]}>Resolved</Text>
+            )}
             {isRefund && (
               <Text style={[styles.escrowBadge, { backgroundColor: 'rgba(231,76,60,0.12)', color: '#E74C3C', borderColor: 'rgba(231,76,60,0.35)' }]}>Refunded</Text>
+            )}
+            {isResolvedByAdmin && !isReleaseToPlatform && (
+              <Text style={[styles.escrowBadge, { backgroundColor: 'rgba(155,89,182,0.12)', color: '#9B59B6', borderColor: 'rgba(155,89,182,0.35)' }]}>
+                🛡 Resolved by Support
+              </Text>
             )}
           </View>
           {isHold && (

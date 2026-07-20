@@ -43,6 +43,9 @@ interface CartItem {
   serviceDate?: string;
   serviceTime?: string;
   serviceNotes?: string;
+  sellerLocation?: { state?: string; country?: string; city?: string } | null;
+  isOutOfState?: boolean;
+  isOutOfCountry?: boolean;
 }
 
 interface CartSummary {
@@ -448,7 +451,20 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
           <Text style={styles.productName} numberOfLines={2}>{item.productName}</Text>
         </TouchableOpacity>
         
-        <Text style={styles.sellerName}>by {item.sellerName}</Text>
+        <View style={styles.sellerInfoRow}>
+          <Text style={styles.sellerName}>by {item.sellerName}</Text>
+          {item.isOutOfCountry ? (
+            <View style={styles.outOfStateBadge}>
+              <Ionicons name="globe-outline" size={10} color="#FF6B35" />
+              <Text style={styles.outOfStateText}>International</Text>
+            </View>
+          ) : item.isOutOfState ? (
+            <View style={styles.outOfStateBadge}>
+              <Ionicons name="navigate-outline" size={10} color="#FF6B35" />
+              <Text style={styles.outOfStateText}>Out-of-State</Text>
+            </View>
+          ) : null}
+        </View>
         <Text style={styles.category}>{item.category}</Text>
         
         <View style={styles.priceContainer}>
@@ -864,6 +880,26 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 12,
     marginBottom: 2,
+  },
+  sellerInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  outOfStateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3EE',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    gap: 2,
+  },
+  outOfStateText: {
+    color: '#FF6B35',
+    fontSize: 9,
+    fontWeight: '600',
   },
   category: {
     color: '#666',

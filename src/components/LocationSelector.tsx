@@ -11,6 +11,7 @@ import {
   Dimensions,
   Alert,
   Platform,
+  Modal,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { Country, State } from 'country-state-city';
@@ -32,6 +33,8 @@ interface LocationSelectorProps {
   selectedLocation: string;
   onLocationSelect: (location: string) => void;
   onClose: () => void;
+  /** Optional: called with state and country as separate strings (useful for address forms) */
+  onLocationSelectDetailed?: (state: string, country: string) => void;
 }
 
 // Function to get location name from coordinates
@@ -107,6 +110,7 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
   selectedLocation,
   onLocationSelect,
   onClose,
+  onLocationSelectDetailed,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredCountries, setFilteredCountries] = useState<any[]>(allCountries);
@@ -184,6 +188,9 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
     }
     const locationString = `${state.name}, ${selectedCountry.name}`;
     onLocationSelect(locationString);
+    if (onLocationSelectDetailed) {
+      onLocationSelectDetailed(state.name, selectedCountry.name);
+    }
     onClose();
   };
 
@@ -253,7 +260,7 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
   if (!visible) return null;
 
   return (
-    <>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       {/* Backdrop */}
       <Animated.View 
         style={[styles.backdrop, { opacity: opacityAnim }]}
@@ -412,7 +419,7 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
           )}
         </TouchableOpacity>
       </Animated.View>
-    </>
+    </Modal>
   );
 };
 

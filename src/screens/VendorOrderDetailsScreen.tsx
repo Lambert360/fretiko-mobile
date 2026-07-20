@@ -26,6 +26,7 @@ import { realtimeAPI } from '../services/realtimeAPI';
 import { chatAPI } from '../services/chatAPI';
 import * as Location from 'expo-location';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AdaptiveText from '../components/AdaptiveText';
 
 interface VendorOrderDetailsParams {
   orderId: string;
@@ -56,6 +57,13 @@ interface OrderDetailsData extends WorkspaceOrder {
     id: string;
     name: string;
     phone?: string | null;
+    avatar?: string | null;
+  };
+  riderInfo?: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    avatar?: string | null;
   };
   riderLocation?: {
     latitude: number;
@@ -363,9 +371,12 @@ const VendorOrderDetailsScreen: React.FC = () => {
           Alert.alert('Success', 'Pickup confirmed');
           break;
         case 'delivered':
-          result = await workspaceAPI.markDelivered(orderId);
-          Alert.alert('Success', 'Order marked as delivered');
-          break;
+          Alert.alert(
+            'PIN Required',
+            'Please ask the buyer for their delivery PIN and confirm delivery from the Workspace orders list.',
+            [{ text: 'OK' }]
+          );
+          return;
       }
 
       // Reload order details to reflect changes
@@ -525,7 +536,7 @@ const VendorOrderDetailsScreen: React.FC = () => {
         chatId: conversation.id,
         chatName: orderDetails.customer.name || 'Customer',
         chatAvatar: orderDetails.customer.avatar || 'https://via.placeholder.com/56',
-        chatType: chatType as const,
+        chatType: chatType,
         isOnline: true,
         verified: false,
         isAI: false,
@@ -543,6 +554,50 @@ const VendorOrderDetailsScreen: React.FC = () => {
     Linking.openURL(`tel:${phone}`).catch(() => {
       Alert.alert('Error', 'Could not open phone app');
     });
+  };
+
+  // ✅ Navigate to a user's public profile (buyer, vendor, or rider)
+  const handleViewProfile = (userId?: string | null) => {
+    if (!userId) return;
+    (navigation as any).navigate('PublicProfile', { userId });
+  };
+
+  // ✅ Generic phone dialer for any counterparty (vendor or rider)
+  const handleCallUser = (phone?: string | null) => {
+    if (!phone) {
+      Alert.alert('Unavailable', 'Phone number not available for this user.');
+      return;
+    }
+    const cleanPhone = phone.replace(/\s+/g, '');
+    Linking.openURL(`tel:${cleanPhone}`).catch(() => {
+      Alert.alert('Error', 'Could not open phone app');
+    });
+  };
+
+  // ✅ Generic chat starter for any counterparty (vendor or rider)
+  const handleChatUser = async (
+    userId?: string | null,
+    name?: string | null,
+    avatar?: string | null,
+    chatType: 'friend' | 'vendor' | 'rider' = 'friend',
+  ) => {
+    if (!userId) return;
+    try {
+      const conversation = await chatAPI.findOrCreateConversation([userId], chatType);
+      (navigation as any).navigate('IndividualChatScreen', {
+        chatId: conversation.id,
+        chatName: name || 'User',
+        chatAvatar: avatar || 'https://via.placeholder.com/56',
+        chatType,
+        isOnline: true,
+        verified: false,
+        isAI: false,
+        otherUserId: userId,
+      });
+    } catch (error) {
+      console.error('Error starting chat:', error);
+      Alert.alert('Error', 'Unable to start chat. Please try again.');
+    }
   };
 
   const getAvailableActions = () => {
@@ -600,7 +655,7 @@ const VendorOrderDetailsScreen: React.FC = () => {
     if (!locationPermission) {
       return (
         <View style={styles.mapPlaceholder}>
-          <Ionicons name="location-off" size={48} color="#888" />
+          <Ionicons name="location-outline" size={48} color="#888" />
           <Text style={styles.mapPlaceholderText}>Location Permission Required</Text>
           <TouchableOpacity 
             style={styles.permissionButton}
@@ -765,7 +820,7 @@ const VendorOrderDetailsScreen: React.FC = () => {
               <View style={styles.mapLocationDetails}>
                 <Text style={styles.mapLocationLabel}>Vendor Location</Text>
                 <Text style={styles.mapLocationAddress} numberOfLines={2}>
-                  {orderDetails.vendorLocation.address}
+                  {orderDetails.vendorLocation?.address}
                 </Text>
               </View>
             </View>
@@ -916,17 +971,22 @@ const VendorOrderDetailsScreen: React.FC = () => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Customer Information</Text>
           <View style={styles.customerCard}>
-            <Image
-              source={{ uri: orderDetails.customer.avatar || 'https://via.placeholder.com/50' }}
-              style={styles.customerAvatar}
-            />
-            <View style={styles.customerInfo}>
-              <Text style={styles.customerName}>{orderDetails.customer.name}</Text>
-              <Text style={styles.customerPhone}>{orderDetails.customer.phone}</Text>
-              {orderDetails.customer.email && (
-                <Text style={styles.customerEmail}>{orderDetails.customer.email}</Text>
-              )}
-            </View>
+            <TouchableOpacity
+              style={styles.customerProfilePressable}
+              onPress={() => handleViewProfile(orderDetails.customer.id)}
+            >
+              <Image
+                source={{ uri: orderDetails.customer.avatar || 'https://via.placeholder.com/50' }}
+                style={styles.customerAvatar}
+              />
+              <View style={styles.customerInfo}>
+                <AdaptiveText style={styles.customerName} baseFontSize={18} maxChars={20} numberOfLines={1}>{orderDetails.customer.name}</AdaptiveText>
+                <Text style={styles.customerPhone}>{orderDetails.customer.phone}</Text>
+                {orderDetails.customer.email && (
+                  <Text style={styles.customerEmail}>{orderDetails.customer.email}</Text>
+                )}
+              </View>
+            </TouchableOpacity>
             <View style={styles.customerActions}>
               <TouchableOpacity style={styles.actionIconButton} onPress={handleChatBuyer}>
                 <Ionicons name="chatbubble-ellipses-outline" size={20} color="#007AFF" />
@@ -1007,12 +1067,34 @@ const VendorOrderDetailsScreen: React.FC = () => {
             <View style={styles.pickupCard}>
               {orderDetails.vendorInfo && (
                 <View style={styles.vendorInfoRow}>
-                  <Ionicons name="storefront-outline" size={20} color="#007AFF" />
-                  <View style={styles.vendorInfoText}>
-                    <Text style={styles.vendorName}>{orderDetails.vendorInfo.name}</Text>
-                    {orderDetails.vendorInfo.phone && (
-                      <Text style={styles.vendorPhone}>{orderDetails.vendorInfo.phone}</Text>
-                    )}
+                  <TouchableOpacity
+                    style={styles.customerProfilePressable}
+                    onPress={() => handleViewProfile(orderDetails.vendorInfo?.id)}
+                  >
+                    <Image
+                      source={{ uri: orderDetails.vendorInfo.avatar || 'https://via.placeholder.com/50' }}
+                      style={styles.customerAvatar}
+                    />
+                    <View style={styles.vendorInfoText}>
+                      <AdaptiveText style={styles.vendorName} baseFontSize={16} maxChars={20} numberOfLines={1}>{orderDetails.vendorInfo.name}</AdaptiveText>
+                      {orderDetails.vendorInfo.phone && (
+                        <Text style={styles.vendorPhone}>{orderDetails.vendorInfo.phone}</Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                  <View style={styles.customerActions}>
+                    <TouchableOpacity
+                      style={styles.actionIconButton}
+                      onPress={() => handleChatUser(orderDetails.vendorInfo?.id, orderDetails.vendorInfo?.name, orderDetails.vendorInfo?.avatar, 'vendor')}
+                    >
+                      <Ionicons name="chatbubble-ellipses-outline" size={20} color="#007AFF" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.actionIconButton}
+                      onPress={() => handleCallUser(orderDetails.vendorInfo?.phone)}
+                    >
+                      <Ionicons name="call-outline" size={20} color="#007AFF" />
+                    </TouchableOpacity>
                   </View>
                 </View>
               )}
@@ -1052,6 +1134,44 @@ const VendorOrderDetailsScreen: React.FC = () => {
               <View style={styles.addressRow}>
                 <Ionicons name="location-outline" size={20} color="#666" />
                 <Text style={styles.deliveryAddress}>{orderDetails.vendorLocation.address}</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Rider Information - Show to Vendor once a rider is assigned to this order */}
+        {orderDetails.riderInfo && orderDetails.vendor_id === user?.id && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Rider Information</Text>
+            <View style={styles.customerCard}>
+              <TouchableOpacity
+                style={styles.customerProfilePressable}
+                onPress={() => handleViewProfile(orderDetails.riderInfo?.id)}
+              >
+                <Image
+                  source={{ uri: orderDetails.riderInfo.avatar || 'https://via.placeholder.com/50' }}
+                  style={styles.customerAvatar}
+                />
+                <View style={styles.customerInfo}>
+                  <AdaptiveText style={styles.customerName} baseFontSize={18} maxChars={20} numberOfLines={1}>{orderDetails.riderInfo.name}</AdaptiveText>
+                  {orderDetails.riderInfo.phone && (
+                    <Text style={styles.customerPhone}>{orderDetails.riderInfo.phone}</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+              <View style={styles.customerActions}>
+                <TouchableOpacity
+                  style={styles.actionIconButton}
+                  onPress={() => handleChatUser(orderDetails.riderInfo?.id, orderDetails.riderInfo?.name, orderDetails.riderInfo?.avatar, 'rider')}
+                >
+                  <Ionicons name="chatbubble-ellipses-outline" size={20} color="#007AFF" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.actionIconButton}
+                  onPress={() => handleCallUser(orderDetails.riderInfo?.phone)}
+                >
+                  <Ionicons name="call-outline" size={20} color="#007AFF" />
+                </TouchableOpacity>
               </View>
             </View>
           </View>
@@ -1425,6 +1545,11 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 12,
   },
+  customerProfilePressable: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   customerAvatar: {
     width: 50,
     height: 50,
@@ -1499,6 +1624,7 @@ const styles = StyleSheet.create({
   vendorInfoRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 12,
     paddingBottom: 12,
     borderBottomWidth: 1,

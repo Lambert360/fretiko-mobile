@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Post, PostMedia } from '../services/postsAPI';
 import ReactionButton, { GiftButton } from './ReactionButton';
 import SafeImage from './SafeImage';
+import AdaptiveText from './AdaptiveText';
 import PostCommentsModal from './PostCommentsModal';
 import RichText from './RichText';
 
@@ -358,7 +359,7 @@ const PostCard: React.FC<PostCardProps> = ({
               />
               <View style={styles.userTextContainer}>
                 <View style={styles.usernameRow}>
-                  <Text style={styles.username}>@{post.user?.username || 'Unknown'}</Text>
+                  <AdaptiveText style={styles.username} baseFontSize={16} maxChars={15} numberOfLines={1}>@{post.user?.username || 'Unknown'}</AdaptiveText>
                   {post.user?.isVerified && (
                     <Ionicons name="checkmark-circle" size={14} color="#3498DB" style={styles.verifiedBadge} />
                   )}
@@ -402,7 +403,7 @@ const PostCard: React.FC<PostCardProps> = ({
                 />
                 <View style={styles.userTextContainer}>
                   <View style={styles.usernameRow}>
-                    <Text style={styles.username}>@{post.user?.username || 'Unknown'}</Text>
+                    <AdaptiveText style={styles.username} baseFontSize={16} maxChars={15} numberOfLines={1}>@{post.user?.username || 'Unknown'}</AdaptiveText>
                     {post.user?.isVerified && (
                       <Ionicons name="checkmark-circle" size={14} color="#3498DB" style={styles.verifiedBadge} />
                     )}

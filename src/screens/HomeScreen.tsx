@@ -11,6 +11,7 @@ import {
   Dimensions,
   FlatList,
   Image,
+  Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Platform,
@@ -143,6 +144,8 @@ const HomeScreen = () => {
   const tabBarHeightFromContext = React.useContext(BottomTabBarHeightContext) || TAB_BAR_HEIGHT;
 
   const [activeTab, setActiveTab] = useState<'products' | 'services'>('services');
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [isSidebarVisible, setSidebarVisible] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -201,6 +204,8 @@ const HomeScreen = () => {
   const [userGifts, setUserGifts] = useState<UserGift[]>([]);
   const [loadingGifts, setLoadingGifts] = useState(false);
   const [isFilterVisible, setFilterVisible] = useState(false);
+  const [showCreatorMenu, setShowCreatorMenu] = useState(false);
+  const [servicesRefreshing, setServicesRefreshing] = useState(false);
   const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
   
   // Use filters from context (persisted)
@@ -228,6 +233,7 @@ const HomeScreen = () => {
   });
   
   const mainPagerRef = useRef<PagerView>(null);
+  const videoPagerRef = useRef<PagerView>(null);
   const headerHeight = useRef(new Animated.Value(HEADER_FULL_HEIGHT)).current;
   const headerOpacity = useRef(new Animated.Value(1)).current; // Added opacity animation
   const subHeaderOpacity = useRef(new Animated.Value(1)).current; // Added for sub-header fade
@@ -236,6 +242,8 @@ const HomeScreen = () => {
 
   // Error state for displaying error messages
   const [errorState, setErrorState] = useState<ErrorInfo | null>(null);
+  // Key used to tell ProductsTab to reload when Home tab is re-tapped
+  const [reloadProductsKey, setReloadProductsKey] = useState(0);
 
   // Data loading functions - USING REAL API DATA with enhanced error handling
   const loadData = async (showLoading = true) => {
@@ -459,7 +467,85 @@ const HomeScreen = () => {
     await loadData(false);
   };
 
+  const refreshServicesTab = useCallback(async () => {
+    if (servicesRefreshing) return;
+    setServicesRefreshing(true);
+    setCurrentVideoIndex(0);
+    setIsPlaying(false);
+    videoPagerRef.current?.setPageWithoutAnimation(0);
+    try {
+      const [videoData, postsData] = await Promise.all([
+        servicesAPI.getVideoFeed({ limit: 10 }),
+        postsAPI.getFeed({ limit: 10 }).catch(() => []),
+      ]);
 
+      const finalVideoData = videoData || [];
+      setVideoFeedData(finalVideoData);
+      setServiceVideoOffset(finalVideoData.length);
+      setHasMoreServiceVideos(finalVideoData.length === SERVICE_VIDEOS_PAGE_SIZE);
+      setLoadingMoreServiceVideos(false);
+
+      const postItems: UnifiedFeedItem[] = (postsData || []).filter(
+        (item: UnifiedFeedItem) => item.type === 'post' && item.postData
+      );
+
+      const unifiedFeed: UnifiedFeedItem[] = [];
+      let postIndex = 0;
+      let serviceIndex = 0;
+
+      while (postIndex < postItems.length || serviceIndex < finalVideoData.length) {
+        let postsAdded = 0;
+        while (postsAdded < 3 && postIndex < postItems.length) {
+          unifiedFeed.push(postItems[postIndex]);
+          postIndex += 1;
+          postsAdded += 1;
+        }
+        if (serviceIndex < finalVideoData.length) {
+          const service = finalVideoData[serviceIndex];
+          unifiedFeed.push({
+            id: `service-${service.id}`,
+            type: 'service',
+            itemId: service.id,
+            score: finalVideoData.length - serviceIndex,
+            isSeen: false,
+            createdAt: new Date().toISOString(),
+            serviceData: service,
+          });
+          serviceIndex += 1;
+        }
+        if (postIndex >= postItems.length && serviceIndex >= finalVideoData.length) break;
+      }
+
+      while (postIndex < postItems.length) {
+        unifiedFeed.push(postItems[postIndex]);
+        postIndex += 1;
+      }
+      while (serviceIndex < finalVideoData.length) {
+        const service = finalVideoData[serviceIndex];
+        unifiedFeed.push({
+          id: `service-${service.id}`,
+          type: 'service',
+          itemId: service.id,
+          score: finalVideoData.length - serviceIndex,
+          isSeen: false,
+          createdAt: new Date().toISOString(),
+          serviceData: service,
+        });
+        serviceIndex += 1;
+      }
+
+      setUnifiedFeedData(unifiedFeed);
+      setFocusedVideoId(finalVideoData[0]?.id ?? null);
+      setIsPlaying(true);
+    } catch (error) {
+      console.error('Error refreshing services tab:', error);
+    } finally {
+      setServicesRefreshing(false);
+    }
+  }, [servicesRefreshing]);
+
+  const refreshServicesTabRef = useRef(refreshServicesTab);
+  useEffect(() => { refreshServicesTabRef.current = refreshServicesTab; }, [refreshServicesTab]);
 
 
   // Function to shuffle array for random display
@@ -484,6 +570,23 @@ const HomeScreen = () => {
       }
     }, [products.length, videoFeedData.length]) // Proper dependencies
   );
+
+  // Reload feed when the Home tab is pressed while already on HomeScreen
+  useEffect(() => {
+    const onTabPress = (e: any) => {
+      if (!navigation.isFocused()) return;
+      e.preventDefault();
+
+      if (activeTabRef.current === 'services') {
+        refreshServicesTabRef.current();
+      } else {
+        setReloadProductsKey(prev => prev + 1);
+      }
+    };
+
+    const unsubscribe = navigation.addListener('tabPress', onTabPress);
+    return unsubscribe;
+  }, [navigation]);
 
   // Handle app state changes (foreground/background) to reload data when app returns
   useEffect(() => {
@@ -1125,6 +1228,14 @@ const HomeScreen = () => {
     if (selectedCategory === 'all') return upcomingAuctions;
     return upcomingAuctions.filter(a => a.category_id === selectedCategory);
   }, [upcomingAuctions, selectedCategory]);
+
+  const handleCreateButtonPress = useCallback(() => {
+    if (user?.is_seller) {
+      setShowCreatorMenu(true);
+    } else {
+      navigation.navigate('CreatePost');
+    }
+  }, [user, navigation]);
 
   const handleTabPress = (tab: 'products' | 'services') => {
     // Add haptic feedback for tab switch
@@ -3329,6 +3440,7 @@ const HomeScreen = () => {
         )}
         
         <PagerView
+          ref={videoPagerRef}
           style={{ flex: 1 }}
           orientation="vertical"
           initialPage={0}
@@ -3439,12 +3551,28 @@ const HomeScreen = () => {
             try {
               // Render PostCard for posts
               if (isPost && postItem) {
+                const isFirstPage = index === 0;
+                const PageOuter: any = isFirstPage ? ScrollView : View;
+                const pageOuterProps: any = isFirstPage ? {
+                  style: { flex: 1, backgroundColor: '#000' },
+                  contentContainerStyle: { flexGrow: 1 },
+                  showsVerticalScrollIndicator: false,
+                  scrollEnabled: false,
+                  refreshControl: (
+                    <RefreshControl
+                      refreshing={servicesRefreshing}
+                      onRefresh={() => refreshServicesTabRef.current()}
+                      tintColor="#FFFFFF"
+                      colors={['#3498DB']}
+                      progressViewOffset={insets.top + 60}
+                    />
+                  ),
+                } : {
+                  style: { width: screenWidth, height: screenHeight, backgroundColor: '#000' },
+                };
+
                 return (
-                  <View key={`post-${item.id}-${index}`} style={{
-                    width: screenWidth,
-                    height: screenHeight,
-                    backgroundColor: '#000',
-                  }}>
+                  <PageOuter key={`post-${item.id}-${index}`} {...pageOuterProps}>
                     <PostCard
                       post={postItem}
                       isActive={index === currentVideoIndex}
@@ -3551,20 +3679,35 @@ const HomeScreen = () => {
                         setShowGiftersModal(true);
                       }}
                     />
-                  </View>
+                  </PageOuter>
                 );
               }
 
               // Render VideoCard for services
               if (!serviceItem) return null;
 
+              const isFirstVideoPage = index === 0;
+              const VideoPageOuter: any = isFirstVideoPage ? ScrollView : View;
+              const videoPageOuterProps: any = isFirstVideoPage ? {
+                style: { flex: 1 },
+                contentContainerStyle: { flexGrow: 1, backgroundColor: '#000', position: 'relative' },
+                showsVerticalScrollIndicator: false,
+                scrollEnabled: false,
+                refreshControl: (
+                  <RefreshControl
+                    refreshing={servicesRefreshing}
+                    onRefresh={() => refreshServicesTabRef.current()}
+                    tintColor="#FFFFFF"
+                    colors={['#3498DB']}
+                    progressViewOffset={insets.top + 60}
+                  />
+                ),
+              } : {
+                style: { width: screenWidth, height: screenHeight, backgroundColor: '#000', position: 'relative' },
+              };
+
               return (
-                <View key={`video-${item.id}-${index}`} style={{
-                  width: screenWidth,
-                  height: screenHeight,
-                  backgroundColor: '#000',
-                  position: 'relative'
-                }}>
+                <VideoPageOuter key={`video-${item.id}-${index}`} {...videoPageOuterProps}>
                 {/* Video container */}
                 <TouchableWithoutFeedback onPress={() => {
                   // If it's a live service, navigate to LiveStreamViewer
@@ -3887,7 +4030,7 @@ const HomeScreen = () => {
                     </Text>
                   </TouchableOpacity>
               </View>
-            </View>
+            </VideoPageOuter>
             );
             } catch (renderError) {
               return (
@@ -3921,7 +4064,7 @@ const HomeScreen = () => {
             </Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <TouchableOpacity onPress={() => navigation.navigate('CreatePost')} style={{ padding: 8, marginRight: 8 }}>
+            <TouchableOpacity onPress={handleCreateButtonPress} style={{ padding: 8, marginRight: 8 }}>
               <Ionicons name="add-circle-outline" size={24} color="white" />
             </TouchableOpacity>
             <TouchableOpacity onPress={handleCartIconPress}>
@@ -3999,7 +4142,7 @@ const HomeScreen = () => {
               <Ionicons name="chevron-down" size={12} color="#888" style={{ marginLeft: 2 }} />
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => navigation.navigate('CreatePost')} style={{ padding: 8, marginRight: 8 }}>
+            <TouchableOpacity onPress={handleCreateButtonPress} style={{ padding: 8, marginRight: 8 }}>
               <Ionicons name="add-circle-outline" size={24} color="white" />
             </TouchableOpacity>
 
@@ -4127,7 +4270,9 @@ const HomeScreen = () => {
             >
             </TouchableOpacity>
           </View>
-          {renderServicesTab()}
+          <View style={{ flex: 1 }}>
+            {renderServicesTab()}
+          </View>
             </>
           ) : (
             <View style={{ flex: 1, backgroundColor: '#000' }} />
@@ -4139,6 +4284,7 @@ const HomeScreen = () => {
             isScreenFocused={isScreenFocused && activeTab === 'products'}
             headerOpacity={headerOpacity}
             subHeaderOpacity={subHeaderOpacity}
+            reloadKey={reloadProductsKey}
           />
         </View>
       </PagerView>
@@ -4227,6 +4373,82 @@ const HomeScreen = () => {
         categories={categories}
         activeTab={activeTab}
       />
+
+      {/* Creator Menu Dropdown – vendor only */}
+      <Modal
+        visible={showCreatorMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCreatorMenu(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1 }}
+          activeOpacity={1}
+          onPress={() => setShowCreatorMenu(false)}
+        >
+          <View
+            style={{
+              position: 'absolute',
+              top: insets.top + HEADER_FULL_HEIGHT + 8,
+              right: 12,
+              backgroundColor: '#1a1a1a',
+              borderRadius: 16,
+              paddingVertical: 8,
+              minWidth: 215,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.12)',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 8 },
+              shadowOpacity: 0.5,
+              shadowRadius: 16,
+              elevation: 16,
+            }}
+          >
+            {([
+              { icon: 'create-outline',    label: 'Create Post',     color: '#9B59B6', screen: 'CreatePost' },
+              { icon: 'cube-outline',      label: 'Upload Product',  color: '#3498DB', screen: 'ProductUpload' },
+              { icon: 'flash-outline',     label: 'Upload Service',  color: '#E74C3C', screen: 'ServiceUpload' },
+              { icon: 'hammer-outline',    label: 'Create Lot',      color: '#F39C12', screen: 'CreateAuction' },
+              { icon: 'radio-outline',     label: 'Go Live',         color: '#FF4757', screen: 'LiveStreamSetup' },
+            ] as const).map((item, index, arr) => (
+              <TouchableOpacity
+                key={item.screen}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 16,
+                  paddingVertical: 14,
+                  borderBottomWidth: index < arr.length - 1 ? 1 : 0,
+                  borderBottomColor: 'rgba(255,255,255,0.07)',
+                }}
+                onPress={() => {
+                  setShowCreatorMenu(false);
+                  navigation.navigate(item.screen as any);
+                }}
+              >
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: item.color + '22',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    marginRight: 12,
+                    borderWidth: 1,
+                    borderColor: item.color + '44',
+                  }}
+                >
+                  <Ionicons name={item.icon as any} size={18} color={item.color} />
+                </View>
+                <Text style={{ color: '#FFFFFF', fontSize: 15, fontWeight: '600' }}>
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 };

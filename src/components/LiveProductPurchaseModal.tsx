@@ -15,6 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { liveSalesAPI } from '../services/liveSalesAPI';
+import { riderAPI } from '../services/riderAPI';
 import { useNavigation } from '@react-navigation/native';
 import { useLiveInventory } from '../hooks/useLiveInventory';
 
@@ -103,30 +104,25 @@ const LiveProductPurchaseModal: React.FC<LiveProductPurchaseModalProps> = ({
     }
   }, [visible, product]);
 
-  // Load available riders
+  // Load available verified, partner-affiliated riders
   const loadRiders = async () => {
     setLoadingRiders(true);
     try {
-      // TODO: Implement actual riders API call
-      const mockRiders = [
-        {
-          id: '1',
-          name: 'John Rider',
-          rating: 4.8,
-          delivery_fee: 5.00,
-          estimated_time: '15-30 min',
-          profile_pic_url: 'https://via.placeholder.com/40x40',
-        },
-        {
-          id: '2',
-          name: 'Sarah Express',
-          rating: 4.9,
-          delivery_fee: 7.50,
-          estimated_time: '10-20 min',
-          profile_pic_url: 'https://via.placeholder.com/40x40',
-        },
-      ];
-      setRiders(mockRiders);
+      const nearbyRiders = await riderAPI.getNearbyRiders({
+        pickupLocation: { latitude: 6.5244, longitude: 3.3792, address: 'Vendor Location' },
+        deliveryLocation: { latitude: 6.5244, longitude: 3.3792, address: 'Delivery Address' },
+        orderDetails: { weight: 0.5, itemCount: 1, distance: 5 },
+      });
+      // Map to the shape this modal uses
+      const mapped = nearbyRiders.map(r => ({
+        id: r.id,
+        name: r.name,
+        rating: r.rating,
+        delivery_fee: r.price,
+        estimated_time: `${r.estimatedArrival} min`,
+        profile_pic_url: r.avatar,
+      }));
+      setRiders(mapped);
     } catch (error) {
       console.error('Error loading riders:', error);
     } finally {
@@ -240,6 +236,7 @@ const LiveProductPurchaseModal: React.FC<LiveProductPurchaseModalProps> = ({
       streamId,
       item: checkoutItem,
       riderId: selectedRider?.id,
+      riderPrice: selectedRider?.delivery_fee ?? 0,
       deliveryAddress: deliveryAddress || undefined,
       returnToStream: true,
     });

@@ -418,6 +418,27 @@ class WorkspaceAPI {
       coordinates?: { latitude: number; longitude: number };
       instructions?: string;
     };
+    vendorLocation?: {
+      address: string;
+      coordinates?: { latitude: number; longitude: number };
+    };
+    vendorInfo?: {
+      id: string;
+      name: string;
+      phone?: string | null;
+      avatar?: string | null;
+    };
+    riderInfo?: {
+      id: string;
+      name: string;
+      phone?: string | null;
+      avatar?: string | null;
+    };
+    riderLocation?: {
+      latitude: number;
+      longitude: number;
+      timestamp: string;
+    };
     timeline: Array<{
       status: string;
       timestamp: string;

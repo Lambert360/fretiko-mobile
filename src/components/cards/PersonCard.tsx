@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import AdaptiveText from '../AdaptiveText';
 
 export interface PersonData {
   id: string;
@@ -107,11 +108,11 @@ export const PersonCard: React.FC<PersonCardProps> = ({
 
       <View style={styles.cardContent}>
         <View style={styles.cardHeader}>
-          <Text style={styles.personName}>
+          <AdaptiveText style={styles.personName} baseFontSize={18} maxChars={18} numberOfLines={1}>
             {person?.firstName && person?.lastName 
               ? `${person?.firstName} ${person?.lastName}` 
               : person?.username}
-          </Text>
+          </AdaptiveText>
           {!!person?.trustScore && (
             <View style={styles.trustScore}>
               <Ionicons name="shield-checkmark" size={12} color="#27AE60" />
@@ -120,7 +121,7 @@ export const PersonCard: React.FC<PersonCardProps> = ({
           )}
         </View>
         
-        <Text style={styles.username}>@{person?.username}</Text>
+        <AdaptiveText style={styles.username} baseFontSize={14} minFontSize={10} maxChars={18} numberOfLines={1}>@{person?.username}</AdaptiveText>
         
         {!!person?.specialty && (
           <Text style={styles.specialty}>{person?.specialty}</Text>
@@ -172,14 +173,14 @@ export const PersonCard: React.FC<PersonCardProps> = ({
       />
       <View style={styles.compactContent}>
         <View style={styles.compactHeader}>
-          <Text style={styles.compactName}>
+          <AdaptiveText style={styles.compactName} baseFontSize={16} maxChars={16} numberOfLines={1}>
             {person?.firstName && person?.lastName 
               ? `${person?.firstName} ${person?.lastName}` 
               : person?.username}
-          </Text>
+          </AdaptiveText>
           {!!person?.isOnline && <View style={styles.onlineIndicatorSmall} />}
         </View>
-        <Text style={styles.compactUsername}>@{person?.username}</Text>
+        <AdaptiveText style={styles.compactUsername} baseFontSize={14} minFontSize={10} maxChars={18} numberOfLines={1}>@{person?.username}</AdaptiveText>
         {!!person?.location && (
           <Text style={styles.compactLocation}>{person?.location}</Text>
         )}
@@ -205,7 +206,7 @@ export const PersonCard: React.FC<PersonCardProps> = ({
       />
       <View style={styles.trendingContent}>
         <View style={styles.trendingHeader}>
-          <Text style={styles.trendingUsername}>@{person?.username}</Text>
+          <AdaptiveText style={styles.trendingUsername} baseFontSize={16} maxChars={15} numberOfLines={1}>@{person?.username}</AdaptiveText>
           {!!person?.engagementRate && (
             <View style={styles.growthBadge}>
               <Text style={styles.growthText}>+{String(person?.engagementRate)}%</Text>

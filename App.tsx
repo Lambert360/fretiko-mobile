@@ -23,7 +23,7 @@ import { FilterProvider } from './src/contexts/FilterContext';
 import { CallProvider } from './src/contexts/CallContext';
 
 // Import global call UI
-import GlobalIncomingCallBanner from './src/components/GlobalIncomingCallBanner';
+import MinimizedCallBar from './src/components/MinimizedCallBar';
 
 // Import services
 import { pushNotificationService } from './src/services/pushNotificationService';
@@ -78,12 +78,14 @@ import OrdersScreen from './src/screens/OrdersScreen';
 import OrderTrackingScreen from './src/screens/OrderTrackingScreen';
 import GroupedOrderScreen from './src/screens/GroupedOrderScreen';
 import RiderSelectionScreen from './src/screens/RiderSelectionScreen';
+import InterstateDeliveryScreen from './src/screens/InterstateDeliveryScreen';
 import RiderDetailScreen from './src/screens/RiderDetailScreen';
 import RateOrderScreen from './src/screens/RateOrderScreen';
 import { RiderVerificationScreen } from './src/screens/RiderVerificationScreen';
 
 // Import communication screens
 import IndividualChatScreen from './src/screens/IndividualChatScreen';
+import CallScreen from './src/screens/CallScreen';
 
 // Import invoice screens
 import CreateInvoiceScreen from './src/screens/CreateInvoiceScreen';
@@ -386,27 +388,16 @@ const AppNavigator: React.FC = () => {
 
           if (convId && callSessionId) {
             // Show the native system call UI when the user taps an incoming
-            // call notification from the tray. This ensures the global call
-            // card and system ringtone are presented even when the app was
-            // backgrounded or killed.
+            // call notification from the tray. This ensures the system
+            // ringtone is presented even when the app was backgrounded or killed.
+            // The full-screen incoming call UI is handled by CallContext's
+            // realtime call_event subscription which calls showIncomingCall().
             callkeepService.displayIncomingCall({
               uuid: callSessionId,
               callerName: data.callerName || 'Unknown',
               callType: data.callType || 'audio',
               conversationId: convId,
               callSessionId,
-            });
-
-            navigationRef.current?.navigate('IndividualChatScreen', {
-              chatId: convId,
-              chatName: data.callerName || 'Unknown',
-              chatAvatar: data.callerAvatar || null,
-              chatType: 'friend',
-              pendingIncomingCall: {
-                callSessionId,
-                callerName: data.callerName || 'Unknown',
-                callType: data.callType || 'audio',
-              },
             });
           }
           break;
@@ -563,8 +554,18 @@ const AppNavigator: React.FC = () => {
                 }} 
               />
               <Stack.Screen name="RiderSelection" component={RiderSelectionScreen as any} />
+              <Stack.Screen name="InterstateDelivery" component={InterstateDeliveryScreen as any} />
               <Stack.Screen name="RiderDetailScreen" component={RiderDetailScreen} />
               <Stack.Screen name="IndividualChatScreen" component={IndividualChatScreen} />
+              <Stack.Screen
+                name="CallScreen"
+                component={CallScreen}
+                options={{
+                  presentation: 'modal',
+                  gestureEnabled: false,
+                  cardOverlayEnabled: true,
+                }}
+              />
               <Stack.Screen name="CreateInvoice" component={CreateInvoiceScreen} />
               <Stack.Screen name="InvoiceDetails" component={InvoiceDetailsScreen} />
               <Stack.Screen name="LiveSales" component={LiveSalesScreen} />
@@ -612,7 +613,7 @@ const AppNavigator: React.FC = () => {
         )}
       </Stack.Navigator>
     </NavigationContainer>
-    <GlobalIncomingCallBanner navigationRef={navigationRef} />
+    <MinimizedCallBar navigationRef={navigationRef} />
     </View>
     </CallProvider>
   );

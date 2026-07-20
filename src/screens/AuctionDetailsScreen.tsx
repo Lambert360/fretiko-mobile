@@ -23,6 +23,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { useAuth } from '../contexts/AuthContext';
 import { auctionsAPI, auctionSocket, AuctionWithDetails, PublicBidHistoryItem } from '../services/auctionsAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
+import AdaptiveText from '../components/AdaptiveText';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -56,7 +57,7 @@ const AuctionVideoViewer: React.FC<{
         contentFit="contain"
         nativeControls={false}
         fullscreenOptions={{
-          allowFullscreen: false,
+          enable: false,
         }}
       />
       {!isPlaying && (
@@ -122,7 +123,7 @@ const AuctionDetailsScreen = () => {
   const [currentItem, setCurrentItem] = useState<any>(null);
 
   // Refs
-  const timeUpdateInterval = useRef<NodeJS.Timeout | null>(null);
+  const timeUpdateInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const imageViewerFlatListRef = useRef<FlatList>(null);
   const lastExtensionAlertRef = useRef<string | null>(null);
 
@@ -943,7 +944,7 @@ const AuctionDetailsScreen = () => {
               />
               <View style={styles.sellerDetails}>
                 <View style={styles.sellerNameContainer}>
-                  <Text style={styles.sellerName}>{auction.seller.username}</Text>
+                  <AdaptiveText style={styles.sellerName} baseFontSize={16} maxChars={18} numberOfLines={1}>{auction.seller.username}</AdaptiveText>
                   {auction.seller.is_verified && (
                     <Ionicons name="checkmark-circle" size={16} color="#27AE60" />
                   )}

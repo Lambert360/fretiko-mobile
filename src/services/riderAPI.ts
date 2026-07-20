@@ -1,10 +1,14 @@
 import { api } from './api';
 import * as SecureStore from 'expo-secure-store';
+import { Country, State } from 'country-state-city';
 
 export interface RiderLocation {
   latitude: number;
   longitude: number;
   address: string;
+  state?: string;   // e.g. "Lagos" — used by backend for rider & partner eligibility filtering
+  country?: string; // e.g. "Nigeria"
+  city?: string;    // e.g. "Ikeja"
 }
 
 export interface OrderDetails {
@@ -37,6 +41,9 @@ export interface RiderAvailabilityRequest {
   deliveryLocation: RiderLocation;
   orderDetails: OrderDetails;
   maxDistance?: number; // Maximum distance from pickup location (default: 5km)
+  // Item types in the order ('product' | 'service'). When 'service' is present,
+  // only motorized riders (car/van/truck) are eligible — never bikes/wheelbarrows.
+  itemTypes?: string[];
 }
 
 export interface RiderRecommendation {
@@ -44,6 +51,50 @@ export interface RiderRecommendation {
   score: number;
   reasons: string[];
 }
+
+export interface InterstateCompanyOption {
+  companyId: string;
+  companyName: string;
+  logoUrl?: string;
+  basePrice: number;
+  perKmRate: number;
+  estimatedDeliveryDaysMin: number;
+  estimatedDeliveryDaysMax: number;
+  isInternational: boolean;
+}
+
+const normalizeLocation = <T extends { state?: string; country?: string }>(location: T): T => {
+  if (!location) return location;
+  const rawCountry = (location.country || '').trim();
+  const rawState = (location.state || '').trim();
+
+  if (!rawCountry) {
+    return { ...location, state: rawState, country: rawCountry } as T;
+  }
+
+  const country = Country.getAllCountries().find(
+    c =>
+      c.name.toLowerCase() === rawCountry.toLowerCase() ||
+      c.isoCode.toLowerCase() === rawCountry.toLowerCase()
+  );
+
+  const countryCode = country?.isoCode;
+  if (!countryCode) {
+    return { ...location, state: rawState, country: rawCountry } as T;
+  }
+
+  const state = State.getStatesOfCountry(countryCode).find(
+    s =>
+      s.name.toLowerCase() === rawState.toLowerCase() ||
+      s.isoCode.toLowerCase() === rawState.toLowerCase()
+  );
+
+  return {
+    ...location,
+    country: countryCode,
+    state: state?.isoCode || rawState,
+  } as T;
+};
 
 const getAuthHeaders = async () => {
   const token = await SecureStore.getItemAsync('accessToken');
@@ -59,14 +110,13 @@ export const riderAPI = {
   getNearbyRiders: async (request: RiderAvailabilityRequest): Promise<Rider[]> => {
     try {
       const headers = await getAuthHeaders();
-      const response = await api.post('/riders/nearby', request, { headers });
+      const normalizedRequest = { ...request, pickupLocation: normalizeLocation(request.pickupLocation) };
+      const response = await api.post('/riders/nearby', normalizedRequest, { headers });
       console.log('🚴 Nearby riders loaded:', response.data?.length || 0, 'riders');
       return response.data || [];
     } catch (error: any) {
       console.error('❌ Failed to get nearby riders:', error.response?.data || error.message);
-      
-      // Return mock data for development
-      return getMockRiders(request);
+      return [];
     }
   },
 
@@ -74,11 +124,32 @@ export const riderAPI = {
   getRiderRecommendations: async (request: RiderAvailabilityRequest): Promise<RiderRecommendation[]> => {
     try {
       const headers = await getAuthHeaders();
-      const response = await api.post('/riders/recommendations', request, { headers });
+      const normalizedRequest = { ...request, pickupLocation: normalizeLocation(request.pickupLocation) };
+      const response = await api.post('/riders/recommendations', normalizedRequest, { headers });
       console.log('⭐ Rider recommendations loaded:', response.data?.length || 0, 'recommendations');
       return response.data || [];
     } catch (error: any) {
       console.error('❌ Failed to get rider recommendations:', error.response?.data || error.message);
+      return [];
+    }
+  },
+
+  // Get logistics companies eligible for interstate/international delivery
+  getInterstateOptions: async (request: {
+    pickupLocation: { state?: string; country?: string };
+    deliveryLocation: { state?: string; country?: string };
+  }): Promise<InterstateCompanyOption[]> => {
+    try {
+      const normalizedRequest = {
+        pickupLocation: normalizeLocation(request.pickupLocation),
+        deliveryLocation: normalizeLocation(request.deliveryLocation),
+      };
+      const headers = await getAuthHeaders();
+      const response = await api.post('/riders/interstate-options', normalizedRequest, { headers });
+      console.log('🚛 Interstate delivery options loaded:', response.data?.length || 0, 'companies');
+      return response.data || [];
+    } catch (error: any) {
+      console.error('❌ Failed to get interstate options:', error.response?.data || error.message);
       return [];
     }
   },
@@ -159,113 +230,3 @@ export const riderAPI = {
   },
 };
 
-// Mock data for development
-const getMockRiders = (request: RiderAvailabilityRequest): Rider[] => {
-  const baseRiders: Rider[] = [
-    {
-      id: '1',
-      name: 'John Adebayo',
-      avatar: 'https://picsum.photos/100/100?random=1',
-      rating: 4.8,
-      totalDeliveries: 150,
-      vehicleType: 'bike',
-      price: 8.50,
-      distanceFromPickup: 0.3,
-      estimatedArrival: 5,
-      isAvailable: true,
-      specialties: ['Fragile items', 'Fast delivery'],
-      isOnline: true,
-      trustScore: 850,
-      completionRate: 98,
-    },
-    {
-      id: '2',
-      name: 'Sarah Okafor',
-      avatar: 'https://picsum.photos/100/100?random=2',
-      rating: 4.9,
-      totalDeliveries: 200,
-      vehicleType: 'car',
-      price: 15.00,
-      distanceFromPickup: 0.8,
-      estimatedArrival: 8,
-      isAvailable: true,
-      specialties: ['Bulk delivery', 'Long distance'],
-      isOnline: true,
-      trustScore: 920,
-      completionRate: 99,
-    },
-    {
-      id: '3',
-      name: 'Ahmed Hassan',
-      avatar: 'https://picsum.photos/100/100?random=3',
-      rating: 4.7,
-      totalDeliveries: 80,
-      vehicleType: 'wheelbarrow',
-      price: 3.00,
-      distanceFromPickup: 0.2,
-      estimatedArrival: 3,
-      isAvailable: request.orderDetails.distance <= 1.0,
-      unavailableReason: request.orderDetails.distance > 1.0 ? 'Distance too far for wheelbarrow delivery' : undefined,
-      specialties: ['Eco-friendly', 'Local delivery', 'Fresh produce'],
-      isOnline: true,
-      trustScore: 780,
-      completionRate: 95,
-    },
-    {
-      id: '4',
-      name: 'Grace Nwankwo',
-      avatar: 'https://picsum.photos/100/100?random=4',
-      rating: 4.6,
-      totalDeliveries: 120,
-      vehicleType: 'bike',
-      price: 7.00,
-      distanceFromPickup: 1.2,
-      estimatedArrival: 12,
-      isAvailable: request.orderDetails.weight <= 20,
-      unavailableReason: request.orderDetails.weight > 20 ? 'Order too heavy for bike delivery' : undefined,
-      specialties: ['Electronics', 'Same-day delivery'],
-      isOnline: true,
-      trustScore: 810,
-      completionRate: 97,
-    },
-    {
-      id: '5',
-      name: 'Ibrahim Musa',
-      avatar: 'https://picsum.photos/100/100?random=5',
-      rating: 4.5,
-      totalDeliveries: 300,
-      vehicleType: 'car',
-      price: 12.00,
-      distanceFromPickup: 2.0,
-      estimatedArrival: 15,
-      isAvailable: true,
-      specialties: ['Furniture', 'Appliances', 'Heavy items'],
-      isOnline: false, // Offline rider example
-      trustScore: 750,
-      completionRate: 94,
-    },
-    {
-      id: '6',
-      name: 'Funmi Adeyemi',
-      avatar: 'https://picsum.photos/100/100?random=6',
-      rating: 4.9,
-      totalDeliveries: 90,
-      vehicleType: 'wheelbarrow',
-      price: 2.50,
-      distanceFromPickup: 0.4,
-      estimatedArrival: 6,
-      isAvailable: request.orderDetails.distance <= 1.0 && request.orderDetails.weight <= 15,
-      unavailableReason: request.orderDetails.distance > 1.0 ? 'Distance too far' : 
-                        request.orderDetails.weight > 15 ? 'Order too heavy' : undefined,
-      specialties: ['Groceries', 'Market runs', 'Quick delivery'],
-      isOnline: true,
-      trustScore: 870,
-      completionRate: 99,
-    },
-  ];
-
-  // Filter by online status and sort by distance
-  return baseRiders
-    .filter(rider => rider.isOnline)
-    .sort((a, b) => a.distanceFromPickup - b.distanceFromPickup);
-};

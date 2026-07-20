@@ -7,6 +7,7 @@ export interface DeliveryAddress {
   address: string;
   city: string;
   state: string;
+  country?: string;
   postalCode: string;
   isDefault: boolean;
 }
@@ -20,6 +21,12 @@ export interface PaymentMethod {
   balance?: number;
 }
 
+export interface SellerLocation {
+  state?: string;
+  country?: string;
+  city?: string;
+}
+
 export interface OrderSummary {
   items: Array<{
     id: string;
@@ -28,12 +35,29 @@ export interface OrderSummary {
     quantity: number;
     sellerId: string;
     requiresEscrow: boolean;
+    sellerLocation?: SellerLocation | null;
+    itemType?: string;
+    isOutOfState?: boolean;
+    isOutOfCountry?: boolean;
   }>;
   subtotal: number;
   shipping: number;
   tax: number;
   escrowFee: number;
   total: number;
+  hasOutOfStateItems?: boolean;
+  hasOutOfCountryItems?: boolean;
+}
+
+export interface InterstateCompanyOption {
+  companyId: string;
+  companyName: string;
+  logoUrl?: string;
+  basePrice: number;
+  perKmRate: number;
+  estimatedDeliveryDaysMin: number;
+  estimatedDeliveryDaysMax: number;
+  isInternational: boolean;
 }
 
 export interface CreateOrderRequest {
@@ -60,6 +84,13 @@ export interface CreateOrderRequest {
     vehicleType: 'wheelbarrow' | 'bike' | 'car' | 'pickup';
     deliveryPrice: number;
     estimatedArrival: number;
+  };
+  // Interstate/international delivery via a logistics partner company
+  interstateCompany?: {
+    companyId: string;
+    companyName: string;
+    deliveryPrice: number;
+    estimatedDeliveryDays: number;
   };
   // NEW: Multi-vendor fields
   riderAssignments?: any[];

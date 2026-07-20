@@ -20,6 +20,8 @@ import { walletAPI } from '../services/walletAPI';
 import { checkoutAPI } from '../services/checkoutAPI';
 import { ordersAPI } from '../services/ordersAPI';
 import { Rider } from './RiderSelectionScreen';
+import { riderSelectionBridge } from '../utils/riderSelectionBridge';
+import { addressSelectionBridge } from '../utils/addressSelectionBridge';
 
 interface DeliveryAddress {
   id?: string;
@@ -59,6 +61,8 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
   const [loading, setLoading] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
   const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>(null); // No default - user must choose
+  const riderCallbackKeyRef = React.useRef<string | null>(null);
+  const addressCallbackKeyRef = React.useRef<string | null>(null);
   const [deliveryAddress, setDeliveryAddress] = useState<DeliveryAddress>({
     fullName: '',
     phone: '',
@@ -152,11 +156,15 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
     }
 
     // Navigate to rider selection screen
+    // Use delivery address state/city as the pickup location hint so the backend
+    // can filter riders to the correct area (auction seller location isn't in scope here).
     navigation.navigate('RiderSelection', {
       pickupLocation: {
-        latitude: 6.5244, // TODO: Get vendor location from auction
+        latitude: 6.5244,
         longitude: 3.3792,
-        address: 'Vendor Location, Lagos'
+        address: deliveryAddress.city ? `Vendor Location, ${deliveryAddress.city}` : 'Vendor Location',
+        state: deliveryAddress.state || undefined,
+        city: deliveryAddress.city || undefined,
       },
       deliveryLocation: {
         latitude: 6.5244, // TODO: Geocode delivery address
@@ -168,9 +176,13 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
         itemCount: wonItems.length,
         distance: 2.5, // Mock distance
       },
-      onRiderSelected: (rider: Rider) => {
-        setSelectedRider(rider);
-      },
+      callbackKey: (() => {
+        if (riderCallbackKeyRef.current) riderSelectionBridge.clear(riderCallbackKeyRef.current);
+        const key = `live_auction_rider_${Date.now()}`;
+        riderCallbackKeyRef.current = key;
+        riderSelectionBridge.register(key, (rider: Rider) => setSelectedRider(rider));
+        return key;
+      })(),
     });
   };
 
@@ -532,9 +544,11 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
 
             <TouchableOpacity
               style={styles.editAddressButton}
-              onPress={() => navigation.navigate('AddressBook', {
-                selectMode: true,
-                onAddressSelected: (address: any) => {
+              onPress={() => {
+                if (addressCallbackKeyRef.current) addressSelectionBridge.clear(addressCallbackKeyRef.current);
+                const callbackKey = `live_auction_address_${Date.now()}`;
+                addressCallbackKeyRef.current = callbackKey;
+                addressSelectionBridge.register(callbackKey, (address) => {
                   setDeliveryAddress({
                     id: address.id,
                     fullName: address.fullName || '',
@@ -545,8 +559,12 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
                     postalCode: address.postalCode || '',
                     isDefault: address.isDefault || false,
                   });
-                }
-              })}
+                });
+                navigation.navigate('AddressBook', {
+                  selectMode: true,
+                  callbackKey,
+                });
+              }}
             >
               <Ionicons name="location" size={18} color="#3498DB" />
               <Text style={styles.editAddressText}>Select from Address Book</Text>

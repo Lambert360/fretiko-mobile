@@ -361,8 +361,9 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
         animationType="slide"
         onRequestClose={() => setShowCountryDropdown(false)}
       >
-        <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowCountryDropdown(false)} />
-        <View style={styles.pickerSheet}>
+        <KeyboardAvoidingView style={styles.pickerKAV} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowCountryDropdown(false)} />
+          <View style={styles.pickerSheet}>
           <View style={styles.pickerHandle} />
           <View style={styles.pickerHeader}>
             <Text style={styles.pickerTitle}>Select Country</Text>
@@ -385,7 +386,8 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
               </TouchableOpacity>
             )}
           />
-        </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Bank Picker Modal */}
@@ -395,8 +397,9 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
         animationType="slide"
         onRequestClose={() => { setShowBankDropdown(false); setBankSearch(''); }}
       >
-        <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => { setShowBankDropdown(false); setBankSearch(''); }} />
-        <View style={styles.pickerSheet}>
+        <KeyboardAvoidingView style={styles.pickerKAV} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => { setShowBankDropdown(false); setBankSearch(''); }} />
+          <View style={styles.pickerSheet}>
           <View style={styles.pickerHandle} />
           <View style={styles.pickerHeader}>
             <Text style={styles.pickerTitle}>Select Bank</Text>
@@ -414,7 +417,7 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
           />
           <FlatList
             data={banks.filter(b => b.name.toLowerCase().includes(bankSearch.toLowerCase()))}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => String(item.id)}
             renderItem={({ item }) => (
               <TouchableOpacity
                 style={[styles.pickerOption, selectedBank?.id === item.id && styles.pickerOptionActive]}
@@ -428,7 +431,8 @@ const AddBankAccountScreen = ({ navigation }: AddBankAccountScreenProps) => {
             )}
             keyboardShouldPersistTaps="handled"
           />
-        </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
         {/* Bottom Action */}
@@ -604,15 +608,20 @@ const styles = StyleSheet.create({
     color: '#F39C12',
     fontWeight: '600',
   },
-  pickerOverlay: {
+  pickerKAV: {
     flex: 1,
+    justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  pickerOverlay: {
+    ...StyleSheet.absoluteFillObject,
   },
   pickerSheet: {
     backgroundColor: '#1a1a1a',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '70%',
+    minHeight: '45%',
+    maxHeight: '80%',
     paddingBottom: 20,
   },
   pickerHandle: {

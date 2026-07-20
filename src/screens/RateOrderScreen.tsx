@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { ordersAPI } from '../services/ordersAPI';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import AdaptiveText from '../components/AdaptiveText';
 
 interface OrderItem {
   id: string;
@@ -165,7 +166,7 @@ const RateOrderScreen: React.FC = () => {
         <View style={styles.orderInfoCard}>
           <Text style={styles.orderNumber}>Order #{order.orderNumber}</Text>
           {order.vendorName && (
-            <Text style={styles.vendorName}>from {order.vendorName}</Text>
+            <AdaptiveText style={styles.vendorName} baseFontSize={14} minFontSize={10} maxChars={22} numberOfLines={1}>from {order.vendorName}</AdaptiveText>
           )}
           <View style={styles.itemsPreview}>
             <Text style={styles.itemsLabel}>

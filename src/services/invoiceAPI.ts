@@ -56,6 +56,40 @@ export interface UpdateInvoiceRequest {
 
 class InvoiceAPI {
   /**
+   * Upload an invoice item image and return its public URL.
+   * Must be called BEFORE createInvoice/updateInvoice so the local device URI
+   * is never sent as the imageUrl (it would be unreachable on other devices).
+   */
+  async uploadInvoiceItemImage(imageUri: string): Promise<string> {
+    try {
+      const fileExtension = imageUri.split('.').pop()?.toLowerCase() || 'jpg';
+      const mimeType = fileExtension === 'png' ? 'image/png' : 'image/jpeg';
+
+      const formData = new FormData();
+      formData.append('image', {
+        uri: imageUri,
+        type: mimeType,
+        name: `invoice_item.${fileExtension}`,
+      } as any);
+
+      const response = await api.post('/chat/invoices/upload-image', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      return response.data.data.imageUrl;
+    } catch (error: any) {
+      console.error('❌ Error uploading invoice item image:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+      });
+      throw new Error(error.response?.data?.message || 'Failed to upload image');
+    }
+  }
+
+  /**
    * Create a new invoice
    */
   async createInvoice(data: CreateInvoiceRequest): Promise<Invoice> {

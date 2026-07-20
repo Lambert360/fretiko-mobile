@@ -47,6 +47,7 @@ import { WishlistShareModal } from '../components/WishlistShareModal';
 import WishlistMessageCard from '../components/WishlistMessageCard';
 import DocumentMessageCard from '../components/DocumentMessageCard';
 import * as Sharing from 'expo-sharing';
+import AdaptiveText from '../components/AdaptiveText';
 
 // Global WebSocket manager to persist across component remounts
 class GeminiWebSocketManager {
@@ -724,7 +725,17 @@ const IndividualChatScreen = () => {
             updatedAt: msg.updatedAt,
           }));
 
-          setMessages(backendMessages);
+          setMessages(prevMessages => {
+            // Merge: preserve local-only fields (e.g. real-time updates) for existing messages
+            const existingMap = new Map(prevMessages.map(m => [m.id, m]));
+            return backendMessages.map(apiMsg => {
+              const localMsg = existingMap.get(apiMsg.id);
+              if (localMsg) {
+                return { ...apiMsg, ...localMsg };
+              }
+              return apiMsg;
+            });
+          });
           console.log('✅ AI messages loaded successfully:', backendMessages.length);
 
           // Extract otherUserId from messages if not provided
@@ -811,7 +822,41 @@ const IndividualChatScreen = () => {
         return converted;
       });
 
-      setMessages(convertedMessages);
+      setMessages(prevMessages => {
+        // Merge: use API messages as base, preserve local-only real-time updates
+        const existingMap = new Map(prevMessages.map(m => [m.id, m]));
+        const apiIds = new Set(convertedMessages.map(m => m.id));
+
+        // Start with API messages, merging in local fields for existing messages
+        const merged: Message[] = convertedMessages.map(apiMsg => {
+          const localMsg = existingMap.get(apiMsg.id);
+          if (localMsg) {
+            const mergedMsg: Message = {
+              ...apiMsg,
+              reactions: localMsg.reactions || apiMsg.reactions,
+              productData: localMsg.productData || apiMsg.productData,
+            };
+            // Preserve local purchaseStatus if API doesn't have it
+            if (localMsg.wishlistData?.purchaseStatus && apiMsg.wishlistData) {
+              mergedMsg.wishlistData = {
+                ...apiMsg.wishlistData,
+                purchaseStatus: localMsg.wishlistData.purchaseStatus,
+              };
+            }
+            return mergedMsg;
+          }
+          return apiMsg;
+        });
+
+        // Keep any local optimistic messages not yet in API response
+        for (const localMsg of prevMessages) {
+          if (!apiIds.has(localMsg.id)) {
+            merged.push(localMsg);
+          }
+        }
+
+        return merged;
+      });
 
       // Extract otherUserId from messages if not provided
       if (!otherUserId && convertedMessages.length > 0) {
@@ -1117,6 +1162,12 @@ const IndividualChatScreen = () => {
     });
 
     const unsubscribeCallEvent = realtimeAPI.subscribe('call_event', (data) => {
+      // Agora call routing now lives entirely in CallContext + CallScreen.
+      // This subscription is kept only so Iko's own call state (which still
+      // reuses these same local state setters) is never touched by real calls.
+      return;
+
+      // eslint-disable-next-line no-unreachable
       console.log('📞 Call event received:', data);
 
       // Only handle events for this conversation
@@ -1171,8 +1222,12 @@ const IndividualChatScreen = () => {
           {
             const serverReason = (callData && (callData as any).reason) as string | undefined;
             let mappedReason: 'completed' | 'declined' | 'missed' | 'cancelled' = 'completed';
-            if (serverReason === 'declined' || serverReason === 'missed' || serverReason === 'cancelled') {
-              mappedReason = serverReason;
+            if (serverReason === 'declined') {
+              mappedReason = 'declined';
+            } else if (serverReason === 'missed') {
+              mappedReason = 'missed';
+            } else if (serverReason === 'cancelled') {
+              mappedReason = 'cancelled';
             }
             // End active call - pass fromRemote=true to prevent sending duplicate signal
             endCall(mappedReason, true);
@@ -1188,11 +1243,14 @@ const IndividualChatScreen = () => {
             stopCallSounds();
             
             // Clear call timeout - participant has joined
-            if (ringbackTimeoutRef.current) {
-              console.log('🛑 Clearing call timeout - participant joined');
-              clearTimeout(ringbackTimeoutRef.current);
-              ringbackTimeoutRef.current = null;
-              setRingbackTimeout(null);
+            {
+              const timeoutId = ringbackTimeoutRef.current;
+              if (timeoutId) {
+                console.log('🛑 Clearing call timeout - participant joined');
+                clearTimeout(timeoutId ?? undefined);
+                ringbackTimeoutRef.current = null;
+                setRingbackTimeout(null);
+              }
             }
             
             playCallSound('connected');
@@ -1220,17 +1278,25 @@ const IndividualChatScreen = () => {
       }
     });
 
-    // Subscribe to call signals (WebRTC-style peer signals)
+    // Call signaling now lives entirely in CallContext (Agora calls). This
+    // subscription is disabled here to avoid duplicate/competing handling.
     const unsubscribeCallSignal = realtimeAPI.subscribe('call_signal', (data) => {
-      console.log('📞 Call signal received:', data);
-      handleIncomingCallSignal(data);
+      return;
     });
 
     // Subscribe to invoice events
     const unsubscribeInvoiceCreated = realtimeAPI.subscribe('invoice_created', (data) => {
       if (data.conversationId === chatId) {
-        console.log('📄 Invoice created, reloading messages');
-        loadMessages();
+        console.log('📄 Invoice created:', data.invoice?.id || data.invoiceId);
+        // Reload messages only if we don't already have this invoice in our list
+        setMessages(prev => {
+          const invoiceId = data.invoice?.id || data.invoiceId;
+          const exists = prev.some(msg => msg.messageType === 'invoice' && msg.invoiceData?.id === invoiceId);
+          if (exists) return prev;
+          // Only reload if the invoice message isn't already in local state
+          loadMessages();
+          return prev;
+        });
       }
     });
 
@@ -1266,22 +1332,42 @@ const IndividualChatScreen = () => {
           return msg;
         }));
         
-        // Also reload messages to ensure everything is in sync
-        loadMessages();
       }
     });
 
     const unsubscribeInvoiceExpired = realtimeAPI.subscribe('invoice_expired', (data) => {
       if (data.conversationId === chatId) {
         console.log('📄 Invoice expired:', data.invoiceId);
-        loadMessages();
+        setMessages(prev => prev.map(msg => {
+          if (msg.messageType === 'invoice' && msg.invoiceData?.id === data.invoiceId) {
+            return {
+              ...msg,
+              invoiceData: {
+                ...msg.invoiceData,
+                status: InvoiceStatus.EXPIRED,
+              },
+            };
+          }
+          return msg;
+        }));
       }
     });
 
     const unsubscribeInvoiceCancelled = realtimeAPI.subscribe('invoice_cancelled', (data) => {
       if (data.conversationId === chatId) {
         console.log('📄 Invoice cancelled:', data.invoiceId);
-        loadMessages();
+        setMessages(prev => prev.map(msg => {
+          if (msg.messageType === 'invoice' && msg.invoiceData?.id === data.invoiceId) {
+            return {
+              ...msg,
+              invoiceData: {
+                ...msg.invoiceData,
+                status: InvoiceStatus.CANCELLED,
+              },
+            };
+          }
+          return msg;
+        }));
       }
     });
 
@@ -1319,19 +1405,13 @@ const IndividualChatScreen = () => {
   };
 
   useEffect(() => {
-    console.log('🔄 IndividualChatScreen useEffect triggered, chatId:', chatId, 'isFocused:', isFocused);
+    console.log('🔄 IndividualChatScreen init useEffect triggered, chatId:', chatId);
     console.log('🔍 Current AI call states when effect runs:', {
       isAICall,
       isConnectedToGemini,
       callStatus,
       geminiLiveWsState: geminiLiveWs?.readyState
     });
-
-    // 🔥 FIX: Only initialize when screen is focused to prevent unnecessary remounts
-    if (!isFocused) {
-      console.log('🚫 Screen not focused, skipping initialization');
-      return;
-    }
 
     // 🔥 FIX: Prevent duplicate initialization on remounts
     if (hasInitializedRef.current === chatId) {
@@ -1442,7 +1522,18 @@ const IndividualChatScreen = () => {
       // Don't disconnect entirely as other screens might be using it
       // realtimeAPI.disconnect();
     };
-  }, [user, accessToken, chatId, isFocused]); // 🔥 Include isFocused in dependencies
+  }, [user, accessToken, chatId]); // 🔥 Removed isFocused — focus handled separately
+
+  // 🔥 Focus effect: join/leave conversation when screen focus changes (without full re-init)
+  useEffect(() => {
+    if (isFocused && hasInitializedRef.current === chatId) {
+      console.log('👁️ Screen focused, rejoining conversation:', chatId);
+      realtimeAPI.joinConversation(chatId);
+    } else if (!isFocused) {
+      console.log('🙈 Screen lost focus, leaving conversation:', chatId);
+      realtimeAPI.leaveConversation(chatId);
+    }
+  }, [isFocused, chatId]);
 
   // Auto scroll to bottom after loading messages
   useEffect(() => {
@@ -2312,6 +2403,10 @@ const IndividualChatScreen = () => {
   };
 
   const handleIncomingCallSignal = (data: any) => {
+    // Agora call signaling now lives entirely in CallContext. This function is
+    // only kept around because Iko's own call flow still references it via
+    // startCall()/endCall() below — for real calls it is never reached anymore
+    // since the call_signal subscription above is a no-op for non-AI chats.
     try {
       console.log('📞 Incoming call signal:', data.signalType);
 
@@ -2624,6 +2719,18 @@ const IndividualChatScreen = () => {
         return startAIVoiceCall();
       }
 
+      // Regular (non-AI) calls now live entirely in CallScreen — just navigate there
+      // and let CallContext own the whole Agora call lifecycle.
+      (navigation as any).navigate('CallScreen', {
+        chatId,
+        otherUserId,
+        callerName: chatName,
+        callerAvatar: chatAvatar,
+        callType: type,
+      });
+      return;
+
+      // ─── Everything below is dead code, kept only for reference/rollback ───
       // Reset call states
       setCallType(type);
       setCallStatus('calling');
@@ -4662,7 +4769,7 @@ const IndividualChatScreen = () => {
             disabled={isAI}
           >
             <View style={styles.nameContainer}>
-              <Text style={styles.chatName} numberOfLines={1} ellipsizeMode="tail">{chatName}</Text>
+              <AdaptiveText style={styles.chatName} baseFontSize={16} maxChars={20} numberOfLines={1} ellipsizeMode="tail">{chatName}</AdaptiveText>
               {verified && (
                 <Ionicons name="checkmark-circle" size={16} color="#3498DB" style={{ marginLeft: 4 }} />
               )}
@@ -4675,18 +4782,22 @@ const IndividualChatScreen = () => {
         </View>
 
         <View style={styles.headerActions}>
-          <TouchableOpacity 
-            style={[styles.headerAction, isInCall && callType === 'audio' && styles.activeCall]}
-            onPress={() => startCall('audio')}
-          >
-            <Ionicons name="call" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.headerAction, isInCall && callType === 'video' && styles.activeCall]}
-            onPress={() => startCall('video')}
-          >
-            <Ionicons name="videocam" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
+          {!isAI && chatType !== 'ai' && (
+            <>
+              <TouchableOpacity 
+                style={[styles.headerAction, isInCall && callType === 'audio' && styles.activeCall]}
+                onPress={() => startCall('audio')}
+              >
+                <Ionicons name="call" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.headerAction, isInCall && callType === 'video' && styles.activeCall]}
+                onPress={() => startCall('video')}
+              >
+                <Ionicons name="videocam" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            </>
+          )}
           <TouchableOpacity
             style={styles.headerAction}
             onPress={() => {
@@ -4923,38 +5034,40 @@ const IndividualChatScreen = () => {
             </View>
           )}
           
-          {/* Text message */}
-          <View
-            style={[
-              styles.messageBubble,
-              isCurrentUser ? styles.currentUserBubble : styles.otherUserBubble,
-            ]}
-          >
-            <RichText
-              style={styles.messageText as any}
+          {/* Text bubble + recommendation cards stacked vertically as a single column */}
+          <View style={styles.ikoRecommendationsColumn}>
+            <View
+              style={[
+                styles.messageBubble,
+                isCurrentUser ? styles.currentUserBubble : styles.otherUserBubble,
+              ]}
             >
-              {item.text || ''}
-            </RichText>
-            <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
+              <RichText
+                style={styles.messageText as any}
+              >
+                {item.text || ''}
+              </RichText>
+              <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
+            </View>
+
+            {/* Product cards */}
+            {item.ikoRecommendations.products?.map((product) => (
+              <ProductMessageCard
+                key={product.id}
+                product={product}
+                isCurrentUser={isCurrentUser}
+              />
+            ))}
+
+            {/* Service cards */}
+            {item.ikoRecommendations.services?.map((service) => (
+              <ServiceMessageCard
+                key={service.id}
+                service={service}
+                isCurrentUser={isCurrentUser}
+              />
+            ))}
           </View>
-
-          {/* Product cards */}
-          {item.ikoRecommendations.products?.map((product) => (
-            <ProductMessageCard
-              key={product.id}
-              product={product}
-              isCurrentUser={isCurrentUser}
-            />
-          ))}
-
-          {/* Service cards */}
-          {item.ikoRecommendations.services?.map((service) => (
-            <ServiceMessageCard
-              key={service.id}
-              service={service}
-              isCurrentUser={isCurrentUser}
-            />
-          ))}
         </View>
       );
     }
@@ -5280,14 +5393,13 @@ const IndividualChatScreen = () => {
               setMessageText(text);
               handleMentionDetection(text);
               
-              // Send typing indicator
+              // Send typing indicator to the other user (don't set local isTyping —
+              // that state is only for showing the OTHER person is typing)
               if (realtimeAPI.isConnected()) {
-                if (text.length > 0 && !isTyping) {
+                if (text.length > 0) {
                   realtimeAPI.sendChatTyping(chatId, true);
-                  setIsTyping(true);
-                } else if (text.length === 0 && isTyping) {
+                } else {
                   realtimeAPI.sendChatTyping(chatId, false);
-                  setIsTyping(false);
                 }
               }
             }}
@@ -5737,7 +5849,7 @@ const IndividualChatScreen = () => {
               </View>
 
               {/* Name */}
-              <Text style={styles.modernCallName}>{chatName}</Text>
+              <AdaptiveText style={styles.modernCallName} baseFontSize={32} minFontSize={20} maxChars={22} numberOfLines={1}>{chatName}</AdaptiveText>
 
               {/* Dynamic Status Text */}
               <Animated.View style={{ opacity: statusFadeAnim }}>
@@ -6128,12 +6240,12 @@ const IndividualChatScreen = () => {
 
             {/* Name and Duration - Center */}
             <View style={styles.callHeaderCenter}>
-              <Text style={[
+              <AdaptiveText style={[
                 styles.inCallName,
                 callType === 'video' && showVideoUI && styles.videoCallText
-              ]}>
+              ]} baseFontSize={16} maxChars={22} numberOfLines={1}>
                 {chatName}
-              </Text>
+              </AdaptiveText>
               <Text style={[
                 styles.inCallDuration,
                 callType === 'video' && showVideoUI && styles.videoCallText
@@ -6355,7 +6467,7 @@ const IndividualChatScreen = () => {
                 </View>
               </View>
 
-              <Text style={styles.modernIncomingCallName}>{incomingCall.callerName}</Text>
+              <AdaptiveText style={styles.modernIncomingCallName} baseFontSize={36} minFontSize={22} maxChars={22} numberOfLines={1}>{incomingCall.callerName}</AdaptiveText>
               <Text style={styles.modernIncomingCallType}>
                 {incomingCall.callType === 'video' ? '📹 Video Call' : '📞 Voice Call'}
               </Text>
@@ -6762,6 +6874,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
+  },
+  ikoRecommendationsColumn: {
+    flexDirection: 'column',
+    maxWidth: screenWidth * 0.85,
+    flexShrink: 1,
   },
   messageBubble: {
     maxWidth: screenWidth * 0.75,

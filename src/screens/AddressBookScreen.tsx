@@ -17,20 +17,22 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { checkoutAPI, DeliveryAddress } from '../services/checkoutAPI';
+import { addressSelectionBridge } from '../utils/addressSelectionBridge';
+import LocationSelector from '../components/LocationSelector';
 
 interface AddressBookScreenProps {
   navigation: any;
   route?: {
     params?: {
       selectMode?: boolean; // If true, allows selecting an address
-      onAddressSelected?: (address: DeliveryAddress) => void;
+      callbackKey?: string; // Bridge key for returning the selected address
     };
   };
 }
 
 const AddressBookScreen: React.FC<AddressBookScreenProps> = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
-  const { selectMode = false, onAddressSelected } = route?.params || {};
+  const { selectMode = false, callbackKey } = route?.params || {};
 
   const [addresses, setAddresses] = useState<DeliveryAddress[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,9 +44,11 @@ const AddressBookScreen: React.FC<AddressBookScreenProps> = ({ navigation, route
     address: '',
     city: '',
     state: '',
+    country: '',
     postalCode: '',
     isDefault: false,
   });
+  const [showLocationSelector, setShowLocationSelector] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -80,6 +84,7 @@ const AddressBookScreen: React.FC<AddressBookScreenProps> = ({ navigation, route
       address: '',
       city: '',
       state: '',
+      country: '',
       postalCode: '',
       isDefault: false,
     });
@@ -156,8 +161,8 @@ const AddressBookScreen: React.FC<AddressBookScreenProps> = ({ navigation, route
   };
 
   const handleSelectAddress = (address: DeliveryAddress) => {
-    if (selectMode && onAddressSelected) {
-      onAddressSelected(address);
+    if (selectMode && callbackKey) {
+      addressSelectionBridge.resolve(callbackKey, address);
       navigation.goBack();
     }
   };
@@ -228,7 +233,8 @@ const AddressBookScreen: React.FC<AddressBookScreenProps> = ({ navigation, route
   const renderAddressModal = () => (
     <Modal visible={showAddressModal} transparent animationType="slide">
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        enabled={Platform.OS === 'ios'}
         style={styles.modalOverlay}
       >
         <View style={styles.addressModal}>
@@ -281,25 +287,28 @@ const AddressBookScreen: React.FC<AddressBookScreenProps> = ({ navigation, route
 
             <View style={styles.inputRow}>
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>City *</Text>
+                <Text style={styles.inputLabel}>City / Town *</Text>
                 <TextInput
                   style={styles.textInput}
                   value={formData.city}
                   onChangeText={(text) => handleFormChange('city', text)}
-                  placeholder="City"
+                  placeholder="City or town"
                   placeholderTextColor="#666"
                 />
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>State *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={formData.state}
-                  onChangeText={(text) => handleFormChange('state', text)}
-                  placeholder="State"
-                  placeholderTextColor="#666"
-                />
+                <Text style={styles.inputLabel}>State / Country *</Text>
+                <TouchableOpacity
+                  style={[styles.textInput, { justifyContent: 'center' }]}
+                  onPress={() => setShowLocationSelector(true)}
+                >
+                  <Text style={{ color: formData.state ? '#FFF' : '#666', fontSize: 14 }}>
+                    {formData.state
+                      ? `${formData.state}${formData.country ? `, ${formData.country}` : ''}`
+                      : 'Select state...'}
+                  </Text>
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -348,6 +357,17 @@ const AddressBookScreen: React.FC<AddressBookScreenProps> = ({ navigation, route
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      <LocationSelector
+        visible={showLocationSelector}
+        selectedLocation={formData.state && formData.country ? `${formData.state}, ${formData.country}` : ''}
+        onLocationSelect={() => {}}
+        onLocationSelectDetailed={(state, country) => {
+          handleFormChange('state', state);
+          handleFormChange('country', country);
+        }}
+        onClose={() => setShowLocationSelector(false)}
+      />
     </Modal>
   );
 

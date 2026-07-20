@@ -36,6 +36,7 @@ import {
   mapPeopleArray,
   mapProvidersArray,
 } from '../utils/dataMappers';
+import AdaptiveText from '../components/AdaptiveText';
 
 const SearchScreen = () => {
   const insets = useSafeAreaInsets();
@@ -461,7 +462,7 @@ const SearchScreen = () => {
           <View style={styles.highlightInfo}>
             <Text style={styles.highlightTitle} numberOfLines={2}>{item.title}</Text>
             <Text style={styles.highlightSubtitle}>{item.subtitle}</Text>
-            <Text style={styles.vendorName}>{item.vendor}</Text>
+            <AdaptiveText style={styles.vendorName} baseFontSize={14} minFontSize={10} maxChars={18} numberOfLines={1}>{item.vendor}</AdaptiveText>
           </View>
         </View>
       </View>

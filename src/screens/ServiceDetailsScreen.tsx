@@ -18,6 +18,7 @@ import ServiceVideoPlayer from '../components/ServiceVideoPlayer';
 import { MediaViewerModal } from '../components/MediaViewerModal';
 import { useAuth } from '../contexts/AuthContext';
 import { chatAPI } from '../services/chatAPI';
+import AdaptiveText from '../components/AdaptiveText';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -332,7 +333,7 @@ const ServiceDetailsScreen = () => {
           {/* Provider Info */}
           <TouchableOpacity style={styles.providerSection} onPress={handleProfilePress}>
             <View style={styles.providerInfo}>
-              <Text style={styles.providerName}>{service.serviceProvider}</Text>
+              <AdaptiveText style={styles.providerName} baseFontSize={18} maxChars={20} numberOfLines={1}>{service.serviceProvider}</AdaptiveText>
               <Text style={styles.providerLocation}>{service.location}</Text>
               <View style={styles.ratingContainer}>
                 <Ionicons name="star" size={16} color="#FFD700" />

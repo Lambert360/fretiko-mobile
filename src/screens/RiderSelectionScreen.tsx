@@ -14,6 +14,7 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { walletAPI } from '../services/walletAPI';
 import { riderAPI, RiderAvailabilityRequest } from '../services/riderAPI';
+import { riderSelectionBridge } from '../utils/riderSelectionBridge';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -25,13 +26,19 @@ interface RiderSelectionScreenProps {
         latitude: number;
         longitude: number;
         address: string;
+        state?: string;
+        country?: string;
+        city?: string;
       };
       orderDetails: {
         weight: number;
         itemCount: number;
         distance: number;
       };
-      onRiderSelected: (rider: Rider) => void;
+      callbackKey: string;
+      // Item types in the order ('product' | 'service'). When 'service' is present,
+      // only motorized vehicle tabs are shown.
+      itemTypes?: string[];
     };
   };
 }
@@ -55,19 +62,25 @@ export interface Rider {
 
 const RiderSelectionScreen: React.FC<RiderSelectionScreenProps> = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
-  const { pickupLocation, orderDetails, onRiderSelected } = route.params;
+  const { pickupLocation, orderDetails, callbackKey, itemTypes } = route.params;
+  const includesService = itemTypes?.includes('service') ?? false;
   
   const [riders, setRiders] = useState<Rider[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState(0);
   const scrollViewRef = useRef<ScrollView>(null);
   
-  const categories = [
-    { id: 'recommended', name: 'Recommended', icon: 'star' },
-    { id: 'cars', name: 'Cars', icon: 'car' },
-    { id: 'bikes', name: 'Bikes', icon: 'bicycle' },
-    { id: 'wheelbarrows', name: 'Wheelbarrows', icon: 'build' },
-  ];
+  const categories = includesService
+    ? [
+        { id: 'recommended', name: 'Recommended', icon: 'star' },
+        { id: 'cars', name: 'Vehicles', icon: 'car' },
+      ]
+    : [
+        { id: 'recommended', name: 'Recommended', icon: 'star' },
+        { id: 'cars', name: 'Cars', icon: 'car' },
+        { id: 'bikes', name: 'Bikes', icon: 'bicycle' },
+        { id: 'wheelbarrows', name: 'Wheelbarrows', icon: 'build' },
+      ];
 
   useEffect(() => {
     loadNearbyRiders();
@@ -87,6 +100,7 @@ const RiderSelectionScreen: React.FC<RiderSelectionScreenProps> = ({ navigation,
         },
         orderDetails,
         maxDistance: 5, // 5km radius
+        itemTypes,
       };
 
       // Fetch nearby riders
@@ -137,7 +151,7 @@ const RiderSelectionScreen: React.FC<RiderSelectionScreenProps> = ({ navigation,
         {
           text: 'Select Rider',
           onPress: () => {
-            onRiderSelected(rider);
+            riderSelectionBridge.resolve(callbackKey, rider);
             navigation.goBack();
           },
         },
@@ -159,7 +173,7 @@ const RiderSelectionScreen: React.FC<RiderSelectionScreenProps> = ({ navigation,
       return scoreB - scoreA;
     })[0];
 
-    onRiderSelected(bestRider);
+    riderSelectionBridge.resolve(callbackKey, bestRider);
     navigation.goBack();
   };
 
@@ -264,6 +278,34 @@ const RiderSelectionScreen: React.FC<RiderSelectionScreenProps> = ({ navigation,
     return (
       <View style={styles.loadingContainer}>
         <Text style={styles.loadingText}>Finding nearby riders...</Text>
+      </View>
+    );
+  }
+
+  // Full-screen empty state when no riders are available at all
+  if (riders.length === 0) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <View style={[styles.header, { paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
+          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={24} color="#FFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Select Rider</Text>
+          <View style={{ width: 44 }} />
+        </View>
+        <View style={styles.emptyStateContainer}>
+          <Ionicons name="bicycle-outline" size={64} color="#444" />
+          <Text style={styles.emptyStateTitle}>No active riders at the moment</Text>
+          <Text style={styles.emptyStateSubtitle}>
+            Please check back later or choose self-pickup
+          </Text>
+          <TouchableOpacity
+            style={styles.emptyStateButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={styles.emptyStateButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
@@ -573,6 +615,36 @@ const styles = StyleSheet.create({
   loadingText: {
     color: '#FFF',
     fontSize: 16,
+  },
+  emptyStateContainer: {
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingBottom: 60,
+  },
+  emptyStateTitle: {
+    color: '#FFF',
+    fontSize: 20,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  emptyStateSubtitle: {
+    color: '#888',
+    fontSize: 15,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  emptyStateButton: {
+    backgroundColor: '#3498DB',
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 24,
+  },
+  emptyStateButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

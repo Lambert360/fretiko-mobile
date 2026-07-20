@@ -19,6 +19,8 @@ import { walletAPI } from '../services/walletAPI';
 import { liveSalesAPI } from '../services/liveSalesAPI';
 import { ordersAPI } from '../services/ordersAPI';
 import { liveStreamSocket } from '../services/liveStreamSocket';
+import { riderSelectionBridge } from '../utils/riderSelectionBridge';
+import { addressSelectionBridge } from '../utils/addressSelectionBridge';
 
 interface LiveCartCheckoutScreenProps {
   navigation: any;
@@ -60,6 +62,8 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
   const [loading, setLoading] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
   const [selectedRider, setSelectedRider] = useState<any>(null); // No default - user must choose
+  const riderCallbackKeyRef = React.useRef<string | null>(null);
+  const addressCallbackKeyRef = React.useRef<string | null>(null);
   const [deliveryAddress, setDeliveryAddress] = useState({
     fullName: '',
     phone: '',
@@ -525,12 +529,24 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
               <View style={styles.deliveryOptions}>
                 <TouchableOpacity
                   style={styles.selectOption}
-                  onPress={() => navigation.navigate('RiderSelection', {
-                    pickupLocation: { latitude: 6.5244, longitude: 3.3792, address: 'Vendor Location' },
-                    deliveryLocation: { latitude: 6.5244, longitude: 3.3792, address: deliveryAddress.address || 'Delivery Address' },
-                    orderDetails: { weight: cartItems.length * 0.5, itemCount: cartItems.length, distance: 5 },
-                    onRiderSelected: (rider: any) => setSelectedRider(rider),
-                  })}
+                  onPress={() => {
+                    if (riderCallbackKeyRef.current) riderSelectionBridge.clear(riderCallbackKeyRef.current);
+                    const callbackKey = `live_cart_rider_${Date.now()}`;
+                    riderCallbackKeyRef.current = callbackKey;
+                    riderSelectionBridge.register(callbackKey, (rider: any) => setSelectedRider(rider));
+                    navigation.navigate('RiderSelection', {
+                      pickupLocation: {
+                        latitude: 6.5244,
+                        longitude: 3.3792,
+                        address: deliveryAddress.city ? `Vendor Location, ${deliveryAddress.city}` : 'Vendor Location',
+                        state: deliveryAddress.state || undefined,
+                        city: deliveryAddress.city || undefined,
+                      },
+                      deliveryLocation: { latitude: 6.5244, longitude: 3.3792, address: deliveryAddress.address || 'Delivery Address' },
+                      orderDetails: { weight: cartItems.length * 0.5, itemCount: cartItems.length, distance: 5 },
+                      callbackKey,
+                    });
+                  }}
                 >
                   <View style={styles.optionIcon}>
                     <Ionicons name="bicycle" size={24} color="#3498DB" />
@@ -619,9 +635,15 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
 
             <TouchableOpacity
               style={styles.editAddressButton}
-              onPress={() => navigation.navigate('AddressBook', {
-                onAddressSelected: (address: any) => setDeliveryAddress(address),
-              })}
+              onPress={() => {
+                if (addressCallbackKeyRef.current) addressSelectionBridge.clear(addressCallbackKeyRef.current);
+                const callbackKey = `live_cart_address_${Date.now()}`;
+                addressCallbackKeyRef.current = callbackKey;
+                addressSelectionBridge.register(callbackKey, (address: any) => setDeliveryAddress(address));
+                navigation.navigate('AddressBook', {
+                  callbackKey,
+                });
+              }}
             >
               <Ionicons name="location" size={18} color="#3498DB" />
               <Text style={styles.editAddressText}>Select from Address Book</Text>

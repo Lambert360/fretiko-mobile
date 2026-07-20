@@ -30,6 +30,20 @@ const AuctionCategoryScreen = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Exclude ended/sold/cancelled auctions and auctions whose end time has passed
+  const isAuctionDisplayable = (auction: AuctionWithDetails) => {
+    const status = auction.status?.toLowerCase();
+    const timeStatus = auction.time_status?.toLowerCase();
+    if (['ended', 'sold', 'cancelled'].includes(status)) return false;
+    if (timeStatus === 'ended') return false;
+    if (auction.end_time) {
+      const endTime = new Date(auction.end_time);
+      const now = new Date();
+      if (!isNaN(endTime.getTime()) && endTime <= now) return false;
+    }
+    return true;
+  };
+
   useEffect(() => {
     loadCategoryAuctions();
   }, [categorySlug]);
@@ -41,7 +55,7 @@ const AuctionCategoryScreen = () => {
         status: 'active',
         limit: 50,
       });
-      setAuctions(response.auctions);
+      setAuctions((response.auctions || []).filter(isAuctionDisplayable));
     } catch (error) {
       console.error('Error loading category auctions:', error);
     } finally {

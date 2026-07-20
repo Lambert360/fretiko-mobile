@@ -64,6 +64,7 @@ interface ProductsTabProps {
   headerOpacity: Animated.Value;
   subHeaderOpacity: Animated.Value;
   onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  reloadKey?: number;
 }
 
 const ProductsTab: React.FC<ProductsTabProps> = ({
@@ -71,6 +72,7 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
   headerOpacity,
   subHeaderOpacity,
   onScroll,
+  reloadKey,
 }) => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
@@ -181,6 +183,13 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
     setHasMoreProducts(true);
     await loadData(false);
   }, [loadData]);
+
+  // Reload when parent bumps the key (Home tab re-tap)
+  useEffect(() => {
+    if (reloadKey && isScreenFocused) {
+      refreshData();
+    }
+  }, [reloadKey, isScreenFocused, refreshData]);
 
   // Clear video positions when products change - FIXED: prevent stale data
   useEffect(() => {
@@ -712,7 +721,7 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
       return dateB - dateA;
     };
 
-    const blocks: JSX.Element[] = [];
+    const blocks: React.ReactNode[] = [];
     let round = 0; // 0 = rating, 1 = newest, then repeat
     let bannerIndex = 0;
 

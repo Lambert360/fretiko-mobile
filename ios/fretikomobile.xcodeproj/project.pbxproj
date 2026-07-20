@@ -264,7 +264,7 @@
 					"-lc++",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.kinging.fretikomobile";
-				PRODUCT_NAME = "fretiko";
+				PRODUCT_NAME = "Fretiko";
 				SWIFT_OBJC_BRIDGING_HEADER = "fretikomobile/fretikomobile-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -293,7 +293,7 @@
 					"-lc++",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.kinging.fretikomobile";
-				PRODUCT_NAME = "fretiko";
+				PRODUCT_NAME = "Fretiko";
 				SWIFT_OBJC_BRIDGING_HEADER = "fretikomobile/fretikomobile-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";

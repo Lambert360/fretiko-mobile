@@ -17,6 +17,9 @@ export interface CartItem {
   serviceDate?: string;
   serviceTime?: string;
   serviceNotes?: string;
+  sellerLocation?: { state?: string; country?: string; city?: string } | null;
+  isOutOfState?: boolean;
+  isOutOfCountry?: boolean;
   createdAt: string;
 }
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeImage } from '../SafeImage';
+import AdaptiveText from '../AdaptiveText';
 
 export interface ProductData {
   id: string;
@@ -145,7 +146,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         {renderMedia()}
         <View style={styles.listContent}>
           <Text style={styles.listTitle} numberOfLines={1}>{String(product.title || '')}</Text>
-          <Text style={styles.listVendor}>{product.vendor?.name || 'Unknown Vendor'}</Text>
+          <AdaptiveText style={styles.listVendor} baseFontSize={12} minFontSize={9} maxChars={18} numberOfLines={1}>{product.vendor?.name || 'Unknown Vendor'}</AdaptiveText>
           <Text style={styles.listPrice}>
             {String(product.currency || '₣')}{typeof product.price === 'number' && !isNaN(product.price) ? product.price.toLocaleString() : String(product.price || 0)}
           </Text>
@@ -189,7 +190,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             fallbackText="Vendor"
           />
           <View style={styles.vendorDetails}>
-            <Text style={styles.vendorName}>{String(product.vendor?.name || 'Unknown Vendor')}</Text>
+            <AdaptiveText style={styles.vendorName} baseFontSize={12} minFontSize={9} maxChars={18} numberOfLines={1}>{String(product.vendor?.name || 'Unknown Vendor')}</AdaptiveText>
             {product.vendor?.verified && (
               <Ionicons name="checkmark-circle" size={12} color="#1DA1F2" />
             )}

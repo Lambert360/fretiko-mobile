@@ -20,6 +20,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { liveSalesAPI, LiveStream } from '../services/liveSalesAPI';
 import { userAPI } from '../services/userAPI';
 import { liveStreamSocket, StreamStatusUpdate } from '../services/liveStreamSocket';
+import AdaptiveText from '../components/AdaptiveText';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -72,9 +73,9 @@ const PluggedVendorCard = ({
           }}
           style={styles.pluggedVendorAvatar}
         />
-        <Text style={styles.pluggedVendorName} numberOfLines={1}>
+        <AdaptiveText style={styles.pluggedVendorName} baseFontSize={10} minFontSize={8} maxChars={12} numberOfLines={1}>
           {stream.vendor.username}
-        </Text>
+        </AdaptiveText>
         {stream.vendor.is_verified && (
           <Ionicons name="checkmark-circle" size={10} color="#3498DB" />
         )}
@@ -166,7 +167,7 @@ const LiveStreamCard = ({
           />
           <View style={styles.vendorInfo}>
             <View style={styles.vendorNameRow}>
-              <Text style={styles.vendorName}>@{stream.vendor.username}</Text>
+              <AdaptiveText style={styles.vendorName} baseFontSize={12} minFontSize={9} maxChars={15} numberOfLines={1}>@{stream.vendor.username}</AdaptiveText>
               {stream.vendor.is_verified && (
                 <Ionicons name="checkmark-circle" size={14} color="#3498DB" />
               )}

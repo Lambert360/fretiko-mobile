@@ -50,6 +50,7 @@ const CreateInvoiceScreen: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState<number | null>(null);
   const [showTimePicker, setShowTimePicker] = useState<number | null>(null);
+  const [uploadingImageIndex, setUploadingImageIndex] = useState<Set<number>>(new Set());
 
   const addItem = () => {
     setItems([
@@ -90,7 +91,25 @@ const CreateInvoiceScreen: React.FC = () => {
       });
 
       if (!result.canceled && result.assets[0]) {
-        updateItem(index, 'imageUrl', result.assets[0].uri);
+        const localUri = result.assets[0].uri;
+        // Show the local image immediately for feedback while it uploads
+        updateItem(index, 'imageUrl', localUri);
+
+        setUploadingImageIndex(prev => new Set(prev).add(index));
+        try {
+          const uploadedUrl = await invoiceAPI.uploadInvoiceItemImage(localUri);
+          updateItem(index, 'imageUrl', uploadedUrl);
+        } catch (uploadError: any) {
+          console.error('Error uploading invoice item image:', uploadError);
+          Alert.alert('Upload Failed', uploadError.message || 'Failed to upload image. Please try again.');
+          updateItem(index, 'imageUrl', '');
+        } finally {
+          setUploadingImageIndex(prev => {
+            const next = new Set(prev);
+            next.delete(index);
+            return next;
+          });
+        }
       }
     } catch (error) {
       console.error('Error picking image:', error);
@@ -148,6 +167,11 @@ const CreateInvoiceScreen: React.FC = () => {
 
   const handleCreateInvoice = async () => {
     console.log(editMode ? '📝 handleUpdateInvoice called' : '📄 handleCreateInvoice called');
+
+    if (uploadingImageIndex.size > 0) {
+      Alert.alert('Please Wait', 'An image is still uploading. Please wait for it to finish.');
+      return;
+    }
 
     if (!validateInvoice()) {
       console.log('❌ Validation failed');
@@ -409,13 +433,23 @@ const CreateInvoiceScreen: React.FC = () => {
 
       {/* Optional Image */}
       <Text style={styles.label}>Image (Optional)</Text>
-      <TouchableOpacity style={styles.imageButton} onPress={() => pickImage(index)}>
+      <TouchableOpacity
+        style={styles.imageButton}
+        onPress={() => pickImage(index)}
+        disabled={uploadingImageIndex.has(index)}
+      >
         {item.imageUrl ? (
           <Image source={{ uri: item.imageUrl }} style={styles.itemImage} />
         ) : (
           <View style={styles.imagePlaceholder}>
             <Ionicons name="image-outline" size={40} color="#666" />
             <Text style={styles.imagePlaceholderText}>Tap to add image</Text>
+          </View>
+        )}
+        {uploadingImageIndex.has(index) && (
+          <View style={styles.imageUploadingOverlay}>
+            <ActivityIndicator color="#FFF" size="small" />
+            <Text style={styles.imageUploadingText}>Uploading...</Text>
           </View>
         )}
       </TouchableOpacity>
@@ -640,6 +674,21 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#444',
+  },
+  imageUploadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageUploadingText: {
+    color: '#FFF',
+    fontSize: 12,
+    marginTop: 6,
   },
   itemImage: {
     width: '100%',

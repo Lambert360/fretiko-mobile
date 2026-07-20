@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -47,6 +47,42 @@ const AuctionDiscoveryScreen = () => {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
 
+  // Keep a full list of active auctions so category card counts exclude ended auctions
+  const allActiveAuctionsRef = useRef<Map<string, AuctionWithDetails>>(new Map());
+
+  // Exclude ended/sold/cancelled auctions and auctions whose end time has passed
+  const isAuctionDisplayable = (auction: AuctionWithDetails) => {
+    const status = auction.status?.toLowerCase();
+    const timeStatus = auction.time_status?.toLowerCase();
+    if (['ended', 'sold', 'cancelled'].includes(status)) return false;
+    if (timeStatus === 'ended') return false;
+    if (auction.end_time) {
+      const endTime = new Date(auction.end_time);
+      const now = new Date();
+      if (!isNaN(endTime.getTime()) && endTime <= now) return false;
+    }
+    return true;
+  };
+
+  // Recalculate category card counts from the full active auction list
+  const updateCategoryCounts = useCallback(() => {
+    const counts = new Map<string, number>();
+    allActiveAuctionsRef.current.forEach((auction) => {
+      if (isAuctionDisplayable(auction)) {
+        const catId = auction.category_id;
+        if (catId) {
+          counts.set(catId, (counts.get(catId) || 0) + 1);
+        }
+      }
+    });
+    setCategories((prev) =>
+      prev.map((cat) => ({
+        ...cat,
+        active_auction_count: counts.get(cat.id) || 0,
+      }))
+    );
+  }, [isAuctionDisplayable]);
+
   // Load auction data
   const loadAuctionData = async () => {
     try {
@@ -66,36 +102,55 @@ const AuctionDiscoveryScreen = () => {
       const results = await Promise.all(promises);
 
       setCategories(results[0] as AuctionCategoryWithStats[]);
-      setEndingSoonAuctions((results[1] as any).auctions);
-      
+      setEndingSoonAuctions(((results[1] as any).auctions || []).filter(isAuctionDisplayable));
+
       const now = new Date();
-      
+
       // Filter live lots that are active (status=active, type=live, and haven't ended)
       // Don't require stream_url - show them when they become active
       const liveAuctionsData = ((results[2] as any).auctions || []).filter(
-        (auction: AuctionWithDetails) => 
-          auction.status === 'active' && 
+        (auction: AuctionWithDetails) =>
+          isAuctionDisplayable(auction) &&
+          auction.status === 'active' &&
           auction.auction_type === 'live' &&
           new Date(auction.end_time) > now
       );
       setLiveAuctions(liveAuctionsData);
-      
+
       // Filter active timed lots that haven't ended yet (client-side safeguard)
       const activeAuctionsData = ((results[3] as any).auctions || []).filter(
-        (auction: AuctionWithDetails) => 
-          auction.status === 'active' && 
+        (auction: AuctionWithDetails) =>
+          isAuctionDisplayable(auction) &&
+          auction.status === 'active' &&
           auction.auction_type === 'timed' &&
           new Date(auction.end_time) > now
       );
       setActiveAuctions(activeAuctionsData);
-      
+
       // Filter to ONLY show truly upcoming auctions (start_time in future AND status=scheduled)
       // This is a client-side safeguard against stale data or status update delays
       const upcomingAuctionsData = ((results[4] as any).auctions || []).filter(
-        (auction: AuctionWithDetails) => 
+        (auction: AuctionWithDetails) =>
+          isAuctionDisplayable(auction) &&
           auction.status === 'scheduled' && new Date(auction.start_time) > now
       );
       setUpcomingAuctions(upcomingAuctionsData);
+
+      // Fetch full active list separately for accurate category counts (non-blocking)
+      try {
+        const allActiveResponse = await auctionsAPI.getAuctions({ status: 'active', limit: 1000, sort: 'time_asc' });
+        const allActiveAuctions = (allActiveResponse.auctions || []) as AuctionWithDetails[];
+        allActiveAuctionsRef.current = new Map(
+          allActiveAuctions.filter(isAuctionDisplayable).map((a) => [a.id, a])
+        );
+        updateCategoryCounts();
+      } catch (error) {
+        console.error('Error loading full active auctions for category counts:', error);
+        // Fallback: use the live + active auctions we already fetched
+        const combinedActive = [...liveAuctionsData, ...activeAuctionsData];
+        allActiveAuctionsRef.current = new Map(combinedActive.map((a) => [a.id, a]));
+        updateCategoryCounts();
+      }
 
       // Fetch my auctions if seller (active + scheduled only, excluding ended)
       if (profileData.isSeller && user?.id) {
@@ -110,10 +165,10 @@ const AuctionDiscoveryScreen = () => {
           // Filter and combine: active auctions that haven't ended, scheduled auctions that haven't started
           const filtered = [
             ...((activeAuctions as any).auctions || []).filter(
-              (a: AuctionWithDetails) => new Date(a.end_time) > currentTime
+              (a: AuctionWithDetails) => isAuctionDisplayable(a) && new Date(a.end_time) > currentTime
             ),
             ...((scheduledAuctions as any).auctions || []).filter(
-              (a: AuctionWithDetails) => new Date(a.start_time) > currentTime
+              (a: AuctionWithDetails) => isAuctionDisplayable(a) && new Date(a.start_time) > currentTime
             )
           ].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
            .slice(0, 10);  // Take first 10
@@ -164,8 +219,8 @@ const AuctionDiscoveryScreen = () => {
             const newAuction = await auctionsAPI.getAuction(data.auction_id);
             const now = new Date();
             
-            // Only add if start_time is in the future (truly upcoming)
-            if (new Date(newAuction.start_time) > now) {
+            // Only add if start_time is in the future and auction is still displayable
+            if (isAuctionDisplayable(newAuction) && new Date(newAuction.start_time) > now) {
               console.log('✅ Adding new auction to myAuctions and upcomingAuctions');
               setMyAuctions(prev => {
                 // Check if not already in list
@@ -202,7 +257,19 @@ const AuctionDiscoveryScreen = () => {
         // Fetch updated auction data
         try {
           const updatedAuction = await auctionsAPI.getAuction(data.auction_id);
-          
+
+          // Don't promote stale/ended auctions back into active lists
+          if (!isAuctionDisplayable(updatedAuction)) {
+            console.log('🚫 Ignoring stale active event for ended auction:', data.auction_id);
+            allActiveAuctionsRef.current.delete(data.auction_id);
+            updateCategoryCounts();
+            return;
+          }
+
+          // Keep ref in sync for accurate category counts
+          allActiveAuctionsRef.current.set(updatedAuction.id, updatedAuction);
+          updateCategoryCounts();
+
           // Add to appropriate active list based on auction type
           if (updatedAuction.auction_type === 'live') {
             setLiveAuctions(prev => {
@@ -250,10 +317,13 @@ const AuctionDiscoveryScreen = () => {
                 updated[existingIndex] = updatedAuction;
                 return updated;
               }
-              // If not in list but belongs to user, add it
-              return [...prev, updatedAuction].sort((a, b) => 
-                new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
-              ).slice(0, 10); // Keep max 10 items
+              // If not in list but belongs to user and still displayable, add it
+              return [...prev, updatedAuction]
+                .filter(isAuctionDisplayable)
+                .sort((a, b) =>
+                  new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+                )
+                .slice(0, 10); // Keep max 10 items
             });
           }
         } catch (error) {
@@ -282,6 +352,10 @@ const AuctionDiscoveryScreen = () => {
         setActiveAuctions(prev => prev.filter(a => a.id !== data.auction_id));
         setLiveAuctions(prev => prev.filter(a => a.id !== data.auction_id));
         setEndingSoonAuctions(prev => prev.filter(a => a.id !== data.auction_id));
+
+        // Remove from the active ref so category counts don't include it
+        allActiveAuctionsRef.current.delete(data.auction_id);
+        updateCategoryCounts();
       }
     };
 

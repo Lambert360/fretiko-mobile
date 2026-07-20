@@ -18,6 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { wishlistAPI, WishlistItem } from '../services/wishlistAPI';
 import { walletAPI } from '../services/walletAPI';
 import { riderAPI, Rider } from '../services/riderAPI';
+import { riderSelectionBridge } from '../utils/riderSelectionBridge';
 
 interface GiftCheckoutScreenProps {
   navigation: any;
@@ -47,6 +48,7 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
   const [canPurchase, setCanPurchase] = useState(false);
   const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>('pickup'); // Default to self-pickup
   const [loadingRiders, setLoadingRiders] = useState(false);
+  const riderCallbackKeyRef = React.useRef<string | null>(null);
   const [deliveryAddress, setDeliveryAddress] = useState({
     fullName: '',
     phone: '',
@@ -117,11 +119,15 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
     }
 
     // Navigate to rider selection screen
+    // Use delivery address state/city as the pickup location hint so the backend
+    // can filter riders to the correct area (vendor location isn't available here).
     navigation.navigate('RiderSelection', {
       pickupLocation: {
-        latitude: 6.5244, // TODO: Get vendor location from product
+        latitude: 6.5244,
         longitude: 3.3792,
-        address: 'Vendor Location',
+        address: deliveryAddress.city ? `Vendor Location, ${deliveryAddress.city}` : 'Vendor Location',
+        state: deliveryAddress.state || undefined,
+        city: deliveryAddress.city || undefined,
       },
       deliveryLocation: {
         latitude: 6.5244, // TODO: Geocode delivery address
@@ -133,9 +139,13 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
         itemCount: items.length,
         distance: 5, // TODO: Calculate actual distance
       },
-      onRiderSelected: (rider: Rider) => {
-        setSelectedRider(rider);
-      },
+      callbackKey: (() => {
+        if (riderCallbackKeyRef.current) riderSelectionBridge.clear(riderCallbackKeyRef.current);
+        const key = `gift_rider_${Date.now()}`;
+        riderCallbackKeyRef.current = key;
+        riderSelectionBridge.register(key, (rider: Rider) => setSelectedRider(rider));
+        return key;
+      })(),
     });
   };
 

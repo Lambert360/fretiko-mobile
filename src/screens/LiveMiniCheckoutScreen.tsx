@@ -61,7 +61,8 @@ const LiveMiniCheckoutScreen = () => {
   const { 
     streamId, 
     item, 
-    riderId, 
+    riderId,
+    riderPrice = 0,
     deliveryAddress, 
     returnToStream = true 
   } = route.params || {};
@@ -156,7 +157,7 @@ const LiveMiniCheckoutScreen = () => {
       ? item.price * (item.quantity || 1)
       : item.price;
 
-    const deliveryFee = riderId ? 7.50 : 0; // Mock delivery fee
+    const deliveryFee = riderId ? (riderPrice || 0) : 0;
     const platformFee = subtotal * 0.05; // 5% platform fee
 
     // Calculate escrow fee if escrow is enabled

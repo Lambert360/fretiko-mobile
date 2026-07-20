@@ -845,10 +845,10 @@ class IkoSearchAPI {
     const resultTexts = results.results.slice(0, 5).map((item, index) => {
       if (results.type === 'products') {
         const product = item as IkoProductResult;
-        return `${index + 1}. ${product.title} - ₦${product.price.toLocaleString()} by ${product.seller.name} (${product.rating}⭐)`;
+        return `${index + 1}. ${product.title} - ₣${product.price.toLocaleString()} by ${product.seller.name} (${product.rating}⭐)`;
       } else if (results.type === 'services') {
         const service = item as IkoServiceResult;
-        return `${index + 1}. ${service.title} - ₦${service.price.toLocaleString()} by ${service.provider.name} (${service.rating}⭐)`;
+        return `${index + 1}. ${service.title} - ₣${service.price.toLocaleString()} by ${service.provider.name} (${service.rating}⭐)`;
       } else {
         const user = item as IkoUserResult;
         return `${index + 1}. ${user.displayName} (@${user.username}) - ${user.bio}`;

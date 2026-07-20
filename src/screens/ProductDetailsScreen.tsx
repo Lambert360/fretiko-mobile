@@ -25,6 +25,7 @@ import { wishlistAPI } from '../services/wishlistAPI';
 import { chatAPI } from '../services/chatAPI';
 import ProductVideoPlayer from '../components/ProductVideoPlayer';
 import { MediaViewerModal } from '../components/MediaViewerModal';
+import AdaptiveText from '../components/AdaptiveText';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -387,7 +388,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
             style={styles.reviewerAvatar}
           />
           <View style={styles.reviewerInfo}>
-            <Text style={styles.reviewerName}>{item.userName}</Text>
+            <AdaptiveText style={styles.reviewerName} baseFontSize={14} minFontSize={10} maxChars={18} numberOfLines={1}>{item.userName}</AdaptiveText>
             <View style={styles.reviewRatingRow}>
               {renderStars(item.rating || 0, 14)}
               <Text style={styles.reviewDate}>{new Date(item.createdAt).toLocaleDateString()}</Text>
@@ -508,7 +509,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
               </View>
             )}
             <View style={styles.sellerInfo}>
-              <Text style={styles.sellerName}>{product.vendor_username || 'Unknown Vendor'}</Text>
+              <AdaptiveText style={styles.sellerName} baseFontSize={16} maxChars={18} numberOfLines={1}>{product.vendor_username || 'Unknown Vendor'}</AdaptiveText>
               <View style={styles.sellerRating}>
                 <Ionicons name="star" size={12} color="#FFD700" />
                 <Text style={styles.sellerRatingText}>Verified Seller</Text>

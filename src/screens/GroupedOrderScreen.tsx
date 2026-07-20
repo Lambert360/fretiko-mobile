@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ordersAPI } from '../services/ordersAPI';
 import { walletAPI } from '../services/walletAPI';
+import AdaptiveText from '../components/AdaptiveText';
 
 interface GroupedOrderScreenProps {
   navigation: any;
@@ -287,7 +288,7 @@ const GroupedOrderScreen: React.FC<GroupedOrderScreenProps> = ({ navigation, rou
               {/* Vendor Info */}
               <View style={styles.vendorInfo}>
                 <Ionicons name="storefront" size={16} color="#007AFF" />
-                <Text style={styles.vendorName}>{order.vendor_name}</Text>
+                <AdaptiveText style={styles.vendorName} baseFontSize={14} minFontSize={10} maxChars={22} numberOfLines={1}>{order.vendor_name}</AdaptiveText>
               </View>
 
               {/* Order Details */}

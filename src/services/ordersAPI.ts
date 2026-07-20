@@ -15,6 +15,14 @@ export interface Order {
   deliveryInstructions?: string; // ✅ Add delivery instructions/notes from checkout
   items: OrderItem[];
   source?: 'regular' | 'live_stream' | 'auction' | 'service_booking';
+  isInterstate?: boolean;
+  isInternational?: boolean;
+  interstateCompany?: {
+    companyId: string;
+    companyName: string;
+    deliveryPrice: number;
+    estimatedDeliveryDays?: number;
+  };
   metadata?: {
     auction_id?: string;
     subtotal?: number;
@@ -112,7 +120,25 @@ class OrdersAPI {
       }
 
       const response = await api.get(`/orders?${params.toString()}`);
-      return response.data;
+      const orders: Order[] = response.data || [];
+      return orders.map(order => {
+        const interstateMeta = order.metadata?.interstate_delivery;
+        const isInterstate = order.delivery_type === 'interstate_delivery' || !!interstateMeta;
+        const isInternational = !!interstateMeta?.isInternational;
+        const interstateCompany = isInterstate && interstateMeta ? {
+          companyId: interstateMeta.companyId,
+          companyName: interstateMeta.companyName,
+          deliveryPrice: interstateMeta.deliveryPrice,
+          estimatedDeliveryDays: interstateMeta.estimatedDeliveryDays,
+        } : undefined;
+
+        return {
+          ...order,
+          isInterstate,
+          isInternational,
+          interstateCompany,
+        };
+      });
     } catch (error) {
       console.error('Error fetching orders:', error);
       throw error;
@@ -123,7 +149,23 @@ class OrdersAPI {
   async getOrderDetails(orderId: string): Promise<OrderDetails> {
     try {
       const response = await api.get(`/orders/${orderId}`);
-      return response.data;
+      const order = response.data;
+      const interstateMeta = order.metadata?.interstate_delivery;
+      const isInterstate = order.delivery_type === 'interstate_delivery' || !!interstateMeta;
+      const isInternational = !!interstateMeta?.isInternational;
+      const interstateCompany = isInterstate && interstateMeta ? {
+        companyId: interstateMeta.companyId,
+        companyName: interstateMeta.companyName,
+        deliveryPrice: interstateMeta.deliveryPrice,
+        estimatedDeliveryDays: interstateMeta.estimatedDeliveryDays,
+      } : undefined;
+
+      return {
+        ...order,
+        isInterstate,
+        isInternational,
+        interstateCompany,
+      } as OrderDetails;
     } catch (error) {
       console.error('Error fetching order details:', error);
       throw error;

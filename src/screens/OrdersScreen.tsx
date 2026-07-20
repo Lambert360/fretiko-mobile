@@ -164,6 +164,18 @@ const OrdersScreen = () => {
                   </View>
                 );
               })()}
+              {/* Interstate / International Badge */}
+              {item.isInternational ? (
+                <View style={styles.interstateBadge}>
+                  <Ionicons name="globe" size={10} color="#FF6B35" />
+                  <Text style={styles.interstateText}>International</Text>
+                </View>
+              ) : item.isInterstate ? (
+                <View style={styles.interstateBadge}>
+                  <Ionicons name="navigate" size={10} color="#FF6B35" />
+                  <Text style={styles.interstateText}>Interstate</Text>
+                </View>
+              ) : null}
             </View>
             <Text style={styles.orderDate}>{formatDate(item.orderDate)}</Text>
           </View>
@@ -201,6 +213,16 @@ const OrdersScreen = () => {
             <Text style={styles.riderVehicle}>
               {(item as any).riderInfo.vehicleType.charAt(0).toUpperCase() + (item as any).riderInfo.vehicleType.slice(1)} delivery
             </Text>
+          )}
+          
+          {/* Interstate / International Company Information */}
+          {item.isInterstate && item.interstateCompany && (
+            <View style={styles.interstateInfo}>
+              <Ionicons name={item.isInternational ? 'globe' : 'navigate'} size={14} color="#FF6B35" />
+              <Text style={styles.interstateInfoText}>
+                {item.interstateCompany.companyName} — {formatPrice(item.interstateCompany.deliveryPrice)}
+              </Text>
+            </View>
           )}
         </View>
         )}
@@ -422,6 +444,21 @@ const styles = StyleSheet.create({
     color: 'white',
     marginLeft: 3,
   },
+  interstateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3EE',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    marginLeft: 6,
+  },
+  interstateText: {
+    color: '#FF6B35',
+    fontSize: 9,
+    fontWeight: '600',
+    marginLeft: 3,
+  },
   orderDate: {
     color: '#888',
     fontSize: 14,
@@ -533,6 +570,18 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 12,
     marginLeft: 28,
+  },
+  interstateInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 28,
+    marginTop: 4,
+  },
+  interstateInfoText: {
+    color: '#FF6B35',
+    fontSize: 12,
+    marginLeft: 6,
+    fontWeight: '500',
   },
   escrowSection: {
     flexDirection: 'row',

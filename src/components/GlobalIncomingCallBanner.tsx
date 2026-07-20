@@ -16,7 +16,7 @@ interface Props {
 }
 
 const GlobalIncomingCallBanner: React.FC<Props> = ({ navigationRef }) => {
-  const { incomingCallForBanner, declineCallFromBanner, clearBannerCall } =
+  const { incomingCallForBanner, declineCallFromBanner, clearBannerCall, acceptIncomingCall } =
     useCallContext();
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(-140)).current;
@@ -42,26 +42,15 @@ const GlobalIncomingCallBanner: React.FC<Props> = ({ navigationRef }) => {
   const handleAccept = () => {
     if (!incomingCallForBanner) return;
 
-    const { conversationId, callSessionId, callerName, callerAvatar, callType } =
-      incomingCallForBanner;
+    const info = incomingCallForBanner;
 
     // Dismiss the banner immediately
     clearBannerCall();
 
-    // Navigate to the correct IndividualChatScreen and pass the pending call info.
-    // IndividualChatScreen will detect pendingIncomingCall and show the full-screen
-    // incoming call modal so the user can tap Accept there (same code path as normal).
-    navigationRef.current?.navigate('IndividualChatScreen', {
-      chatId: conversationId,
-      chatName: callerName,
-      chatAvatar: callerAvatar || null,
-      chatType: 'friend',
-      pendingIncomingCall: {
-        callSessionId,
-        callerName,
-        callType,
-      },
-    });
+    // Accept the call and jump straight into the full-screen CallScreen —
+    // no intermediate confirmation step needed since this button already is one.
+    acceptIncomingCall(info);
+    navigationRef.current?.navigate('CallScreen');
   };
 
   // Do not render the component at all when there is no incoming call

@@ -24,6 +24,7 @@ import { realtimeAPI } from '../services/realtimeAPI';
 import { storiesAPI, Story } from '../services/storiesAPI';
 import { useAuth } from '../contexts/AuthContext';
 import { AI_ASSISTANT_UUID, AI_ASSISTANT_NAME, AI_ASSISTANT_AVATAR } from '../constants/chat';
+import AdaptiveText from '../components/AdaptiveText';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -842,9 +843,9 @@ const KonnectScreen = () => {
                   </View>
                   <View style={styles.storyCardOverlay} />
                   <View style={styles.storyCardTextContainer}>
-                    <Text style={styles.storyCardName} numberOfLines={2}>
+                    <AdaptiveText style={styles.storyCardName} baseFontSize={13} minFontSize={10} maxChars={15} numberOfLines={2}>
                       {group.user.username}
-                    </Text>
+                    </AdaptiveText>
                   </View>
                 </TouchableOpacity>
               );
@@ -1079,7 +1080,7 @@ const KonnectScreen = () => {
           <View style={styles.chatContent}>
             <View style={styles.chatHeader}>
               <View style={styles.nameContainer}>
-                <Text style={styles.chatName}>{item.name}</Text>
+                <AdaptiveText style={styles.chatName} baseFontSize={18} maxChars={20} numberOfLines={1}>{item.name}</AdaptiveText>
                 {item.verified && (
                   <Ionicons name="checkmark-circle" size={16} color="#3498DB" style={{ marginLeft: 4 }} />
                 )}

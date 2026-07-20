@@ -22,6 +22,7 @@ import { walletAPI } from '../services/walletAPI';
 import { riderLocationAPI } from '../services/riderLocationAPI';
 import { realtimeAPI } from '../services/realtimeAPI';
 import { disputesAPI } from '../services/disputesAPI';
+import AdaptiveText from '../components/AdaptiveText';
 
 const { width, height } = Dimensions.get('window');
 
@@ -90,7 +91,7 @@ const OrderTrackingScreen: React.FC = () => {
 
   // Real-time updates
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval>;
     
     if (order && order.timerInfo) {
       interval = setInterval(() => {
@@ -1209,7 +1210,20 @@ const OrderTrackingScreen: React.FC = () => {
         <View style={styles.orderSummaryHeader}>
           <View style={styles.orderSummaryLeft}>
             <Text style={styles.orderNumberText}>#{order.orderNumber}</Text>
-            <Text style={styles.orderDateText}>{formatDate(order.orderDate)}</Text>
+            <View style={styles.orderSummaryBadges}>
+              <Text style={styles.orderDateText}>{formatDate(order.orderDate)}</Text>
+              {order.isInternational ? (
+                <View style={styles.interstateBadge}>
+                  <Ionicons name="globe" size={10} color="#FF6B35" />
+                  <Text style={styles.interstateText}>International</Text>
+                </View>
+              ) : order.isInterstate ? (
+                <View style={styles.interstateBadge}>
+                  <Ionicons name="navigate" size={10} color="#FF6B35" />
+                  <Text style={styles.interstateText}>Interstate</Text>
+                </View>
+              ) : null}
+            </View>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) }]}>
             <Text style={styles.statusBadgeText}>{getStatusText(order.status)}</Text>
@@ -1286,6 +1300,22 @@ const OrderTrackingScreen: React.FC = () => {
               <Text style={styles.estimatedDeliveryText}>
                 Estimated Delivery: {formatDate(order.estimatedDelivery)}
               </Text>
+            </View>
+          )}
+          
+          {/* Interstate / International Delivery Company */}
+          {order.isInterstate && order.interstateCompany && (
+            <View style={styles.interstateDeliveryRow}>
+              <Ionicons name={order.isInternational ? 'globe' : 'navigate'} size={18} color="#FF6B35" />
+              <View style={styles.interstateDeliveryContent}>
+                <Text style={styles.interstateDeliveryLabel}>
+                  {order.isInternational ? 'International Delivery Partner' : 'Interstate Delivery Partner'}
+                </Text>
+                <Text style={styles.interstateDeliveryName}>{order.interstateCompany.companyName}</Text>
+                <Text style={styles.interstateDeliveryPrice}>
+                  Delivery Fee: {walletAPI.formatFreti(order.interstateCompany.deliveryPrice)}
+                </Text>
+              </View>
             </View>
           )}
         </View>
@@ -1482,7 +1512,7 @@ const OrderTrackingScreen: React.FC = () => {
             style={styles.riderAvatar}
           />
           <View style={styles.riderDetails}>
-            <Text style={styles.riderName}>{order.riderInfo.riderName}</Text>
+            <AdaptiveText style={styles.riderName} baseFontSize={18} maxChars={20} numberOfLines={1}>{order.riderInfo.riderName}</AdaptiveText>
             <Text style={styles.riderVehicle}>
               {order.riderInfo.vehicleType.charAt(0).toUpperCase() + order.riderInfo.vehicleType.slice(1)} delivery
             </Text>
@@ -1573,7 +1603,7 @@ const OrderTrackingScreen: React.FC = () => {
               <View style={styles.vendorCard}>
                 <Ionicons name="storefront" size={24} color="#3498DB" />
                 <View style={styles.vendorDetails}>
-                  <Text style={styles.vendorName}>{order.vendorInfo.name}</Text>
+                  <AdaptiveText style={styles.vendorName} baseFontSize={16} maxChars={20} numberOfLines={1}>{order.vendorInfo.name}</AdaptiveText>
                   {order.vendorLocation && (
                     <Text style={styles.vendorAddress}>{order.vendorLocation.address}</Text>
                   )}
@@ -1635,7 +1665,7 @@ const OrderTrackingScreen: React.FC = () => {
               <View style={styles.vendorCard}>
                 <Ionicons name="storefront" size={24} color="#3498DB" />
                 <View style={styles.vendorDetails}>
-                  <Text style={styles.vendorName}>{order.vendorInfo.name}</Text>
+                  <AdaptiveText style={styles.vendorName} baseFontSize={16} maxChars={20} numberOfLines={1}>{order.vendorInfo.name}</AdaptiveText>
                   {order.vendorLocation && (
                     <Text style={styles.vendorAddress}>{order.vendorLocation.address}</Text>
                   )}
@@ -2512,6 +2542,26 @@ const styles = StyleSheet.create({
   orderSummaryLeft: {
     flex: 1,
   },
+  orderSummaryBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  interstateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3EE',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  interstateText: {
+    color: '#FF6B35',
+    fontSize: 9,
+    fontWeight: '600',
+    marginLeft: 3,
+  },
   orderNumberText: {
     color: 'white',
     fontSize: 20,
@@ -2615,6 +2665,33 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginLeft: 8,
     fontWeight: '500',
+  },
+  interstateDeliveryRow: {
+    flexDirection: 'row',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  interstateDeliveryContent: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  interstateDeliveryLabel: {
+    color: '#FF6B35',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  interstateDeliveryName: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  interstateDeliveryPrice: {
+    color: '#888',
+    fontSize: 12,
   },
   // ✅ Payment Details Styles
   paymentDetailsCard: {

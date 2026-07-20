@@ -41,9 +41,6 @@ export interface VerificationStatus {
 export interface LogisticsPartner {
   id: string;
   company_name: string;
-  contact_email: string;
-  service_areas: string[];
-  partner_status: string;
 }
 
 export interface DocumentUploadResponse {
@@ -61,7 +58,21 @@ const getAuthHeaders = async () => {
 };
 
 export const riderVerificationAPI = {
-  // Submit verification request
+  // Claim a partner-created dormant rider account using a unique rider ID
+  claimRiderAccount: async (uniqueRiderId: string, companyId: string): Promise<VerificationResponse> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.post('/rider-verification/claim', {
+        unique_rider_id: uniqueRiderId.toLowerCase().trim(),
+        company_id: companyId,
+      }, { headers });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to claim rider account');
+    }
+  },
+
+  // Submit verification request (legacy self-apply flow)
   submitVerification: async (data: RiderVerificationData): Promise<VerificationResponse> => {
     try {
       const headers = await getAuthHeaders();
@@ -127,12 +138,14 @@ export const riderVerificationAPI = {
     }
   },
 
-  // Get available companies for selection
-  getCompanies: async (): Promise<LogisticsPartner[]> => {
+  // Get available companies for selection, optionally filtered by state
+  getCompanies: async (state?: string): Promise<LogisticsPartner[]> => {
     try {
       const headers = await getAuthHeaders();
-      const response = await api.get('/logistics-partners/verified', { headers });
-      return response.data;
+      const params = state ? `?state=${encodeURIComponent(state)}` : '';
+      const response = await api.get(`/rider-verification/companies${params}`, { headers });
+      // Response shape: { success: boolean, companies: [...] }
+      return response.data?.companies || [];
     } catch (error: any) {
       console.error('Get companies error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch companies');

@@ -3,6 +3,7 @@ import React from 'react';
 import { Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { walletAPI } from '../services/walletAPI';
 import { SafeImage } from './SafeImage';
+import AdaptiveText from './AdaptiveText';
 
 const { width } = Dimensions.get('window');
 const cardWidth = (width - 24) / 2; // Account for padding
@@ -75,7 +76,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
             </Text>
           </View>
         )}
-        <Text style={styles.sellerName} numberOfLines={1}>{sellerName || 'Unknown Seller'}</Text>
+        <AdaptiveText style={styles.sellerName} baseFontSize={12} minFontSize={9} maxChars={18} numberOfLines={1}>{sellerName || 'Unknown Seller'}</AdaptiveText>
       </View>
     );
     

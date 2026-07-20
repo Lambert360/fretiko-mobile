@@ -12,6 +12,7 @@ import { postsAPI } from '../services/postsAPI';
 import { searchAPI, SearchType } from '../services/searchAPI';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeImage } from '../components/SafeImage';
+import AdaptiveText from '../components/AdaptiveText';
 
 interface UserProfile {
   id: string;
@@ -620,12 +621,12 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                 <View style={styles.balanceGrid}>
                   <View style={styles.balanceCard}>
                     <Text style={styles.balanceLabel}>Available Balance</Text>
-                    <Text style={styles.fretiAmount}>{walletAPI.formatFreti(userData.fretiBalance)}</Text>
+                    <AdaptiveText style={styles.fretiAmount} baseFontSize={20} minFontSize={12} maxChars={7} numberOfLines={1}>{walletAPI.formatFreti(userData.fretiBalance)}</AdaptiveText>
                     <Text style={styles.localAmount}>{walletAPI.formatCurrency(userData.availableLocal, userData.localCurrency)}</Text>
                   </View>
                   <View style={styles.rewardsCard}>
                     <Text style={styles.balanceLabel}>Total Balance</Text>
-                    <Text style={styles.fretiAmount}>{walletAPI.formatFreti(userData.totalFretiBalance)}</Text>
+                    <AdaptiveText style={styles.fretiAmount} baseFontSize={20} minFontSize={12} maxChars={7} numberOfLines={1}>{walletAPI.formatFreti(userData.totalFretiBalance)}</AdaptiveText>
                     <Text style={styles.localAmount}>{walletAPI.formatCurrency(userData.totalLocal, userData.localCurrency)}</Text>
                     <View style={styles.rewardsBadge}>
                       <Text style={styles.rewardsText}>{userData.recentTransactions}</Text>
@@ -639,14 +640,14 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                     {userData.escrowBalance > 0 && (
                       <View style={styles.escrowCard}>
                         <Text style={styles.escrowLabel}>In Escrow</Text>
-                        <Text style={styles.escrowAmount}>{walletAPI.formatFreti(userData.escrowBalance)}</Text>
+                        <AdaptiveText style={styles.escrowAmount} baseFontSize={16} minFontSize={10} maxChars={7} numberOfLines={1}>{walletAPI.formatFreti(userData.escrowBalance)}</AdaptiveText>
                         <Text style={styles.escrowLocal}>{walletAPI.formatCurrency(userData.escrowLocal, userData.localCurrency)}</Text>
                       </View>
                     )}
                     {userData.pendingWithdrawal > 0 && (
                       <View style={styles.pendingCard}>
                         <Text style={styles.pendingLabel}>Pending Withdrawal</Text>
-                        <Text style={styles.pendingAmount}>{walletAPI.formatFreti(userData.pendingWithdrawal)}</Text>
+                        <AdaptiveText style={styles.pendingAmount} baseFontSize={16} minFontSize={10} maxChars={7} numberOfLines={1}>{walletAPI.formatFreti(userData.pendingWithdrawal)}</AdaptiveText>
                         <Text style={styles.pendingLocal}>{walletAPI.formatCurrency(userData.pendingLocal, userData.localCurrency)}</Text>
                       </View>
                     )}
@@ -968,8 +969,8 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
           <Animated.View style={[styles.uploadModalContent, { transform: [{ scale: springAnim }] }]}>
             <TouchableOpacity activeOpacity={0.9} onPress={() => {}}>
               <View style={styles.uploadModalHeader}>
-                <Text style={styles.uploadModalTitle}>Create Listing</Text>
-                <Text style={styles.uploadModalSubtitle}>What would you like to list on the marketplace?</Text>
+                <Text style={styles.uploadModalTitle}>Create</Text>
+                <Text style={styles.uploadModalSubtitle}>What would you like to do?</Text>
               </View>
 
               <View style={styles.uploadOptions}>
@@ -1008,6 +1009,46 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                     <View style={styles.uploadOptionContent}>
                       <Text style={styles.uploadOptionTitle}>List Service</Text>
                       <Text style={styles.uploadOptionDescription}>Offer services to customers</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.6)" />
+                  </TouchableOpacity>
+                )}
+
+                {/* Create Lot (auction) — sellers only */}
+                {profile?.isSeller && (
+                  <TouchableOpacity
+                    style={styles.uploadOption}
+                    onPress={() => {
+                      setIsUploadModalVisible(false);
+                      navigation.navigate('CreateAuction');
+                    }}
+                  >
+                    <View style={[styles.uploadOptionIcon, { backgroundColor: '#F39C12' }]}>
+                      <Ionicons name="hammer" size={28} color="#FFFFFF" />
+                    </View>
+                    <View style={styles.uploadOptionContent}>
+                      <Text style={styles.uploadOptionTitle}>Create Lot</Text>
+                      <Text style={styles.uploadOptionDescription}>List an item for auction</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.6)" />
+                  </TouchableOpacity>
+                )}
+
+                {/* Go Live — sellers and riders */}
+                {(profile?.isSeller || profile?.isRider) && (
+                  <TouchableOpacity
+                    style={styles.uploadOption}
+                    onPress={() => {
+                      setIsUploadModalVisible(false);
+                      navigation.navigate('LiveStreamSetup');
+                    }}
+                  >
+                    <View style={[styles.uploadOptionIcon, { backgroundColor: '#FF4757' }]}>
+                      <Ionicons name="radio" size={28} color="#FFFFFF" />
+                    </View>
+                    <View style={styles.uploadOptionContent}>
+                      <Text style={styles.uploadOptionTitle}>Go Live</Text>
+                      <Text style={styles.uploadOptionDescription}>Start a live stream</Text>
                     </View>
                     <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.6)" />
                   </TouchableOpacity>

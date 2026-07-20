@@ -50,7 +50,8 @@ export interface WalletTransaction {
   walletId: string;
   userId: string;
   transactionType: 'deposit_mint' | 'withdrawal_burn' | 'purchase_hold' | 'escrow_release' | 
-                   'escrow_refund' | 'admin_adjustment' | 'fee_deduction' | 'reward_credit';
+                   'escrow_release_to_platform' | 'escrow_refund' | 'admin_adjustment' | 
+                   'fee_deduction' | 'reward_credit';
   availableDelta: number;
   escrowDelta: number;
   pendingWithdrawalDelta: number;
@@ -567,6 +568,7 @@ export const walletAPI = {
       'withdrawal_burn': { label: 'Withdrawal', icon: 'remove-circle', color: '#E74C3C' },
       'purchase_hold': { label: 'Purchase', icon: 'bag', color: '#3498DB' },
       'escrow_release': { label: 'Escrow Released', icon: 'checkmark-circle', color: '#27AE60' },
+      'escrow_release_to_platform': { label: 'Dispute Resolved', icon: 'shield-checkmark', color: '#9B59B6' },
       'escrow_refund': { label: 'Refund', icon: 'return-up-back', color: '#F39C12' },
       'admin_adjustment': { label: 'Adjustment', icon: 'construct', color: '#9B59B6' },
       'fee_deduction': { label: 'Fee', icon: 'card', color: '#E67E22' },

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,10 @@ import { walletAPI } from '../services/walletAPI';
 import { rewardsAPI, CheckoutDisplayRewards } from '../services/rewardsAPI';
 import { invoiceAPI } from '../services/invoiceAPI';
 import { Rider } from './RiderSelectionScreen';
+import { InterstateCompanySelection } from './InterstateDeliveryScreen';
+import { riderSelectionBridge } from '../utils/riderSelectionBridge';
+import { addressSelectionBridge } from '../utils/addressSelectionBridge';
+import LocationSelector from '../components/LocationSelector';
 
 interface CheckoutScreenProps {
   navigation: any;
@@ -65,6 +69,7 @@ interface DeliveryAddress {
   address: string;
   city: string;
   state: string;
+  country?: string;
   postalCode: string;
   isDefault: boolean;
 }
@@ -86,12 +91,18 @@ interface OrderSummary {
     quantity: number;
     sellerId: string;
     requiresEscrow: boolean;
+    sellerLocation?: { state?: string; country?: string; city?: string } | null;
+    itemType?: string;
+    isOutOfState?: boolean;
+    isOutOfCountry?: boolean;
   }>;
   subtotal: number;
   shipping: number;
   tax: number;
   escrowFee: number;
   total: number;
+  hasOutOfStateItems?: boolean;
+  hasOutOfCountryItems?: boolean;
 }
 
 const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) => {
@@ -114,9 +125,11 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
     address: '',
     city: '',
     state: '',
+    country: '',
     postalCode: '',
     isDefault: false,
   });
+  const [showAddressLocationSelector, setShowAddressLocationSelector] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('wallet');
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [loading, setLoading] = useState(true);
@@ -126,6 +139,35 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
   const [useEscrow, setUseEscrow] = useState(true);
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
   const [selectedRider, setSelectedRider] = useState<Rider | 'pickup' | null>(null); // No default - user must choose
+  const [selectedInterstateCompany, setSelectedInterstateCompany] = useState<InterstateCompanySelection | null>(null);
+  const riderCallbackKeyRef = useRef<string | null>(null);
+  const addressCallbackKeyRef = useRef<string | null>(null);
+  const prevRequiresInterstateRef = useRef<boolean>(false);
+  const requiresInterstateDelivery = useMemo(() => {
+    const firstItem = orderSummary?.items?.[0];
+    const sellerLoc = firstItem?.sellerLocation;
+    if (!sellerLoc || (!sellerLoc.state && !sellerLoc.country)) {
+      return !!(orderSummary?.hasOutOfStateItems || orderSummary?.hasOutOfCountryItems);
+    }
+    const sellerCountry = (sellerLoc.country || '').trim().toLowerCase();
+    const sellerState = (sellerLoc.state || '').trim().toLowerCase();
+    const buyerCountry = (deliveryAddress.country || '').trim().toLowerCase();
+    const buyerState = (deliveryAddress.state || '').trim().toLowerCase();
+
+    if (sellerCountry && buyerCountry && sellerCountry !== buyerCountry) return true;
+    return !!(
+      (!sellerCountry || !buyerCountry || sellerCountry === buyerCountry) &&
+      sellerState && buyerState && sellerState !== buyerState
+    );
+  }, [orderSummary, deliveryAddress]);
+
+  useEffect(() => {
+    if (prevRequiresInterstateRef.current !== requiresInterstateDelivery) {
+      setSelectedRider(null);
+      setSelectedInterstateCompany(null);
+      prevRequiresInterstateRef.current = requiresInterstateDelivery;
+    }
+  }, [requiresInterstateDelivery]);
   
   // Escrow bypass eligibility
   const [escrowBypass, setEscrowBypass] = useState<{
@@ -414,10 +456,12 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
     if (!orderSummary) return 0;
     
     // Multi-vendor: use totalRiderFee from rider assignments
-    // Single-vendor: use selectedRider price or default shipping
+    // Single-vendor: use selectedRider price, interstate company price, or default shipping
     const riderPrice = isMultiVendor 
       ? totalRiderFee 
-      : (selectedRider === 'pickup' ? 0 : selectedRider?.price || orderSummary?.shipping || 0);
+      : requiresInterstateDelivery
+        ? (selectedInterstateCompany?.deliveryPrice || 0)
+        : (selectedRider === 'pickup' ? 0 : selectedRider?.price || orderSummary?.shipping || 0);
     
     const subtotal = (orderSummary?.subtotal || 0) + (orderSummary?.tax || 0) + riderPrice + (useEscrow ? (orderSummary?.escrowFee || 0) : 0);
     const rewardsDiscount = useRewards ? rewardsAmount : 0;
@@ -428,7 +472,16 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
     if (!orderSummary) return;
     
     // Validate that user has selected a delivery option
-    if (!selectedRider) {
+    if (requiresInterstateDelivery) {
+      if (!selectedInterstateCompany) {
+        Alert.alert(
+          'Delivery Company Required',
+          'Please select a logistics partner for interstate/international delivery before proceeding.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+    } else if (!selectedRider) {
       Alert.alert(
         'Delivery Option Required',
         'Please select either Self Pickup or a Delivery Rider before proceeding.',
@@ -438,7 +491,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
     }
 
     // Validate delivery address only if delivery rider is selected (not pickup)
-    if (selectedRider !== 'pickup' && typeof selectedRider === 'object') {
+    if (requiresInterstateDelivery || (selectedRider !== 'pickup' && typeof selectedRider === 'object')) {
       if (!deliveryAddress.fullName || !deliveryAddress.address || 
           !deliveryAddress.phone || !deliveryAddress.city || 
           !deliveryAddress.state) {
@@ -467,7 +520,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
     
       Alert.alert(
         'Confirm Order',
-        `Total: ${walletAPI.formatFreti(finalTotal ?? 0)}\nPayment: Freti Wallet${selectedRider === 'pickup' ? '\nDelivery: Self Pickup (Free)' : (selectedRider && typeof selectedRider === 'object') ? `\nRider: ${selectedRider.name || 'Rider'} (${selectedRider.vehicleType || 'N/A'})` : ''}\n${useEscrow ? 'Funds will be held in escrow until delivery is confirmed.' : 'Payment will be processed immediately.'}`,
+        `Total: ${walletAPI.formatFreti(finalTotal ?? 0)}\nPayment: Freti Wallet${requiresInterstateDelivery && selectedInterstateCompany ? `\nDelivery Partner: ${selectedInterstateCompany.companyName}` : selectedRider === 'pickup' ? '\nDelivery: Self Pickup (Free)' : (selectedRider && typeof selectedRider === 'object') ? `\nRider: ${selectedRider.name || 'Rider'} (${selectedRider.vehicleType || 'N/A'})` : ''}\n${useEscrow ? 'Funds will be held in escrow until delivery is confirmed.' : 'Payment will be processed immediately.'}`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Place Order', onPress: processOrder },
@@ -533,7 +586,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         
         const orderData = {
           ...baseOrderData,
-          selectedRider: selectedRider === 'pickup' ? {
+          selectedRider: requiresInterstateDelivery ? undefined : selectedRider === 'pickup' ? {
             riderId: 'pickup',
             riderName: 'Self Pickup',
             vehicleType: 'pickup',
@@ -545,6 +598,12 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
             vehicleType: selectedRider.vehicleType,
             deliveryPrice: selectedRider.price,
             estimatedArrival: selectedRider.estimatedArrival,
+          } : undefined,
+          interstateCompany: requiresInterstateDelivery && selectedInterstateCompany ? {
+            companyId: selectedInterstateCompany.companyId,
+            companyName: selectedInterstateCompany.companyName,
+            deliveryPrice: selectedInterstateCompany.deliveryPrice,
+            estimatedDeliveryDays: selectedInterstateCompany.estimatedDeliveryDays,
           } : undefined,
         };
 
@@ -662,11 +721,26 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       return;
     }
 
-    // Mock pickup location (vendor location)
+    // Use the vendor's (seller's) location from the checkout summary.
+    // The backend now attaches sellerLocation to each item.
+    // Fall back to the buyer's delivery address state when seller location is unavailable.
+    const firstItem = orderSummary?.items?.[0];
+    const sellerLoc = firstItem?.sellerLocation;
+    const vendorState = sellerLoc?.state || deliveryAddress.state || undefined;
+    const vendorCountry = sellerLoc?.country || undefined;
+    const vendorCity = sellerLoc?.city || deliveryAddress.city || undefined;
+
     const pickupLocation = {
-      latitude: 6.5244, // Lagos coordinates
+      latitude: 6.5244, // GPS coordinates are still mocked; state/country carry the real filter signal
       longitude: 3.3792,
-      address: 'Vendor Location, Lagos'
+      address: vendorCity
+        ? `Vendor Location, ${vendorCity}`
+        : vendorState
+          ? `Vendor Location, ${vendorState}`
+          : 'Vendor Location',
+      state: vendorState,
+      country: vendorCountry,
+      city: vendorCity,
     };
 
     // Calculate order details
@@ -676,17 +750,39 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       distance: 2.5, // Mock distance calculation
     };
 
+    // Derive item types from the checkout summary so the backend can filter
+    // to motorized-only riders when services are present.
+    const itemTypes = orderSummary
+      ? [...new Set(orderSummary.items.map(i => i.itemType || 'product'))]
+      : ['product'];
+
+    if (riderCallbackKeyRef.current) riderSelectionBridge.clear(riderCallbackKeyRef.current);
+    const callbackKey = `checkout_rider_${Date.now()}`;
+    riderCallbackKeyRef.current = callbackKey;
+
+    if (requiresInterstateDelivery) {
+      riderSelectionBridge.register(callbackKey, (company: InterstateCompanySelection) => setSelectedInterstateCompany(company));
+      navigation.navigate('InterstateDelivery', {
+        pickupLocation: { state: vendorState, country: vendorCountry, city: vendorCity },
+        deliveryLocation: { state: deliveryAddress.state, country: deliveryAddress.country, city: deliveryAddress.city },
+        callbackKey,
+      });
+      return;
+    }
+
+    riderSelectionBridge.register(callbackKey, (rider: Rider) => setSelectedRider(rider));
+
     navigation.navigate('RiderSelection', {
       pickupLocation,
       orderDetails,
-      onRiderSelected: (rider: Rider) => {
-        setSelectedRider(rider);
-      },
+      callbackKey,
+      itemTypes,
     });
   };
 
   const handleRemoveRider = () => {
     setSelectedRider(null); // Reset to show both options
+    setSelectedInterstateCompany(null);
   };
 
   const renderPaymentMethod = (method: PaymentMethod) => (
@@ -719,9 +815,10 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
   );
 
   const renderAddressModal = () => (
-    <Modal visible={showAddressModal} transparent animationType="slide">
+    <Modal visible={showAddressModal} transparent animationType="slide" onRequestClose={() => setShowAddressModal(false)}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        enabled={Platform.OS === 'ios'}
         style={styles.modalOverlay}
       >
         <View style={styles.addressModal}>
@@ -772,25 +869,28 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
             
             <View style={styles.inputRow}>
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>City *</Text>
+                <Text style={styles.inputLabel}>City / Town *</Text>
                 <TextInput
                   style={styles.textInput}
                   value={deliveryAddress.city}
                   onChangeText={(text) => handleAddressChange('city', text)}
-                  placeholder="City"
+                  placeholder="City or town"
                   placeholderTextColor="#666"
                 />
               </View>
               
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>State *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={deliveryAddress.state}
-                  onChangeText={(text) => handleAddressChange('state', text)}
-                  placeholder="State"
-                  placeholderTextColor="#666"
-                />
+                <Text style={styles.inputLabel}>State / Country *</Text>
+                <TouchableOpacity
+                  style={[styles.textInput, { justifyContent: 'center' }]}
+                  onPress={() => setShowAddressLocationSelector(true)}
+                >
+                  <Text style={{ color: deliveryAddress.state ? '#FFF' : '#666', fontSize: 14 }}>
+                    {deliveryAddress.state
+                      ? `${deliveryAddress.state}${deliveryAddress.country ? `, ${deliveryAddress.country}` : ''}`
+                      : 'Select state...'}
+                  </Text>
+                </TouchableOpacity>
               </View>
             </View>
             
@@ -823,6 +923,17 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      <LocationSelector
+        visible={showAddressLocationSelector}
+        selectedLocation={deliveryAddress.state && deliveryAddress.country ? `${deliveryAddress.state}, ${deliveryAddress.country}` : ''}
+        onLocationSelect={() => {}}
+        onLocationSelectDetailed={(state, country) => {
+          handleAddressChange('state', state);
+          handleAddressChange('country', country);
+        }}
+        onClose={() => setShowAddressLocationSelector(false)}
+      />
     </Modal>
   );
 
@@ -878,12 +989,18 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
             <View style={styles.addressHeaderActions}>
               <TouchableOpacity
                 style={styles.editButton}
-                onPress={() => navigation.navigate('AddressBook', {
-                  selectMode: true,
-                  onAddressSelected: (address: DeliveryAddress) => {
+                onPress={() => {
+                  if (addressCallbackKeyRef.current) addressSelectionBridge.clear(addressCallbackKeyRef.current);
+                  const callbackKey = `checkout_address_${Date.now()}`;
+                  addressCallbackKeyRef.current = callbackKey;
+                  addressSelectionBridge.register(callbackKey, (address: DeliveryAddress) => {
                     setDeliveryAddress(address);
-                  }
-                })}
+                  });
+                  navigation.navigate('AddressBook', {
+                    selectMode: true,
+                    callbackKey,
+                  });
+                }}
               >
                 <Ionicons name="list" size={16} color="#3498DB" />
                 <Text style={styles.editButtonText}>Select</Text>
@@ -919,8 +1036,8 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         {/* Rider Selection Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Delivery Rider</Text>
-            {!isMultiVendor && selectedRider && (
+            <Text style={styles.sectionTitle}>{requiresInterstateDelivery ? 'Interstate Delivery' : 'Delivery Rider'}</Text>
+            {!isMultiVendor && (selectedRider || selectedInterstateCompany) && (
               <TouchableOpacity
                 style={styles.editButton}
                 onPress={handleRemoveRider}
@@ -987,6 +1104,46 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                 </View>
               )}
             </View>
+          ) : requiresInterstateDelivery ? (
+            selectedInterstateCompany ? (
+              <View style={styles.selectedRiderCard}>
+                <View style={styles.selectedRiderInfo}>
+                  <View style={styles.selectedRiderAvatar}>
+                    <Ionicons name="business" size={20} color="#FFF" />
+                  </View>
+                  <View style={styles.selectedRiderDetails}>
+                    <Text style={styles.selectedRiderName}>{selectedInterstateCompany.companyName}</Text>
+                    <Text style={styles.selectedRiderDistance}>
+                      {selectedInterstateCompany.isInternational ? 'International' : 'Interstate'} delivery • Est. {selectedInterstateCompany.estimatedDeliveryDays} day(s)
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.selectedRiderPrice}>
+                  <Text style={styles.selectedRiderPriceText}>{walletAPI.formatFreti(selectedInterstateCompany.deliveryPrice)}</Text>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.deliveryOptions}>
+                <View style={styles.multiVendorNoticeBox}>
+                  <Ionicons name="information-circle" size={18} color="#007AFF" />
+                  <Text style={styles.multiVendorNoticeText}>
+                    This order ships across states/countries and requires a verified logistics partner.
+                  </Text>
+                </View>
+                <TouchableOpacity style={styles.selectRiderCard} onPress={handleSelectRider}>
+                  <View style={styles.selectRiderIcon}>
+                    <Ionicons name="business" size={24} color="#3498DB" />
+                  </View>
+                  <View style={styles.selectRiderInfo}>
+                    <Text style={styles.selectRiderTitle}>Choose Delivery Partner</Text>
+                    <Text style={styles.selectRiderSubtitle}>
+                      Select from verified interstate/international logistics companies
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#666" />
+                </TouchableOpacity>
+              </View>
+            )
           ) : selectedRider === 'pickup' ? (
             // Single-vendor: Show selected pickup option
             <View style={styles.selectedRiderCard}>
@@ -1225,6 +1382,18 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
               <Text style={styles.summaryValue}>{walletAPI.formatFreti(orderSummary.subtotal ?? 0)}</Text>
             </View>
             
+            {/* Interstate delivery fee */}
+            {requiresInterstateDelivery && selectedInterstateCompany && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>
+                  Delivery Fee ({selectedInterstateCompany.companyName})
+                </Text>
+                <Text style={styles.summaryValue}>
+                  {walletAPI.formatFreti(selectedInterstateCompany.deliveryPrice ?? 0)}
+                </Text>
+              </View>
+            )}
+            
             {/* Only show rider fee if a rider is selected */}
             {(selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object') && (
               <View style={styles.summaryRow}>
@@ -1305,7 +1474,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       </Animated.View>
 
       {renderAddressModal()}
-      
+
       {/* Info Modal */}
       <Modal visible={showInfoModal} transparent animationType="slide">
         <View style={styles.infoModalOverlay}>
@@ -1332,6 +1501,16 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                       {orderSummary ? walletAPI.formatFreti(orderSummary.subtotal ?? 0) : '₣0'}
                     </Text>
                   </View>
+                  
+                  {/* Interstate delivery fee */}
+                  {requiresInterstateDelivery && selectedInterstateCompany && (
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Delivery Fee ({selectedInterstateCompany.companyName})</Text>
+                      <Text style={styles.infoValue}>
+                        {walletAPI.formatFreti(selectedInterstateCompany.deliveryPrice ?? 0)}
+                      </Text>
+                    </View>
+                  )}
                   
                   {/* Only show rider fee if a rider is selected */}
                   {(selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object') && (
