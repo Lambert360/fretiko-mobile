@@ -8,9 +8,11 @@ import {
   Dimensions,
   Animated,
   TouchableWithoutFeedback,
-  FlatList,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
   Alert,
 } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,7 +41,39 @@ interface PostCardProps {
   onDoubleTap?: (post: Post) => void; // New: navigate to post details on double-tap
   onLikesPress?: (postId: string) => void;
   onGiftersPress?: (postId: string) => void;
+  onSwipePastEnd?: () => void; // Triggered when user overscrolls past the last media item
 }
+
+const PostCardVideoPlayer: React.FC<{ uri: string; isPlaying: boolean }> = ({ uri, isPlaying }) => {
+  const player = useVideoPlayer(uri, (player) => {
+    player.loop = true;
+    if (isPlaying) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  });
+
+  useEffect(() => {
+    if (isPlaying) {
+      player?.play();
+    } else {
+      player?.pause();
+    }
+  }, [isPlaying, player]);
+
+  return (
+    <VideoView
+      style={styles.video}
+      player={player}
+      allowsFullscreen
+      allowsPictureInPicture
+      nativeControls={false}
+      pointerEvents="none"
+      contentFit="contain"
+    />
+  );
+};
 
 const PostCard: React.FC<PostCardProps> = ({
   post,
@@ -57,6 +91,7 @@ const PostCard: React.FC<PostCardProps> = ({
   onDoubleTap,
   onLikesPress,
   onGiftersPress,
+  onSwipePastEnd,
 }) => {
   const insets = useSafeAreaInsets();
   const [isUIVisible, setIsUIVisible] = useState(true);
@@ -68,33 +103,81 @@ const PostCard: React.FC<PostCardProps> = ({
   const hideTimer = useRef<number | null>(null);
   const lastTapTimeRef = useRef<number | null>(null);
   const singleTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endPromptVisibleRef = useRef(false);
+  const endDragHandledRef = useRef(false);
 
   // Prefer processed H.264 URLs when available
   const effectiveMediaUrls = post.processedMediaUrls?.length
     ? post.processedMediaUrls
     : post.mediaUrls;
 
-  // Video player for video posts
-  const videoPlayer = useVideoPlayer(
-    effectiveMediaUrls[0] || '',
-    (player) => {
-      player.loop = true;
-      if (isActive && isPlaying) {
-        player.play();
-      } else {
-        player.pause();
+  // Multi-media pagination
+  const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
+  const [showEndPrompt, setShowEndPrompt] = useState(false);
+
+  useEffect(() => {
+    setCurrentMediaIndex(0);
+    setShowEndPrompt(false);
+    endPromptVisibleRef.current = false;
+    endDragHandledRef.current = false;
+    if (endPromptTimerRef.current) {
+      clearTimeout(endPromptTimerRef.current);
+      endPromptTimerRef.current = null;
+    }
+  }, [post.id]);
+
+  const isVideoUrl = (url: string) =>
+    /^.*\.(mp4|mov|m4v|3gp|avi|mkv)(\?.*)?$/i.test(url);
+
+  const handleMediaScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetX = event.nativeEvent.contentOffset.x;
+    const newIndex = Math.round(offsetX / screenWidth);
+    setCurrentMediaIndex(newIndex);
+
+    // Hide end-of-media prompt if user moved away from the last item
+    if (newIndex !== effectiveMediaUrls.length - 1) {
+      endPromptVisibleRef.current = false;
+      setShowEndPrompt(false);
+      if (endPromptTimerRef.current) {
+        clearTimeout(endPromptTimerRef.current);
+        endPromptTimerRef.current = null;
       }
     }
-  );
+  };
 
-  // Handle video playback based on active state
-  useEffect(() => {
-    if (isActive && isPlaying) {
-      videoPlayer?.play();
-    } else {
-      videoPlayer?.pause();
+  const handleScrollBeginDrag = () => {
+    endDragHandledRef.current = false;
+  };
+
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (effectiveMediaUrls.length <= 1) return;
+    if (currentMediaIndex !== effectiveMediaUrls.length - 1) return;
+
+    const offsetX = event.nativeEvent.contentOffset.x;
+    const lastOffset = (effectiveMediaUrls.length - 1) * screenWidth;
+    const overscroll = offsetX - lastOffset;
+    const threshold = screenWidth * 0.12;
+
+    if (overscroll > threshold) {
+      if (!endDragHandledRef.current) {
+        if (endPromptVisibleRef.current) {
+          onSwipePastEnd?.();
+        } else {
+          endPromptVisibleRef.current = true;
+          setShowEndPrompt(true);
+          if (endPromptTimerRef.current) {
+            clearTimeout(endPromptTimerRef.current);
+          }
+          endPromptTimerRef.current = setTimeout(() => {
+            endPromptVisibleRef.current = false;
+            setShowEndPrompt(false);
+          }, 2500);
+        }
+        endDragHandledRef.current = true;
+      }
     }
-  }, [isActive, isPlaying, videoPlayer]);
+  };
 
   // Auto-play when card becomes active, pause when it is no longer active
   useEffect(() => {
@@ -110,6 +193,7 @@ const PostCard: React.FC<PostCardProps> = ({
     return () => {
       if (hideTimer.current) clearTimeout(hideTimer.current);
       if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
+      if (endPromptTimerRef.current) clearTimeout(endPromptTimerRef.current);
     };
   }, []);
 
@@ -209,89 +293,133 @@ const PostCard: React.FC<PostCardProps> = ({
       return null;
     }
 
-    if (post.mediaType === 'video' && effectiveMediaUrls.length > 0) {
-      return (
-        <View style={styles.videoContainer}>
-          <VideoView
-            style={styles.video}
-            player={videoPlayer}
-            allowsFullscreen
-            allowsPictureInPicture
-            nativeControls={false}
-            pointerEvents="none"
-            contentFit="contain"
-          />
-        </View>
-      );
+    if (effectiveMediaUrls.length === 0) {
+      return null;
     }
 
-    if (post.mediaType === 'image' && effectiveMediaUrls.length > 0) {
+    // Image posts: restore original collage layout
+    if (post.mediaType === 'image') {
       if (effectiveMediaUrls.length === 1) {
         return (
-          <Image
-            source={{ uri: effectiveMediaUrls[0] }}
-            style={styles.singleImage}
-            resizeMode="contain"
-          />
-        );
-      }
-
-      // Multiple images - grid layout
-      return (
-        <View style={styles.imageGrid}>
-          {effectiveMediaUrls.slice(0, 4).map((url, index) => (
-            <Image
-              key={index}
-              source={{ uri: url }}
-              style={[
-                styles.gridImage,
-                effectiveMediaUrls.length === 2 && styles.gridImageTwo,
-                effectiveMediaUrls.length >= 3 && styles.gridImageMulti,
-              ]}
-              resizeMode="contain"
-            />
-          ))}
-          {effectiveMediaUrls.length > 4 && (
-            <View style={styles.moreImagesOverlay}>
-              <Text style={styles.moreImagesText}>
-                +{post.mediaUrls.length - 4}
-              </Text>
-            </View>
-          )}
-        </View>
-      );
-    }
-
-    if (post.mediaType === 'mixed') {
-      // For mixed content, show first item prominently
-      return (
-        <View style={styles.mixedContainer}>
-          {effectiveMediaUrls[0]?.includes('.mp4') || effectiveMediaUrls[0]?.includes('.mov') ? (
-            <VideoView
-              style={styles.video}
-              player={videoPlayer}
-              allowsFullscreen
-              nativeControls={false}
-              pointerEvents="none"
-            />
-          ) : (
+          <TouchableWithoutFeedback onPress={handleCardTap}>
             <Image
               source={{ uri: effectiveMediaUrls[0] }}
               style={styles.singleImage}
               resizeMode="contain"
             />
-          )}
-          {effectiveMediaUrls.length > 1 && (
-            <View style={styles.mediaIndicator}>
-              <Ionicons name="images" size={16} color="white" />
-              <Text style={styles.mediaCountText}>{post.mediaUrls.length}</Text>
-            </View>
-          )}
-        </View>
+          </TouchableWithoutFeedback>
+        );
+      }
+
+      return (
+        <TouchableWithoutFeedback onPress={handleCardTap}>
+          <View style={styles.imageGrid}>
+            {effectiveMediaUrls.slice(0, 4).map((url, index) => (
+              <Image
+                key={`${post.id}-img-${index}`}
+                source={{ uri: url }}
+                style={[
+                  styles.gridImage,
+                  effectiveMediaUrls.length === 2 && styles.gridImageTwo,
+                  effectiveMediaUrls.length >= 3 && styles.gridImageMulti,
+                ]}
+                resizeMode="contain"
+              />
+            ))}
+            {effectiveMediaUrls.length > 4 && (
+              <View style={styles.moreImagesOverlay}>
+                <Text style={styles.moreImagesText}>
+                  +{post.mediaUrls.length - 4}
+                </Text>
+              </View>
+            )}
+          </View>
+        </TouchableWithoutFeedback>
       );
     }
 
-    return null;
+    // Video / mixed posts: keep the new horizontal pager
+    if (effectiveMediaUrls.length === 1) {
+      const url = effectiveMediaUrls[0];
+      return isVideoUrl(url) ? (
+        <View style={styles.videoContainer}>
+          <PostCardVideoPlayer uri={url} isPlaying={isPlaying} />
+        </View>
+      ) : (
+        <TouchableWithoutFeedback onPress={handleCardTap}>
+          <Image
+            source={{ uri: url }}
+            style={styles.singleImage}
+            resizeMode="contain"
+          />
+        </TouchableWithoutFeedback>
+      );
+    }
+
+    return (
+      <>
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          scrollEventThrottle={16}
+          decelerationRate="fast"
+          onScrollBeginDrag={handleScrollBeginDrag}
+          onScroll={handleScroll}
+          onMomentumScrollEnd={handleMediaScroll}
+          style={styles.mediaPager}
+          contentContainerStyle={{ flexDirection: 'row' }}
+        >
+          {effectiveMediaUrls.map((url, index) => (
+            <TouchableWithoutFeedback
+              key={`${post.id}-media-${index}`}
+              onPress={handleCardTap}
+            >
+              <View style={styles.mediaPage}>
+                {isVideoUrl(url) ? (
+                  index === currentMediaIndex ? (
+                    <PostCardVideoPlayer uri={url} isPlaying={isPlaying} />
+                  ) : (
+                    <View style={styles.videoPlaceholder}>
+                      {post.thumbnailUrls?.[index] ? (
+                        <>
+                          <Image
+                            source={{ uri: post.thumbnailUrls[index] }}
+                            style={styles.singleImage}
+                            resizeMode="contain"
+                          />
+                          <View style={styles.playIconOverlay}>
+                            <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.8)" />
+                          </View>
+                        </>
+                      ) : (
+                        <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.8)" />
+                      )}
+                    </View>
+                  )
+                ) : (
+                  <Image source={{ uri: url }} style={styles.singleImage} resizeMode="contain" />
+                )}
+              </View>
+            </TouchableWithoutFeedback>
+          ))}
+        </ScrollView>
+
+        <View style={[styles.pageIndicator, { top: insets.top + 80 }]}>
+          <Ionicons name="images" size={14} color="white" />
+          <Text style={styles.pageIndicatorText}>
+            {currentMediaIndex + 1} / {effectiveMediaUrls.length}
+          </Text>
+        </View>
+
+        {showEndPrompt && (
+          <View style={styles.endPrompt}>
+            <Ionicons name="arrow-forward" size={20} color="white" />
+            <Text style={styles.endPromptText}>Swipe again to switch to Product tab</Text>
+          </View>
+        )}
+      </>
+    );
   };
 
   // Check if this is a text-only post
@@ -309,8 +437,7 @@ const PostCard: React.FC<PostCardProps> = ({
   const hasLongCaption = !!post.content && post.content.length > 120;
 
   return (
-    <TouchableWithoutFeedback onPress={handleCardTap}>
-      <View style={styles.container}>
+    <View style={styles.container}>
         {/* Media Content - Only show if not text-only */}
         {!isTextOnly && (
           <View style={styles.mediaContainer}>
@@ -318,7 +445,7 @@ const PostCard: React.FC<PostCardProps> = ({
           </View>
         )}
 
-        {!isTextOnly && (post.mediaType === 'video' || post.mediaType === 'mixed') && (
+        {!isTextOnly && effectiveMediaUrls.length > 0 && isVideoUrl(effectiveMediaUrls[currentMediaIndex]) && (
           <Animated.View
             pointerEvents="box-none"
             style={[
@@ -371,9 +498,9 @@ const PostCard: React.FC<PostCardProps> = ({
             {/* Post Content - Large, Readable, Left-Aligned */}
             {displayContent && (
               <View style={styles.textOnlyContent}>
-                <Text style={styles.textOnlyPostText}>
+                <RichText style={styles.textOnlyPostText}>
                   {displayContent}
-                </Text>
+                </RichText>
               </View>
             )}
           </Animated.View>
@@ -381,6 +508,7 @@ const PostCard: React.FC<PostCardProps> = ({
 
         {/* Bottom Cluster — single absolute anchor for left content + right reactions */}
         <Animated.View
+          pointerEvents="box-none"
           style={[
             styles.bottomCluster,
             {
@@ -497,8 +625,7 @@ const PostCard: React.FC<PostCardProps> = ({
             post.commentsCount = (post.commentsCount || 0) + 1;
           }}
         />
-      </View>
-    </TouchableWithoutFeedback>
+    </View>
   );
 };
 
@@ -515,6 +642,65 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+    position: 'relative',
+  },
+  mediaPager: {
+    width: '100%',
+    height: '100%',
+  },
+  mediaPage: {
+    width: screenWidth,
+    height: '100%',
+  },
+  videoPlaceholder: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#111',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  playIconOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pageIndicator: {
+    position: 'absolute',
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    zIndex: 20,
+    elevation: 20,
+  },
+  pageIndicatorText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  endPrompt: {
+    position: 'absolute',
+    bottom: 140,
+    left: 24,
+    right: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 24,
+    gap: 8,
+    zIndex: 3,
+  },
+  endPromptText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
   videoContainer: {
     width: '100%',

@@ -19,6 +19,7 @@ import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ProductCard as ModernProductCard } from './cards/ProductCard';
 import ProductVideoPlayer from './ProductVideoPlayer';
+import VideoProductCard from './VideoProductCard';
 import AuctionCard from './AuctionCard';
 import { Product, ProductCategory, productsAPI } from '../services/productsAPI';
 import { AuctionWithDetails } from '../services/auctionsAPI';
@@ -134,7 +135,7 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
       ]);
 
       const [productsData, categoriesData, trendingData, seasonalData] = await Promise.all([
-        productsAPI.getProducts({ limit: PRODUCTS_PAGE_SIZE, offset: 0 }),
+        productsAPI.getRanked({ limit: PRODUCTS_PAGE_SIZE, offset: 0 }),
         productsAPI.getCategories(),
         productsAPI.getTrending({ limit: 12 }),
         productsAPI.getSeasonal({ limit: 12 }),
@@ -262,7 +263,7 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
 
     try {
       setLoadingMoreProducts(true);
-      const moreProducts = await productsAPI.getProducts({
+      const moreProducts = await productsAPI.getRanked({
         limit: PRODUCTS_PAGE_SIZE,
         offset: productsOffset,
       });
@@ -364,15 +365,17 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
 
   // Handlers
   const handleProductPress = useCallback((productId: string) => {
+    productsAPI.recordEvent(productId, 'click', 'home_products_tab');
     navigation.navigate('ProductDetails', { productId });
   }, [navigation]);
 
-  const handleCartPress = useCallback(async (productId: string) => {
+  const handleCartPress = useCallback(async (productId: string, variant?: { id: string; name: string; price: number }) => {
     try {
       if (Platform.OS === 'ios') {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
-      await addToCart(productId, 1);
+      await addToCart(productId, 1, variant);
+      productsAPI.recordEvent(productId, 'cart_add', 'home_products_tab');
     } catch (error) {
       console.error('Error adding to cart:', error);
     }
@@ -496,111 +499,27 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
     const isVisible = visibleVideoId === item.id && isScreenFocused;
 
     return (
-      <View
+      <VideoProductCard
         key={item.id}
+        item={item}
+        isVisible={isVisible}
+        screenWidth={screenWidth}
         onLayout={(event) => {
           const layout = event.nativeEvent.layout;
           const absoluteY = scrollYRef.current + layout.y;
           trackVideoPosition(item.id, absoluteY);
         }}
-        style={{ width: '100%', marginBottom: 16 }}
-      >
-        <TouchableOpacity
-          onPress={() => handleProductPress(item.id)}
-          style={{
-            width: '100%',
-            backgroundColor: '#1a1a1a',
-            borderRadius: 12,
-            overflow: 'hidden',
-          }}
-        >
-          {item.primary_video_url ? (
-            <ProductVideoPlayer
-              videoUri={item.processed_videos?.[0] || item.primary_video_url}
-              shouldAutoPlay={isVisible}
-              containerWidth={screenWidth - 24}
-            />
-          ) : (
-            <Image
-              source={{ uri: item.primary_image_url || item.images?.[0] }}
-              style={{ width: '100%', height: screenWidth * 0.56 }}
-              resizeMode="cover"
-            />
-          )}
-
-          <View style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            backgroundColor: 'rgba(0,0,0,0.7)',
-            padding: 12,
-          }}>
-            <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }} numberOfLines={1}>
-              {item.name}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text style={{ color: '#FFD700', fontSize: 18, fontWeight: 'bold' }}>
-                ₣{item.price.toFixed(2)}
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <TouchableOpacity
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    handleBargainPress(item);
-                  }}
-                  style={{
-                    backgroundColor: '#F39C12',
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: 16,
-                  }}
-                >
-                  <Ionicons name="chatbubble-ellipses-outline" size={14} color="white" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    handleCartPress(item.id);
-                  }}
-                  style={{
-                    backgroundColor: '#3498DB',
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: 16,
-                  }}
-                >
-                  <Ionicons name="cart-outline" size={14} color="white" />
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-
-          {item.media_type === 'video' && (
-            <View style={{
-              position: 'absolute',
-              top: 12,
-              left: 12,
-              backgroundColor: 'rgba(255,255,255,0.9)',
-              paddingHorizontal: 8,
-              paddingVertical: 4,
-              borderRadius: 12,
-              flexDirection: 'row',
-              alignItems: 'center',
-            }}>
-              <Ionicons name="videocam" size={12} color="#FF4757" />
-              <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold', marginLeft: 4 }}>
-                VIDEO
-              </Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
+        onPress={() => handleProductPress(item.id)}
+        onBargainPress={() => handleBargainPress(item)}
+        onCartPress={(variant) => handleCartPress(item.id, variant)}
+      />
     );
   };
 
   const renderHeroBanner = (hero: any, index: number) => {
-    if (!hero) return null;
+    if (!hero || !hero.url) return null;
+
+    const heroSource = typeof hero.url === 'string' ? { uri: hero.url } : hero.url;
 
     return (
       <View style={{ marginHorizontal: 16, marginVertical: 12 }}>
@@ -612,7 +531,7 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
           }}
         >
           <Image
-            source={typeof hero.url === 'string' ? { uri: hero.url } : hero.url}
+            source={heroSource}
             style={{ width: '100%', height: '100%' }}
             resizeMode="cover"
           />

@@ -5,6 +5,8 @@ export interface CartItem {
   productId?: string;
   serviceId?: string;
   productName: string;
+  variantId?: string | null;
+  variantName?: string | null;
   productImage: string;
   price: number;
   originalPrice?: number;
@@ -36,6 +38,8 @@ export interface AddToCartRequest {
   productId: string;
   quantity: number;
   price: number;
+  variantId?: string;
+  variantName?: string;
 }
 
 class CartAPI {

@@ -48,6 +48,16 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
   const progressIntervalRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const lastProgressRef = React.useRef(0);
 
+  // Guards against operating on the player/state after this instance starts unmounting
+  // (avoids races with expo-video releasing the native player during fast feed swaps)
+  const isMountedRef = React.useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Create video player for this specific video
   const player = useVideoPlayer(videoUri, (player) => {
     player.loop = true;
@@ -58,16 +68,22 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
 
   // Control playback based on props
   useEffect(() => {
-    if (isCurrentVideo && shouldAutoPlay) {
-      player.play();
-    } else {
-      player.pause();
+    if (!isMountedRef.current) return;
+    try {
+      if (isCurrentVideo && shouldAutoPlay) {
+        player.play();
+      } else {
+        player.pause();
+      }
+    } catch (e) {
+      // Player may have already been released during a fast unmount/remount; ignore
     }
   }, [isCurrentVideo, shouldAutoPlay, player]);
 
   // Setup status listeners with correct expo-video events
   useEffect(() => {
     const statusSubscription = player.addListener('statusChange', (status) => {
+      if (!isMountedRef.current) return;
       // Use type assertion to access status properties
       const statusAny = status as any;
       
@@ -99,6 +115,7 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
 
     // Time update listener for progress tracking
     const timeUpdateSubscription = player.addListener('timeUpdate', (timeUpdate) => {
+      if (!isMountedRef.current) return;
       const payload = timeUpdate as any;
       // expo-video timeUpdate payload has currentTime and duration directly
       const currentTime = payload?.currentTime ?? payload?.currentTimeMillis ?? 0;
@@ -120,7 +137,7 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
 
     // Backup: Poll currentTime if timeUpdate events are inconsistent (iOS/Android compatibility)
     progressIntervalRef.current = setInterval(() => {
-      if (player && isCurrentVideo && onPlaybackStatusUpdate) {
+      if (isMountedRef.current && player && isCurrentVideo && onPlaybackStatusUpdate) {
         try {
           const currentTime = player.currentTime ?? 0;
           const duration = player.duration ?? 0;
@@ -200,9 +217,14 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
         <TouchableOpacity
           style={styles.retryButton}
           onPress={() => {
+            if (!isMountedRef.current) return;
             setHasError(false);
             setIsLoading(true);
-            player.replace(videoUri);
+            try {
+              player.replace(videoUri);
+            } catch (e) {
+              // Player may have already been released; ignore
+            }
           }}
         >
           <Ionicons name="refresh" size={20} color="#FFF" style={styles.retryIcon} />

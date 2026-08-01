@@ -224,7 +224,7 @@ const CreatePostScreen: React.FC = () => {
           uploadedMedia.push({
             ...item,
             mediaUrl: uploadResult.url,
-            thumbnailUrl: item.mediaType === 'video' ? uploadResult.url : undefined,
+            thumbnailUrl: uploadResult.thumbnailUrl,
           });
         }
       } catch (error) {

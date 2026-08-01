@@ -15,7 +15,7 @@ export interface CartState {
 
 export interface CartContextType extends CartState {
   // Cart actions
-  addToCart: (productId: string, quantity?: number) => Promise<void>;
+  addToCart: (productId: string, quantity?: number, variant?: { id: string; name: string; price: number }) => Promise<void>;
   removeFromCart: (itemId: string) => Promise<void>;
   updateQuantity: (itemId: string, quantity: number) => Promise<void>;
   clearCart: () => Promise<void>;
@@ -108,7 +108,7 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     }
   };
 
-  const addToCart = async (productId: string, quantity: number = 1) => {
+  const addToCart = async (productId: string, quantity: number = 1, variant?: { id: string; name: string; price: number }) => {
     try {
       setCartState(prev => ({ ...prev, loading: true }));
       
@@ -117,7 +117,9 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
         await cartAPI.addToCart({
           productId,
           quantity,
-          price: 0 // Backend will fetch current price
+          price: variant?.price || 0, // Backend will fetch current price if 0
+          variantId: variant?.id,
+          variantName: variant?.name,
         });
         
         await refreshCart();

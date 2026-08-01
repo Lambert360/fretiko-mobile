@@ -2,6 +2,15 @@ import { api } from './api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 
+export interface ProductVariant {
+  id: string;
+  name: string;
+  price: number;
+  media_url: string;
+  media_type: 'image' | 'video';
+  sort_order: number;
+}
+
 export interface Product {
   id: string;
   user_id: string;
@@ -16,6 +25,8 @@ export interface Product {
   videos?: string[];
   processed_videos?: string[];
   video_processing_status?: any;
+  is_multi_item?: boolean;
+  variants?: ProductVariant[];
   primary_video_url?: string;
   media_type?: 'image' | 'video';
   location?: string;
@@ -260,6 +271,35 @@ class ProductsAPI {
     }
   }
 
+
+  // Get location-aware, engagement/trust-ranked products (backend v1 ranking algorithm).
+  // No caching — ranking is personalized (location, seen-penalty) and should stay fresh.
+  async getRanked(params?: {
+    category_id?: string;
+    search?: string;
+    price_min?: number;
+    price_max?: number;
+    condition?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Product[]> {
+    try {
+      const response = await api.get('/products/ranked', { params, timeout: 8000 });
+      return response.data;
+    } catch (error) {
+      return this.handleError(error, 'Failed to fetch ranked products', false);
+    }
+  }
+
+  // Record a product engagement event (click, cart_add, etc.) for ranking feedback.
+  // Fire-and-forget: failures are swallowed so this never blocks the UI.
+  async recordEvent(productId: string, eventType: 'impression' | 'click' | 'view' | 'cart_add' | 'wishlist_add', source?: string): Promise<void> {
+    try {
+      await api.post('/products/events', { productId, eventType, source });
+    } catch (error) {
+      console.warn('Failed to record product event:', error);
+    }
+  }
 
   // Get trending products based on real order activity
   async getTrending(params?: { limit?: number; region?: string }): Promise<Product[]> {

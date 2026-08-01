@@ -17,6 +17,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRegistration } from '../contexts/RegistrationContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SocialAuthButtons } from '../components/SocialAuthButtons';
+import * as Google from 'expo-auth-session/providers/google';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { PasswordStrengthIndicator } from '../components/PasswordStrengthIndicator';
 import { EmailAvailabilityChecker } from '../components/EmailAvailabilityChecker';
 import { DatePickerInput } from '../components/DatePickerInput';
@@ -24,6 +27,19 @@ import { API_CONFIG } from '../config/api';
 import * as Linking from 'expo-linking';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+const parseJwt = (token: string): any => {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    const jsonPayload = (global as any).atob(base64 + padding);
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    console.error('Failed to parse JWT:', e);
+    return {};
+  }
+};
 
 interface SignupScreenProps {
   navigation: any;
@@ -50,6 +66,98 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
   const insets = useSafeAreaInsets();
 
   const { updateRegistrationData } = useRegistration();
+
+  const [, , promptAsync] = Google.useIdTokenAuthRequest(
+    {
+      webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '',
+    },
+    { scheme: 'fretiko' }
+  );
+
+  const handleGoogleSignIn = async () => {
+    if (!process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) {
+      Alert.alert('Missing config', 'Add Google client IDs to your .env file first.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const result = await promptAsync();
+      if (result?.type !== 'success' || !result.params.id_token) {
+        return;
+      }
+      const idToken = result.params.id_token;
+      const parsed = parseJwt(idToken);
+      const fullName = parsed.name || '';
+      const [firstName, ...rest] = fullName.split(' ');
+      const lastName = rest.join(' ');
+      const email = parsed.email || '';
+      const avatarUrl = parsed.picture || '';
+
+      navigation.navigate('SocialSignUp', {
+        provider: 'google',
+        idToken,
+        email,
+        firstName,
+        lastName,
+        avatarUrl,
+      });
+    } catch (error: any) {
+      Alert.alert('Google Sign Up Error', error?.message || 'Something went wrong');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAppleSignIn = async () => {
+    if (Platform.OS !== 'ios') {
+      Alert.alert('Not available', 'Apple Sign In is only available on iOS.');
+      return;
+    }
+
+    const isAvailable = await AppleAuthentication.isAvailableAsync();
+    if (!isAvailable) {
+      Alert.alert('Not available', 'Apple Sign In is not available on this device.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+
+      const idToken = credential.identityToken;
+      if (!idToken) {
+        throw new Error('No identity token received from Apple');
+      }
+
+      const parsed = parseJwt(idToken);
+      const email = credential.email || parsed.email || '';
+      const firstName = credential.fullName?.givenName || '';
+      const lastName = credential.fullName?.familyName || '';
+      const avatarUrl = '';
+
+      navigation.navigate('SocialSignUp', {
+        provider: 'apple',
+        idToken,
+        email,
+        firstName,
+        lastName,
+        avatarUrl,
+      });
+    } catch (error: any) {
+      if (error.code === 'ERR_CANCELED' || error.code === 'ERR_REQUEST_CANCELED') {
+        return;
+      }
+      Alert.alert('Apple Sign Up Error', error?.message || 'Something went wrong');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const genderOptions = [
     { label: 'Male', value: 'male', icon: 'male' },
@@ -405,6 +513,11 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                 <Text style={styles.linkText}>Sign in here</Text>
               </TouchableOpacity>
             </View>
+
+            <SocialAuthButtons
+              onGoogleSignIn={handleGoogleSignIn}
+              onAppleSignIn={handleAppleSignIn}
+            />
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

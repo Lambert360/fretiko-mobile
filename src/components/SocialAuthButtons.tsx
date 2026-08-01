@@ -5,6 +5,7 @@ import {
   Text,
   StyleSheet,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -52,26 +53,28 @@ export const SocialAuthButtons: React.FC<SocialAuthButtonsProps> = ({
         )}
       </TouchableOpacity>
 
-      <TouchableOpacity
-        style={[
-          styles.socialButton,
-          styles.appleButton,
-          (appleLoading || isLoading) && styles.buttonDisabled,
-        ]}
-        onPress={onAppleSignIn}
-        disabled={appleLoading || isLoading}
-      >
-        {appleLoading ? (
-          <ActivityIndicator color="#FFF" size="small" />
-        ) : (
-          <>
-            <Ionicons name="logo-apple" size={20} color="#FFF" />
-            <Text style={[styles.socialButtonText, styles.appleButtonText]}>
-              Continue with Apple
-            </Text>
-          </>
-        )}
-      </TouchableOpacity>
+      {Platform.OS === 'ios' && (
+        <TouchableOpacity
+          style={[
+            styles.socialButton,
+            styles.appleButton,
+            (appleLoading || isLoading) && styles.buttonDisabled,
+          ]}
+          onPress={onAppleSignIn}
+          disabled={appleLoading || isLoading}
+        >
+          {appleLoading ? (
+            <ActivityIndicator color="#FFF" size="small" />
+          ) : (
+            <>
+              <Ionicons name="logo-apple" size={20} color="#FFF" />
+              <Text style={[styles.socialButtonText, styles.appleButtonText]}>
+                Continue with Apple
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
+      )}
     </View>
   );
 };

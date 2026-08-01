@@ -11,6 +11,7 @@ import {
   Dimensions,
   LayoutChangeEvent,
   Modal,
+  Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { currencyAPI } from '../services/currencyAPI';
@@ -342,16 +343,12 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
         animationType="fade"
         onRequestClose={() => setShowCurrencyDropdown(false)}
       >
-        <TouchableOpacity
-          style={styles.modalBackdrop}
-          activeOpacity={1}
-          onPress={() => setShowCurrencyDropdown(false)}
-        >
-          <TouchableOpacity
-            style={styles.modalContent}
-            activeOpacity={1}
-            onPress={(e) => e.stopPropagation()}
-          >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setShowCurrencyDropdown(false)}
+          />
+          <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Currency</Text>
               <TouchableOpacity onPress={() => setShowCurrencyDropdown(false)}>
@@ -360,8 +357,10 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
             </View>
             <ScrollView
               style={styles.currencyList}
+              contentContainerStyle={{ paddingBottom: 12 }}
               showsVerticalScrollIndicator={true}
               keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
             >
               {sortedCurrencies.map((currency) => (
                 <TouchableOpacity
@@ -385,8 +384,8 @@ const DualCurrencyInput: React.FC<DualCurrencyInputProps> = ({
                 </TouchableOpacity>
               ))}
             </ScrollView>
-          </TouchableOpacity>
-        </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     );
   };

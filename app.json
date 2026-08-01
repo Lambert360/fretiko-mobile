@@ -107,7 +107,10 @@
       ],
       "expo-font",
       "expo-maps",
-      "./plugins/withCallkeep"
+      "./plugins/withCallkeep",
+      "expo-web-browser",
+      "expo-apple-authentication",
+      "expo-asset"
     ],
     "extra": {
       "eas": {

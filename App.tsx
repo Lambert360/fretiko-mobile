@@ -8,6 +8,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
+import * as WebBrowser from 'expo-web-browser';
 
 // Import base64 polyfill first
 import './src/utils/base64-polyfill';
@@ -37,6 +38,7 @@ import EmailVerificationScreen from './src/screens/EmailVerificationScreen';
 import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
 import { ResetPasswordScreen } from './src/screens/ResetPasswordScreen';
 import { WelcomeScreen } from './src/screens/WelcomeScreen';
+import { SocialSignUpScreen } from './src/screens/SocialSignUpScreen';
 
 // Import profile and user screens
 import { EditProfileScreen } from './src/screens/EditProfileScreen';
@@ -117,6 +119,7 @@ import StoresScreen from './src/screens/StoresScreen';
 // Import stories screens
 import StoriesScreen from './src/screens/StoriesScreen';
 import StoryUploadScreen from './src/screens/StoryUploadScreen';
+import StoryUpdatesScreen from './src/screens/StoryUpdatesScreen';
 import { ShareStoryScreen } from './src/screens/ShareStoryScreen';
 import { StoryDeepLinkScreen } from './src/screens/StoryDeepLinkScreen';
 
@@ -153,6 +156,8 @@ import PostDetailsScreen from './src/screens/PostDetailsScreen';
 import MyPostsScreen from './src/screens/MyPostsScreen';
 
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
+
+WebBrowser.maybeCompleteAuthSession();
 
 const Stack = createStackNavigator();
 
@@ -579,6 +584,7 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="Stores" component={StoresScreen} />
               <Stack.Screen name="Stories" component={StoriesScreen} />
               <Stack.Screen name="StoryUpload" component={StoryUploadScreen} />
+              <Stack.Screen name="StoryUpdates" component={StoryUpdatesScreen} />
               <Stack.Screen name="ShareStory" component={ShareStoryScreen} />
               <Stack.Screen name="StoryDeepLink" component={StoryDeepLinkScreen} />
               <Stack.Screen name="Workspace" component={WorkspaceScreen} />
@@ -604,6 +610,7 @@ const AppNavigator: React.FC = () => {
           <>
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Signup" component={SignupScreen} />
+            <Stack.Screen name="SocialSignUp" component={SocialSignUpScreen} />
             <Stack.Screen name="RoleSelection" component={RoleSelectionScreen as any} />
             <Stack.Screen name="EmailVerification" component={EmailVerificationScreen as any} />
             <Stack.Screen name="Welcome" component={WelcomeScreen} />

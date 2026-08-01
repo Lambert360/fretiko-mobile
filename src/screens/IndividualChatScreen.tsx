@@ -9,6 +9,7 @@ import {
   Dimensions,
   FlatList,
   Image,
+  ImageBackground,
   Keyboard,
   Platform,
   StyleSheet,
@@ -21,6 +22,7 @@ import {
   Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PanGestureHandler, State } from 'react-native-gesture-handler';
 import { chatAPI, ChatMessage } from '../services/chatAPI';
 import { realtimeAPI } from '../services/realtimeAPI';
 import { userAPI, UserProfile } from '../services/userAPI';
@@ -34,10 +36,12 @@ import { wishlistAPI } from '../services/wishlistAPI';
 import { agoraCallService, AgoraCallConfig } from '../services/agoraCallService';
 import { RtcSurfaceView, RenderModeType } from 'react-native-agora';
 // Gift imports
-import { giftAPI, VirtualGift } from '../services/giftAPI';
+import { giftAPI, VirtualGift, UserGift } from '../services/giftAPI';
 import GiftAnimation from '../components/GiftAnimation';
+import GiftSelectorModal from '../components/GiftSelectorModal';
 import { walletAPI } from '../services/walletAPI';
 import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat, FlipType } from 'expo-image-manipulator';
 import InvoiceMessageCard from '../components/InvoiceMessageCard';
 import ProductMessageCard from '../components/ProductMessageCard';
 import ServiceMessageCard from '../components/ServiceMessageCard';
@@ -242,6 +246,10 @@ const IndividualChatScreen = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [recordingInterval, setRecordingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
+  const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
+  const [highlightedReplyId, setHighlightedReplyId] = useState<string | null>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const messageAnimRefs = useRef(new Map<string, Animated.Value>());
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
   // url → download progress (0–1). Presence in map = currently downloading.
   const [downloadingFiles, setDownloadingFiles] = useState<Map<string, number>>(new Map());
@@ -289,7 +297,7 @@ const IndividualChatScreen = () => {
 
   // Gift states for calls
   const [showGiftModal, setShowGiftModal] = useState(false);
-  const [availableGifts, setAvailableGifts] = useState<Array<{id: string, emoji: string, name: string, quantity: number}>>([]);
+  const [availableGifts, setAvailableGifts] = useState<UserGift[]>([]);
   const [loadingGifts, setLoadingGifts] = useState(false);
   // Gift animation states - array of active animations
   const [activeGiftAnimations, setActiveGiftAnimations] = useState<Array<{
@@ -323,6 +331,10 @@ const IndividualChatScreen = () => {
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
   const [videoPlayerVisible, setVideoPlayerVisible] = useState(false);
   const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
+  const [imageEditorVisible, setImageEditorVisible] = useState(false);
+  const [imageEditorAsset, setImageEditorAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [videoEditorVisible, setVideoEditorVisible] = useState(false);
+  const [videoEditorAsset, setVideoEditorAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
 
   // Emoji states
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -350,6 +362,7 @@ const IndividualChatScreen = () => {
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdHintOpacity = useRef(new Animated.Value(0)).current;
   const holdHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const REPLY_SWIPE_THRESHOLD = 60;
 
 
   // Register this chat as the currently active chat so CallContext knows NOT to show
@@ -957,6 +970,10 @@ const IndividualChatScreen = () => {
           updatedAt: data.message.updated_at || data.message.updatedAt,
           text: data.message.content,
           timestamp: new Date(data.message.created_at || data.message.createdAt),
+          replyToId: data.message.reply_to_id || data.message.replyToId || undefined,
+          replyTo: ((data.message.reply_to_id || data.message.replyToId) && (data.message.reply_to || data.message.replyTo)?.id)
+            ? (data.message.reply_to || data.message.replyTo)
+            : undefined,
           wishlistData: data.message.metadata?.wishlistData || data.message.wishlistData, // ✅ Extract wishlist data
           productData: data.message.metadata?.productData || data.message.productData, // ✅ Extract product data
           metadata: data.message.metadata,
@@ -1537,12 +1554,19 @@ const IndividualChatScreen = () => {
 
   // Auto scroll to bottom after loading messages
   useEffect(() => {
-    if (messages.length > 0) {
+    if (messages.length > 0 && isAtBottom) {
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     }
-  }, [messages.length]);
+  }, [messages.length, isAtBottom]);
+
+  // Clear the "scroll to original message" highlight after a couple of seconds
+  useEffect(() => {
+    if (!highlightedReplyId) return;
+    const timer = setTimeout(() => setHighlightedReplyId(null), 2000);
+    return () => clearTimeout(timer);
+  }, [highlightedReplyId]);
 
   // Cleanup effect for haptic sounds and call state
   useEffect(() => {
@@ -1636,10 +1660,23 @@ const IndividualChatScreen = () => {
       content: messageContent,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      replyToId: replyToMessage?.id,
+      replyTo: replyToMessage
+        ? {
+            id: replyToMessage.id,
+            content: replyToMessage.text || replyToMessage.content,
+            messageType: replyToMessage.messageType,
+            sender: {
+              id: replyToMessage.senderId,
+              username: replyToMessage.senderName,
+            },
+          }
+        : undefined,
     };
 
     setMessages(prev => [...prev, newMessage]);
     setMessageText('');
+    setReplyToMessage(null);
 
     if (mentionSearchTimeoutRef.current) {
       clearTimeout(mentionSearchTimeoutRef.current);
@@ -1734,6 +1771,11 @@ const IndividualChatScreen = () => {
           content: messageContent,
         };
 
+        if (replyToMessage) {
+          messagePayload.replyToId = replyToMessage.id;
+          console.log('↩️ Sending reply to message:', replyToMessage.id);
+        }
+
         // Add product data if available (will be stored in metadata)
         if (hasProductData) {
           messagePayload.productData = productData;
@@ -1759,6 +1801,8 @@ const IndividualChatScreen = () => {
                   createdAt: sentMessage.createdAt,
                   updatedAt: sentMessage.updatedAt,
                   productData: hasProductData ? productData : undefined,
+                  replyTo: sentMessage.replyTo || msg.replyTo,
+                  replyToId: sentMessage.replyToId || msg.replyToId,
                 }
               : msg
           )
@@ -3011,19 +3055,20 @@ const IndividualChatScreen = () => {
       // Get user's owned gifts instead of all available gifts
       const userGiftsResponse = await giftAPI.getUserGifts();
       
-      // Group gifts by gift_id and sum quantities
-      const giftMap = new Map<string, {id: string, emoji: string, name: string, quantity: number}>();
+      // Group gifts by gift_id and sum quantities/total values
+      const giftMap = new Map<string, UserGift>();
       
       userGiftsResponse.gifts.forEach((userGift) => {
         const existing = giftMap.get(userGift.gift_id);
         if (existing) {
           existing.quantity += userGift.quantity;
+          existing.total_value += userGift.total_value;
         } else {
           giftMap.set(userGift.gift_id, {
+            ...userGift,
             id: userGift.gift_id,
-            emoji: userGift.emoji,
-            name: userGift.gift_name,
             quantity: userGift.quantity,
+            total_value: userGift.total_value,
           });
         }
       });
@@ -3121,7 +3166,7 @@ const IndividualChatScreen = () => {
       const animationId = `gift-local-${Date.now()}-${Math.random()}`;
       
       // Get gift emoji from available gifts
-      const gift = availableGifts.find(g => g.id === giftId);
+      const gift = availableGifts.find(g => g.gift_id === giftId);
       if (gift && gift.emoji) {
         setActiveGiftAnimations(prev => [...prev, {
           id: animationId,
@@ -4104,41 +4149,13 @@ const IndividualChatScreen = () => {
       // Launch camera for video recording
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['videos'],
-        allowsEditing: true,
+        allowsEditing: false,
         quality: 0.8,
         videoMaxDuration: 60, // 60 seconds max
       });
 
       if (!result.canceled && result.assets[0]) {
-        const asset = result.assets[0];
-        console.log('📹 Video asset:', {
-          uri: asset.uri,
-          fileName: asset.fileName,
-          fileSize: asset.fileSize,
-          type: asset.type,
-          mimeType: asset.mimeType
-        });
-
-        // Determine mime type from file extension if not provided
-        const fileName = asset.fileName || 'video.mp4';
-        const extension = fileName.split('.').pop()?.toLowerCase();
-        let mimeType = asset.mimeType || asset.type;
-
-        if (!mimeType) {
-          if (extension === 'mp4') mimeType = 'video/mp4';
-          else if (extension === 'mov') mimeType = 'video/quicktime';
-          else if (extension === 'avi') mimeType = 'video/x-msvideo';
-          else if (extension === 'webm') mimeType = 'video/webm';
-          else mimeType = 'video/mp4'; // Default
-        }
-
-        console.log('📹 Using mime type:', mimeType);
-
-        await sendMediaMessage('video', asset.uri, {
-          name: fileName,
-          size: (asset.fileSize || 0).toString(),
-          type: mimeType,
-        });
+        handleVideoEdit(result.assets[0]);
       }
     } catch (error) {
       console.error('Error recording video:', error);
@@ -4161,41 +4178,23 @@ const IndividualChatScreen = () => {
       // Open video picker
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['videos'],
-        allowsEditing: true,
+        allowsEditing: false,
         quality: 0.8,
-        allowsMultipleSelection: false,
+        allowsMultipleSelection: true,
       });
 
-      if (!result.canceled && result.assets[0]) {
-        const asset = result.assets[0];
-        console.log('📹 Video asset from gallery:', {
-          uri: asset.uri,
-          fileName: asset.fileName,
-          fileSize: asset.fileSize,
-          type: asset.type,
-          mimeType: asset.mimeType
-        });
-
-        // Determine mime type from file extension if not provided
-        const fileName = asset.fileName || 'video.mp4';
-        const extension = fileName.split('.').pop()?.toLowerCase();
-        let mimeType = asset.mimeType || asset.type;
-
-        if (!mimeType) {
-          if (extension === 'mp4') mimeType = 'video/mp4';
-          else if (extension === 'mov') mimeType = 'video/quicktime';
-          else if (extension === 'avi') mimeType = 'video/x-msvideo';
-          else if (extension === 'webm') mimeType = 'video/webm';
-          else mimeType = 'video/mp4'; // Default
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        if (result.assets.length === 1) {
+          handleVideoEdit(result.assets[0]);
+        } else {
+          for (const asset of result.assets) {
+            await sendMediaMessage('video', asset.uri, {
+              name: asset.fileName || 'video.mp4',
+              size: (asset.fileSize || 0).toString(),
+              type: getVideoMimeType(asset),
+            });
+          }
         }
-
-        console.log('📹 Using mime type:', mimeType);
-
-        await sendMediaMessage('video', asset.uri, {
-          name: fileName,
-          size: (asset.fileSize || 0).toString(),
-          type: mimeType,
-        });
       }
     } catch (error) {
       console.error('Error selecting video:', error);
@@ -4203,6 +4202,182 @@ const IndividualChatScreen = () => {
     } finally {
       setShowAttachmentModal(false);
     }
+  };
+
+  const getVideoMimeType = (videoAsset: ImagePicker.ImagePickerAsset) => {
+    const fileName = videoAsset.fileName || 'video.mp4';
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    let mimeType = videoAsset.mimeType || videoAsset.type;
+
+    if (!mimeType) {
+      if (extension === 'mp4') mimeType = 'video/mp4';
+      else if (extension === 'mov') mimeType = 'video/quicktime';
+      else if (extension === 'avi') mimeType = 'video/x-msvideo';
+      else if (extension === 'webm') mimeType = 'video/webm';
+      else mimeType = 'video/mp4'; // Default
+    }
+
+    return mimeType;
+  };
+
+  const sendVideoMessage = async (videoAsset: ImagePicker.ImagePickerAsset) => {
+    setVideoEditorVisible(false);
+    setVideoEditorAsset(null);
+    await sendMediaMessage('video', videoAsset.uri, {
+      name: videoAsset.fileName || 'video.mp4',
+      size: (videoAsset.fileSize || 0).toString(),
+      type: getVideoMimeType(videoAsset),
+    });
+  };
+
+  const editAndSendVideo = async () => {
+    if (!videoEditorAsset) return;
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        setVideoEditorVisible(false);
+        setVideoEditorAsset(null);
+        await sendVideoMessage(result.assets[0]);
+      }
+    } catch (error) {
+      console.error('Error editing video:', error);
+      Alert.alert('Error', 'Failed to edit video.');
+    }
+  };
+
+  const cancelVideoEdit = () => {
+    setVideoEditorVisible(false);
+    setVideoEditorAsset(null);
+  };
+
+  const handleVideoEdit = (asset: ImagePicker.ImagePickerAsset) => {
+    setVideoEditorAsset(asset);
+    setVideoEditorVisible(true);
+  };
+
+  const applyImageCropAndSend = async (assetToEdit: ImagePicker.ImagePickerAsset, cropW: number, cropH: number) => {
+    try {
+      const w = assetToEdit.width!;
+      const h = assetToEdit.height!;
+      const targetAspect = cropW / cropH;
+      const origAspect = w / h;
+      let newW = w;
+      let newH = h;
+      let originX = 0;
+      let originY = 0;
+      if (origAspect > targetAspect) {
+        newH = h;
+        newW = h * targetAspect;
+        originX = (w - newW) / 2;
+        originY = 0;
+      } else {
+        newW = w;
+        newH = w / targetAspect;
+        originX = 0;
+        originY = (h - newH) / 2;
+      }
+
+      const { uri: editedUri } = await manipulateAsync(
+        assetToEdit.uri,
+        [{ crop: { originX: Math.round(originX), originY: Math.round(originY), width: Math.round(newW), height: Math.round(newH) } }],
+        { format: SaveFormat.JPEG, compress: 0.8 }
+      );
+
+      const fileInfo = await FileSystem.getInfoAsync(editedUri);
+      const editedSize = (fileInfo as any).size || assetToEdit.fileSize || 0;
+      setImageEditorVisible(false);
+      setImageEditorAsset(null);
+      await sendMediaMessage('image', editedUri, {
+        name: assetToEdit.fileName || 'image.jpg',
+        size: editedSize.toString(),
+        type: 'image/jpeg',
+      });
+    } catch (error) {
+      console.error('Error cropping image:', error);
+      Alert.alert('Error', 'Failed to crop image.');
+    }
+  };
+
+  const applyImageRotateAndSend = async (assetToEdit: ImagePicker.ImagePickerAsset, deg: number) => {
+    try {
+      const { uri: editedUri } = await manipulateAsync(
+        assetToEdit.uri,
+        [{ rotate: deg }],
+        { format: SaveFormat.JPEG, compress: 0.8 }
+      );
+      const fileInfo = await FileSystem.getInfoAsync(editedUri);
+      const editedSize = (fileInfo as any).size || assetToEdit.fileSize || 0;
+      setImageEditorVisible(false);
+      setImageEditorAsset(null);
+      await sendMediaMessage('image', editedUri, {
+        name: assetToEdit.fileName || 'image.jpg',
+        size: editedSize.toString(),
+        type: 'image/jpeg',
+      });
+    } catch (error) {
+      console.error('Error rotating image:', error);
+      Alert.alert('Error', 'Failed to rotate image.');
+    }
+  };
+
+  const applyImageFlipAndSend = async (assetToEdit: ImagePicker.ImagePickerAsset, flip: FlipType) => {
+    try {
+      const { uri: editedUri } = await manipulateAsync(
+        assetToEdit.uri,
+        [{ flip }],
+        { format: SaveFormat.JPEG, compress: 0.8 }
+      );
+      const fileInfo = await FileSystem.getInfoAsync(editedUri);
+      const editedSize = (fileInfo as any).size || assetToEdit.fileSize || 0;
+      setImageEditorVisible(false);
+      setImageEditorAsset(null);
+      await sendMediaMessage('image', editedUri, {
+        name: assetToEdit.fileName || 'image.jpg',
+        size: editedSize.toString(),
+        type: 'image/jpeg',
+      });
+    } catch (error) {
+      console.error('Error flipping image:', error);
+      Alert.alert('Error', 'Failed to flip image.');
+    }
+  };
+
+  const handleImageEdit = (asset: ImagePicker.ImagePickerAsset) => {
+    const { uri, width, height } = asset;
+    if (!width || !height) {
+      sendMediaMessage('image', uri, {
+        name: asset.fileName || 'image.jpg',
+        size: (asset.fileSize || 0).toString(),
+        type: asset.mimeType || 'image/jpeg',
+      });
+      return;
+    }
+
+    setImageEditorAsset(asset);
+    setImageEditorVisible(true);
+  };
+
+  const sendOriginalImage = () => {
+    if (!imageEditorAsset) return;
+    const asset = imageEditorAsset;
+    setImageEditorVisible(false);
+    setImageEditorAsset(null);
+    sendMediaMessage('image', asset.uri, {
+      name: asset.fileName || 'image.jpg',
+      size: (asset.fileSize || 0).toString(),
+      type: asset.mimeType || 'image/jpeg',
+    });
+  };
+
+  const cancelImageEdit = () => {
+    setImageEditorVisible(false);
+    setImageEditorAsset(null);
   };
 
   const takePhoto = async () => {
@@ -4218,18 +4393,12 @@ const IndividualChatScreen = () => {
       // Launch camera for photo
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [4, 3],
+        allowsEditing: false,
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets[0]) {
-        const asset = result.assets[0];
-        await sendMediaMessage('image', asset.uri, {
-          name: asset.fileName || 'photo.jpg',
-          size: (asset.fileSize || 0).toString(),
-          type: asset.mimeType || 'image/jpeg',
-        });
+        handleImageEdit(result.assets[0]);
       }
     } catch (error) {
       console.error('Error taking photo:', error);
@@ -4493,35 +4662,42 @@ const IndividualChatScreen = () => {
     console.log('🎭 Adding reaction:', { messageId, emoji, userId: user?.id });
 
     try {
-      // Optimistically update UI
+      // Optimistically update UI without mutating existing state
       setMessages(prev => prev.map(msg => {
-        if (msg.id === messageId) {
-          const reactions = msg.reactions || {};
-          const users = reactions[emoji] || [];
+        if (msg.id !== messageId) return msg;
 
-          // Toggle reaction - add if not present, remove if present
-          if (users.includes(user?.id || '')) {
-            // Remove reaction
-            const newUsers = users.filter(id => id !== user?.id);
-            if (newUsers.length === 0) {
-              delete reactions[emoji];
-            } else {
-              reactions[emoji] = newUsers;
-            }
+        const userId = user?.id || '';
+        const prevReactions = msg.reactions || {};
+        const users = prevReactions[emoji] ? [...prevReactions[emoji]] : [];
+        const nextReactions = { ...prevReactions };
+
+        // Toggle reaction - add if not present, remove if present
+        if (users.includes(userId)) {
+          const newUsers = users.filter(id => id !== userId);
+          if (newUsers.length === 0) {
+            delete nextReactions[emoji];
           } else {
-            // Add reaction
-            reactions[emoji] = [...users, user?.id || ''];
+            nextReactions[emoji] = newUsers;
           }
-
-          return { ...msg, reactions };
+        } else {
+          nextReactions[emoji] = [...users, userId];
         }
-        return msg;
+
+        return { ...msg, reactions: nextReactions };
       }));
 
-      // Send to backend (we'll create this endpoint)
-      await chatAPI.addReaction(messageId, emoji);
+      // Send to backend and use server-authoritative reaction state
+      const updatedReactions = await chatAPI.addReaction(messageId, emoji);
 
-      console.log('✅ Reaction added successfully');
+      if (updatedReactions) {
+        setMessages(prev =>
+          prev.map(msg =>
+            msg.id === messageId ? { ...msg, reactions: updatedReactions } : msg
+          )
+        );
+      }
+
+      console.log('✅ Reaction updated successfully');
 
       // Close reaction picker
       setSelectedMessageForReaction(null);
@@ -4676,19 +4852,23 @@ const IndividualChatScreen = () => {
       // Open image picker
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [4, 3],
+        allowsEditing: false,
         quality: 0.8,
-        allowsMultipleSelection: false,
+        allowsMultipleSelection: true,
       });
 
-      if (!result.canceled && result.assets[0]) {
-        const asset = result.assets[0];
-        await sendMediaMessage('image', asset.uri, {
-          name: asset.fileName || 'image.jpg',
-          size: (asset.fileSize || 0).toString(),
-          type: asset.mimeType || 'image/jpeg',
-        });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        if (result.assets.length === 1) {
+          handleImageEdit(result.assets[0]);
+        } else {
+          for (const asset of result.assets) {
+            await sendMediaMessage('image', asset.uri, {
+              name: asset.fileName || 'image.jpg',
+              size: (asset.fileSize || 0).toString(),
+              type: asset.mimeType || 'image/jpeg',
+            });
+          }
+        }
       }
     } catch (error) {
       console.error('Error selecting image:', error);
@@ -4873,6 +5053,101 @@ const IndividualChatScreen = () => {
     return result;
   }, [messages]);
 
+  const scrollToRepliedMessage = (replyToId: string) => {
+    const index = messagesWithSeparators.findIndex(
+      (msg: any) => msg.type !== 'date_separator' && (msg as Message).id === replyToId
+    );
+    if (index === -1) return;
+
+    setHighlightedReplyId(replyToId);
+    flatListRef.current?.scrollToIndex({
+      index,
+      animated: true,
+      viewPosition: 0.5,
+    });
+  };
+
+  const renderReplyToHeader = (replyTo: Message['replyTo']) => {
+    if (!replyTo || !replyTo.id) return null;
+    const snippet = replyTo.content
+      ? replyTo.content
+      : replyTo.messageType === 'image'
+      ? 'Photo'
+      : replyTo.messageType === 'video'
+      ? 'Video'
+      : replyTo.messageType === 'audio'
+      ? 'Audio'
+      : 'Attachment';
+    return (
+      <TouchableOpacity
+        activeOpacity={0.8}
+        style={styles.replyToHeaderContainer}
+        onPress={() => scrollToRepliedMessage(replyTo.id)}
+      >
+        <View style={styles.replyToHeaderBorder} />
+        <View style={styles.replyToHeaderContent}>
+          <Text style={styles.replyToHeaderName} numberOfLines={1}>
+            {replyTo.sender?.id === user?.id ? 'You' : (replyTo.sender?.username || 'Unknown')}
+          </Text>
+          <Text style={styles.replyToHeaderText} numberOfLines={1}>
+            {snippet}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const wrapWithReplyGesture = (message: Message, content: React.ReactNode, active = true) => {
+    if (!active || (message as any).type === 'date_separator' || message.messageType === 'system') {
+      return <>{content}</>;
+    }
+
+    let translateX = messageAnimRefs.current.get(message.id);
+    if (!translateX) {
+      translateX = new Animated.Value(0);
+      messageAnimRefs.current.set(message.id, translateX);
+    }
+
+    const visualX = translateX.interpolate({
+      inputRange: [-100, 0, 80],
+      outputRange: [0, 0, 80],
+      extrapolate: 'clamp',
+    });
+
+    const onGestureEvent = Animated.event(
+      [{ nativeEvent: { translationX: translateX } }],
+      { useNativeDriver: true }
+    );
+
+    const onHandlerStateChange = ({ nativeEvent }: any) => {
+      if (nativeEvent.state === State.END || nativeEvent.state === State.CANCELLED) {
+        if ((nativeEvent.translationX || 0) > REPLY_SWIPE_THRESHOLD) {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setReplyToMessage(message);
+          console.log('↩️ Selected message to reply:', message.id);
+        }
+        Animated.spring(translateX, {
+          toValue: 0,
+          friction: 6,
+          useNativeDriver: true,
+        }).start();
+      }
+    };
+
+    return (
+      <PanGestureHandler
+        activeOffsetX={[-1000, 20]}
+        failOffsetY={[-15, 15]}
+        onGestureEvent={onGestureEvent}
+        onHandlerStateChange={onHandlerStateChange}
+      >
+        <Animated.View style={{ transform: [{ translateX: visualX }] }}>
+          {content}
+        </Animated.View>
+      </PanGestureHandler>
+    );
+  };
+
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     if ((item as any).type === 'date_separator') {
       return (
@@ -4886,6 +5161,7 @@ const IndividualChatScreen = () => {
     // 🔥 FIX: For wishlist messages, also check if current user is the wishlist owner
     const isCurrentUser = item.senderId === user?.id || 
                           (item.messageType === 'wishlist' && item.wishlistData?.ownerId === user?.id);
+    const isHighlighted = item.id === highlightedReplyId;
     
     // Debug log for wishlist message rendering
     if (item.messageType === 'wishlist') {
@@ -4979,13 +5255,14 @@ const IndividualChatScreen = () => {
 
     // Render invoice messages
     if (item.messageType === 'invoice' && item.invoiceData) {
-      return <InvoiceMessageCard invoice={item.invoiceData} isCurrentUser={isCurrentUser} />;
+      return wrapWithReplyGesture(item, <InvoiceMessageCard invoice={item.invoiceData} isCurrentUser={isCurrentUser} />);
     }
 
     // Render product messages (bargain) - check metadata for productData
     if (item.productData || item.metadata?.productData) {
       const productInfo = item.productData || item.metadata?.productData;
-      return (
+      return wrapWithReplyGesture(
+        item,
         <ProductMessageCard
           product={productInfo}
           isCurrentUser={isCurrentUser}
@@ -4997,7 +5274,8 @@ const IndividualChatScreen = () => {
     // 🎁 Render wishlist messages
     if (item.messageType === 'wishlist' && (item.wishlistData || item.metadata?.wishlistData)) {
       const wishlistInfo = item.wishlistData || item.metadata?.wishlistData;
-      return (
+      return wrapWithReplyGesture(
+        item,
         <WishlistMessageCard
           wishlistData={wishlistInfo}
           isCurrentUser={isCurrentUser}
@@ -5008,7 +5286,8 @@ const IndividualChatScreen = () => {
 
     // 📅 Render IKO schedule card
     if (item.ikoScheduleCard) {
-      return (
+      return wrapWithReplyGesture(
+        item,
         <ScheduleMessageCard
           scheduleData={item.ikoScheduleCard}
           isCurrentUser={isCurrentUser}
@@ -5072,7 +5351,7 @@ const IndividualChatScreen = () => {
       );
     }
 
-    return (
+    return wrapWithReplyGesture(item, (
       <View style={[
         styles.messageContainer,
         isCurrentUser ? styles.currentUserMessage : styles.otherUserMessage,
@@ -5096,8 +5375,12 @@ const IndividualChatScreen = () => {
           style={[
             styles.messageBubble,
             isCurrentUser ? styles.currentUserBubble : styles.otherUserBubble,
+            item.replyTo && styles.messageBubbleWithReply,
+            isHighlighted && styles.highlightedMessage,
           ]}
         >
+          {renderReplyToHeader(item.replyTo)}
+
           {/* Render different message types */}
           {item.messageType === 'text' && (
             <RichText
@@ -5132,10 +5415,25 @@ const IndividualChatScreen = () => {
               style={styles.videoContainer}
               onPress={() => handlePlayVideo(item.mediaUrl!)}
             >
-              <View style={styles.videoPlayButton}>
-                <Ionicons name="play" size={30} color="#FFFFFF" />
-              </View>
-              <Text style={styles.videoText}>Video Message</Text>
+              {item.metadata?.thumbnailUrl ? (
+                <ImageBackground
+                  source={{ uri: item.metadata.thumbnailUrl }}
+                  style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center', borderRadius: 12, overflow: 'hidden' }]}
+                  resizeMode="cover"
+                >
+                  <View style={styles.videoPlayButton}>
+                    <Ionicons name="play" size={30} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.videoText}>Video Message</Text>
+                </ImageBackground>
+              ) : (
+                <>
+                  <View style={styles.videoPlayButton}>
+                    <Ionicons name="play" size={30} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.videoText}>Video Message</Text>
+                </>
+              )}
             </TouchableOpacity>
           )}
           
@@ -5298,7 +5596,7 @@ const IndividualChatScreen = () => {
           )}
         </TouchableOpacity>
       </View>
-    );
+    ));
   };
 
   const renderMessageInput = () => (
@@ -5369,9 +5667,24 @@ const IndividualChatScreen = () => {
             )}
             <View style={styles.productPreviewInfo}>
               <Text style={styles.productPreviewName} numberOfLines={2}>{productData.name}</Text>
-              <Text style={styles.productPreviewPrice}>₦{productData.price.toLocaleString()}</Text>
+              <Text style={styles.productPreviewPrice}>{walletAPI.formatFreti(productData.price)}</Text>
             </View>
           </View>
+        </View>
+      )}
+
+      {replyToMessage && (
+        <View style={styles.replyPreviewContainer}>
+          <View style={styles.replyPreviewHeader}>
+            <Ionicons name="arrow-undo" size={16} color="#3498DB" />
+            <Text style={styles.replyPreviewTitle}>Reply to {replyToMessage.senderName}</Text>
+            <TouchableOpacity onPress={() => setReplyToMessage(null)}>
+              <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.6)" />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.replyPreviewText} numberOfLines={1}>
+            {replyToMessage.messageType === 'text' ? (replyToMessage.text || replyToMessage.content || '') : `Attachment: ${replyToMessage.messageType}`}
+          </Text>
         </View>
       )}
 
@@ -6541,12 +6854,27 @@ const IndividualChatScreen = () => {
           <TouchableOpacity
             style={styles.imageViewerActionButton}
             onPress={async () => {
-              if (selectedImageUrl) {
-                try {
-                  await Linking.openURL(selectedImageUrl);
-                } catch (error) {
-                  console.error('Error opening image:', error);
+              if (!selectedImageUrl) return;
+              try {
+                const { status } = await MediaLibrary.requestPermissionsAsync();
+                if (status !== 'granted') {
+                  Alert.alert('Permission Required', 'Permission to save photos is required!');
+                  return;
                 }
+
+                let localUri = selectedImageUrl;
+                if (selectedImageUrl.startsWith('http')) {
+                  const filename = `fretiko_image_${Date.now()}.jpg`;
+                  const fileUri = FileSystem.cacheDirectory + filename;
+                  const downloadResult = await FileSystem.downloadAsync(selectedImageUrl, fileUri);
+                  localUri = downloadResult.uri;
+                }
+
+                await MediaLibrary.saveToLibraryAsync(localUri);
+                Alert.alert('Downloaded', 'Image saved to your gallery.');
+              } catch (error) {
+                console.error('Error saving image:', error);
+                Alert.alert('Error', 'Failed to save image.');
               }
             }}
           >
@@ -6580,7 +6908,40 @@ const IndividualChatScreen = () => {
           >
             <Ionicons name="close" size={28} color="#FFFFFF" />
           </TouchableOpacity>
-          <Text style={styles.videoPlayerTitle}>Video</Text>
+          <Text style={[styles.videoPlayerTitle, { flex: 1, textAlign: 'center' }]}>Video</Text>
+          <TouchableOpacity
+            style={{ padding: 8 }}
+            onPress={async () => {
+              if (!selectedVideoUrl) return;
+              if (selectedVideoUrl.endsWith('.m3u8')) {
+                Alert.alert('Cannot Download', 'HLS streams cannot be saved.');
+                return;
+              }
+              try {
+                const { status } = await MediaLibrary.requestPermissionsAsync();
+                if (status !== 'granted') {
+                  Alert.alert('Permission Required', 'Permission to save videos is required!');
+                  return;
+                }
+
+                let localUri = selectedVideoUrl;
+                if (selectedVideoUrl.startsWith('http')) {
+                  const filename = `fretiko_video_${Date.now()}.mp4`;
+                  const fileUri = FileSystem.cacheDirectory + filename;
+                  const downloadResult = await FileSystem.downloadAsync(selectedVideoUrl, fileUri);
+                  localUri = downloadResult.uri;
+                }
+
+                await MediaLibrary.saveToLibraryAsync(localUri);
+                Alert.alert('Saved', 'Video saved to your gallery.');
+              } catch (error) {
+                console.error('Error saving video:', error);
+                Alert.alert('Error', 'Failed to save video.');
+              }
+            }}
+          >
+            <Ionicons name="download" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
         {selectedVideoUrl && (
@@ -6592,6 +6953,102 @@ const IndividualChatScreen = () => {
             />
           </View>
         )}
+      </View>
+    </Modal>
+  );
+
+  // Render custom image editor modal
+  const renderImageEditorModal = () => (
+    <Modal
+      visible={imageEditorVisible}
+      transparent={false}
+      animationType="slide"
+      onRequestClose={cancelImageEdit}
+    >
+      <View style={styles.imageEditorContainer}>
+        <View style={styles.imageEditorHeader}>
+          <TouchableOpacity onPress={cancelImageEdit} style={styles.imageEditorCloseButton}>
+            <Ionicons name="close" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.imageEditorTitle}>Edit Photo</Text>
+          <View style={styles.imageEditorCloseButton} />
+        </View>
+
+        <View style={styles.imageEditorContent}>
+          {imageEditorAsset && (
+            <Image
+              source={{ uri: imageEditorAsset.uri }}
+              style={styles.imageEditorImage}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.imageEditorControls}
+        >
+          <TouchableOpacity style={styles.imageEditorControlButton} onPress={sendOriginalImage}>
+            <Ionicons name="send" size={20} color="#FFFFFF" />
+            <Text style={styles.imageEditorControlText}>Send</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.imageEditorControlButton} onPress={() => imageEditorAsset && applyImageCropAndSend(imageEditorAsset, 1, 1)}>
+            <Text style={styles.imageEditorControlText}>1:1</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.imageEditorControlButton} onPress={() => imageEditorAsset && applyImageCropAndSend(imageEditorAsset, 4, 3)}>
+            <Text style={styles.imageEditorControlText}>4:3</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.imageEditorControlButton} onPress={() => imageEditorAsset && applyImageCropAndSend(imageEditorAsset, 16, 9)}>
+            <Text style={styles.imageEditorControlText}>16:9</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.imageEditorControlButton} onPress={() => imageEditorAsset && applyImageRotateAndSend(imageEditorAsset, 90)}>
+            <Ionicons name="refresh" size={20} color="#FFFFFF" />
+            <Text style={styles.imageEditorControlText}>Rotate</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.imageEditorControlButton} onPress={() => imageEditorAsset && applyImageFlipAndSend(imageEditorAsset, FlipType.Horizontal)}>
+            <Ionicons name="swap-horizontal" size={20} color="#FFFFFF" />
+            <Text style={styles.imageEditorControlText}>Flip</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+
+  // Render custom video editor modal
+  const renderVideoEditorModal = () => (
+    <Modal
+      visible={videoEditorVisible}
+      transparent={false}
+      animationType="slide"
+      onRequestClose={cancelVideoEdit}
+    >
+      <View style={styles.videoEditorContainer}>
+        <View style={styles.videoEditorHeader}>
+          <TouchableOpacity onPress={cancelVideoEdit} style={styles.videoEditorCloseButton}>
+            <Ionicons name="close" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.videoEditorTitle}>Edit Video</Text>
+          <View style={styles.videoEditorCloseButton} />
+        </View>
+
+        <View style={styles.videoEditorContent}>
+          <Ionicons name="videocam" size={80} color="rgba(255,255,255,0.4)" />
+          <Text style={styles.videoEditorFileName} numberOfLines={1}>
+            {videoEditorAsset?.fileName || 'Video'}
+          </Text>
+        </View>
+
+        <View style={styles.videoEditorControls}>
+          <TouchableOpacity style={styles.videoEditorControlButton} onPress={() => videoEditorAsset && sendVideoMessage(videoEditorAsset)}>
+            <Ionicons name="send" size={20} color="#FFFFFF" />
+            <Text style={styles.videoEditorControlText}>Send</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.videoEditorControlButton} onPress={editAndSendVideo}>
+            <Ionicons name="cut" size={20} color="#FFFFFF" />
+            <Text style={styles.videoEditorControlText}>Trim</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </Modal>
   );
@@ -6642,7 +7099,16 @@ const IndividualChatScreen = () => {
             keyExtractor={(item) => (item as any).type === 'date_separator' ? (item as any).id : (item as Message).id}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.messagesContent}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+            onScroll={({ nativeEvent }) => {
+              const { contentOffset, layoutMeasurement, contentSize } = nativeEvent;
+              setIsAtBottom(contentSize.height - contentOffset.y - layoutMeasurement.height < 50);
+            }}
+            onContentSizeChange={() => {
+              if (isAtBottom) {
+                flatListRef.current?.scrollToEnd({ animated: true });
+              }
+            }}
+            getItemLayout={(data, index) => ({ length: 80, offset: 80 * index, index })}
           />
         ) : (
           <View style={styles.emptyState}>
@@ -6661,62 +7127,19 @@ const IndividualChatScreen = () => {
       {renderIncomingCallModal()}
       {renderImageViewer()}
       {renderVideoPlayer()}
+      {renderImageEditorModal()}
+      {renderVideoEditorModal()}
       
       {/* Gift Modal for Calls */}
-      <Modal
+      <GiftSelectorModal
         visible={showGiftModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowGiftModal(false)}
-      >
-        <View style={styles.giftModalOverlay}>
-          <View style={styles.giftModalContainer}>
-            <View style={styles.giftModalHeader}>
-              <Text style={styles.giftModalTitle}>Send Gift</Text>
-              <TouchableOpacity
-                onPress={() => setShowGiftModal(false)}
-                style={styles.giftModalCloseButton}
-              >
-                <Ionicons name="close" size={24} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.giftModalContent}>
-              {loadingGifts ? (
-                <View style={styles.giftModalLoading}>
-                  <Text style={styles.giftModalLoadingText}>Loading gifts...</Text>
-                </View>
-              ) : (
-                <FlatList
-                  data={availableGifts}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={styles.giftModalItem}
-                      onPress={() => {
-                        handleSendGift(item.id, 1);
-                        setShowGiftModal(false);
-                      }}
-                    >
-                      <Text style={styles.giftModalEmoji}>{item.emoji}</Text>
-                      <Text style={styles.giftModalName}>{item.name}</Text>
-                      <Text style={styles.giftModalQuantity}>x{item.quantity}</Text>
-                    </TouchableOpacity>
-                  )}
-                  keyExtractor={(item) => item.id}
-                  numColumns={3}
-                  contentContainerStyle={styles.giftModalGrid}
-                  showsVerticalScrollIndicator={false}
-                  ListEmptyComponent={
-                    <View style={styles.giftModalEmpty}>
-                      <Text style={styles.giftModalEmptyText}>You don't have any gifts to send</Text>
-                    </View>
-                  }
-                />
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setShowGiftModal(false)}
+        gifts={availableGifts}
+        loading={loadingGifts}
+        onSendGift={handleSendGift}
+        title="Send Gift"
+        subtitle="Select a gift to send during the call"
+      />
       {renderReactionPicker()}
 
       {/* Wishlist Share Modal */}
@@ -6885,6 +7308,13 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 10,
+  },
+  messageBubbleWithReply: {
+    minWidth: screenWidth * 0.5,
+  },
+  highlightedMessage: {
+    borderWidth: 1.5,
+    borderColor: '#FFD700',
   },
   currentUserBubble: {
     backgroundColor: '#051094', // Admiral Blue for outgoing messages
@@ -8433,6 +8863,65 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  // Reply-to Preview Styles (above input)
+  replyPreviewContainer: {
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 152, 219, 0.3)',
+    minWidth: screenWidth * 0.6,
+    maxWidth: screenWidth - 40,
+    minHeight: 56,
+    maxHeight: 80,
+    justifyContent: 'center',
+    alignSelf: 'center',
+  },
+  replyPreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+    gap: 6,
+  },
+  replyPreviewTitle: {
+    flex: 1,
+    color: '#3498DB',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  replyPreviewText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 14,
+  },
+  replyToHeaderContainer: {
+    flexDirection: 'row',
+    marginBottom: 6,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    borderRadius: 6,
+    overflow: 'hidden',
+    alignSelf: 'stretch',
+  },
+  replyToHeaderBorder: {
+    width: 3,
+    backgroundColor: '#3498DB',
+  },
+  replyToHeaderContent: {
+    flex: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  replyToHeaderName: {
+    color: '#3498DB',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  replyToHeaderText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+  },
+
   // Product Preview Styles
   productPreviewContainer: {
     backgroundColor: 'rgba(243, 156, 18, 0.1)',
@@ -8505,6 +8994,123 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: 'hidden',
     letterSpacing: 0.3,
+  },
+  imageEditorContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  imageEditorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 50,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+  },
+  imageEditorCloseButton: {
+    padding: 8,
+    width: 44,
+  },
+  imageEditorTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  imageEditorContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  imageEditorImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 12,
+  },
+  imageEditorControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 20,
+    paddingBottom: 40,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+  },
+  imageEditorControlButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginHorizontal: 6,
+    minWidth: 70,
+  },
+  imageEditorControlText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  videoEditorContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  videoEditorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 50,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+  },
+  videoEditorCloseButton: {
+    padding: 8,
+    width: 44,
+  },
+  videoEditorTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  videoEditorContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  videoEditorFileName: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 16,
+    textAlign: 'center',
+    maxWidth: '80%',
+  },
+  videoEditorControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-evenly',
+    paddingHorizontal: 16,
+    paddingVertical: 24,
+    paddingBottom: 40,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+  },
+  videoEditorControlButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    minWidth: 120,
+  },
+  videoEditorControlText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 4,
   },
 });
 

@@ -31,6 +31,19 @@ export interface User {
   token?: string; // Add token property for PIN reset screens
 }
 
+export interface SocialSignInPayload {
+  provider: 'google' | 'apple';
+  idToken: string;
+  firstName?: string;
+  lastName?: string;
+  dateOfBirth?: string;
+  gender?: string;
+  user_role?: 'citizen' | 'vendor' | 'rider';
+  is_seller?: boolean;
+  is_rider?: boolean;
+  hasAcceptedTerms: boolean;
+}
+
 export interface AuthState {
   user: User | null;
   accessToken: string | null;
@@ -56,7 +69,7 @@ export interface AuthContextType extends AuthState {
     is_seller?: boolean,
     is_rider?: boolean
   ) => Promise<void>;
-  socialSignIn: (provider: 'google' | 'apple', accessToken: string, idToken?: string) => Promise<void>;
+  socialSignIn: (payload: SocialSignInPayload) => Promise<void>;
   migrate: (email: string, newPassword: string) => Promise<void>;
   signout: () => Promise<void>;
   logout: () => Promise<void>;
@@ -918,7 +931,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, [saveAuthData]);
 
-  const socialSignIn = useCallback(async (provider: 'google' | 'apple', accessToken: string, idToken?: string) => {
+  const socialSignIn = useCallback(async (payload: SocialSignInPayload) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
 
@@ -927,11 +940,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          provider,
-          accessToken,
-          idToken,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await response.json();
@@ -946,13 +955,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           accessToken: data.accessToken,
           isLoading: false,
           isAuthenticated: true,
-          isNewUser: data.isNewUser || false,
+          isNewUser: false, // Social profile is already complete on this screen
           isSuspended: data.isSuspended || false,
           isDeleted: false,
           isCheckingSuspension: data.isSuspended,
         });
       } else {
-        throw new Error(data.message || 'Social authentication failed');
+        const error: any = new Error(data.message || 'Social authentication failed');
+        error.requiresProfile = data.requiresProfile === true;
+        throw error;
       }
     } catch (error) {
       setAuthState(prev => ({ ...prev, isLoading: false }));

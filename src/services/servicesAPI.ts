@@ -71,6 +71,8 @@ export interface VideoFeedItem {
   title: string;
   thumbnail?: string;
   videoUri?: string;
+  mediaUrls?: string[];
+  processedMediaUrls?: string[];
   userId: string;
   username: string;
   userAvatar: string;
@@ -84,6 +86,13 @@ export interface VideoFeedItem {
   serviceProvider: string;
   rating: number;
   completedJobs: string;
+  duration?: string | null;
+  availability?: {
+    weekdays: boolean;
+    weekends: boolean;
+    evenings: boolean;
+    emergency: boolean;
+  };
   isLiked?: boolean;
   isBookmarked?: boolean;
 }

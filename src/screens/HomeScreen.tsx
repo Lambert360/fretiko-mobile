@@ -4,6 +4,7 @@ import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import React, { memo, useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   AppState,
@@ -25,6 +26,7 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScrollView as RNGHScrollView } from 'react-native-gesture-handler';
 import ProductCard from '../components/ProductCard';
 import VideoCard from '../components/VideoCard';
 import PostCard from '../components/PostCard';
@@ -39,6 +41,7 @@ import LocationSelector from '../components/LocationSelector';
 import FilterDropdown, { FilterOptions } from '../components/FilterDropdown';
 import ServiceVideoPlayer from '../components/ServiceVideoPlayer';
 import ProductVideoPlayer from '../components/ProductVideoPlayer';
+import VideoProductCard from '../components/VideoProductCard';
 import { productsAPI, Product, ProductCategory } from '../services/productsAPI';
 
 import { servicesAPI, VideoFeedItem } from '../services/servicesAPI';
@@ -78,7 +81,7 @@ const HEADER_MIN_HEIGHT = 50; // Minimum height
 const SUB_HEADER_HEIGHT = 44; // New sub-header for Products/Services
 const TAB_BAR_HEIGHT = 70;
 
-const SERVICE_VIDEOS_PAGE_SIZE = 10;
+const UNIFIED_FEED_PAGE_SIZE = 10;
 
 // Category icon mapping - connects backend categories to UI icons
 const categoryIconMap: Record<string, string> = {
@@ -207,6 +210,10 @@ const HomeScreen = () => {
   const [showCreatorMenu, setShowCreatorMenu] = useState(false);
   const [servicesRefreshing, setServicesRefreshing] = useState(false);
   const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
+  // Tracks the active page (video/image index) within a multi-media service
+  // item's own horizontal pager, keyed by feed item id.
+  const [serviceMediaIndexMap, setServiceMediaIndexMap] = useState<Record<string, number>>({});
+  const [serviceMediaEndPromptIds, setServiceMediaEndPromptIds] = useState<Set<string>>(new Set());
   
   // Use filters from context (persisted)
   const filters = activeTab === 'products' ? productFilters : serviceFilters;
@@ -216,11 +223,16 @@ const HomeScreen = () => {
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [videoFeedData, setVideoFeedData] = useState<VideoFeedItem[]>([]);
   const [unifiedFeedData, setUnifiedFeedData] = useState<UnifiedFeedItem[]>([]);
-  const [serviceVideoOffset, setServiceVideoOffset] = useState(0);
-  const [hasMoreServiceVideos, setHasMoreServiceVideos] = useState(true);
-  const [loadingMoreServiceVideos, setLoadingMoreServiceVideos] = useState(false);
+  const [unifiedFeedOffset, setUnifiedFeedOffset] = useState(0);
+  const [hasMoreFeedItems, setHasMoreFeedItems] = useState(true);
+  const [loadingMoreFeedItems, setLoadingMoreFeedItems] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Disabled while the currently-visible feed item is a video/mixed post or
+  // service with multiple media items, so the horizontal media pager inside
+  // PostCard/VideoCard can receive the swipe instead of it being stolen by
+  // this outer horizontal tab pager (Services <-> Products).
+  const [mainPagerSwipeEnabled, setMainPagerSwipeEnabled] = useState(true);
 
   // User profile state for role checking
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -298,94 +310,31 @@ const HomeScreen = () => {
         }
       );
       
-      // Load video data and posts from API (non-blocking, doesn't fail entire load)
+      // Load the unified feed (posts + service videos), ranked and ordered entirely by the backend
       try {
-        const [videoData, postsData] = await Promise.all([
-          servicesAPI.getVideoFeed({ limit: 10 }),
-          postsAPI.getFeed({ limit: 10 }).catch(() => []) // Gracefully handle posts API errors
-        ]);
+        const feedData = await postsAPI.getFeed({ limit: UNIFIED_FEED_PAGE_SIZE, offset: 0 });
+        const finalFeed = feedData || [];
 
-        // Use real API data - remove mock data dependency
-        const finalVideoData = videoData || [];
-        setVideoFeedData(finalVideoData);
-        setServiceVideoOffset(finalVideoData.length);
-        setHasMoreServiceVideos(finalVideoData.length === SERVICE_VIDEOS_PAGE_SIZE);
-        setLoadingMoreServiceVideos(false);
+        setUnifiedFeedData(finalFeed);
+        setUnifiedFeedOffset(finalFeed.length);
+        setHasMoreFeedItems(finalFeed.length === UNIFIED_FEED_PAGE_SIZE);
+        setLoadingMoreFeedItems(false);
 
-        // Prepare posts in their existing high-interaction order
-        const postItems: UnifiedFeedItem[] = (postsData || []).filter(
-          (item: UnifiedFeedItem) => item.type === 'post' && item.postData
-        );
-
-        // Build unified feed in repeating blocks: 3 posts, then 1 service video
-        const unifiedFeed: UnifiedFeedItem[] = [];
-        let postIndex = 0;
-        let serviceIndex = 0;
-
-        while (postIndex < postItems.length || serviceIndex < finalVideoData.length) {
-          // Add up to 3 posts
-          let postsAdded = 0;
-          while (postsAdded < 3 && postIndex < postItems.length) {
-            unifiedFeed.push(postItems[postIndex]);
-            postIndex += 1;
-            postsAdded += 1;
-          }
-
-          // Add 1 service video card
-          if (serviceIndex < finalVideoData.length) {
-            const service = finalVideoData[serviceIndex];
-            unifiedFeed.push({
-              id: `service-${service.id}`,
-              type: 'service',
-              itemId: service.id,
-              score: finalVideoData.length - serviceIndex, // Keep simple recency-based score
-              isSeen: false,
-              createdAt: new Date().toISOString(),
-              serviceData: service,
-            });
-            serviceIndex += 1;
-          }
-
-          if (postIndex >= postItems.length && serviceIndex >= finalVideoData.length) {
-            break;
-          }
-        }
-
-        // Append any remaining posts or services if one type ran out earlier
-        while (postIndex < postItems.length) {
-          unifiedFeed.push(postItems[postIndex]);
-          postIndex += 1;
-        }
-
-        while (serviceIndex < finalVideoData.length) {
-          const service = finalVideoData[serviceIndex];
-          unifiedFeed.push({
-            id: `service-${service.id}`,
-            type: 'service',
-            itemId: service.id,
-            score: finalVideoData.length - serviceIndex,
-            isSeen: false,
-            createdAt: new Date().toISOString(),
-            serviceData: service,
-          });
-          serviceIndex += 1;
-        }
-
-        setUnifiedFeedData(unifiedFeed);
-      } catch (videoError) {
-        // Video feed errors are non-critical, log but don't block
-        const videoErrorInfo = handleError(videoError, () => {
-          // Retry video feed load
-          servicesAPI.getVideoFeed({ limit: 10 })
-            .then(setVideoFeedData)
-            .catch(() => setVideoFeedData([]));
-        });
-        console.warn('🔴 Error loading video data, using empty array:', videoErrorInfo);
+        // Derive videoFeedData (service items) from the unified feed for existing
+        // interaction handlers, filters, and booking flows that key off it
+        const serviceItems: VideoFeedItem[] = finalFeed
+          .filter((item: UnifiedFeedItem) => item.type === 'service' && item.serviceData)
+          .map((item: UnifiedFeedItem) => item.serviceData as VideoFeedItem);
+        setVideoFeedData(serviceItems);
+      } catch (feedError) {
+        // Feed errors are non-critical, log but don't block
+        const feedErrorInfo = handleError(feedError, () => loadData(showLoading));
+        console.warn('🔴 Error loading unified feed, using empty array:', feedErrorInfo);
         setVideoFeedData([]);
         setUnifiedFeedData([]);
-        setServiceVideoOffset(0);
-        setHasMoreServiceVideos(false);
-        setLoadingMoreServiceVideos(false);
+        setUnifiedFeedOffset(0);
+        setHasMoreFeedItems(false);
+        setLoadingMoreFeedItems(false);
       }
 
       // Load auctions (small batches for MVP)
@@ -474,68 +423,20 @@ const HomeScreen = () => {
     setIsPlaying(false);
     videoPagerRef.current?.setPageWithoutAnimation(0);
     try {
-      const [videoData, postsData] = await Promise.all([
-        servicesAPI.getVideoFeed({ limit: 10 }),
-        postsAPI.getFeed({ limit: 10 }).catch(() => []),
-      ]);
+      const feedData = await postsAPI.getFeed({ limit: UNIFIED_FEED_PAGE_SIZE, offset: 0 });
+      const finalFeed = feedData || [];
 
-      const finalVideoData = videoData || [];
-      setVideoFeedData(finalVideoData);
-      setServiceVideoOffset(finalVideoData.length);
-      setHasMoreServiceVideos(finalVideoData.length === SERVICE_VIDEOS_PAGE_SIZE);
-      setLoadingMoreServiceVideos(false);
+      setUnifiedFeedData(finalFeed);
+      setUnifiedFeedOffset(finalFeed.length);
+      setHasMoreFeedItems(finalFeed.length === UNIFIED_FEED_PAGE_SIZE);
+      setLoadingMoreFeedItems(false);
 
-      const postItems: UnifiedFeedItem[] = (postsData || []).filter(
-        (item: UnifiedFeedItem) => item.type === 'post' && item.postData
-      );
+      const serviceItems: VideoFeedItem[] = finalFeed
+        .filter((item: UnifiedFeedItem) => item.type === 'service' && item.serviceData)
+        .map((item: UnifiedFeedItem) => item.serviceData as VideoFeedItem);
+      setVideoFeedData(serviceItems);
 
-      const unifiedFeed: UnifiedFeedItem[] = [];
-      let postIndex = 0;
-      let serviceIndex = 0;
-
-      while (postIndex < postItems.length || serviceIndex < finalVideoData.length) {
-        let postsAdded = 0;
-        while (postsAdded < 3 && postIndex < postItems.length) {
-          unifiedFeed.push(postItems[postIndex]);
-          postIndex += 1;
-          postsAdded += 1;
-        }
-        if (serviceIndex < finalVideoData.length) {
-          const service = finalVideoData[serviceIndex];
-          unifiedFeed.push({
-            id: `service-${service.id}`,
-            type: 'service',
-            itemId: service.id,
-            score: finalVideoData.length - serviceIndex,
-            isSeen: false,
-            createdAt: new Date().toISOString(),
-            serviceData: service,
-          });
-          serviceIndex += 1;
-        }
-        if (postIndex >= postItems.length && serviceIndex >= finalVideoData.length) break;
-      }
-
-      while (postIndex < postItems.length) {
-        unifiedFeed.push(postItems[postIndex]);
-        postIndex += 1;
-      }
-      while (serviceIndex < finalVideoData.length) {
-        const service = finalVideoData[serviceIndex];
-        unifiedFeed.push({
-          id: `service-${service.id}`,
-          type: 'service',
-          itemId: service.id,
-          score: finalVideoData.length - serviceIndex,
-          isSeen: false,
-          createdAt: new Date().toISOString(),
-          serviceData: service,
-        });
-        serviceIndex += 1;
-      }
-
-      setUnifiedFeedData(unifiedFeed);
-      setFocusedVideoId(finalVideoData[0]?.id ?? null);
+      setFocusedVideoId(finalFeed[0]?.itemId ?? null);
       setIsPlaying(true);
     } catch (error) {
       console.error('Error refreshing services tab:', error);
@@ -653,6 +554,34 @@ const HomeScreen = () => {
       setIsPlaying(true);
     }
   }, [activeTab, isPlaying, videoFeedData.length, isScreenFocused]);
+
+  // Disable the outer horizontal tab pager's swipe while the currently-visible
+  // services-feed item (post or service) is a video/mixed item with multiple
+  // media, so the item's own horizontal media pager can receive the gesture
+  // instead of it being intercepted by the Services<->Products tab switcher.
+  useEffect(() => {
+    // IMPORTANT: this must mirror the exact filtering applied to the array that
+    // is actually rendered/paged in renderServicesTab (feedItems), otherwise
+    // currentVideoIndex (an index into that filtered/rendered array) will point
+    // at the wrong item here, silently breaking multi-video swipe detection.
+    const renderedFeedItems = unifiedFeedData.filter((it) =>
+      it.type === 'post' ? it.postData : it.serviceData
+    );
+    const currentItem = renderedFeedItems[currentVideoIndex];
+    if (!currentItem) {
+      setMainPagerSwipeEnabled(true);
+      return;
+    }
+    const media: any = currentItem.type === 'post' ? currentItem.postData : currentItem.serviceData;
+    const urls = media?.processedMediaUrls?.length ? media.processedMediaUrls : media?.mediaUrls;
+    // Service feed items are always video-based (no mediaType field from the
+    // backend), so multiple urls alone implies a multi-video swipeable item.
+    // Posts can mix images/video, so mediaType must be checked there.
+    const isMultiVideo = currentItem.type === 'service'
+      ? Array.isArray(urls) && urls.length > 1
+      : (media?.mediaType === 'video' || media?.mediaType === 'mixed') && Array.isArray(urls) && urls.length > 1;
+    setMainPagerSwipeEnabled(!isMultiVideo);
+  }, [currentVideoIndex, unifiedFeedData]);
 
   // Cleanup play button timer on unmount to prevent memory leaks
   useEffect(() => {
@@ -1333,13 +1262,13 @@ const HomeScreen = () => {
   };
 
   // Handler for add to cart button press
-  const handleCartPress = useCallback(async (productId: string) => {
+  const handleCartPress = useCallback(async (productId: string, variant?: { id: string; name: string; price: number }) => {
     try {
       // Add haptic feedback
       if (Platform.OS === 'ios') {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
-      await addToCart(productId, 1);
+      await addToCart(productId, 1, variant);
     } catch (error) {
       console.error('Error adding to cart:', error);
     }
@@ -2492,7 +2421,9 @@ const HomeScreen = () => {
 
   // Alibaba-style Component Functions
   const renderPeriodicHero = (hero: any, index: number) => {
-    if (!hero) return null;
+    if (!hero || !hero.url) return null;
+
+    const heroSource = typeof hero.url === 'string' ? { uri: hero.url } : hero.url;
     
     return (
       <View key={`hero-${index}`} style={{ marginHorizontal: 16, marginVertical: 20 }}>
@@ -2505,7 +2436,7 @@ const HomeScreen = () => {
           }}
         >
           <Image 
-            source={typeof hero.url === 'string' ? { uri: hero.url } : hero.url}
+            source={heroSource}
             style={{ width: '100%', height: '100%' }} 
             resizeMode="cover"
           />
@@ -3042,146 +2973,24 @@ const HomeScreen = () => {
     // Only play if: activeTab is products, video is in viewport, AND screen is focused
     // SAME PATTERN AS SERVICE TAB: activeTab === 'services' && isPlaying && isCurrentVideo
     const shouldPlayVideo = activeTab === 'products' && isInViewport && isScreenFocused;
-    
-    let viewRef: View | null = null;
 
     return (
-      <View
-        ref={(ref) => { viewRef = ref; }}
+      <VideoProductCard
+        item={item}
+        isVisible={shouldPlayVideo}
+        screenWidth={screenWidth + 24}
         onLayout={(event) => {
-          // Use measureInWindow to get absolute position
-          if (viewRef) {
-            viewRef.measureInWindow((x, pageY, width, height) => {
-              // pageY is distance from top of screen
-              // We need to add scrollY to get position in ScrollView content
-              const absoluteY = pageY + currentScrollY.current;
-              
-              videoProductPositions.current.set(item.id, { absoluteY, height });
-              
-              // Check visibility immediately
-              checkVideoVisibility();
-            });
-          }
+          const layout = event.nativeEvent.layout;
+          const absoluteY = currentScrollY.current + layout.y;
+          videoProductPositions.current.set(item.id, { absoluteY, height: layout.height });
+          checkVideoVisibility();
         }}
-      >
-      <TouchableOpacity
         onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
-        style={{
-          width: '100%',
-          backgroundColor: '#1a1a1a',
-          borderRadius: 12,
-          overflow: 'hidden',
-          position: 'relative',
-        }}
-      >
-          {/* Always render video player (don't unmount) - SAME AS SERVICE TAB */}
-        {item.primary_video_url ? (
-            <ProductVideoPlayer
-              videoUri={item.primary_video_url}
-              shouldAutoPlay={shouldPlayVideo}
-              containerWidth={screenWidth}
-            />
-          ) : (
-            // Show thumbnail when no video URL
-          <Image
-            source={{ uri: item.primary_image_url || item.images?.[0] || 'https://via.placeholder.com/400x600' }}
-            style={{ width: '100%', height: screenWidth * (9/16) }}
-            resizeMode="cover"
-          />
-        )}
-
-        {/* Product info overlay at bottom - Original layout */}
-        <View style={{
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          backgroundColor: 'rgba(0,0,0,0.7)',
-          padding: 12,
-        }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold', marginBottom: 4 }} numberOfLines={1}>
-                {String(item.name || 'Product')}
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={{ color: '#FFD700', fontSize: 18, fontWeight: 'bold', marginRight: 8 }}>
-                  ₣{(item.price || 0).toFixed(2)}
-                </Text>
-                {item.vendor_username ? (
-                  <Text style={{ color: '#888', fontSize: 12 }}>
-                    by @{String(item.vendor_username)}
-                  </Text>
-                ) : null}
-              </View>
-            </View>
-
-            {/* Action buttons on the right */}
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleBargainPress(item.id);
-                }}
-                style={{
-                  backgroundColor: '#F39C12',
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 20,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                }}
-              >
-                <Ionicons name="chatbubble-ellipses-outline" size={16} color="white" />
-                <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold', marginLeft: 4 }}>
-                  Bargain
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleCartPress(item.id);
-                }}
-                style={{
-                  backgroundColor: '#3498DB',
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 20,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                }}
-              >
-                <Ionicons name="cart-outline" size={16} color="white" />
-                <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold', marginLeft: 4 }}>
-                  Add
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-
-        {/* Video badge */}
-        <View style={{
-          position: 'absolute',
-          top: 12,
-          left: 12,
-          backgroundColor: 'rgba(255,255,255,0.9)',
-          paddingHorizontal: 8,
-          paddingVertical: 4,
-          borderRadius: 12,
-          flexDirection: 'row',
-          alignItems: 'center',
-        }}>
-          <Ionicons name="videocam" size={12} color="#FF4757" />
-          <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold', marginLeft: 4 }}>
-            VIDEO
-          </Text>
-        </View>
-      </TouchableOpacity>
-    </View>
+        onBargainPress={() => handleBargainPress(item.id)}
+        onCartPress={(variant) => handleCartPress(item.id, variant)}
+      />
     );
-  }, [isScreenFocused, visibleVideoProducts, activeTab, navigation]);
+  }, [isScreenFocused, visibleVideoProducts, activeTab, navigation, handleBargainPress, handleCartPress]);
 
   // Handler for vendor profile navigation
   const handleVendorPress = (userId: string) => {
@@ -3235,6 +3044,42 @@ const HomeScreen = () => {
     navigation.navigate('ProductDetails', { productId });
   };
 
+  const renderServiceInfoBadges = (service?: VideoFeedItem) => {
+    if (!service) return null;
+
+    const availability = service.availability;
+    const availabilityParts: string[] = [];
+    if (availability?.weekdays) availabilityParts.push('Weekdays');
+    if (availability?.weekends) availabilityParts.push('Weekends');
+    if (availability?.evenings) availabilityParts.push('Evenings');
+    if (availability?.emergency) availabilityParts.push('24/7');
+
+    const availabilityText = availabilityParts.length > 0
+      ? `Available: ${availabilityParts.join(' • ')}`
+      : 'Availability: TBD';
+
+    const durationText = service.duration?.trim() || 'Flexible duration';
+    const ratingText = service.rating ? service.rating.toFixed(1) : '0.0';
+
+    const badges = [
+      { icon: 'location-outline' as any, text: service.location || 'Unknown', color: '#B0B0B0' },
+      { icon: 'star' as any, text: ratingText, color: '#FFD700' },
+      { icon: 'time-outline' as any, text: durationText, color: '#9B59B6' },
+      { icon: 'calendar-outline' as any, text: availabilityText, color: '#3498DB' },
+    ];
+
+    return (
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 }}>
+        {badges.map((badge, index) => (
+          <View key={`service-info-${index}`} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.12)', marginRight: 6, marginBottom: 6 }}>
+            <Ionicons name={badge.icon} size={12} color={badge.color} style={{ marginRight: 4 }} />
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 11 }} numberOfLines={1}>{badge.text}</Text>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
   // Video item renderer using VideoCard component
   const renderVideoItem = ({ item, index }: { item: VideoFeedItem; index: number }) => (
     <VideoCard
@@ -3257,6 +3102,10 @@ const HomeScreen = () => {
       onShare={handleShare}
       onBook={handleBook}
       onVendorPress={handleVendorPress}
+      onSwipePastEnd={() => mainPagerRef.current?.setPage(1)}
+      onDoubleTap={(serviceItem) => {
+        navigation.navigate('ServiceDetails', { serviceId: serviceItem.id });
+      }}
     />
   );
 
@@ -3378,7 +3227,14 @@ const HomeScreen = () => {
       );
     }
 
-    const feedItems = unifiedFeedData.length > 0 ? unifiedFeedData : [];
+    // Filter out any feed items that lack renderable data — PagerView children
+    // must be valid React elements; null/undefined children cause
+    // 'Cannot read property 'props' of null' in react-native-pager-view.
+    const feedItems = unifiedFeedData.length > 0
+      ? unifiedFeedData.filter((item) =>
+          item.type === 'post' ? item.postData : item.serviceData
+        )
+      : [];
 
     if (feedItems.length === 0) {
       return (
@@ -3463,73 +3319,52 @@ const HomeScreen = () => {
 
             showPlayButton(); // Show play button when switching videos
 
-            // Lazy-load more service videos when user approaches end of current batch
-            if (!loadingMoreServiceVideos && hasMoreServiceVideos) {
-              let servicesSeen = 0;
-              for (let i = 0; i <= newIndex && i < feedItems.length; i++) {
-                if (feedItems[i].type === 'service') {
-                  servicesSeen++;
-                }
-              }
-
-              // Trigger loading more when the user has reached roughly (offset - 2) services
-              const threshold = Math.max(0, serviceVideoOffset - 2);
-              if (servicesSeen >= threshold && serviceVideoOffset > 0) {
+            // Lazy-load more feed items (posts + services, backend-ranked) as user approaches end of current batch
+            if (!loadingMoreFeedItems && hasMoreFeedItems) {
+              const threshold = Math.max(0, feedItems.length - 3);
+              if (newIndex >= threshold) {
                 (async () => {
                   try {
-                    setLoadingMoreServiceVideos(true);
+                    setLoadingMoreFeedItems(true);
 
-                    const moreVideos = await servicesAPI.getVideoFeed({
-                      limit: SERVICE_VIDEOS_PAGE_SIZE,
-                      offset: serviceVideoOffset,
+                    const moreItems = await postsAPI.getFeed({
+                      limit: UNIFIED_FEED_PAGE_SIZE,
+                      offset: unifiedFeedOffset,
                     });
 
-                    const newItems = moreVideos || [];
+                    const newItems = moreItems || [];
                     if (newItems.length === 0) {
-                      setHasMoreServiceVideos(false);
+                      setHasMoreFeedItems(false);
                       return;
                     }
 
-                    setVideoFeedData(prev => {
-                      const existingIds = new Set(prev.map(v => v.id));
-                      const deduped = newItems.filter(v => !existingIds.has(v.id));
-                      return [...prev, ...deduped];
-                    });
-
                     setUnifiedFeedData(prevUnified => {
-                      const existingServiceIds = new Set(
-                        prevUnified
-                          .filter(item => item.type === 'service')
-                          .map(item => item.itemId)
-                      );
-
-                      const newServiceItems: UnifiedFeedItem[] = newItems
-                        .filter(service => !existingServiceIds.has(service.id))
-                        .map(service => ({
-                          id: `service-${service.id}`,
-                          type: 'service',
-                          itemId: service.id,
-                          score: 0,
-                          isSeen: false,
-                          createdAt: new Date().toISOString(),
-                          serviceData: service,
-                        }));
-
-                      if (newServiceItems.length === 0) {
-                        return prevUnified;
-                      }
-
-                      return [...prevUnified, ...newServiceItems];
+                      const existingIds = new Set(prevUnified.map(item => item.id));
+                      const deduped = newItems.filter((item: UnifiedFeedItem) => !existingIds.has(item.id));
+                      if (deduped.length === 0) return prevUnified;
+                      return [...prevUnified, ...deduped];
                     });
 
-                    setServiceVideoOffset(prev => prev + newItems.length);
-                    if (newItems.length < SERVICE_VIDEOS_PAGE_SIZE) {
-                      setHasMoreServiceVideos(false);
+                    const newServiceItems: VideoFeedItem[] = newItems
+                      .filter((item: UnifiedFeedItem) => item.type === 'service' && item.serviceData)
+                      .map((item: UnifiedFeedItem) => item.serviceData as VideoFeedItem);
+
+                    if (newServiceItems.length > 0) {
+                      setVideoFeedData(prev => {
+                        const existingIds = new Set(prev.map(v => v.id));
+                        const deduped = newServiceItems.filter(v => !existingIds.has(v.id));
+                        return [...prev, ...deduped];
+                      });
+                    }
+
+                    setUnifiedFeedOffset(prev => prev + newItems.length);
+                    if (newItems.length < UNIFIED_FEED_PAGE_SIZE) {
+                      setHasMoreFeedItems(false);
                     }
                   } catch (error) {
-                    console.error('Error loading more service videos:', error);
+                    console.error('Error loading more feed items:', error);
                   } finally {
-                    setLoadingMoreServiceVideos(false);
+                    setLoadingMoreFeedItems(false);
                   }
                 })();
               }
@@ -3667,6 +3502,9 @@ const HomeScreen = () => {
                       onDoubleTap={(post) => {
                         navigation.navigate('PostDetails', { postId: post.id });
                       }}
+                      onSwipePastEnd={() => {
+                        mainPagerRef.current?.setPage(1);
+                      }}
                       onLikesPress={(postId) => {
                         setLikesModalPostId(postId);
                         setLikesModalCount(postItem.likesCount || 0);
@@ -3706,9 +3544,169 @@ const HomeScreen = () => {
                 style: { width: screenWidth, height: screenHeight, backgroundColor: '#000', position: 'relative' },
               };
 
+              // Support services with multiple videos/media (not just the single
+              // `videoUri`): swipe horizontally between them instead of leaking
+              // the gesture through to the outer Services<->Products tab pager.
+              const serviceMediaUrls: string[] = serviceItem?.processedMediaUrls?.length
+                ? serviceItem.processedMediaUrls
+                : serviceItem?.mediaUrls?.length
+                ? serviceItem.mediaUrls
+                : serviceItem?.videoUri
+                ? [serviceItem.videoUri]
+                : [];
+              const isMultiServiceMedia = serviceMediaUrls.length > 1;
+              const currentServiceMediaIndex = serviceMediaIndexMap[item.id] || 0;
+              const isServiceVideoUrl = (url: string) => /^.*\.(mp4|mov|m4v|3gp|avi|mkv)(\?.*)?$/i.test(url);
+
+              const handleServiceMediaMomentumEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+                const offsetX = e.nativeEvent.contentOffset.x;
+                const newMediaIndex = Math.round(offsetX / screenWidth);
+                setServiceMediaIndexMap(prev => ({ ...prev, [item.id]: newMediaIndex }));
+                if (newMediaIndex !== serviceMediaUrls.length - 1) {
+                  setServiceMediaEndPromptIds(prev => {
+                    if (!prev.has(item.id)) return prev;
+                    const next = new Set(prev);
+                    next.delete(item.id);
+                    return next;
+                  });
+                }
+              };
+
+              const handleServiceMediaScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+                if (serviceMediaUrls.length <= 1) return;
+                if (currentServiceMediaIndex !== serviceMediaUrls.length - 1) return;
+
+                const offsetX = e.nativeEvent.contentOffset.x;
+                const lastOffset = (serviceMediaUrls.length - 1) * screenWidth;
+                const overscroll = offsetX - lastOffset;
+                const threshold = screenWidth * 0.12;
+
+                if (overscroll > threshold) {
+                  if (serviceMediaEndPromptIds.has(item.id)) {
+                    mainPagerRef.current?.setPage(1);
+                  } else {
+                    setServiceMediaEndPromptIds(prev => new Set(prev).add(item.id));
+                    setTimeout(() => {
+                      setServiceMediaEndPromptIds(prev => {
+                        if (!prev.has(item.id)) return prev;
+                        const next = new Set(prev);
+                        next.delete(item.id);
+                        return next;
+                      });
+                    }, 2500);
+                  }
+                }
+              };
+
               return (
                 <VideoPageOuter key={`video-${item.id}-${index}`} {...videoPageOuterProps}>
                 {/* Video container */}
+                {isMultiServiceMedia ? (
+                  <>
+                    <RNGHScrollView
+                      horizontal
+                      pagingEnabled
+                      showsHorizontalScrollIndicator={false}
+                      scrollEventThrottle={16}
+                      decelerationRate="fast"
+                      onScroll={handleServiceMediaScroll}
+                      onMomentumScrollEnd={handleServiceMediaMomentumEnd}
+                      style={{ width: screenWidth, height: screenHeight }}
+                      contentContainerStyle={{ flexDirection: 'row' }}
+                    >
+                      {serviceMediaUrls.map((url, mediaIdx) => (
+                        <TouchableWithoutFeedback key={`${item.id}-media-${mediaIdx}`} onPress={handleVideoTap}>
+                          <View style={{ width: screenWidth, height: screenHeight, justifyContent: 'center', alignItems: 'center' }}>
+                            {isServiceVideoUrl(url) ? (
+                              shouldRenderVideo && mediaIdx === currentServiceMediaIndex ? (
+                                <ServiceVideoPlayer
+                                  videoUri={url}
+                                  isCurrentVideo={isCurrentVideo}
+                                  shouldAutoPlay={shouldPlay}
+                                  onLoad={(status) => {
+                                    if (isCurrentVideo) {
+                                      setVideoDuration(status.duration || 0);
+                                      setVideoProgress(0);
+                                      setVideoPosition(0);
+                                    }
+                                  }}
+                                  onPlaybackStatusUpdate={isCurrentVideo ? handlePlaybackStatusUpdate : undefined}
+                                />
+                              ) : (
+                                <Image
+                                  source={{ uri: serviceItem?.thumbnail || 'https://via.placeholder.com/400x600' }}
+                                  style={{ width: screenWidth, height: screenHeight, position: 'absolute', top: 0, left: 0 }}
+                                  resizeMode="contain"
+                                />
+                              )
+                            ) : (
+                              <Image
+                                source={{ uri: url }}
+                                style={{ width: screenWidth, height: screenHeight, position: 'absolute', top: 0, left: 0 }}
+                                resizeMode="contain"
+                              />
+                            )}
+                          </View>
+                        </TouchableWithoutFeedback>
+                      ))}
+                    </RNGHScrollView>
+
+                    <View style={[{
+                      position: 'absolute',
+                      top: insets.top + 80,
+                      alignSelf: 'center',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(0,0,0,0.6)',
+                      paddingHorizontal: 10,
+                      paddingVertical: 4,
+                      borderRadius: 12,
+                      zIndex: 20,
+                    }, Platform.OS === 'android' ? { elevation: 20 } : null]}>
+                      <Ionicons name="images" size={14} color="white" />
+                      <Text style={{ color: 'white', fontSize: 12, fontWeight: '600', marginLeft: 6 }}>
+                        {currentServiceMediaIndex + 1} / {serviceMediaUrls.length}
+                      </Text>
+                    </View>
+
+                    {serviceMediaEndPromptIds.has(item.id) && (
+                      <View style={{
+                        position: 'absolute',
+                        bottom: '40%',
+                        alignSelf: 'center',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: 'rgba(0,0,0,0.75)',
+                        paddingHorizontal: 16,
+                        paddingVertical: 10,
+                        borderRadius: 24,
+                        gap: 8,
+                      }}>
+                        <Ionicons name="arrow-forward" size={20} color="white" />
+                        <Text style={{ color: 'white', fontSize: 13, fontWeight: '600' }}>Swipe again to switch to Product tab</Text>
+                      </View>
+                    )}
+
+                    {/* LIVE indicator for live services */}
+                    {item.itemId?.startsWith('live-service-') && (
+                      <View style={{
+                        position: 'absolute',
+                        top: insets.top + 60,
+                        left: 16,
+                        backgroundColor: '#E74C3C',
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        borderRadius: 12,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        zIndex: 1000
+                      }}>
+                        <Ionicons name="radio" size={14} color="#FFF" style={{ marginRight: 4 }} />
+                        <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>LIVE</Text>
+                      </View>
+                    )}
+                  </>
+                ) : (
                 <TouchableWithoutFeedback onPress={() => {
                   // If it's a live service, navigate to LiveStreamViewer
                   if (item.id.startsWith('live-service-') && (item as any).liveStreamId) {
@@ -3773,6 +3771,7 @@ const HomeScreen = () => {
                     )}
                   </View>
                 </TouchableWithoutFeedback>
+                )}
 
               {/* Play Button - Centered, fades out when playing */}
               {index === currentVideoIndex && (
@@ -3891,6 +3890,8 @@ const HomeScreen = () => {
                     )}
                   </View>
                 ) : null}
+
+                {renderServiceInfoBadges(serviceItem)}
 
                 {/* Price - tight spacing */}
                 <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold', marginBottom: 8 }}>
@@ -4039,7 +4040,50 @@ const HomeScreen = () => {
                 </View>
               );
             }
-          })}
+          }).concat(!hasMoreFeedItems ? [
+            <View
+              key="end-of-feed"
+              style={{
+                width: screenWidth,
+                height: screenHeight,
+                backgroundColor: '#000',
+                justifyContent: 'center',
+                alignItems: 'center',
+                paddingHorizontal: 40,
+              }}
+            >
+              <Ionicons name="checkmark-done-circle-outline" size={64} color="#3498DB" />
+              <Text style={{ color: 'white', fontSize: 20, fontWeight: 'bold', marginTop: 16, textAlign: 'center' }}>
+                You're all caught up!
+              </Text>
+              <Text style={{ color: '#888', fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
+                You've seen all posts and services. Refresh to check for new content.
+              </Text>
+              <TouchableOpacity
+                onPress={refreshData}
+                disabled={refreshing}
+                style={{
+                  marginTop: 24,
+                  backgroundColor: '#3498DB',
+                  paddingHorizontal: 24,
+                  paddingVertical: 12,
+                  borderRadius: 24,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  opacity: refreshing ? 0.6 : 1,
+                }}
+              >
+                {refreshing ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <>
+                    <Ionicons name="refresh" size={18} color="white" style={{ marginRight: 8 }} />
+                    <Text style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>Refresh</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          ] : [])}
         </PagerView>
 
         {/* Services Header - rendered once here, visible over ALL items (posts and videos) */}
@@ -4099,21 +4143,23 @@ const HomeScreen = () => {
   return (
     <View style={{ flex: 1, backgroundColor: '#000000' }}>
       {/* Header Container with Safe Area Background */}
-      <Animated.View style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: insets.top + HEADER_FULL_HEIGHT + SUB_HEADER_HEIGHT,
-        backgroundColor: '#000000',
-        zIndex: 1000,
-        opacity: activeTab === 'services' ? 0 : headerOpacity,
-        elevation: 10, // Android shadow for better layering
-        shadowColor: '#000', // iOS shadow
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
-      }}>
+      <Animated.View
+        pointerEvents={activeTab === 'services' ? 'none' : 'auto'}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: insets.top + HEADER_FULL_HEIGHT + SUB_HEADER_HEIGHT,
+          backgroundColor: '#000000',
+          zIndex: 1000,
+          opacity: activeTab === 'services' ? 0 : headerOpacity,
+          elevation: activeTab === 'services' ? 0 : 10, // Avoid Android elevation layer covering content underneath when hidden
+          shadowColor: '#000', // iOS shadow
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: activeTab === 'services' ? 0 : 0.25,
+          shadowRadius: 3.84,
+        }}>
         {/* Main Header Content */}
         <View style={{
           position: 'absolute',
@@ -4226,6 +4272,7 @@ const HomeScreen = () => {
         style={{ flex: 1 }}
         initialPage={0}
         overdrag={true}
+        scrollEnabled={mainPagerSwipeEnabled}
         onPageSelected={(e) => {
           const newTab = e.nativeEvent.position === 0 ? 'services' : 'products';
           if (newTab !== activeTab) {

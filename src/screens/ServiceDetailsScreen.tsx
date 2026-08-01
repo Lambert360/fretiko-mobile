@@ -13,12 +13,15 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { servicesAPI, VideoFeedItem } from '../services/servicesAPI';
+import { servicesAPI, VideoFeedItem, Service, ServiceCategory } from '../services/servicesAPI';
 import ServiceVideoPlayer from '../components/ServiceVideoPlayer';
 import { MediaViewerModal } from '../components/MediaViewerModal';
 import { useAuth } from '../contexts/AuthContext';
+import { useCart } from '../contexts/CartContext';
 import { chatAPI } from '../services/chatAPI';
 import AdaptiveText from '../components/AdaptiveText';
+import RichText from '../components/RichText';
+import ServiceBookingModal from '../components/ServiceBookingModal';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -27,45 +30,66 @@ const ServiceDetailsScreen = () => {
   const route = useRoute<any>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { addServiceToCart } = useCart();
 
   const [service, setService] = useState<VideoFeedItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [isPlaying, setIsPlaying] = useState(true);
   const [isLiked, setIsLiked] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
+  const [serviceDetails, setServiceDetails] = useState<Service | null>(null);
+  const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [mediaViewerType, setMediaViewerType] = useState<'image' | 'video'>('image');
   const [mediaViewerUri, setMediaViewerUri] = useState<string>('');
+  const [mediaViewerUris, setMediaViewerUris] = useState<string[] | undefined>(undefined);
+  const [mediaViewerInitialIndex, setMediaViewerInitialIndex] = useState(0);
+  const [bookingModalVisible, setBookingModalVisible] = useState(false);
 
   const serviceId = route.params?.serviceId;
 
-  const openMediaViewer = (type: 'image' | 'video', uri: string) => {
+  const openMediaViewer = (
+    type: 'image' | 'video',
+    uri: string,
+    uris?: string[],
+    initialIndex = 0,
+  ) => {
     setMediaViewerType(type);
     setMediaViewerUri(uri);
+    setMediaViewerUris(uris);
+    setMediaViewerInitialIndex(initialIndex);
     setMediaViewerVisible(true);
   };
 
   useEffect(() => {
     if (serviceId) {
       loadServiceDetails();
+      loadCategories();
     }
   }, [serviceId]);
 
   const loadServiceDetails = async () => {
     try {
       setLoading(true);
-      // Get service details from the video feed
-      const videoFeed = await servicesAPI.getVideoFeed();
-      const serviceDetails = videoFeed.find(item => item.id === serviceId);
+      const [videoFeed, fullService] = await Promise.all([
+        servicesAPI.getVideoFeed(),
+        servicesAPI.getService(serviceId).catch(() => null),
+      ]);
+      const foundService = videoFeed.find(item => item.id === serviceId);
 
-      if (serviceDetails) {
-        setService(serviceDetails);
-        setIsLiked(serviceDetails.isLiked || false);
-        setIsBookmarked(serviceDetails.isBookmarked || false);
+      if (foundService) {
+        setService(foundService);
+        setIsLiked(foundService.isLiked || false);
+        setIsBookmarked(foundService.isBookmarked || false);
       } else {
         Alert.alert('Error', 'Service not found');
         navigation.goBack();
+        return;
+      }
+
+      if (fullService) {
+        setServiceDetails(fullService);
       }
     } catch (error) {
       console.error('Error loading service details:', error);
@@ -73,6 +97,15 @@ const ServiceDetailsScreen = () => {
       navigation.goBack();
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadCategories = async () => {
+    try {
+      const data = await servicesAPI.getCategories();
+      setCategories(data);
+    } catch (error) {
+      console.error('Error loading service categories:', error);
     }
   };
 
@@ -112,21 +145,15 @@ const ServiceDetailsScreen = () => {
   const handleBookNow = () => {
     if (!service) return;
 
-    // TODO: Navigate to booking screen or open booking modal
-    Alert.alert(
-      'Book Service',
-      `Book "${service.title}" now?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Book Now',
-          onPress: () => {
-            console.log('Booking service:', service.id);
-            // TODO: Implement booking logic
-          }
-        }
-      ]
-    );
+    setBookingModalVisible(true);
+  };
+
+  const handleServiceBooking = async (serviceId: string, date: Date, time: string, notes?: string) => {
+    try {
+      await addServiceToCart(serviceId, date, time, notes);
+    } catch (error) {
+      console.error('Error booking service:', error);
+    }
   };
 
   const handleChatWithProvider = async () => {
@@ -179,6 +206,67 @@ const ServiceDetailsScreen = () => {
     if (service?.userId) {
       navigation.navigate('PublicProfile', { userId: service.userId });
     }
+  };
+
+  const renderAttributeTags = () => {
+    if (!serviceDetails) return null;
+
+    const tags: { label: string; color?: string; bg?: string }[] = [];
+
+    const category = categories.find(c => c.id === serviceDetails.category_id);
+    if (category) {
+      tags.push({ label: category.name, bg: category.color_hex });
+    }
+
+    if (serviceDetails.duration) {
+      tags.push({ label: serviceDetails.duration });
+    }
+
+    if (serviceDetails.availability) {
+      const availabilityMap: Record<string, string> = {
+        weekdays: 'Weekdays',
+        weekends: 'Weekends',
+        evenings: 'Evenings',
+        emergency: 'Emergency',
+      };
+      Object.entries(serviceDetails.availability).forEach(([key, value]) => {
+        if (value && availabilityMap[key]) {
+          tags.push({ label: availabilityMap[key] });
+        }
+      });
+    }
+
+    if (serviceDetails.location) {
+      tags.push({ label: serviceDetails.location });
+    }
+
+    if (serviceDetails.service_area && serviceDetails.service_area !== serviceDetails.location) {
+      tags.push({ label: `Service Area: ${serviceDetails.service_area}` });
+    }
+
+    if (serviceDetails.tags && serviceDetails.tags.length > 0) {
+      serviceDetails.tags.forEach(tag => tags.push({ label: tag }));
+    }
+
+    if (tags.length === 0) return null;
+
+    return (
+      <View style={styles.attributeTagsContainer}>
+        <View style={styles.tagsRow}>
+          {tags.map((tag, index) => (
+            <View
+              key={index}
+              style={[
+                styles.tag,
+                tag.bg ? { backgroundColor: tag.bg } : {},
+              ]}
+            >
+              <Text style={[styles.tagText, tag.color ? { color: tag.color } : {}]}>{tag.label}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
   };
 
   if (loading) {
@@ -268,7 +356,14 @@ const ServiceDetailsScreen = () => {
             <TouchableOpacity
               style={styles.thumbnailContainer}
               activeOpacity={1}
-              onPress={() => openMediaViewer('image', service.thumbnail!)}
+              onPress={() => openMediaViewer(
+                'image',
+                service.thumbnail!,
+                serviceDetails?.images && serviceDetails.images.length > 0
+                  ? serviceDetails.images
+                  : [service.thumbnail!],
+                0,
+              )}
             >
               <Image source={{ uri: service.thumbnail }} style={styles.thumbnail} />
             </TouchableOpacity>
@@ -308,12 +403,12 @@ const ServiceDetailsScreen = () => {
         {/* Service Information */}
         <View style={styles.serviceInfo}>
           <Text style={styles.serviceTitle}>{service.title}</Text>
-          <Text 
+          <RichText 
             style={styles.serviceDescription}
             numberOfLines={descriptionExpanded ? undefined : 3}
           >
-            {service.description}
-          </Text>
+            {service.description || ''}
+          </RichText>
           {service.description && service.description.length > 150 && (
             <TouchableOpacity
               onPress={() => setDescriptionExpanded(!descriptionExpanded)}
@@ -329,6 +424,8 @@ const ServiceDetailsScreen = () => {
               />
             </TouchableOpacity>
           )}
+
+          {renderAttributeTags()}
 
           {/* Provider Info */}
           <TouchableOpacity style={styles.providerSection} onPress={handleProfilePress}>
@@ -371,6 +468,15 @@ const ServiceDetailsScreen = () => {
         onClose={() => setMediaViewerVisible(false)}
         type={mediaViewerType}
         uri={mediaViewerUri}
+        uris={mediaViewerUris}
+        initialIndex={mediaViewerInitialIndex}
+      />
+
+      <ServiceBookingModal
+        visible={bookingModalVisible}
+        service={service}
+        onClose={() => setBookingModalVisible(false)}
+        onBook={handleServiceBooking}
       />
     </View>
   );
@@ -634,6 +740,24 @@ const styles = StyleSheet.create({
     color: '#007AFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  attributeTagsContainer: {
+    marginBottom: 16,
+  },
+  tagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  tag: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  tagText: {
+    color: '#FFFFFF',
+    fontSize: 12,
   },
 });
 

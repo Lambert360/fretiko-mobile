@@ -35,6 +35,7 @@ export interface ProductData {
   isNew?: boolean;
   isFeatured?: boolean;
   isTrending?: boolean;
+  condition?: string;
 }
 
 interface ProductCardProps {
@@ -48,6 +49,22 @@ interface ProductCardProps {
   onBargainPress?: (product: ProductData) => void;
 }
 
+const getConditionStyle = (condition?: string): { label: string; color: string; bg: string } | null => {
+  if (!condition) return null;
+  const c = condition.toLowerCase();
+  if (c.includes('new')) {
+    return { label: 'Brand New', color: '#4CAF50', bg: 'rgba(76, 175, 80, 0.15)' };
+  }
+  if (c.includes('used') || c.includes('fairly')) {
+    return { label: 'Fairly Used', color: '#FF9800', bg: 'rgba(255, 152, 0, 0.15)' };
+  }
+  return {
+    label: condition.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
+    color: '#9E9E9E',
+    bg: 'rgba(158, 158, 158, 0.15)',
+  };
+};
+
 export const ProductCard: React.FC<ProductCardProps> = ({
   product,
   variant = 'featured',
@@ -58,6 +75,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onCartPress,
   onBargainPress,
 }) => {
+  const conditionStyle = getConditionStyle(product.condition);
+
   const getMediaHeight = () => {
     if (variant === 'grid') return 140;
     if (variant === 'list') return 80;
@@ -227,16 +246,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         )}
 
         <View style={styles.features}>
-          {product.fastShipping && (
-            <View style={styles.feature}>
-              <Ionicons name="flash" size={10} color="#FF9800" />
-              <Text style={styles.featureText}>Fast Shipping</Text>
-            </View>
-          )}
           {product.location && (
             <View style={styles.feature}>
               <Ionicons name="location" size={10} color="#9E9E9E" />
               <Text style={styles.featureText}>{String(product.location || '')}</Text>
+            </View>
+          )}
+          {product.fastShipping && (
+            <View style={styles.doubleFlashContainer}>
+              <Ionicons name="flash" size={10} color="#FF9800" />
+              <Ionicons name="flash" size={10} color="#FF9800" style={styles.flashOverlap} />
             </View>
           )}
         </View>
@@ -260,6 +279,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <View style={styles.engagementButton}>
               <Ionicons name="eye" size={14} color="rgba(255,255,255,0.6)" />
               <Text style={styles.engagementText}>{product.views}</Text>
+            </View>
+          )}
+
+          {conditionStyle && (
+            <View style={[styles.conditionTag, { backgroundColor: conditionStyle.bg }]}>
+              <Ionicons name="pricetag-outline" size={10} color={conditionStyle.color} />
+              <Text style={[styles.conditionText, { color: conditionStyle.color }]}>{conditionStyle.label}</Text>
             </View>
           )}
         </View>
@@ -574,5 +600,25 @@ const styles = StyleSheet.create({
     color: '#1DA1F2',
     fontSize: 12,
     marginBottom: 4,
+  },
+  doubleFlashContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: 18,
+  },
+  flashOverlap: {
+    marginLeft: -6,
+  },
+  conditionTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 10,
+    gap: 3,
+  },
+  conditionText: {
+    fontSize: 10,
+    fontWeight: '600',
   },
 });

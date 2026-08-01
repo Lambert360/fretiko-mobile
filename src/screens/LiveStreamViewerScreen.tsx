@@ -2271,8 +2271,40 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
   },
+  giftItemDisabled: {
+    opacity: 0.4,
+  },
+  giftItemSelected: {
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    backgroundColor: 'rgba(255, 215, 0, 0.2)',
+  },
+  selectedIndicator: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+  },
   giftGridContent: {
     paddingBottom: 20,
+  },
+  sendButtonContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+    paddingTop: 8,
+  },
+  sendButton: {
+    backgroundColor: '#FFD700',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+  },
+  sendButtonText: {
+    color: '#000',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   giftLoadingContainer: {
     flex: 1,
@@ -3405,7 +3437,31 @@ const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight
   const panRef = useRef<any>(null);
   const baseHeight = useRef(modalHeight);
   const animatedHeight = useRef(new Animated.Value(modalHeight)).current;
-  
+  const [selectedGift, setSelectedGift] = useState<{id: string, emoji: string, name: string, quantity: number} | null>(null);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setSelectedGift(null);
+      setSending(false);
+    }
+  }, [visible]);
+
+  const handleSelectGift = (item: {id: string, emoji: string, name: string, quantity: number}) => {
+    setSelectedGift(item);
+  };
+
+  const handleSend = async () => {
+    if (!selectedGift || sending) return;
+    setSending(true);
+    try {
+      await onSendGift(selectedGift.id, 1);
+      onClose();
+    } catch (error) {
+      setSending(false);
+    }
+  };
+
   // Update animated height when prop changes
   React.useEffect(() => {
     Animated.spring(animatedHeight, {
@@ -3466,17 +3522,29 @@ const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight
     }
   };
 
-  const renderGiftItem = ({ item }: { item: {id: string, emoji: string, name: string, quantity: number} }) => (
-    <TouchableOpacity
-      style={styles.giftItem}
-      onPress={() => onSendGift(item.id, 1)}
-      disabled={item.quantity === 0}
-    >
-      <Text style={styles.giftEmoji}>{item.emoji}</Text>
-      <Text style={styles.giftName}>{item.name}</Text>
-      <Text style={styles.giftQuantity}>x{item.quantity}</Text>
-    </TouchableOpacity>
-  );
+  const renderGiftItem = ({ item }: { item: {id: string, emoji: string, name: string, quantity: number} }) => {
+    const isSelected = selectedGift?.id === item.id;
+    return (
+      <TouchableOpacity
+        style={[
+          styles.giftItem,
+          item.quantity === 0 && styles.giftItemDisabled,
+          isSelected && styles.giftItemSelected,
+        ]}
+        onPress={() => handleSelectGift(item)}
+        disabled={item.quantity === 0}
+      >
+        <Text style={styles.giftEmoji}>{item.emoji}</Text>
+        <Text style={styles.giftName}>{item.name}</Text>
+        <Text style={styles.giftQuantity}>x{item.quantity}</Text>
+        {isSelected && (
+          <View style={styles.selectedIndicator}>
+            <Ionicons name="checkmark-circle" size={20} color="#FFD700" />
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.modalOverlay} pointerEvents="box-none">
@@ -3525,6 +3593,29 @@ const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight
               numColumns={3}
               style={styles.modalContent}
               contentContainerStyle={[styles.giftGridContent, { paddingBottom: 20 + (insetsBottom || 0) }]}
+              ListFooterComponent={
+                selectedGift ? (
+                  <View style={styles.sendButtonContainer}>
+                    <TouchableOpacity
+                      style={[styles.sendButton, sending && styles.sendButtonDisabled]}
+                      onPress={handleSend}
+                      activeOpacity={0.8}
+                      disabled={sending}
+                    >
+                      {sending ? (
+                        <ActivityIndicator size="small" color="#000" />
+                      ) : (
+                        <>
+                          <Ionicons name="gift" size={20} color="#FFF" />
+                          <Text style={styles.sendButtonText}>
+                            Send {selectedGift.emoji} {selectedGift.name}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ) : null
+              }
             />
           )}
         </Animated.View>

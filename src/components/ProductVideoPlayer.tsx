@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { View, Dimensions, TouchableOpacity, Text, StyleSheet, Platform } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,7 +35,41 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
   
   // Ref to track if component is mounted
   const isMountedRef = useRef(true);
-  
+
+  // Resize the container to the video's natural aspect ratio
+  const updateDimensions = useCallback((naturalWidth: number, naturalHeight: number, duration = 0) => {
+    if (!isMountedRef.current) return;
+    if (naturalWidth <= 0 || naturalHeight <= 0) return;
+
+    const naturalAspectRatio = naturalWidth / naturalHeight;
+    const displayWidth = containerWidth;
+    let displayHeight = containerWidth / naturalAspectRatio;
+
+    if (maxHeight && displayHeight > maxHeight) {
+      displayHeight = maxHeight;
+    }
+
+    console.log(`📐 Video dimensions:`, {
+      naturalWidth,
+      naturalHeight,
+      naturalAspectRatio,
+      orientation: naturalAspectRatio > 1 ? 'landscape' : 'portrait'
+    });
+
+    console.log(`📐 Display dimensions:`, { displayWidth, displayHeight });
+
+    setVideoDimensions({ width: displayWidth, height: displayHeight });
+
+    if (onLoad) {
+      onLoad({
+        duration: duration || 0,
+        width: naturalWidth,
+        height: naturalHeight,
+        aspectRatio: naturalAspectRatio
+      });
+    }
+  }, [containerWidth, maxHeight, onLoad]);
+
   // Memoize video URI to prevent unnecessary re-creations
   const memoizedVideoUri = useMemo(() => videoUri, [videoUri]);
   
@@ -75,26 +109,12 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
       setIsLoading(false);
       setHasError(false);
       setErrorMessage(null);
-      
-      const naturalWidth = containerWidth;
-      const naturalHeight = containerWidth * aspectRatio;
-      const naturalAspectRatio = naturalWidth / naturalHeight;
-      
-      const displayWidth = containerWidth;
-      let displayHeight = containerWidth / naturalAspectRatio;
-      if (maxHeight && displayHeight > maxHeight) {
-        displayHeight = maxHeight;
-      }
-      
-      setVideoDimensions({ width: displayWidth, height: displayHeight });
-      
-      if (onLoad && isMountedRef.current) {
-        onLoad({
-          duration: player.duration || 0,
-          width: naturalWidth,
-          height: naturalHeight,
-          aspectRatio: naturalAspectRatio
-        });
+
+      const videoSize = player.videoTrack?.size;
+      if (videoSize?.width && videoSize?.height) {
+        updateDimensions(videoSize.width, videoSize.height, player.duration || 0);
+      } else {
+        updateDimensions(containerWidth, containerWidth / aspectRatio, player.duration || 0);
       }
     }
     
@@ -107,38 +127,11 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
         setHasError(false);
         setErrorMessage(null);
 
-        // Get natural video dimensions - use defaults for now since expo-video doesn't expose dimensions easily
-        const naturalWidth = containerWidth;
-        const naturalHeight = containerWidth * aspectRatio;
-        const naturalAspectRatio = naturalWidth / naturalHeight;
-
-        console.log(`📐 Video dimensions:`, {
-          naturalWidth,
-          naturalHeight,
-          naturalAspectRatio,
-          orientation: naturalAspectRatio > 1 ? 'landscape' : 'portrait'
-        });
-
-        // Always fit screen width, calculate height based on aspect ratio
-        const displayWidth = containerWidth;
-        let displayHeight = containerWidth / naturalAspectRatio;
-
-        // Apply max height if specified
-        if (maxHeight && displayHeight > maxHeight) {
-          displayHeight = maxHeight;
-        }
-
-        console.log(`📐 Display dimensions:`, { displayWidth, displayHeight });
-
-        setVideoDimensions({ width: displayWidth, height: displayHeight });
-
-        if (onLoad && isMountedRef.current) {
-          onLoad({
-            duration: player.duration || 0,
-            width: naturalWidth,
-            height: naturalHeight,
-            aspectRatio: naturalAspectRatio
-          });
+        const videoSize = player.videoTrack?.size;
+        if (videoSize?.width && videoSize?.height) {
+          updateDimensions(videoSize.width, videoSize.height, player.duration || 0);
+        } else {
+          updateDimensions(containerWidth, containerWidth / aspectRatio, player.duration || 0);
         }
       } else if (status === 'error') {
         if (!isMountedRef.current) return;
@@ -151,6 +144,14 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
         if (!isMountedRef.current) return;
         setIsLoading(true);
         setHasError(false);
+      }
+    });
+
+    const videoTrackChangeSubscription = player.addListener('videoTrackChange', (event: any) => {
+      if (!isMountedRef.current) return;
+      const size = event?.videoTrack?.size;
+      if (size?.width && size?.height) {
+        updateDimensions(size.width, size.height);
       }
     });
 
@@ -168,9 +169,10 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
 
     return () => {
       statusSubscription?.remove();
+      videoTrackChangeSubscription?.remove();
       timeUpdateSubscription?.remove();
     };
-  }, [player, onLoad, onPlaybackStatusUpdate, memoizedVideoUri, containerWidth, aspectRatio, maxHeight]);
+  }, [player, onLoad, onPlaybackStatusUpdate, memoizedVideoUri, containerWidth, aspectRatio, maxHeight, updateDimensions]);
   
   // Cleanup on unmount
   useEffect(() => {
@@ -194,9 +196,9 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
         }}
         contentFit="contain"
         fullscreenOptions={{
-          allowFullscreen: false,
-          allowPictureInPicture: false,
+          enable: false,
         }}
+        allowsPictureInPicture={false}
       />
     </View>
   );

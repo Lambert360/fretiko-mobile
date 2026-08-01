@@ -6,6 +6,8 @@ import {
   Animated,
   Dimensions,
   ImageStyle,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -13,10 +15,12 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { VideoFeedItem } from '../services/servicesAPI';
 import SafeImage from './SafeImage';
 import AdaptiveText from './AdaptiveText';
+import RichText from './RichText';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const TAB_BAR_HEIGHT = 70;
@@ -36,7 +40,38 @@ interface VideoCardProps {
   onShare?: (itemId: string) => void;
   onBook?: (itemId: string) => void;
   onVendorPress?: (userId: string) => void;
+  onSwipePastEnd?: () => void;
+  onDoubleTap?: (item: VideoFeedItem) => void;
 }
+
+const VideoCardVideoPlayer: React.FC<{ uri: string; isPlaying: boolean; style: any }> = ({ uri, isPlaying, style }) => {
+  const player = useVideoPlayer(uri, (player) => {
+    player.loop = true;
+    if (isPlaying) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  });
+
+  useEffect(() => {
+    if (isPlaying) {
+      player?.play();
+    } else {
+      player?.pause();
+    }
+  }, [isPlaying, player]);
+
+  return (
+    <VideoView
+      style={style}
+      player={player}
+      contentFit="cover"
+      nativeControls={false}
+      pointerEvents="none"
+    />
+  );
+};
 
 const VideoCard: React.FC<VideoCardProps> = ({
   item,
@@ -53,6 +88,8 @@ const VideoCard: React.FC<VideoCardProps> = ({
   onShare,
   onBook,
   onVendorPress,
+  onSwipePastEnd,
+  onDoubleTap,
 }) => {
   console.log(' VideoCard rendering for:', item.title, 'ID:', item.id);
   const insets = useSafeAreaInsets();
@@ -68,12 +105,16 @@ const VideoCard: React.FC<VideoCardProps> = ({
   // Timers
   const hideTimer = useRef<number | null>(null);
   const playButtonTimer = useRef<number | null>(null);
+  const lastTapTimeRef = useRef<number | null>(null);
+  const singleTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cleanup timers on unmount
   useEffect(() => {
     return () => {
       if (hideTimer.current) clearTimeout(hideTimer.current);
       if (playButtonTimer.current) clearTimeout(playButtonTimer.current);
+      if (endPromptTimerRef.current) clearTimeout(endPromptTimerRef.current);
+      if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
     };
   }, []);
 
@@ -116,13 +157,13 @@ const VideoCard: React.FC<VideoCardProps> = ({
     }
   };
 
-  const handleVideoTouch = () => {
+  const runSingleTapActions = () => {
     if (isUIVisible) {
       hideUI();
     } else {
       showUI();
     }
-    
+
     // Show play button temporarily with more natural animation
     setIsPlayButtonVisible(true);
     Animated.spring(playButtonOpacity, {
@@ -131,7 +172,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
       tension: 100,
       friction: 8,
     }).start();
-    
+
     // Hide play button after 2.5 seconds (more natural timing)
     if (playButtonTimer.current) {
       clearTimeout(playButtonTimer.current);
@@ -148,30 +189,33 @@ const VideoCard: React.FC<VideoCardProps> = ({
     onVideoTouch?.();
   };
 
-  // Validate video URI
-  const isValidVideo = item.videoUri && typeof item.videoUri === 'string' && item.videoUri.startsWith('http');
-  const videoSource: string | null = isValidVideo ? (item.videoUri as string) : null;
+  const handleVideoTouch = () => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 250;
 
-  // Always call the hook (React rules) - pass null when invalid
-  const player = useVideoPlayer(
-    isValidVideo ? videoSource : null,
-    (player) => {
-      if (!player) return;
-      player.loop = true;
-      player.muted = false;
+    if (lastTapTimeRef.current && now - lastTapTimeRef.current < DOUBLE_TAP_DELAY) {
+      if (singleTapTimeoutRef.current) {
+        clearTimeout(singleTapTimeoutRef.current);
+        singleTapTimeoutRef.current = null;
+      }
+      lastTapTimeRef.current = null;
+      onDoubleTap?.(item);
+      return;
     }
-  );
 
-  // Control playback based on active state and play state
-  useEffect(() => {
-    if (!player) return;
-
-    if (isActive && isPlaying) {
-      player.play();
-    } else {
-      player.pause();
+    lastTapTimeRef.current = now;
+    if (singleTapTimeoutRef.current) {
+      clearTimeout(singleTapTimeoutRef.current);
     }
-  }, [isActive, isPlaying, player]);
+    singleTapTimeoutRef.current = setTimeout(() => {
+      runSingleTapActions();
+      singleTapTimeoutRef.current = null;
+      lastTapTimeRef.current = null;
+    }, DOUBLE_TAP_DELAY);
+  };
+
+  const isVideoUrl = (url: string) =>
+    /^.*\.(mp4|mov|m4v|3gp|avi|mkv)(\?.*)?$/i.test(url);
 
   const getVideoStyle = (): ViewStyle => {
     // Use parent container dimensions - the Reels wrapper sets the exact height
@@ -180,6 +224,81 @@ const VideoCard: React.FC<VideoCardProps> = ({
       width: screenWidth,
       height: containerHeight,
     };
+  };
+
+  // Prefer processed H.264 URLs when available
+  const effectiveMediaUrls = item.processedMediaUrls?.length
+    ? item.processedMediaUrls
+    : item.mediaUrls?.length
+    ? item.mediaUrls
+    : item.videoUri
+    ? [item.videoUri]
+    : [];
+
+  // Multi-media pagination
+  const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
+  const [showEndPrompt, setShowEndPrompt] = useState(false);
+
+  const endPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endPromptVisibleRef = useRef(false);
+  const endDragHandledRef = useRef(false);
+
+  useEffect(() => {
+    setCurrentMediaIndex(0);
+    setShowEndPrompt(false);
+    endPromptVisibleRef.current = false;
+    endDragHandledRef.current = false;
+    if (endPromptTimerRef.current) {
+      clearTimeout(endPromptTimerRef.current);
+      endPromptTimerRef.current = null;
+    }
+  }, [item.id]);
+
+  const handleMediaScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetX = event.nativeEvent.contentOffset.x;
+    const newIndex = Math.round(offsetX / screenWidth);
+    setCurrentMediaIndex(newIndex);
+    if (newIndex !== effectiveMediaUrls.length - 1) {
+      endPromptVisibleRef.current = false;
+      setShowEndPrompt(false);
+      if (endPromptTimerRef.current) {
+        clearTimeout(endPromptTimerRef.current);
+        endPromptTimerRef.current = null;
+      }
+    }
+  };
+
+  const handleScrollBeginDrag = () => {
+    endDragHandledRef.current = false;
+  };
+
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (effectiveMediaUrls.length <= 1) return;
+    if (currentMediaIndex !== effectiveMediaUrls.length - 1) return;
+
+    const offsetX = event.nativeEvent.contentOffset.x;
+    const lastOffset = (effectiveMediaUrls.length - 1) * screenWidth;
+    const overscroll = offsetX - lastOffset;
+    const threshold = screenWidth * 0.12;
+
+    if (overscroll > threshold) {
+      if (!endDragHandledRef.current) {
+        if (endPromptVisibleRef.current) {
+          onSwipePastEnd?.();
+        } else {
+          endPromptVisibleRef.current = true;
+          setShowEndPrompt(true);
+          if (endPromptTimerRef.current) {
+            clearTimeout(endPromptTimerRef.current);
+          }
+          endPromptTimerRef.current = setTimeout(() => {
+            endPromptVisibleRef.current = false;
+            setShowEndPrompt(false);
+          }, 2500);
+        }
+        endDragHandledRef.current = true;
+      }
+    }
   };
 
   const togglePlayPause = (e: any) => {
@@ -229,6 +348,97 @@ const VideoCard: React.FC<VideoCardProps> = ({
     onBook?.(item.id);
   };
 
+  const renderMedia = () => {
+    if (effectiveMediaUrls.length === 0) {
+      return (
+        <View style={styles.videoContainer}>
+          <SafeImage
+            source={item.thumbnail ? { uri: item.thumbnail } : undefined}
+            fallbackText="No preview"
+            style={getVideoStyle() as ImageStyle}
+          />
+        </View>
+      );
+    }
+
+    if (effectiveMediaUrls.length === 1) {
+      const url = effectiveMediaUrls[0];
+      return (
+        <TouchableWithoutFeedback onPress={handleVideoTouch}>
+          <View style={styles.videoContainer}>
+            {isVideoUrl(url) ? (
+              <VideoCardVideoPlayer uri={url} isPlaying={isActive && isPlaying} style={getVideoStyle()} />
+            ) : (
+              <SafeImage source={{ uri: url }} fallbackText="No preview" style={getVideoStyle() as ImageStyle} />
+            )}
+          </View>
+        </TouchableWithoutFeedback>
+      );
+    }
+
+    return (
+      <>
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          scrollEventThrottle={16}
+          decelerationRate="fast"
+          onScrollBeginDrag={handleScrollBeginDrag}
+          onScroll={handleScroll}
+          onMomentumScrollEnd={handleMediaScroll}
+          style={styles.mediaPager}
+          contentContainerStyle={{ flexDirection: 'row' }}
+        >
+          {effectiveMediaUrls.map((url, index) => (
+            <TouchableWithoutFeedback key={`${item.id}-media-${index}`} onPress={handleVideoTouch}>
+              <View style={styles.mediaPage}>
+                {isVideoUrl(url) ? (
+                  index === currentMediaIndex ? (
+                    <VideoCardVideoPlayer uri={url} isPlaying={isActive && isPlaying} style={getVideoStyle()} />
+                  ) : (
+                    <View style={[getVideoStyle() as any, styles.videoPlaceholder]}>
+                      {item.thumbnail ? (
+                        <>
+                          <SafeImage
+                            source={{ uri: item.thumbnail }}
+                            fallbackText="No preview"
+                            style={getVideoStyle() as ImageStyle}
+                          />
+                          <View style={styles.playIconOverlay}>
+                            <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.8)" />
+                          </View>
+                        </>
+                      ) : (
+                        <Ionicons name="play-circle" size={48} color="rgba(255,255,255,0.8)" />
+                      )}
+                    </View>
+                  )
+                ) : (
+                  <SafeImage source={{ uri: url }} fallbackText="No preview" style={getVideoStyle() as ImageStyle} />
+                )}
+              </View>
+            </TouchableWithoutFeedback>
+          ))}
+        </ScrollView>
+
+        <View style={[styles.pageIndicator, { top: insets.top + 80 }]}>
+          <Ionicons name="images" size={14} color="white" />
+          <Text style={styles.pageIndicatorText}>
+            {currentMediaIndex + 1} / {effectiveMediaUrls.length}
+          </Text>
+        </View>
+
+        {showEndPrompt && (
+          <View style={styles.endPrompt}>
+            <Ionicons name="arrow-forward" size={20} color="white" />
+            <Text style={styles.endPromptText}>Swipe again to switch to Product tab</Text>
+          </View>
+        )}
+      </>
+    );
+  };
+
   // Auto-hide UI when video is active
   useEffect(() => {
     if (isActive && isUIVisible) {
@@ -240,28 +450,11 @@ const VideoCard: React.FC<VideoCardProps> = ({
   }, [isActive, isUIVisible]);
 
   return (
-    <TouchableWithoutFeedback onPress={handleVideoTouch}>
-      <View style={styles.container}>
-        {/* 1. Video Player - Full Screen with Crop (TikTok Style) */}
-        <View style={styles.videoContainer}>
-          {isValidVideo && player ? (
-            <VideoView
-              player={player}
-              style={getVideoStyle()}
-              contentFit="cover"
-              nativeControls={false}
-            />
-          ) : (
-            <SafeImage
-              source={item.thumbnail ? { uri: item.thumbnail } : undefined}
-              fallbackText="No preview"
-              style={getVideoStyle() as ImageStyle}
-            />
-          )}
-        </View>
+    <View style={styles.container}>
+        {renderMedia()}
         
         {/* Play/Pause Button Overlay */}
-        {isPlayButtonVisible && (
+        {isPlayButtonVisible && effectiveMediaUrls.length > 0 && isVideoUrl(effectiveMediaUrls[currentMediaIndex]) && (
           <Animated.View style={[styles.playButtonContainer, { opacity: playButtonOpacity }]}>
             <TouchableOpacity
               onPress={togglePlayPause}
@@ -277,7 +470,9 @@ const VideoCard: React.FC<VideoCardProps> = ({
         )}
 
         {/* 2, 3 & 4. Bottom UI Cluster — single absolute anchor for both columns */}
-        <Animated.View style={[
+        <Animated.View
+          pointerEvents="box-none"
+          style={[
           styles.bottomCluster,
           {
             bottom: tabBarHeight + insets.bottom + 10,
@@ -318,16 +513,12 @@ const VideoCard: React.FC<VideoCardProps> = ({
             </TouchableOpacity>
 
             {/* Description */}
-            <Text style={styles.description} numberOfLines={3}>
+            <RichText style={styles.description} numberOfLines={3}>
               {String(item.description || '')}
-            </Text>
+            </RichText>
 
             {/* Service Details */}
             <View style={styles.serviceTagsContainer}>
-              <View style={styles.serviceTag}>
-                <Ionicons name="checkmark-circle-outline" size={14} color="#27AE60" />
-                <Text style={styles.serviceTagText}>{String(item.completedJobs || 0)} jobs</Text>
-              </View>
               <View style={styles.serviceTag}>
                 <Ionicons name="location-outline" size={14} color="#B0B0B0" />
                 <Text style={styles.serviceTagText}>{String(item.location || 'Unknown')}</Text>
@@ -421,7 +612,6 @@ const VideoCard: React.FC<VideoCardProps> = ({
           </View>
         </Animated.View>
       </View>
-    </TouchableWithoutFeedback>
   );
 };
 
@@ -441,6 +631,62 @@ const styles = StyleSheet.create({
   video: {
     width: '100%',
     height: '100%',
+  },
+  mediaPager: {
+    width: '100%',
+    height: '100%',
+  },
+  mediaPage: {
+    width: screenWidth,
+    height: '100%',
+  },
+  videoPlaceholder: {
+    backgroundColor: '#111',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  playIconOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pageIndicator: {
+    position: 'absolute',
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    zIndex: 20,
+    elevation: 20,
+  },
+  pageIndicatorText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  endPrompt: {
+    position: 'absolute',
+    bottom: 140,
+    left: 24,
+    right: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 24,
+    gap: 8,
+    zIndex: 3,
+  },
+  endPromptText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
   playButtonContainer: {
     position: 'absolute',

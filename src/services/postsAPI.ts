@@ -1,4 +1,5 @@
 import { api } from './api';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 
 export type MediaType = 'text' | 'image' | 'video' | 'mixed';
 export type PrivacyLevel = 'public' | 'friends' | 'private';
@@ -19,6 +20,7 @@ export interface Post {
   content: string | null;
   mediaUrls: string[];
   processedMediaUrls?: string[];
+  thumbnailUrls?: string[];
   mediaType: MediaType;
   privacyLevel: PrivacyLevel;
   likesCount: number;
@@ -398,18 +400,38 @@ class PostsAPI {
   }
 
   // Upload media file (image or video) to backend
-  async uploadMedia(fileUri: string, fileType: string, fileName: string): Promise<{ url: string; path: string }> {
+  async uploadMedia(fileUri: string, fileType: string, fileName: string): Promise<{ url: string; path: string; thumbnailUrl?: string }> {
     try {
-      console.log('📤 Uploading media via backend API:', { fileUri, fileType, fileName });
+      let uploadUri = fileUri;
+      let uploadType = fileType;
+      let uploadName = fileName;
+
+      // Backend storage cannot serve HEIC/HEIF; convert to JPEG before upload.
+      if (/^image\/hei[cf]$/i.test(uploadType)) {
+        try {
+          const converted = await manipulateAsync(uploadUri, [], {
+            compress: 0.9,
+            format: SaveFormat.JPEG,
+          });
+          uploadUri = converted.uri;
+          uploadType = 'image/jpeg';
+          // Replace any trailing extension (e.g., .heic/.heif) with .jpg.
+          uploadName = (uploadName.replace(/\.[^.]+$/, '') || `file-${Date.now()}`) + '.jpg';
+        } catch (convertError) {
+          console.warn('⚠️ HEIC conversion failed, attempting upload as-is:', convertError);
+        }
+      }
+
+      console.log('📤 Uploading media via backend API:', { fileUri: uploadUri, fileType: uploadType, fileName: uploadName });
       
       // Create FormData for multipart upload
       const formData = new FormData();
       
       // For React Native, we need to create the file object differently
       const file = {
-        uri: fileUri,
-        type: fileType,
-        name: fileName || `file-${Date.now()}.${fileType.split('/')[1] || 'jpg'}`,
+        uri: uploadUri,
+        type: uploadType,
+        name: uploadName || `file-${Date.now()}.${uploadType.split('/')[1] || 'jpg'}`,
       } as any;
       
       formData.append('file', file);

@@ -936,8 +936,11 @@ const VendorOrderDetailsScreen: React.FC = () => {
           <Text style={styles.orderTotal}>{formatCurrency(orderDetails.total)}</Text>
         </View>
 
-        {/* Service Booking Info (scheduled date/time + buyer notes) */}
+        {/* Service Booking Info (scheduled date/time + buyer notes) - Vendor only */}
         {(() => {
+          const isRiderForThisOrder = orderDetails.rider_id === user?.id;
+          if (isRiderForThisOrder) return null;
+
           const bookingInfo = getServiceBookingInfo();
           if (!bookingInfo) return null;
 

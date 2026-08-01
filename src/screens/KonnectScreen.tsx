@@ -762,7 +762,19 @@ const KonnectScreen = () => {
 
     return (
       <View style={styles.storiesStickyContainer}>
-        <Text style={styles.storiesTitle}>My Plugs  🔌</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14 }}>
+          <Text style={[styles.storiesTitle, { paddingHorizontal: 0 }]}>My Plugs  🔌</Text>
+          <TouchableOpacity
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              (navigation as any).navigate('StoryUpdates');
+            }}
+            style={{ padding: 6 }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="list" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
         {storiesLoading ? (
           <View style={styles.storiesLoadingContainer}>
             <Text style={styles.storiesLoadingText}>Loading stories...</Text>

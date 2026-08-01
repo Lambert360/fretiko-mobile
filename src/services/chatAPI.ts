@@ -33,6 +33,17 @@ export interface ChatMessage {
     url: string;
   };
   invoiceData?: any; // Will be populated with Invoice object for invoice messages
+  replyToId?: string;
+  replyTo?: {
+    id: string;
+    content?: string;
+    messageType?: string;
+    sender?: {
+      id: string;
+      username?: string;
+      avatarUrl?: string;
+    };
+  };
   metadata?: {
     [key: string]: any;
     wishlistData?: any;
@@ -53,6 +64,7 @@ export interface SendMessageRequest {
     size: string;
     type: string;
   };
+  replyToId?: string;
   metadata?: {
     [key: string]: any;
     audioDuration?: number; // Duration in seconds for audio messages
@@ -693,9 +705,10 @@ class ChatAPI {
   // =============================================================================
 
   // Add or remove emoji reaction to a message
-  async addReaction(messageId: string, emoji: string): Promise<void> {
+  async addReaction(messageId: string, emoji: string): Promise<any> {
     try {
-      await api.post(`/chat/messages/${messageId}/reactions`, { emoji });
+      const response = await api.post(`/chat/messages/${messageId}/reactions`, { emoji });
+      return response.data?.data?.reactions;
     } catch (error) {
       console.error('Error adding reaction:', error);
       throw error;

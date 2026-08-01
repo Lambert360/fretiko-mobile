@@ -510,7 +510,7 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
                       </TouchableOpacity>
                     ) : (
                       <GridMediaCard
-                        imageUrl={item.processedMediaUrls?.[0] || item.mediaUrls[0]}
+                        imageUrl={item.thumbnailUrls?.[0] || item.processedMediaUrls?.[0] || item.mediaUrls[0]}
                         onPress={() => navigation.navigate('PostDetails', { postId: item.id })}
                         onLongPress={() => {}}
                         isVideo={item.mediaType === 'video' || item.mediaType === 'mixed'}

@@ -93,25 +93,15 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
       return;
     }
 
-    const urls = post.processedMediaUrls?.length ? post.processedMediaUrls : post.mediaUrls;
-    if (!urls || urls.length === 0) {
+    const fullUrl = post.processedMediaUrls?.[selectedMediaIndex] || post.mediaUrls?.[selectedMediaIndex];
+    if (!fullUrl) {
       setCurrentVideoUrl(null);
       videoPlayer.pause();
       return;
     }
 
-    const mediaUrl = urls[selectedMediaIndex] || urls[0];
-    const lowerUrl = mediaUrl?.toLowerCase() || '';
-    const isVideo =
-      post.mediaType === 'video' ||
-      (post.mediaType === 'mixed' &&
-        (lowerUrl.endsWith('.mp4') ||
-          lowerUrl.endsWith('.mov') ||
-          lowerUrl.endsWith('.m4v') ||
-          lowerUrl.endsWith('.webm')));
-
-    if (isVideo && mediaUrl) {
-      setCurrentVideoUrl(mediaUrl);
+    if (isMediaVideo(fullUrl)) {
+      setCurrentVideoUrl(fullUrl);
       videoPlayer.play();
     } else {
       setCurrentVideoUrl(null);
@@ -507,6 +497,20 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
     });
   };
 
+  const isMediaVideo = (mediaUrl?: string) => {
+    if (!post || !mediaUrl) return false;
+    const mediaType = post.mediaType;
+    if (mediaType === 'video') return true;
+    if (mediaType !== 'mixed') return false;
+    const lowerUrl = mediaUrl.toLowerCase();
+    return (
+      lowerUrl.endsWith('.mp4') ||
+      lowerUrl.endsWith('.mov') ||
+      lowerUrl.endsWith('.m4v') ||
+      lowerUrl.endsWith('.webm')
+    );
+  };
+
   const renderHeader = () => (
     <View style={[styles.header, { paddingTop: insets.top }]}>
       <TouchableOpacity onPress={() => nav.goBack()} style={styles.headerButton}>
@@ -566,24 +570,62 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
 
   const renderMedia = () => {
     if (!post || post.mediaUrls.length === 0) return null;
-    const effectiveMediaUrls = post.processedMediaUrls?.length
+    const displayUrls = post?.thumbnailUrls?.length
+      ? post.thumbnailUrls
+      : post?.processedMediaUrls?.length
       ? post.processedMediaUrls
       : post.mediaUrls;
+    if (displayUrls.length === 0) return null;
 
     return (
       <View style={styles.mediaContainer}>
-        {effectiveMediaUrls.map((url, index) => (
-          <TouchableOpacity
-            key={index}
-            activeOpacity={0.9}
-            onPress={() => {
-              setSelectedMediaIndex(index);
-              setShowMediaViewer(true);
-            }}
-          >
-            <Image source={{ uri: url }} style={styles.mediaImage} />
-          </TouchableOpacity>
-        ))}
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          nestedScrollEnabled
+          onMomentumScrollEnd={(e) => {
+            const newIndex = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
+            if (!Number.isNaN(newIndex) && newIndex >= 0 && newIndex < displayUrls.length) {
+              setSelectedMediaIndex(newIndex);
+            }
+          }}
+        >
+          {displayUrls.map((url, index) => {
+            const originalUrl = post.mediaUrls?.[index] || url;
+            const video = isMediaVideo(originalUrl);
+            return (
+              <TouchableOpacity
+                key={index}
+                activeOpacity={0.9}
+                onPress={() => {
+                  setSelectedMediaIndex(index);
+                  setShowMediaViewer(true);
+                }}
+              >
+                <Image source={{ uri: url }} style={styles.mediaImage} />
+                {video && (
+                  <View style={styles.videoOverlay}>
+                    <Ionicons name='play-circle' size={48} color='#FFFFFF' style={{ opacity: 0.9 }} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        {displayUrls.length > 1 && (
+          <View style={styles.paginationContainer}>
+            {displayUrls.map((_, index) => (
+              <View
+                key={index}
+                style={[
+                  styles.paginationDot,
+                  index === selectedMediaIndex && styles.paginationDotActive,
+                ]}
+              />
+            ))}
+          </View>
+        )}
       </View>
     );
   };
@@ -800,9 +842,8 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
   };
 
   const renderMediaViewerContent = () => {
-    if (!post || !post.mediaUrls || post.mediaUrls.length === 0) return null;
-
-    const urls = post.processedMediaUrls?.length ? post.processedMediaUrls : post.mediaUrls;
+    if (!post || post.mediaUrls.length === 0) return null;
+    const urls = post.mediaUrls;
 
     return (
       <ScrollView
@@ -812,37 +853,36 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
         contentOffset={{ x: selectedMediaIndex * screenWidth, y: 0 }}
         onMomentumScrollEnd={(event) => {
           const index = Math.round(event.nativeEvent.contentOffset.x / screenWidth);
-          if (!Number.isNaN(index)) {
+          if (!Number.isNaN(index) && index >= 0 && index < urls.length) {
             setSelectedMediaIndex(index);
           }
         }}
       >
         {urls.map((url, index) => {
-          const lowerUrl = url?.toLowerCase() || '';
-          const isVideo =
-            post.mediaType === 'video' ||
-            (post.mediaType === 'mixed' &&
-              (lowerUrl.endsWith('.mp4') ||
-                lowerUrl.endsWith('.mov') ||
-                lowerUrl.endsWith('.m4v') ||
-                lowerUrl.endsWith('.webm')));
-
+          const fullUrl = post.processedMediaUrls?.[index] || url;
+          const isVideo = isMediaVideo(fullUrl);
           const isActive = index === selectedMediaIndex;
 
           return (
             <View key={index} style={styles.mediaViewerPage}>
-              {isVideo && isActive && currentVideoUrl ? (
-                <VideoView
-                  style={styles.mediaViewerImage}
-                  player={videoPlayer}
-                  allowsFullscreen
-                  allowsPictureInPicture
-                />
+              {isVideo ? (
+                isActive && currentVideoUrl ? (
+                  <VideoView
+                    style={styles.mediaViewerImage}
+                    player={videoPlayer}
+                    allowsFullscreen
+                    allowsPictureInPicture
+                  />
+                ) : (
+                  <View style={styles.mediaViewerPlaceholder}>
+                    <Ionicons name='play-circle' size={64} color='#FFFFFF' />
+                  </View>
+                )
               ) : (
                 <Image
-                  source={{ uri: url }}
+                  source={{ uri: fullUrl }}
                   style={styles.mediaViewerImage}
-                  resizeMode="contain"
+                  resizeMode='contain'
                 />
               )}
             </View>
@@ -1036,10 +1076,9 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
         animationType="fade"
         onRequestClose={() => setShowMediaViewer(false)}
       >
-        <TouchableOpacity
+        <View
           style={styles.mediaViewerOverlay}
-          activeOpacity={1}
-          onPress={() => setShowMediaViewer(false)}
+          pointerEvents="box-none"
         >
           <View style={styles.mediaViewerContainer}>
             <TouchableOpacity
@@ -1050,7 +1089,7 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
             </TouchableOpacity>
             {renderMediaViewerContent()}
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
     </View>
   );
@@ -1153,11 +1192,37 @@ const styles = StyleSheet.create({
     width: screenWidth,
     aspectRatio: 1,
     backgroundColor: '#1a1a1a',
+    overflow: 'hidden',
   },
   mediaImage: {
     width: screenWidth,
     height: '100%',
     resizeMode: 'cover',
+  },
+  videoOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  paginationContainer: {
+    position: 'absolute',
+    bottom: 12,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  paginationDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    marginHorizontal: 4,
+  },
+  paginationDotActive: {
+    backgroundColor: '#007AFF',
   },
   captionContainer: {
     padding: 16,
@@ -1436,6 +1501,13 @@ const styles = StyleSheet.create({
   mediaViewerImage: {
     width: screenWidth,
     height: screenHeight,
+  },
+  mediaViewerPlaceholder: {
+    width: screenWidth,
+    height: screenHeight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000000',
   },
   mediaViewerPage: {
     width: screenWidth,

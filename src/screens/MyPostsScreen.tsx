@@ -184,7 +184,7 @@ const MyPostsScreen: React.FC = () => {
               ) : (
                 <View>
                   <GridMediaCard
-                    imageUrl={post.processedMediaUrls?.[0] || post.mediaUrls[0]}
+                    imageUrl={post.thumbnailUrls?.[0] || post.processedMediaUrls?.[0] || post.mediaUrls[0]}
                     onPress={() => navigation.navigate('PostDetails', { postId: post.id })}
                     onLongPress={() => openActionModal(post)}
                     isVideo={post.mediaType === 'video' || post.mediaType === 'mixed'}

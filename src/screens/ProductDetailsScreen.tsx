@@ -25,6 +25,7 @@ import { wishlistAPI } from '../services/wishlistAPI';
 import { chatAPI } from '../services/chatAPI';
 import ProductVideoPlayer from '../components/ProductVideoPlayer';
 import { MediaViewerModal } from '../components/MediaViewerModal';
+import RichText from '../components/RichText';
 import AdaptiveText from '../components/AdaptiveText';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -71,16 +72,20 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [mediaViewerType, setMediaViewerType] = useState<'image' | 'video'>('image');
   const [mediaViewerUri, setMediaViewerUri] = useState<string>('');
+  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
   
   // Animation values
   const scrollY = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
+  const selectedVariant = selectedVariantId ? product?.variants?.find(v => v.id === selectedVariantId) : undefined;
+
   useEffect(() => {
     loadProduct();
     loadReviews();
     checkWishlistStatus();
+    setSelectedVariantId(null);
     
     // Fade in animation
     Animated.timing(fadeAnim, {
@@ -130,7 +135,15 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
         Animated.spring(scaleAnim, { toValue: 1, tension: 300, friction: 10, useNativeDriver: true }),
       ]).start();
 
-      await addToCart(product.id, quantity);
+      let variant: { id: string; name: string; price: number } | undefined;
+      if (product.is_multi_item && selectedVariantId) {
+        const selected = product.variants?.find(v => v.id === selectedVariantId);
+        if (selected) {
+          variant = { id: selected.id, name: selected.name, price: selected.price };
+        }
+      }
+
+      await addToCart(product.id, quantity, variant);
     } catch (error) {
       console.error('Error adding to cart:', error);
     }
@@ -266,10 +279,13 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
   };
 
   const renderImageCarousel = () => {
-    // Check if product has video
-    const hasVideo = product?.media_type === 'video' && product?.primary_video_url;
+    if (!product) return null;
+    const isMultiItem = !!product.is_multi_item && !!product.variants && product.variants.length > 0;
+    const activeMediaUrl = selectedVariant?.media_url || (product.processed_videos?.[0] || product.primary_video_url);
+    const activeMediaType = selectedVariant ? selectedVariant.media_type : product.media_type;
+    const hasVideo = activeMediaType === 'video' && activeMediaUrl;
 
-    if (!hasVideo && !product?.images.length) return null;
+    if (!activeMediaUrl && !product?.images.length) return null;
 
     return (
       <View style={styles.imageCarouselContainer}>
@@ -281,7 +297,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
               pointerEvents="none"
             >
               <ProductVideoPlayer
-                videoUri={product.processed_videos?.[0] || product.primary_video_url!}
+                videoUri={activeMediaUrl!}
                 shouldAutoPlay={true}
                 containerWidth={screenWidth}
                 maxHeight={screenHeight * 0.4}
@@ -297,7 +313,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
                 activeOpacity={1}
                 onPress={() => {
                   setMediaViewerType('video');
-                  setMediaViewerUri(product.processed_videos?.[0] || product.primary_video_url!);
+                  setMediaViewerUri(activeMediaUrl!);
                   setMediaViewerVisible(true);
                 }}
               />
@@ -370,6 +386,121 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
             </View>
           </>
         )}
+
+        {/* Variant thumbnail selector for multi-item products */}
+        {isMultiItem && (
+          <View style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            flexDirection: 'row',
+            paddingHorizontal: 12,
+            paddingBottom: 8,
+            paddingTop: 8,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            justifyContent: 'center',
+          }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <TouchableOpacity
+                onPress={() => setSelectedVariantId(null)}
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 8,
+                  overflow: 'hidden',
+                  marginRight: 8,
+                  borderWidth: selectedVariantId === null ? 2 : 0,
+                  borderColor: '#F39C12',
+                  backgroundColor: '#1a1a1a',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
+                {product.media_type === 'video' ? (
+                  <Ionicons name="play-circle" size={24} color="rgba(255,255,255,0.85)" />
+                ) : (
+                  <Image source={{ uri: product.primary_image_url || product.images?.[0] || '' }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                )}
+              </TouchableOpacity>
+              {product.variants?.map((variant) => {
+                const isSelected = selectedVariantId === variant.id;
+                return (
+                  <TouchableOpacity
+                    key={variant.id}
+                    onPress={() => setSelectedVariantId(variant.id)}
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      marginRight: 8,
+                      borderWidth: isSelected ? 2 : 0,
+                      borderColor: '#F39C12',
+                      backgroundColor: '#000',
+                    }}
+                  >
+                    {variant.media_type === 'video' ? (
+                      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                        <Ionicons name="play-circle" size={24} color="rgba(255,255,255,0.85)" />
+                      </View>
+                    ) : (
+                      <Image source={{ uri: variant.media_url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  const renderAttributeTags = () => {
+    if (!product) return null;
+
+    const tags: { label: string; color?: string; bg?: string }[] = [];
+
+    if (product.condition) {
+      const c = product.condition.toLowerCase();
+      if (c.includes('new')) {
+        tags.push({ label: 'Brand New', color: '#4CAF50', bg: 'rgba(76, 175, 80, 0.15)' });
+      } else if (c.includes('used') || c.includes('fairly')) {
+        tags.push({ label: 'Fairly Used', color: '#FF9800', bg: 'rgba(255, 152, 0, 0.15)' });
+      } else {
+        tags.push({ label: product.condition.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()) });
+      }
+    }
+
+    if (product.shipping_options?.shipping) {
+      tags.push({ label: 'Fast Shipping', color: '#FF9800' });
+    }
+    if (product.shipping_options?.pickup) {
+      tags.push({ label: 'Pickup' });
+    }
+    if (product.shipping_options?.delivery) {
+      tags.push({ label: 'Delivery' });
+    }
+
+    if (tags.length === 0) return null;
+
+    return (
+      <View style={styles.attributeTagsContainer}>
+        <View style={styles.tagsRow}>
+          {tags.map((tag, index) => (
+            <View
+              key={index}
+              style={[
+                styles.tag,
+                tag.color ? { borderColor: tag.color, borderWidth: 1 } : {},
+                tag.bg ? { backgroundColor: tag.bg } : {},
+              ]}
+            >
+              <Text style={[styles.tagText, tag.color ? { color: tag.color } : {}]}>{tag.label}</Text>
+            </View>
+          ))}
+        </View>
       </View>
     );
   };
@@ -477,9 +608,9 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
           </View>
 
           {/* Title and Price */}
-          <Text style={styles.productTitle}>{product.name}</Text>
+          <Text style={styles.productTitle}>{selectedVariant ? selectedVariant.name : product.name}</Text>
           <View style={styles.priceContainer}>
-            <Text style={styles.currentPrice}>₣{(product.price || 0).toFixed(2)}</Text>
+            <Text style={styles.currentPrice}>₣{((selectedVariant ? selectedVariant.price : product.price) || 0).toFixed(2)}</Text>
           </View>
 
           {/* Rating and Reviews */}
@@ -547,12 +678,12 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
           {/* Description */}
           <View style={styles.descriptionContainer}>
             <Text style={styles.sectionTitle}>Description</Text>
-            <Text 
+            <RichText 
               style={styles.description}
               numberOfLines={descriptionExpanded ? undefined : 3}
             >
-              {product.description}
-            </Text>
+              {product.description || ''}
+            </RichText>
             {product.description && product.description.length > 150 && (
               <TouchableOpacity
                 onPress={() => setDescriptionExpanded(!descriptionExpanded)}
@@ -569,6 +700,8 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
               </TouchableOpacity>
             )}
           </View>
+
+          {renderAttributeTags()}
 
           {/* Tags */}
           {product.tags && product.tags.length > 0 && (
@@ -1005,6 +1138,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginRight: 4,
+  },
+  attributeTagsContainer: {
+    marginBottom: 16,
   },
   tagsContainer: {
     marginBottom: 24,

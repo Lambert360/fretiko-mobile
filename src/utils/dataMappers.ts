@@ -47,6 +47,7 @@ export const mapProductToCard = (apiProduct: any): ProductData => {
     fastShipping: apiProduct.shipping_options?.shipping === true,
     location: apiProduct.location ? toStringSafe(apiProduct.location) : undefined,
     mediaAspectRatio: apiProduct.mediaAspectRatio || 'portrait',
+    condition: apiProduct.condition ? toStringSafe(apiProduct.condition) : undefined,
     likes: toNumber(apiProduct.like_count ?? apiProduct.likes, 0),
     views: toNumber(apiProduct.view_count ?? apiProduct.views, 0),
     isLiked: apiProduct.isLiked || false,

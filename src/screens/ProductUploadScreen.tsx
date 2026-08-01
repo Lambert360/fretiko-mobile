@@ -33,6 +33,28 @@ interface ProductMedia {
   type: 'image' | 'video';
 }
 
+interface ProductVariantForm {
+  id: string;
+  name: string;
+  price: string;
+  localAmount: string;
+  localCurrency: string;
+  mediaUri: string | null;
+  mediaType: 'image' | 'video' | null;
+  isPrimary: boolean;
+}
+
+const createEmptyVariant = (): ProductVariantForm => ({
+  id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+  name: '',
+  price: '',
+  localAmount: '',
+  localCurrency: 'NGN',
+  mediaUri: null,
+  mediaType: null,
+  isPrimary: false,
+});
+
 const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
   const insets = useSafeAreaInsets();
   const [productName, setProductName] = useState('');
@@ -51,6 +73,8 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
     delivery: false,
     shipping: false
   });
+  const [isMultiItem, setIsMultiItem] = useState(false);
+  const [variants, setVariants] = useState<ProductVariantForm[]>([{ ...createEmptyVariant(), isPrimary: true }]);
   const [uploading, setUploading] = useState(false);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [categoryId, setCategoryId] = useState('');
@@ -138,29 +162,40 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
 
   const pickVideo = async () => {
     try {
+      const currentVideoCount = media.filter(m => m.type === 'video').length;
+      if (currentVideoCount >= 2) {
+        Alert.alert('Video Limit', 'You can add up to 2 product videos.');
+        return;
+      }
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-        allowsEditing: true,
+        allowsMultipleSelection: true,
         quality: 0.8,
       });
 
-      if (!result.canceled && result.assets && result.assets[0]) {
-        const asset = result.assets[0];
-        if (asset.duration && asset.duration > 60000) { // 60 seconds
-          Alert.alert('Video Too Long', 'Please select a video shorter than 60 seconds.');
-          return;
+      if (!result.canceled && result.assets) {
+        const availableSlots = 2 - currentVideoCount;
+        const selected = result.assets.slice(0, availableSlots);
+
+        const validAssets = selected.filter(asset => !asset.duration || asset.duration <= 60000);
+        if (validAssets.length < selected.length) {
+          Alert.alert('Video Too Long', 'Videos longer than 60 seconds were skipped.');
         }
 
-        const newVideo = {
+        const newVideos = validAssets.map((asset, index) => ({
           uri: asset.uri,
-          id: Date.now().toString(),
+          id: `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
           type: 'video' as const
-        };
-        setMedia(prev => [newVideo, ...prev.filter(m => m.type !== 'video')].slice(0, 6));
+        }));
+
+        if (newVideos.length === 0) return;
+
+        setMedia(prev => [...prev, ...newVideos].slice(0, 6));
       }
     } catch (error) {
-      console.error('Error picking video:', error);
-      Alert.alert('Error', 'Failed to pick video. Please try again.');
+      console.error('Error picking videos:', error);
+      Alert.alert('Error', 'Failed to pick videos. Please try again.');
     }
   };
 
@@ -168,13 +203,86 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
     setMedia(prev => prev.filter(m => m.id !== mediaId));
   };
 
+  const hasVideo = media.some(m => m.type === 'video');
+
+  useEffect(() => {
+    if (!hasVideo && isMultiItem) {
+      setIsMultiItem(false);
+    }
+  }, [hasVideo]);
+
+  // Keep the primary variant (item 1) synced with the first product video
+  useEffect(() => {
+    if (!isMultiItem) return;
+
+    const firstVideo = media.find(m => m.type === 'video');
+    const primaryIndex = variants.findIndex(v => v.isPrimary);
+    if (primaryIndex === -1) return;
+
+    setVariants(prev => {
+      const primary = prev[primaryIndex];
+      if (firstVideo) {
+        if (primary.mediaUri === firstVideo.uri && primary.mediaType === 'video') return prev;
+        const next = [...prev];
+        next[primaryIndex] = { ...primary, mediaUri: firstVideo.uri, mediaType: 'video' };
+        return next;
+      }
+      if (primary.mediaUri) {
+        const next = [...prev];
+        next[primaryIndex] = { ...primary, mediaUri: null, mediaType: null };
+        return next;
+      }
+      return prev;
+    });
+  }, [media, isMultiItem]);
+
+  const updateVariant = (id: string, updates: Partial<ProductVariantForm>) => {
+    setVariants(prev => prev.map(v => (v.id === id ? { ...v, ...updates } : v)));
+  };
+
+  const addVariant = () => {
+    setVariants(prev => [...prev, createEmptyVariant()]);
+  };
+
+  const removeVariant = (id: string) => {
+    setVariants(prev => (prev.length > 1 ? prev.filter(v => v.id !== id) : prev));
+  };
+
+  const pickVariantMedia = async (variantId: string) => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        allowsEditing: false,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        const mediaType: 'image' | 'video' = asset.type === 'video' ? 'video' : 'image';
+        if (mediaType === 'video' && asset.duration && asset.duration > 60000) {
+          Alert.alert('Video Too Long', 'Please select a video shorter than 60 seconds.');
+          return;
+        }
+        updateVariant(variantId, { mediaUri: asset.uri, mediaType, isPrimary: false });
+      }
+    } catch (error) {
+      console.error('Error picking variant media:', error);
+      Alert.alert('Error', 'Failed to pick media. Please try again.');
+    }
+  };
+
   const handleUpload = async () => {
-    if (!productName.trim() || !description.trim() || !fretiAmount.trim() || !categoryId) {
+    if (!productName.trim() || !description.trim() || !categoryId) {
       Alert.alert('Missing Information', 'Please fill in all required fields.');
       return;
     }
 
-    if (!isPriceValid) {
+    if (!isMultiItem && !fretiAmount.trim()) {
+      Alert.alert('Missing Information', 'Please fill in all required fields.');
+      return;
+    }
+
+    if (!isMultiItem && !isPriceValid) {
       Alert.alert('Price Error', priceError || 'Please fix price validation errors.');
       return;
     }
@@ -182,6 +290,20 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
     if (media.length === 0) {
       Alert.alert('No Media', 'Please add at least one photo or video of your product.');
       return;
+    }
+
+    let validVariants: ProductVariantForm[] = [];
+    if (isMultiItem) {
+      validVariants = variants.filter(v => v.name.trim() && v.price.trim() && v.mediaUri);
+      if (validVariants.length === 0) {
+        Alert.alert('Missing Items', 'Please add at least one item with a name, price, and media.');
+        return;
+      }
+      const invalidPrice = validVariants.some(v => isNaN(parseFloat(v.price)) || parseFloat(v.price) < 0);
+      if (invalidPrice) {
+        Alert.alert('Invalid Price', 'Please enter a valid price for each item.');
+        return;
+      }
     }
 
     if (!shippingOptions.pickup && !shippingOptions.delivery && !shippingOptions.shipping) {
@@ -202,9 +324,12 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
       // Create FormData for multipart upload
       const formData = new FormData();
 
-      // Separate images and videos
-      const images = media.filter(m => m.type === 'image');
-      const videos = media.filter(m => m.type === 'video');
+      // Separate images and videos. For multi-item, the primary variant's media
+      // is sent as variant_media, not duplicated as product media.
+      const primaryVariant = isMultiItem ? variants.find(v => v.isPrimary) : undefined;
+      const primaryUri = primaryVariant?.mediaUri || undefined;
+      const images = media.filter(m => m.type === 'image' && m.uri !== primaryUri);
+      const videos = media.filter(m => m.type === 'video' && m.uri !== primaryUri);
 
       // Add image files to FormData
       images.forEach((image, index) => {
@@ -227,15 +352,39 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
       });
 
       // Add product data to FormData
+      const overallPrice = isMultiItem
+        ? Math.min(...validVariants.map(v => parseFloat(v.price)))
+        : parseFloat(fretiAmount);
+
       formData.append('name', productName.trim());
       formData.append('description', description.trim());
-      formData.append('price', fretiAmount);
+      formData.append('price', String(overallPrice));
       formData.append('category_id', categoryId);
       formData.append('condition', condition);
       formData.append('quantity', quantity);
       formData.append('location', location.trim());
       formData.append('tags', JSON.stringify(tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0)));
       formData.append('shipping_options', JSON.stringify(shippingOptions));
+      formData.append('is_multi_item', String(isMultiItem));
+
+      if (isMultiItem) {
+        const variantMeta = validVariants.map((variant, index) => {
+          const fileExtension = variant.mediaType === 'video' ? 'mp4' : 'jpg';
+          const fileName = `variant_${Date.now()}_${index}.${fileExtension}`;
+          formData.append('variant_media', {
+            uri: variant.mediaUri,
+            type: variant.mediaType === 'video' ? 'video/mp4' : 'image/jpeg',
+            name: fileName,
+          } as any);
+          return {
+            name: variant.name.trim(),
+            price: parseFloat(variant.price),
+            mediaIndex: index,
+            mediaType: variant.mediaType,
+          };
+        });
+        formData.append('variants', JSON.stringify(variantMeta));
+      }
 
       // Upload via backend endpoint
       const response = await fetch(`${API_BASE_URL}/products/upload`, {
@@ -283,6 +432,8 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
     setTags('');
     setLocation('');
     setShippingOptions({ pickup: false, delivery: false, shipping: false });
+    setIsMultiItem(false);
+    setVariants([{ ...createEmptyVariant(), isPrimary: true }]);
   };
 
   const renderCategoryItem = ({ item }: { item: ProductCategory }) => (
@@ -383,7 +534,96 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
               ) : null
             }
           />
+
+          {hasVideo && (
+            <TouchableOpacity
+              style={styles.multiItemToggle}
+              onPress={() => setIsMultiItem(prev => !prev)}
+              activeOpacity={0.8}
+            >
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={styles.multiItemToggleTitle}>Multiple Items in this Video</Text>
+                <Text style={styles.multiItemToggleSubtitle}>
+                  Showcase several products in one advert video. Buyers pick the item they want.
+                </Text>
+              </View>
+              <View style={[styles.switchTrack, isMultiItem && styles.switchTrackActive]}>
+                <View style={[styles.switchThumb, isMultiItem && styles.switchThumbActive]} />
+              </View>
+            </TouchableOpacity>
+          )}
         </View>
+
+        {/* Multi-Item Variants Section */}
+        {isMultiItem && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Items in this Video *</Text>
+            <Text style={styles.sectionSubtitle}>
+              Add each item's name, price, and media. Buyers will tap between them.
+            </Text>
+
+            {variants.map((variant, index) => (
+              <View key={variant.id} style={styles.variantCard}>
+                <View style={styles.variantHeader}>
+                  <Text style={styles.variantIndexLabel}>{variant.isPrimary ? 'Primary Item (Showcase)' : `Item ${index + 1}`}</Text>
+                  {variants.length > 1 && (
+                    <TouchableOpacity onPress={() => removeVariant(variant.id)}>
+                      <Ionicons name="trash-outline" size={18} color="#E74C3C" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <View style={styles.variantRow}>
+                  <TouchableOpacity
+                    style={styles.variantMediaPicker}
+                    onPress={() => pickVariantMedia(variant.id)}
+                  >
+                    {variant.mediaUri ? (
+                      variant.mediaType === 'video' ? (
+                        <View style={styles.variantMediaThumb}>
+                          <Ionicons name="play-circle" size={28} color="rgba(255,255,255,0.8)" />
+                        </View>
+                      ) : (
+                        <Image source={{ uri: variant.mediaUri }} style={styles.variantMediaThumb} />
+                      )
+                    ) : (
+                      <Ionicons name="add" size={28} color="rgba(255,255,255,0.6)" />
+                    )}
+                  </TouchableOpacity>
+
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <TextInput
+                      style={[styles.textInput, { marginBottom: 8 }]}
+                      value={variant.name}
+                      onChangeText={(text) => updateVariant(variant.id, { name: text })}
+                      placeholder="Item name"
+                      placeholderTextColor="rgba(255,255,255,0.5)"
+                      maxLength={100}
+                    />
+                    <DualCurrencyInput
+                      localCurrency={variant.localCurrency}
+                      onLocalCurrencyChange={(currency) => updateVariant(variant.id, { localCurrency: currency })}
+                      localAmount={variant.localAmount}
+                      fretiAmount={variant.price}
+                      onLocalAmountChange={(text) => updateVariant(variant.id, { localAmount: text })}
+                      onFretiAmountChange={(text) => updateVariant(variant.id, { price: text })}
+                      title="Item Price *"
+                      placeholder="0.00"
+                      supportedCurrencies={supportedCurrencies}
+                      minAmount={0.01}
+                      maxAmount={1000000}
+                    />
+                  </View>
+                </View>
+              </View>
+            ))}
+
+            <TouchableOpacity style={styles.addVariantButton} onPress={addVariant}>
+              <Ionicons name="add-circle-outline" size={20} color="#F39C12" />
+              <Text style={styles.addVariantText}>Add Another Item</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Basic Information */}
         <View style={styles.section}>
@@ -415,29 +655,31 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
             />
           </View>
 
-          {/* Dual Currency Pricing */}
-          <View style={styles.inputGroup}>
-            <DualCurrencyInput
-              localCurrency={localCurrency}
-              onLocalCurrencyChange={setLocalCurrency}
-              localAmount={localAmount}
-              fretiAmount={fretiAmount}
-              onLocalAmountChange={setLocalAmount}
-              onFretiAmountChange={setFretiAmount}
-              title="Product Price *"
-              placeholder="0.00"
-              supportedCurrencies={supportedCurrencies}
-              minAmount={0.01}
-              maxAmount={1000000}
-              onValidationChange={handlePriceValidation}
-              containerStyle={styles.priceInputContainer}
-            />
-            
-            {/* Price Helper Text */}
-            <Text style={styles.helperText}>
-              Buyers will see the price in Freti (₣). You can set your price in your local currency for convenience.
-            </Text>
-          </View>
+          {/* Dual Currency Pricing (hidden for multi-item — each item has its own price) */}
+          {!isMultiItem && (
+            <View style={styles.inputGroup}>
+              <DualCurrencyInput
+                localCurrency={localCurrency}
+                onLocalCurrencyChange={setLocalCurrency}
+                localAmount={localAmount}
+                fretiAmount={fretiAmount}
+                onLocalAmountChange={setLocalAmount}
+                onFretiAmountChange={setFretiAmount}
+                title="Product Price *"
+                placeholder="0.00"
+                supportedCurrencies={supportedCurrencies}
+                minAmount={0.01}
+                maxAmount={1000000}
+                onValidationChange={handlePriceValidation}
+                containerStyle={styles.priceInputContainer}
+              />
+              
+              {/* Price Helper Text */}
+              <Text style={styles.helperText}>
+                Buyers will see the price in Freti (₣). You can set your price in your local currency for convenience.
+              </Text>
+            </View>
+          )}
 
           {/* Quantity */}
           <View style={styles.inputGroup}>
@@ -873,6 +1115,105 @@ const styles = StyleSheet.create({
   },
   locationButtonPlaceholder: {
     color: 'rgba(255,255,255,0.5)',
+  },
+  multiItemToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(243,156,18,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(243,156,18,0.3)',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 16,
+  },
+  multiItemToggleTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  multiItemToggleSubtitle: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  switchTrack: {
+    width: 46,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    padding: 3,
+    justifyContent: 'center',
+  },
+  switchTrackActive: {
+    backgroundColor: '#F39C12',
+  },
+  switchThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+  },
+  switchThumbActive: {
+    alignSelf: 'flex-end',
+  },
+  variantCard: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  variantHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  variantIndexLabel: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  variantRow: {
+    flexDirection: 'row',
+  },
+  variantMediaPicker: {
+    width: 72,
+    height: 72,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  variantMediaThumb: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  addVariantButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(243,156,18,0.4)',
+    borderRadius: 12,
+    borderStyle: 'dashed',
+  },
+  addVariantText: {
+    color: '#F39C12',
+    fontSize: 14,
+    fontWeight: '700',
+    marginLeft: 8,
   },
 });
 
