@@ -138,8 +138,8 @@ const BookmarksScreen: React.FC = () => {
         <Text style={styles.content} numberOfLines={3}>{item.content}</Text>
       )}
 
-      {item.mediaUrls.length > 0 && (
-        <Image source={{ uri: item.mediaUrls[0] }} style={styles.mediaImage} resizeMode="cover" />
+      {(item.thumbnailUrls?.[0] || item.mediaUrls?.[0]) && (
+        <Image source={{ uri: item.thumbnailUrls?.[0] || item.mediaUrls?.[0] }} style={styles.mediaImage} resizeMode="cover" />
       )}
 
       <View style={styles.statsRow}>
@@ -154,22 +154,27 @@ const BookmarksScreen: React.FC = () => {
   const renderServiceItem = ({ item }: { item: Service }) => (
     <TouchableOpacity style={styles.itemContainer} onPress={() => (navigation as any).navigate('ServiceDetails', { serviceId: item.id })}>
       <View style={styles.itemHeader}>
-        <View style={styles.userInfo}>
+        <TouchableOpacity
+          style={styles.userInfo}
+          onPress={() => (navigation as any).navigate('PublicProfile', { userId: item.user_id })}
+        >
           <Image
-            source={{ uri: 'https://via.placeholder.com/40' }}
+            source={{ uri: item.user_profiles?.avatar_url || 'https://via.placeholder.com/40' }}
             style={styles.avatar}
           />
           <View>
-            <Text style={styles.username}>@Vendor</Text>
+            <Text style={styles.username}>
+              @{item.user_profiles?.username || item.user_profiles?.display_name || 'Vendor'}
+            </Text>
           </View>
-        </View>
+        </TouchableOpacity>
         <TouchableOpacity onPress={() => handleServiceBookmark(item.id)}>
           <Ionicons name="bookmark" size={24} color="#FFD700" />
         </TouchableOpacity>
       </View>
 
-      {item.images && item.images.length > 0 && (
-        <Image source={{ uri: item.images[0] }} style={styles.mediaImage} resizeMode="cover" />
+      {(item.images?.[0] || item.primary_media_url) && (
+        <Image source={{ uri: item.images?.[0] || item.primary_media_url }} style={styles.mediaImage} resizeMode="cover" />
       )}
 
       <Text style={styles.serviceTitle} numberOfLines={2}>{item.name}</Text>
@@ -179,7 +184,7 @@ const BookmarksScreen: React.FC = () => {
         <Text style={styles.price}>₣{Number(item.base_price || 0).toFixed(2)}</Text>
         <View style={styles.ratingBadge}>
           <Ionicons name="star" size={14} color="#FFD700" />
-          <Text style={styles.ratingText}>4.5</Text>
+          <Text style={styles.ratingText}>{Number(item.average_rating || 0).toFixed(1)}</Text>
         </View>
       </View>
 

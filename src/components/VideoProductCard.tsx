@@ -15,6 +15,22 @@ interface VideoCardGalleryItem {
   variantId?: string; // undefined for the main advert item
 }
 
+const getConditionStyle = (condition?: string): { label: string; color: string; bg: string } | null => {
+  if (!condition) return null;
+  const c = condition.toLowerCase();
+  if (c.includes('new')) {
+    return { label: 'Brand New', color: '#4CAF50', bg: 'rgba(76, 175, 80, 0.15)' };
+  }
+  if (c.includes('used') || c.includes('fairly')) {
+    return { label: 'Fairly Used', color: '#FF9800', bg: 'rgba(255, 152, 0, 0.15)' };
+  }
+  return {
+    label: condition.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
+    color: '#9E9E9E',
+    bg: 'rgba(158, 158, 158, 0.15)',
+  };
+};
+
 const VideoProductCard: React.FC<{
   item: Product;
   isVisible: boolean;
@@ -54,6 +70,8 @@ const VideoProductCard: React.FC<{
   const displayPrice = selected ? selected.price : item.price;
   const displayMediaUrl = selected ? selected.mediaUrl : (item.processed_videos?.[0] || item.primary_video_url);
   const displayMediaType = selected ? selected.mediaType : 'video';
+
+  const conditionStyle = getConditionStyle(item.condition);
 
   const handleCartPress = () => {
     if (selected && selected.variantId) {
@@ -136,6 +154,59 @@ const VideoProductCard: React.FC<{
                 <Ionicons name="cart-outline" size={14} color="white" />
               </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Tags and badges */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+            {conditionStyle && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: conditionStyle.bg,
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 12,
+                  marginRight: 8,
+                  marginBottom: 4,
+                }}
+              >
+                <Ionicons name="pricetag-outline" size={10} color={conditionStyle.color} />
+                <Text style={{ color: conditionStyle.color, fontSize: 10, fontWeight: '600', marginLeft: 4 }}>
+                  {conditionStyle.label}
+                </Text>
+              </View>
+            )}
+            {item.location && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginRight: 8,
+                  marginBottom: 4,
+                }}
+              >
+                <Ionicons name="location" size={10} color="#9E9E9E" />
+                <Text style={{ color: '#9E9E9E', fontSize: 10, marginLeft: 4 }} numberOfLines={1}>
+                  {String(item.location)}
+                </Text>
+              </View>
+            )}
+            {(item.shipping_options?.delivery || item.shipping_options?.shipping) && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginRight: 8,
+                  marginBottom: 4,
+                }}
+              >
+                <Ionicons name="flash" size={10} color="#FF9800" />
+                <Text style={{ color: '#FF9800', fontSize: 10, marginLeft: 4, fontWeight: '600' }}>
+                  Fast Delivery
+                </Text>
+              </View>
+            )}
           </View>
         </View>
 

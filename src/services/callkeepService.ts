@@ -89,6 +89,13 @@ class CallkeepService {
       this.setup();
     }
 
+    // Avoid double-ringing if this call is already displayed (e.g. socket
+    // call_event and push notification both trigger this in quick succession)
+    if (this.pendingCalls.has(info.uuid)) {
+      console.log('📞 CallKeep incoming call already displayed, skipping duplicate:', info.uuid);
+      return;
+    }
+
     try {
       this.pendingCalls.set(info.uuid, info);
       RNCallKeep.displayIncomingCall(

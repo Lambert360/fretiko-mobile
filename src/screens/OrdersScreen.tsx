@@ -9,6 +9,7 @@ import {
   Image,
   RefreshControl,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -89,6 +90,30 @@ const OrdersScreen = () => {
 
   const formatPrice = (price: number) => {
     return walletAPI.formatFreti(price);
+  };
+
+  // Buyer confirms and releases escrowed funds immediately (mirrors OrderTrackingScreen)
+  const handleReleaseFunds = (orderId: string) => {
+    Alert.alert(
+      'Release Funds',
+      'Are you satisfied with your order? This will immediately release funds to the vendor and rider.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Release Funds',
+          style: 'default',
+          onPress: async () => {
+            try {
+              const result = await ordersAPI.confirmAndReleaseFunds(orderId);
+              Alert.alert('Success', result.message);
+              await loadOrders();
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to release funds');
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Check if order is part of a group
@@ -251,7 +276,13 @@ const OrdersScreen = () => {
             </Text>
           </View>
           {(item as any).escrowStatus === 'held' && item.status === 'delivered' && (
-            <TouchableOpacity style={styles.releaseButton}>
+            <TouchableOpacity 
+              style={styles.releaseButton}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleReleaseFunds(item.id);
+              }}
+            >
               <Text style={styles.releaseButtonText}>Release Funds</Text>
             </TouchableOpacity>
           )}
@@ -287,7 +318,7 @@ const OrdersScreen = () => {
               style={styles.reviewButton}
               onPress={(e) => {
                 e.stopPropagation();
-                // Navigate to review screen
+                (navigation as any).navigate('RateOrder', { orderId: item.id });
               }}
             >
               <Ionicons name="star-outline" size={16} color="#F39C12" />

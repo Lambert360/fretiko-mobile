@@ -14,6 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { DatePickerInput } from '../components/DatePickerInput';
 
 const parseJwt = (token: string): any => {
   try {
@@ -36,7 +37,7 @@ const isTokenValid = (token: string): boolean => {
   const exp = getTokenExpirySeconds(token);
   if (!exp) return false;
   const now = Math.floor(Date.now() / 1000);
-  return exp - now > 300; // more than 5 minutes left
+  return exp - now > 60; // more than 1 minute left
 };
 
 const GENDER_OPTIONS = [
@@ -61,7 +62,7 @@ export const SocialSignUpScreen: React.FC<SocialSignUpScreenProps> = ({ navigati
   const insets = useSafeAreaInsets();
   const { socialSignIn } = useAuth();
 
-  const { provider, idToken, email, firstName = '', lastName = '', avatarUrl } = route.params;
+  const { provider, idToken, code, redirectUri, email, firstName = '', lastName = '', avatarUrl } = route.params;
 
   const [formData, setFormData] = useState({
     firstName: firstName,
@@ -74,6 +75,17 @@ export const SocialSignUpScreen: React.FC<SocialSignUpScreenProps> = ({ navigati
 
   const [isLoading, setIsLoading] = useState(false);
 
+  // Auto-fill first/last name from the idToken claims if the screen params didn't provide them
+  useEffect(() => {
+    if (!idToken) return;
+    const parsed = parseJwt(idToken);
+    setFormData(prev => ({
+      ...prev,
+      firstName: prev.firstName || parsed.given_name || '',
+      lastName: prev.lastName || parsed.family_name || '',
+    }));
+  }, [idToken]);
+
   const showSessionExpired = () => {
     Alert.alert(
       'Session expired',
@@ -83,7 +95,7 @@ export const SocialSignUpScreen: React.FC<SocialSignUpScreenProps> = ({ navigati
   };
 
   useEffect(() => {
-    if (!isTokenValid(idToken)) {
+    if (idToken && !isTokenValid(idToken)) {
       showSessionExpired();
     }
   }, [idToken]);
@@ -103,17 +115,24 @@ export const SocialSignUpScreen: React.FC<SocialSignUpScreenProps> = ({ navigati
   const handleSignUp = async () => {
     if (!validateForm()) return;
 
-    if (!isTokenValid(idToken)) {
+    if (idToken && !isTokenValid(idToken)) {
       showSessionExpired();
+      return;
+    }
+
+    if (!idToken && !code) {
+      Alert.alert('Sign Up Failed', 'No authorization token available. Please sign in again.');
       return;
     }
 
     setIsLoading(true);
 
     try {
+      console.log('🧩 SocialSignUp payload:', { provider, hasIdToken: !!idToken, hasCode: !!code, redirectUri });
+
       await socialSignIn({
         provider,
-        idToken,
+        ...(idToken ? { idToken } : { code, redirectUri }),
         firstName: formData.firstName,
         lastName: formData.lastName,
         dateOfBirth: formData.dateOfBirth || undefined,
@@ -179,16 +198,14 @@ export const SocialSignUpScreen: React.FC<SocialSignUpScreenProps> = ({ navigati
             </View>
           </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Date of Birth (optional)</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.dateOfBirth}
-              onChangeText={(value) => updateFormData('dateOfBirth', value)}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor="#666"
-            />
-          </View>
+          <DatePickerInput
+            value={formData.dateOfBirth}
+            onChange={(value) => updateFormData('dateOfBirth', value)}
+            placeholder="Select your date of birth"
+            label="Date of Birth (optional)"
+            minimumAge={13}
+            required={false}
+          />
 
           <Text style={styles.sectionTitle}>Gender (optional)</Text>
           <View style={styles.genderContainer}>
@@ -318,14 +335,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    padding: 16,
-    borderRadius: 12,
+    padding: 18,
+    borderRadius: 16,
     backgroundColor: '#1a1a1a',
     borderWidth: 1,
     borderColor: '#333',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 6,
   },
   roleOptionSelected: { backgroundColor: '#3498DB', borderColor: '#3498DB' },
-  roleOptionText: { color: '#FFF', fontSize: 16 },
+  roleOptionText: { color: '#FFF', fontSize: 16, fontWeight: '600' },
   roleOptionTextSelected: { color: '#FFF', fontWeight: 'bold' },
   termsContainer: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 16 },
   checkbox: {

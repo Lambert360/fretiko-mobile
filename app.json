@@ -110,7 +110,13 @@
       "./plugins/withCallkeep",
       "expo-web-browser",
       "expo-apple-authentication",
-      "expo-asset"
+      "expo-asset",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.931500623521-4a7l5sp39ukk1h4jfnvbb424eo97kcou"
+        }
+      ]
     ],
     "extra": {
       "eas": {

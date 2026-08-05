@@ -3551,8 +3551,12 @@ const HomeScreen = () => {
                 ? serviceItem.processedMediaUrls
                 : serviceItem?.mediaUrls?.length
                 ? serviceItem.mediaUrls
+                : serviceItem?.images?.length
+                ? serviceItem.images
                 : serviceItem?.videoUri
                 ? [serviceItem.videoUri]
+                : serviceItem?.thumbnail
+                ? [serviceItem.thumbnail]
                 : [];
               const isMultiServiceMedia = serviceMediaUrls.length > 1;
               const currentServiceMediaIndex = serviceMediaIndexMap[item.id] || 0;
@@ -4302,14 +4306,16 @@ const HomeScreen = () => {
         <View key="services" style={{ flex: 1 }}>
           {activeTab === 'services' ? (
             <>
-              {/* Add invisible swipe area on left edge to go back to products */}
+              {/* Invisible swipe area on left edge to go back to products.
+                  Starts below the Services header row so it doesn't cover
+                  the menu-outline icon (which sits at zIndex 2000). */}
               <View style={{
                 position: 'absolute',
                 left: 0,
-                top: 0,
+                top: insets.top + 56,
                 bottom: 0,
                 width: 50,
-                zIndex: 3000,
+                zIndex: 1500,
               }}>
             <TouchableOpacity
               style={{ flex: 1 }}

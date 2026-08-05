@@ -9,6 +9,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
 import * as WebBrowser from 'expo-web-browser';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 
 // Import base64 polyfill first
 import './src/utils/base64-polyfill';
@@ -263,6 +264,16 @@ const AppNavigator: React.FC = () => {
   const rootViewRef = useRef<any>(null);
   const hasHandledInitialNotificationRef = useRef(false);
 
+  // Configure native Google Sign-In
+  useEffect(() => {
+    if (process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) {
+      GoogleSignin.configure({
+        webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+        iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+      });
+    }
+  }, []);
+
   // Configure Android notification channels
   useEffect(() => {
     pushNotificationService.configureNotificationChannel();
@@ -309,10 +320,20 @@ const AppNavigator: React.FC = () => {
     pushNotificationService.setupNotificationListeners({
       onNotificationReceived: (notification) => {
         console.log('📬 Notification received in foreground:', notification.request.content);
-        
+
+        const data = notification.request.content.data as any;
+
+        // For incoming call pushes, ring immediately on receipt instead of
+        // waiting for the user to tap the notification. This covers the case
+        // where the app is foregrounded/backgrounded but the realtime socket
+        // hasn't (yet) delivered the call_event for this call.
+        if (data?.type === 'call_incoming') {
+          handleIncomingCallPush(data);
+        }
+
         // Update badge count
         pushNotificationService.setBadgeCount(1);
-        
+
         // Optional: Show a custom in-app notification banner
         // You can implement a custom notification component here if needed
       },
@@ -362,6 +383,24 @@ const AppNavigator: React.FC = () => {
     checkInitialNotification();
   }, []);
 
+  // Display the native incoming-call UI (CallKeep) for a call_incoming push.
+  // Called both when the push is received (foreground/background delivery)
+  // and when the user taps it, so the device rings without requiring a tap.
+  const handleIncomingCallPush = (data: any) => {
+    const convId = data?.conversationId;
+    const callSessionId = data?.callSessionId;
+
+    if (!convId || !callSessionId) return;
+
+    callkeepService.displayIncomingCall({
+      uuid: callSessionId,
+      callerName: data.callerName || 'Unknown',
+      callType: data.callType || 'audio',
+      conversationId: convId,
+      callSessionId,
+    });
+  };
+
   // Handle navigation based on notification data
   const handleNotificationNavigation = (data: any) => {
     console.log('🧭 Handling notification navigation:', data);
@@ -387,26 +426,14 @@ const AppNavigator: React.FC = () => {
           }
           break;
 
-        case 'call_incoming': {
-          const convId = data.conversationId;
-          const callSessionId = data.callSessionId;
-
-          if (convId && callSessionId) {
-            // Show the native system call UI when the user taps an incoming
-            // call notification from the tray. This ensures the system
-            // ringtone is presented even when the app was backgrounded or killed.
-            // The full-screen incoming call UI is handled by CallContext's
-            // realtime call_event subscription which calls showIncomingCall().
-            callkeepService.displayIncomingCall({
-              uuid: callSessionId,
-              callerName: data.callerName || 'Unknown',
-              callType: data.callType || 'audio',
-              conversationId: convId,
-              callSessionId,
-            });
-          }
+        case 'call_incoming':
+          // Show the native system call UI when the user taps an incoming
+          // call notification from the tray. This ensures the system
+          // ringtone is presented even when the app was backgrounded or killed.
+          // The full-screen incoming call UI is handled by CallContext's
+          // realtime call_event subscription which calls showIncomingCall().
+          handleIncomingCallPush(data);
           break;
-        }
 
         case 'delivery_update':
         case 'rider_assigned':

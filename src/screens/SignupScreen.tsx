@@ -16,9 +16,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRegistration } from '../contexts/RegistrationContext';
+import { useAuth } from '../contexts/AuthContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SocialAuthButtons } from '../components/SocialAuthButtons';
-import * as Google from 'expo-auth-session/providers/google';
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { PasswordStrengthIndicator } from '../components/PasswordStrengthIndicator';
 import { EmailAvailabilityChecker } from '../components/EmailAvailabilityChecker';
@@ -66,13 +67,9 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
   const insets = useSafeAreaInsets();
 
   const { updateRegistrationData } = useRegistration();
+  const { socialSignIn } = useAuth();
 
-  const [, , promptAsync] = Google.useIdTokenAuthRequest(
-    {
-      webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '',
-    },
-    { scheme: 'fretiko' }
-  );
+  // Google Sign-In is configured globally in App.tsx
 
   const handleGoogleSignIn = async () => {
     if (!process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) {
@@ -80,30 +77,75 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
       return;
     }
 
+    let googleUser: any = {};
+    let idToken: string | undefined;
+
     setIsLoading(true);
     try {
-      const result = await promptAsync();
-      if (result?.type !== 'success' || !result.params.id_token) {
+      await GoogleSignin.hasPlayServices();
+      const userInfo = await GoogleSignin.signIn();
+      googleUser = (userInfo as any).data?.user || (userInfo as any).user || {};
+      idToken = (userInfo as any).data?.idToken || (userInfo as any).idToken;
+
+      if (!idToken) {
+        const tokens = await GoogleSignin.getTokens();
+        idToken = tokens.idToken;
+      }
+
+      if (!idToken) {
+        throw new Error('No ID token received from Google');
+      }
+
+      try {
+        await socialSignIn({ provider: 'google', idToken, hasAcceptedTerms: false });
+      } catch (error: any) {
+        if (error.requiresProfile) {
+          const profileUser = error.user || {};
+          Alert.alert(
+            'Complete your profile',
+            'Please accept the terms and conditions to finish signing up.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Continue',
+                onPress: () => navigation.navigate('SocialSignUp', {
+                  provider: 'google',
+                  idToken,
+                  email: profileUser.email || googleUser.email || '',
+                  firstName: profileUser.firstName || googleUser.givenName || '',
+                  lastName: profileUser.lastName || googleUser.familyName || '',
+                  avatarUrl: profileUser.avatar_url || googleUser.photo || '',
+                }),
+              },
+            ]
+          );
+          return;
+        }
+        throw error;
+      }
+    } catch (error: any) {
+      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
         return;
       }
-      const idToken = result.params.id_token;
-      const parsed = parseJwt(idToken);
-      const fullName = parsed.name || '';
-      const [firstName, ...rest] = fullName.split(' ');
-      const lastName = rest.join(' ');
-      const email = parsed.email || '';
-      const avatarUrl = parsed.picture || '';
-
-      navigation.navigate('SocialSignUp', {
-        provider: 'google',
-        idToken,
-        email,
-        firstName,
-        lastName,
-        avatarUrl,
-      });
-    } catch (error: any) {
-      Alert.alert('Google Sign Up Error', error?.message || 'Something went wrong');
+      console.error('❌ Google sign up error:', error);
+      Alert.alert(
+        'Could not sign up with Google',
+        error?.message || 'Something went wrong. You can still complete your profile manually.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Complete Profile',
+            onPress: () => navigation.navigate('SocialSignUp', {
+              provider: 'google',
+              idToken,
+              email: googleUser.email || '',
+              firstName: googleUser.givenName || '',
+              lastName: googleUser.familyName || '',
+              avatarUrl: googleUser.photo || '',
+            }),
+          },
+        ]
+      );
     } finally {
       setIsLoading(false);
     }
@@ -121,6 +163,12 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
       return;
     }
 
+    let idToken: string | undefined;
+    let email = '';
+    let firstName = '';
+    let lastName = '';
+    let avatarUrl = '';
+
     setIsLoading(true);
     try {
       const credential = await AppleAuthentication.signInAsync({
@@ -130,16 +178,16 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
         ],
       });
 
-      const idToken = credential.identityToken;
+      idToken = credential.identityToken || undefined;
       if (!idToken) {
         throw new Error('No identity token received from Apple');
       }
 
       const parsed = parseJwt(idToken);
-      const email = credential.email || parsed.email || '';
-      const firstName = credential.fullName?.givenName || '';
-      const lastName = credential.fullName?.familyName || '';
-      const avatarUrl = '';
+      email = credential.email || parsed.email || '';
+      firstName = credential.fullName?.givenName || '';
+      lastName = credential.fullName?.familyName || '';
+      avatarUrl = '';
 
       navigation.navigate('SocialSignUp', {
         provider: 'apple',
@@ -153,7 +201,24 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
       if (error.code === 'ERR_CANCELED' || error.code === 'ERR_REQUEST_CANCELED') {
         return;
       }
-      Alert.alert('Apple Sign Up Error', error?.message || 'Something went wrong');
+      Alert.alert(
+        'Could not sign up with Apple',
+        error?.message || 'Something went wrong. You can still complete your profile manually.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Complete Profile',
+            onPress: () => navigation.navigate('SocialSignUp', {
+              provider: 'apple',
+              idToken,
+              email,
+              firstName,
+              lastName,
+              avatarUrl,
+            }),
+          },
+        ]
+      );
     } finally {
       setIsLoading(false);
     }
@@ -281,7 +346,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
       >
         {/* Background Image */}
         <ImageBackground
-          source={require('../../assets/images/sign up-pic.jpeg')}
+          source={require('../../assets/images/sign-up-pic.jpeg')}
           style={styles.backgroundImage}
           imageStyle={styles.backgroundImageStyle}
         >

@@ -33,7 +33,9 @@ export interface User {
 
 export interface SocialSignInPayload {
   provider: 'google' | 'apple';
-  idToken: string;
+  idToken?: string;
+  code?: string;
+  redirectUri?: string;
   firstName?: string;
   lastName?: string;
   dateOfBirth?: string;
@@ -74,7 +76,7 @@ export interface AuthContextType extends AuthState {
   signout: () => Promise<void>;
   logout: () => Promise<void>;
   clearNewUserFlag: () => void;
-  checkAccountStatus: () => Promise<void>;
+  checkAccountStatus: (accessTokenOverride?: string | null) => Promise<boolean>;
   acceptTerms: () => Promise<void>;
   refreshUserProfile: () => Promise<void>;
 }
@@ -199,9 +201,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                     isLoading: false,
                     isAuthenticated: true,
                     isNewUser: false,
+                    // Use the cached values as a fast, optimistic paint - the
+                    // checkAccountStatus() call below will immediately
+                    // reconcile this with the real backend state.
                     isSuspended: storedSuspensionStatus.isSuspended,
                     isDeleted: storedSuspensionStatus.isDeleted,
-                    isCheckingSuspension: storedSuspensionStatus.isSuspended,
+                    isCheckingSuspension: false,
                   });
                   
                   console.log('Valid token loaded with roles:', { 
@@ -220,7 +225,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                     isNewUser: false,
                     isSuspended: storedSuspensionStatus.isSuspended,
                     isDeleted: storedSuspensionStatus.isDeleted,
-                    isCheckingSuspension: storedSuspensionStatus.isSuspended,
+                    isCheckingSuspension: false,
                   });
                 }
               } catch (profileError) {
@@ -234,9 +239,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                   isNewUser: false,
                   isSuspended: storedSuspensionStatus.isSuspended,
                   isDeleted: storedSuspensionStatus.isDeleted,
-                  isCheckingSuspension: storedSuspensionStatus.isSuspended,
+                  isCheckingSuspension: false,
                 });
               }
+
+              // Always re-verify suspension/deletion status against the
+              // backend on app start - this is the fix for admin-issued
+              // suspensions not being enforced/displayed on cold start,
+              // since the cached value alone can never be trusted.
+              await checkAccountStatus(accessToken);
             } else {
               console.log('Token expired, clearing auth data');
               await clearAuthData();
@@ -394,22 +405,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 is_verified: profileData.is_verified,
               };
               
-              setAuthState({
+              // Merge instead of replacing wholesale so we don't clobber
+              // isSuspended/isDeleted - checkAccountStatus() below is the
+              // single source of truth for those flags.
+              setAuthState(prev => ({
+                ...prev,
                 user: enrichedUserData,
                 accessToken,
                 isLoading: false,
                 isAuthenticated: true,
                 isNewUser: false,
-                isSuspended: false,
-                isDeleted: false,
-                isCheckingSuspension: false,
-              });
+              }));
             } else {
               console.error('Failed to fetch user profile during refresh');
             }
           } catch (error) {
             console.error('Error refreshing auth session:', error);
           }
+
+          // Re-check suspension/deletion status every time the app returns
+          // to the foreground. This is the primary fix for admin-issued
+          // suspensions not being enforced/displayed on mobile: previously
+          // this handler unconditionally reset isSuspended/isDeleted to
+          // false here, hiding any suspension detected earlier in the
+          // session.
+          await checkAccountStatus(accessToken);
         }
       }
     });
@@ -609,7 +629,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return () => clearInterval(checkInterval);
   }, [authState.isAuthenticated, authState.accessToken]);
 
-  const saveAuthData = useCallback(async (user: User, accessToken: string, refreshToken: string) => {
+  const saveAuthData = useCallback(async (
+    user: User,
+    accessToken: string,
+    refreshToken: string,
+    isSuspended: boolean = false,
+    isDeleted: boolean = false,
+  ) => {
     try {
       console.log('💾 Saving auth data:');
       console.log('  - User ID:', user.id);
@@ -658,9 +684,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Save suspension status separately for quick access on app reload
       // This ensures suspended users are immediately identified
+      // IMPORTANT: persist the *real* status passed in, not a hardcoded value,
+      // otherwise a suspended/deleted account would look "active" after restart
       const suspensionStatus = {
-        isSuspended: false,
-        isDeleted: false,
+        isSuspended,
+        isDeleted,
         savedAt: new Date().toISOString(),
       };
       await AsyncStorage.setItem('suspensionStatus', JSON.stringify(suspensionStatus));
@@ -710,16 +738,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const checkAccountStatus = useCallback(async () => {
-    // Don't check if we're not authenticated
-    if (!authStateRef.current.isAuthenticated || !authStateRef.current.accessToken) {
+  const checkAccountStatus = useCallback(async (accessTokenOverride?: string | null): Promise<boolean> => {
+    // Use the explicitly provided token when available (avoids relying on a
+    // possibly-stale authStateRef right after signin/refresh), otherwise fall
+    // back to whatever is currently stored in the auth state.
+    const token = accessTokenOverride || authStateRef.current.accessToken;
+
+    if (!token) {
       setAuthState(prev => ({ ...prev, isCheckingSuspension: false }));
-      return;
+      return false;
     }
 
     try {
       setAuthState(prev => ({ ...prev, isCheckingSuspension: true }));
-      const accountStatus = await warningsAPI.getAccountStatus(authStateRef.current.accessToken);
+      const accountStatus = await warningsAPI.getAccountStatus(token);
       
       const isSuspended = accountStatus.accountStatus === 'suspended' || 
                          accountStatus.suspension.isSuspended;
@@ -732,23 +764,49 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isDeleted,
         isCheckingSuspension: false 
       }));
+
+      // Keep the on-disk cache in sync with the real backend status so that
+      // the next app cold-start (loadAuthData) reflects reality immediately.
+      try {
+        await AsyncStorage.setItem('suspensionStatus', JSON.stringify({
+          isSuspended,
+          isDeleted,
+          savedAt: new Date().toISOString(),
+        }));
+      } catch (cacheError) {
+        console.log('Error caching suspension status:', cacheError);
+      }
       
       console.log('🔍 Account status checked:', { 
         accountStatus: accountStatus.accountStatus,
         isSuspended,
         isDeleted
       });
+
+      return isSuspended || isDeleted;
     } catch (error: any) {
       console.error('❌ Error checking account status:', error);
-      // Don't block user if check fails - assume not suspended/deleted
-      setAuthState(prev => ({ 
-        ...prev, 
-        isSuspended: false,
-        isDeleted: false,
-        isCheckingSuspension: false 
-      }));
+      // Don't overwrite a previously-known suspended/deleted state just
+      // because this particular check failed (e.g. transient network error)
+      setAuthState(prev => ({ ...prev, isCheckingSuspension: false }));
+      return authStateRef.current.isSuspended || authStateRef.current.isDeleted;
     }
   }, []);
+
+  // Periodically re-check suspension/deletion status while the app is open
+  // and the user is authenticated. This catches an admin suspending the
+  // account mid-session, without requiring the app to be backgrounded first.
+  useEffect(() => {
+    if (!authState.isAuthenticated || !authState.accessToken || authState.isSuspended || authState.isDeleted) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      checkAccountStatus();
+    }, 5 * 60 * 1000); // every 5 minutes
+
+    return () => clearInterval(interval);
+  }, [authState.isAuthenticated, authState.accessToken, authState.isSuspended, authState.isDeleted, checkAccountStatus]);
 
   const signin = useCallback(async (email: string, password: string) => {
     try {
@@ -770,10 +828,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Suspended users can authenticate but have limited access
       const isSuspended = response.isSuspended === true;
       
-      // Save auth data
-      await saveAuthData(enrichedUser, response.accessToken, response.refreshToken);
+      // Save auth data - persist the real suspension status so a cold app
+      // restart doesn't wrongly show the user as active
+      await saveAuthData(enrichedUser, response.accessToken, response.refreshToken, isSuspended, false);
       
-      // Update state - use backend suspension response directly
+      // Update state - use backend suspension response directly.
+      // isCheckingSuspension is false here because we already have a
+      // definitive answer from the signin response - leaving it true would
+      // leave the app stuck on the loading screen since nothing below would
+      // ever flip it back to false.
       setAuthState({
         user: enrichedUser,
         accessToken: response.accessToken,
@@ -782,13 +845,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isNewUser: false,
         isSuspended: isSuspended,
         isDeleted: false,
-        isCheckingSuspension: isSuspended, // Only check if actually suspended
+        isCheckingSuspension: false,
       });
       
-      // Check account status after signin (if not already suspended)
-      if (!isSuspended) {
-        await checkAccountStatus();
-      }
+      // Always re-verify with the backend (also picks up deletion status and
+      // warning history), passing the fresh token explicitly rather than
+      // relying on authStateRef (which may not have caught up yet).
+      await checkAccountStatus(response.accessToken);
       
       console.log('✅ Signed in with roles:', { 
         is_seller: enrichedUser.is_seller, 
@@ -933,7 +996,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const socialSignIn = useCallback(async (payload: SocialSignInPayload) => {
     try {
-      setAuthState(prev => ({ ...prev, isLoading: true }));
+      console.log('🔑 Social sign-in payload:', {
+        provider: payload.provider,
+        hasIdToken: !!payload.idToken,
+        hasCode: !!payload.code,
+        redirectUri: payload.redirectUri,
+      });
 
       const response = await fetch(`${API_CONFIG.BASE_URL}/auth/social/signin`, {
         method: 'POST',
@@ -944,32 +1012,43 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       });
 
       const data = await response.json();
+      console.log('🔑 Social sign-in response:', { success: data.success, requiresProfile: data.requiresProfile, message: data.message });
 
       if (data.success) {
-        // Save auth data
-        await saveAuthData(data.user, data.accessToken, data.refreshToken);
+        const isSuspended = data.isSuspended === true;
 
-        // Update state
+        // Save auth data - persist the real suspension status
+        await saveAuthData(data.user, data.accessToken, data.refreshToken, isSuspended, false);
+
+        // Update state. isCheckingSuspension is false immediately since we
+        // already have a definitive answer - checkAccountStatus below will
+        // still run to confirm/refine it, but the UI shouldn't be stuck
+        // waiting on a flag that nothing else would clear.
         setAuthState({
           user: data.user,
           accessToken: data.accessToken,
           isLoading: false,
           isAuthenticated: true,
           isNewUser: false, // Social profile is already complete on this screen
-          isSuspended: data.isSuspended || false,
+          isSuspended,
           isDeleted: false,
-          isCheckingSuspension: data.isSuspended,
+          isCheckingSuspension: false,
         });
+
+        // Re-verify with the backend using the fresh token explicitly
+        await checkAccountStatus(data.accessToken);
       } else {
         const error: any = new Error(data.message || 'Social authentication failed');
         error.requiresProfile = data.requiresProfile === true;
+        error.idToken = data.idToken;
+        error.user = data.user;
         throw error;
       }
     } catch (error) {
       setAuthState(prev => ({ ...prev, isLoading: false }));
       throw error;
     }
-  }, [saveAuthData]);
+  }, [saveAuthData, checkAccountStatus]);
 
   const migrate = useCallback(async (email: string, newPassword: string) => {
     try {
@@ -992,8 +1071,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isCheckingSuspension: true,
       });
       
-      // Check account status after migration
-      await checkAccountStatus();
+      // Check account status after migration - pass the fresh token
+      // explicitly since authStateRef may not have caught up yet
+      await checkAccountStatus(response.accessToken);
     } catch (error) {
       setAuthState(prev => ({ ...prev, isLoading: false }));
       throw error; // Re-throw so the UI can handle it

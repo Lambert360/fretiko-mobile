@@ -11,6 +11,8 @@ import {
   Alert,
   Dimensions,
   Modal,
+  Linking,
+  Share,
 } from 'react-native';
 // import MapView, { Marker, Polyline } from 'expo-maps'; // Temporarily disabled
 import * as Location from 'expo-location';
@@ -526,58 +528,11 @@ const OrderTrackingScreen: React.FC = () => {
     }
   };
 
-  // ✅ Buyer-only action handler
-  const handleBuyerAction = async (action: string) => {
-    try {
-      switch (action) {
-        case 'order_received':
-          // Buyer confirms receipt
-          await handleOrderReceived();
-          break;
-        default:
-          console.warn('Unknown buyer action:', action);
-      }
-      
-      // Reload order data
-      await loadOrderDetails();
-      
-    } catch (error) {
-      Alert.alert('Error', 'Failed to complete action. Please try again.');
-    }
-  };
-
-  const handleOrderReceived = async () => {
-    try {
-      console.log(`✅ Buyer confirming order receipt for: ${orderId}`);
-      
-      // Confirm order and release funds immediately
-      await ordersAPI.confirmOrderReceived(orderId);
-      
-      console.log(`✅ Order confirmed successfully!`);
-      
-      // Navigate directly to rating screen (don't wait for reload)
-      (navigation as any as { navigate: (screen: string, params: any) => void }).navigate('RateOrder', { orderId: orderId.toString() });
-      
-      // Try to reload order details in background (non-blocking)
-      setTimeout(async () => {
-        try {
-          await loadOrderDetails();
-// ... (rest of the code remains the same)
-          console.log(` Order details reloaded successfully`);
-        } catch (reloadError) {
-          console.warn(' Failed to reload order details (non-critical):', reloadError);
-          // Update status manually if reload fails
-          setOrder(prev => prev ? { ...prev, status: 'delivered' } : null);
-        }
-      }, 500);
-      
-    } catch (error) {
-      console.error(' Error confirming order receipt:', error);
-      Alert.alert('Error', 'Failed to confirm order receipt. Please try again.');
-    }
-  };
-
-  // ✅ Buyer confirms and releases funds immediately
+  // ✅ Buyer confirms and releases funds immediately, then rates the order.
+  // This is the single "order complete" action for the buyer - it covers
+  // both rider-delivered orders and self-pickup orders, since this handler
+  // and the button that triggers it (in renderBuyerActions) are shared
+  // between both the self-pickup and regular-delivery renders of this screen.
   const handleReleaseFunds = async () => {
     Alert.alert(
       'Release Funds',
@@ -592,10 +547,24 @@ const OrderTrackingScreen: React.FC = () => {
           style: 'default',
           onPress: async () => {
             try {
-              const result = await ordersAPI.confirmAndReleaseFunds(orderId);
-              Alert.alert('Success', result.message);
-              await loadOrderDetails();
+              await ordersAPI.confirmAndReleaseFunds(orderId);
+
+              console.log(`✅ Funds released for order: ${orderId}`);
+
+              // Navigate directly to the rating screen (don't wait for reload)
+              (navigation as any as { navigate: (screen: string, params: any) => void }).navigate('RateOrder', { orderId: orderId.toString() });
+
+              // Reload order details in the background (non-blocking) so the
+              // screen reflects the released state if the buyer comes back.
+              setTimeout(async () => {
+                try {
+                  await loadOrderDetails();
+                } catch (reloadError) {
+                  console.warn('Failed to reload order details after releasing funds (non-critical):', reloadError);
+                }
+              }, 500);
             } catch (error: any) {
+              console.error('Error releasing funds:', error);
               Alert.alert('Error', error.message || 'Failed to release funds');
             }
           },
@@ -730,6 +699,28 @@ const OrderTrackingScreen: React.FC = () => {
       Alert.alert('Invoice', `Invoice Number: ${invoice.invoiceNumber}\n\nInvoice URL: ${invoice.invoiceUrl}`);
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to load invoice');
+    }
+  };
+
+  const handleCallRider = () => {
+    const phone = order?.riderInfo?.phone;
+    if (!phone) {
+      Alert.alert('Unavailable', 'Rider phone number is not available.');
+      return;
+    }
+    Linking.openURL(`tel:${phone}`).catch(() => {
+      Alert.alert('Error', 'Unable to place call.');
+    });
+  };
+
+  const handleShareOrder = async () => {
+    if (!order) return;
+    try {
+      await Share.share({
+        message: `Track my Fretiko order #${order.orderNumber} - Status: ${getStatusText(order.status)}`,
+      });
+    } catch (error) {
+      console.error('Error sharing order:', error);
     }
   };
 
@@ -1138,18 +1129,7 @@ const OrderTrackingScreen: React.FC = () => {
           </TouchableOpacity>
         )}
 
-        {/* Confirm Receipt Button - Show when delivered */}
-        {order.status === 'delivered' && order.currentPhase.phase === 'buyer' && (
-          <TouchableOpacity 
-            style={styles.confirmReceiptButton}
-            onPress={() => handleBuyerAction('order_received')}
-          >
-            <Ionicons name="checkmark-done" size={24} color="white" />
-            <Text style={styles.confirmReceiptButtonText}>Confirm Order Received</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Buyer Action Buttons - Show when order is delivered */}
+        {/* Buyer Action Buttons - Show when order is delivered (rider-delivered or self-pickup) */}
         {order.status === 'delivered' && (
           <View style={styles.buyerActionsContainer}>
             <Text style={styles.buyerActionsTitle}>Order Delivered - What would you like to do?</Text>
@@ -1518,7 +1498,7 @@ const OrderTrackingScreen: React.FC = () => {
             </Text>
             <Text style={styles.riderPhone}>{order.riderInfo.phone}</Text>
           </View>
-          <TouchableOpacity style={styles.callButton}>
+          <TouchableOpacity style={styles.callButton} onPress={handleCallRider}>
             <Ionicons name="call" size={20} color="#27AE60" />
           </TouchableOpacity>
         </View>
@@ -1553,7 +1533,7 @@ const OrderTrackingScreen: React.FC = () => {
             <Ionicons name="arrow-back" size={24} color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Order #{order.orderNumber}</Text>
-          <TouchableOpacity style={styles.shareButton}>
+          <TouchableOpacity style={styles.shareButton} onPress={handleShareOrder}>
             <Ionicons name="share-outline" size={24} color="white" />
           </TouchableOpacity>
         </View>
@@ -1739,7 +1719,7 @@ const OrderTrackingScreen: React.FC = () => {
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Order #{order.orderNumber}</Text>
-        <TouchableOpacity style={styles.shareButton}>
+        <TouchableOpacity style={styles.shareButton} onPress={handleShareOrder}>
           <Ionicons name="share-outline" size={24} color="white" />
         </TouchableOpacity>
       </View>
@@ -2836,20 +2816,6 @@ const styles = StyleSheet.create({
     padding: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#333',
-  },
-  confirmReceiptButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#27AE60',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 16,
-  },
-  confirmReceiptButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
   },
   cancelOrderButton: {
     backgroundColor: '#E74C3C',

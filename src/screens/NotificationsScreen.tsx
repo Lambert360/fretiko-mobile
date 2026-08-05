@@ -40,6 +40,22 @@ interface FrontendNotification extends Omit<Notification, 'created_at' | 'is_rea
   avatar?: string;
 }
 
+// Route an order/delivery notification to the correct screen based on the
+// recipient's role (buyer/vendor/rider), as indicated by the backend's
+// `recipient_role` / `target_screen` fields on the notification data payload.
+const navigateToOrderScreenForRole = (navigation: any, data: any, orderId: string) => {
+  const role = data?.recipient_role;
+  const targetScreen = data?.target_screen;
+
+  if (targetScreen === 'VendorOrderDetails' || role === 'vendor') {
+    navigation.navigate('VendorOrderDetails', { orderId });
+  } else if (targetScreen === 'Workspace' || role === 'rider') {
+    navigation.navigate('Workspace');
+  } else {
+    navigation.navigate('OrderTracking', { orderId });
+  }
+};
+
 const NotificationsScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -227,6 +243,11 @@ const NotificationsScreen = () => {
     try {
       console.log('Notification pressed:', notification.type, notification.data);
 
+      // Route an order/delivery notification to the correct screen based on
+      // the recipient's role (buyer/vendor/rider), as indicated by the backend.
+      const navigateToOrderScreen = (orderId: string) =>
+        navigateToOrderScreenForRole(navigation, notification.data, orderId);
+
       // Navigate based on notification type
       switch (notification.type) {
         case 'chat':
@@ -252,14 +273,10 @@ const NotificationsScreen = () => {
           break;
 
         case 'order':
-          // Navigate to order details
+          // Navigate to order details, routed by recipient role (buyer/vendor/rider)
           const orderId = notification.data?.order_id;
           if (orderId) {
-            console.log('Navigating to order:', orderId);
-            (navigation as any).navigate('Orders', {
-              screen: 'OrderDetails',
-              params: { orderId }
-            });
+            navigateToOrderScreen(orderId);
           } else {
             Alert.alert('Order Notification', notification.message);
           }
@@ -290,17 +307,11 @@ const NotificationsScreen = () => {
           if (postId) {
             // Navigate to specific post
             console.log('Navigating to post:', postId);
-            (navigation as any).navigate('Social', {
-              screen: 'Post',
-              params: { postId }
-            });
+            (navigation as any).navigate('PostDetails', { postId });
           } else if (senderId) {
             // Navigate to user profile
             console.log('Navigating to profile:', senderId);
-            (navigation as any).navigate('Profile', {
-              screen: 'UserProfile',
-              params: { userId: senderId }
-            });
+            (navigation as any).navigate('PublicProfile', { userId: senderId });
           } else {
             Alert.alert('Social Notification', notification.message);
           }
@@ -311,24 +322,17 @@ const NotificationsScreen = () => {
           const streamId = notification.data?.stream_id;
           if (streamId) {
             console.log('Navigating to live stream:', streamId);
-            (navigation as any).navigate('Live', {
-              screen: 'LiveStream',
-              params: { streamId }
-            });
+            (navigation as any).navigate('LiveStreamViewer', { streamId });
           } else {
             Alert.alert('Live Notification', notification.message);
           }
           break;
 
         case 'delivery':
-          // Navigate to order tracking
+          // Navigate to order details, routed by recipient role (buyer/vendor/rider)
           const trackingOrderId = notification.data?.order_id;
           if (trackingOrderId) {
-            console.log('Navigating to order tracking:', trackingOrderId);
-            (navigation as any).navigate('Orders', {
-              screen: 'OrderTracking',
-              params: { orderId: trackingOrderId }
-            });
+            navigateToOrderScreen(trackingOrderId);
           } else {
             Alert.alert('Delivery Notification', notification.message);
           }
@@ -353,36 +357,21 @@ const NotificationsScreen = () => {
           break;
 
         case 'payment':
-          // Navigate to wallet or transaction details
-          const transactionId = notification.data?.transaction_id;
-          if (transactionId) {
-            console.log('Navigating to transaction:', transactionId);
-            (navigation as any).navigate('Wallet', {
-              screen: 'TransactionDetails',
-              params: { transactionId }
-            });
-          } else {
-            (navigation as any).navigate('Wallet');
-          }
+          // Navigate to wallet (transaction details screen not implemented)
+          (navigation as any).navigate('Wallet');
           break;
 
         case 'promotion':
-          // Navigate to promotions or specific offer
+          // Navigate to the promoted product if available
           const promotionId = notification.data?.promotion_id;
           const productId = notification.data?.product_id;
 
           if (productId) {
             console.log('Navigating to promoted product:', productId);
-            (navigation as any).navigate('Products', {
-              screen: 'ProductDetails',
-              params: { productId }
-            });
+            (navigation as any).navigate('ProductDetails', { productId });
           } else if (promotionId) {
-            console.log('Navigating to promotion:', promotionId);
-            (navigation as any).navigate('Promotions', {
-              screen: 'PromotionDetails',
-              params: { promotionId }
-            });
+            console.log('No promotion details screen for:', promotionId);
+            Alert.alert('Promotion', notification.message);
           } else {
             Alert.alert('Promotion', notification.message);
           }
@@ -489,14 +478,10 @@ const NotificationsScreen = () => {
         case 'track order':
         case 'track':
         case 'view order':
-          // Navigate to order details or tracking
+          // Navigate to order details, routed by recipient role (buyer/vendor/rider)
           const orderId = notif.data?.order_id;
           if (orderId) {
-            if (normalizedAction.includes('track')) {
-              (navigation as any).navigate('OrderTracking', { orderId });
-            } else {
-              (navigation as any).navigate('GroupedOrder', { orderId });
-            }
+            navigateToOrderScreenForRole(navigation, notif.data, orderId);
           } else {
             Alert.alert('Error', 'Order ID not found');
           }

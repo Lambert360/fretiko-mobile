@@ -32,6 +32,14 @@ export interface Service {
   like_count: number;
   save_count: number;
   booking_count: number;
+  average_rating?: number;
+  review_count?: number;
+  user_profiles?: {
+    username?: string;
+    display_name?: string;
+    avatar_url?: string;
+    is_verified?: boolean;
+  };
   created_at: string;
   updated_at: string;
 }
@@ -73,6 +81,7 @@ export interface VideoFeedItem {
   videoUri?: string;
   mediaUrls?: string[];
   processedMediaUrls?: string[];
+  images?: string[];
   userId: string;
   username: string;
   userAvatar: string;
