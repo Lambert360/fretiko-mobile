@@ -117,6 +117,48 @@ const VideoProductCard: React.FC<{
           backgroundColor: 'rgba(0,0,0,0.7)',
           padding: 12,
         }}>
+          {isMultiItem && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ width: '100%', marginBottom: 8 }}
+              contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 2 }}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+            >
+              {galleryItems.map((gItem, idx) => {
+                const isSelected = idx === selectedIndex;
+                return (
+                  <TouchableOpacity
+                    key={gItem.id}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      setSelectedIndex(idx);
+                    }}
+                    style={{
+                      width: 64,
+                      height: 64,
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      marginRight: 8,
+                      borderWidth: isSelected ? 2 : 0,
+                      borderColor: '#F39C12',
+                      backgroundColor: '#000',
+                    }}
+                  >
+                    {gItem.mediaType === 'video' ? (
+                      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                        <Ionicons name="play-circle" size={22} color="rgba(255,255,255,0.85)" />
+                      </View>
+                    ) : (
+                      <Image source={{ uri: gItem.mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
+
           <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }} numberOfLines={1}>
             {displayName}
           </Text>
@@ -132,12 +174,12 @@ const VideoProductCard: React.FC<{
                 }}
                 style={{
                   backgroundColor: '#F39C12',
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderRadius: 16,
+                  paddingHorizontal: 18,
+                  paddingVertical: 12,
+                  borderRadius: 22,
                 }}
               >
-                <Ionicons name="chatbubble-ellipses-outline" size={14} color="white" />
+                <Ionicons name="chatbubble-ellipses-outline" size={20} color="white" />
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={(e) => {
@@ -146,12 +188,12 @@ const VideoProductCard: React.FC<{
                 }}
                 style={{
                   backgroundColor: '#3498DB',
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderRadius: 16,
+                  paddingHorizontal: 18,
+                  paddingVertical: 12,
+                  borderRadius: 22,
                 }}
               >
-                <Ionicons name="cart-outline" size={14} color="white" />
+                <Ionicons name="cart-outline" size={20} color="white" />
               </TouchableOpacity>
             </View>
           </View>
@@ -245,45 +287,6 @@ const VideoProductCard: React.FC<{
           </View>
         )}
       </TouchableOpacity>
-
-      {isMultiItem && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ width: '100%', marginTop: 8 }}
-          contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 2 }}
-          nestedScrollEnabled
-          keyboardShouldPersistTaps="handled"
-        >
-          {galleryItems.map((gItem, idx) => {
-            const isSelected = idx === selectedIndex;
-            return (
-              <TouchableOpacity
-                key={gItem.id}
-                onPress={() => setSelectedIndex(idx)}
-                style={{
-                  width: 64,
-                  height: 64,
-                  borderRadius: 8,
-                  overflow: 'hidden',
-                  marginRight: 8,
-                  borderWidth: isSelected ? 2 : 0,
-                  borderColor: '#F39C12',
-                  backgroundColor: '#000',
-                }}
-              >
-                {gItem.mediaType === 'video' ? (
-                  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <Ionicons name="play-circle" size={22} color="rgba(255,255,255,0.85)" />
-                  </View>
-                ) : (
-                  <Image source={{ uri: gItem.mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      )}
     </View>
   );
 });

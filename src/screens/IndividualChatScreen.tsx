@@ -335,6 +335,12 @@ const IndividualChatScreen = () => {
   const [imageEditorAsset, setImageEditorAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [videoEditorVisible, setVideoEditorVisible] = useState(false);
   const [videoEditorAsset, setVideoEditorAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [videoTrimmerVisible, setVideoTrimmerVisible] = useState(false);
+  const [videoTrimmerAsset, setVideoTrimmerAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [trimStartTime, setTrimStartTime] = useState(0);
+  const [trimEndTime, setTrimEndTime] = useState(0);
+  const [trimmerCurrentTime, setTrimmerCurrentTime] = useState(0);
+  const [trimmerPlaying, setTrimmerPlaying] = useState(false);
 
   // Emoji states
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -350,6 +356,27 @@ const IndividualChatScreen = () => {
       player.play();
     }
   });
+
+  // Trimmer video player hook
+  const trimVideoPlayer = useVideoPlayer(videoTrimmerAsset?.uri || '', player => {
+    if (videoTrimmerAsset) {
+      player.play();
+    }
+  });
+
+  // Track trimmer current time and duration
+  useEffect(() => {
+    if (!videoTrimmerVisible || !trimVideoPlayer) return;
+
+    const interval = setInterval(() => {
+      setTrimmerCurrentTime(trimVideoPlayer.currentTime || 0);
+      if (trimVideoPlayer.duration > 0) {
+        setTrimEndTime(prev => prev > 0 ? prev : trimVideoPlayer.duration);
+      }
+    }, 250);
+
+    return () => clearInterval(interval);
+  }, [videoTrimmerVisible, trimVideoPlayer]);
 
   // Audio player for voice messages
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
@@ -4220,35 +4247,43 @@ const IndividualChatScreen = () => {
     return mimeType;
   };
 
-  const sendVideoMessage = async (videoAsset: ImagePicker.ImagePickerAsset) => {
+  const sendVideoMessage = async (videoAsset: ImagePicker.ImagePickerAsset, trim?: { start: number; end: number }) => {
     setVideoEditorVisible(false);
     setVideoEditorAsset(null);
+    setVideoTrimmerVisible(false);
+    setVideoTrimmerAsset(null);
     await sendMediaMessage('video', videoAsset.uri, {
       name: videoAsset.fileName || 'video.mp4',
       size: (videoAsset.fileSize || 0).toString(),
       type: getVideoMimeType(videoAsset),
+      trimStart: trim?.start,
+      trimEnd: trim?.end,
     });
   };
 
-  const editAndSendVideo = async () => {
+  const openVideoTrimmer = () => {
     if (!videoEditorAsset) return;
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['videos'],
-        allowsEditing: true,
-        quality: 0.8,
-        allowsMultipleSelection: false,
-      });
+    const durationSeconds = (videoEditorAsset.duration || 0) / 1000;
+    setVideoTrimmerAsset(videoEditorAsset);
+    setTrimStartTime(0);
+    setTrimEndTime(durationSeconds > 0 ? durationSeconds : 0);
+    setTrimmerCurrentTime(0);
+    setTrimmerPlaying(false);
+    setVideoTrimmerVisible(true);
+    setVideoEditorVisible(false);
+  };
 
-      if (!result.canceled && result.assets && result.assets[0]) {
-        setVideoEditorVisible(false);
-        setVideoEditorAsset(null);
-        await sendVideoMessage(result.assets[0]);
-      }
-    } catch (error) {
-      console.error('Error editing video:', error);
-      Alert.alert('Error', 'Failed to edit video.');
-    }
+  const confirmVideoTrim = () => {
+    if (!videoTrimmerAsset) return;
+    const start = Math.max(0, Math.min(trimStartTime, trimEndTime - 0.1));
+    const end = Math.max(start + 0.1, trimEndTime);
+    sendVideoMessage(videoTrimmerAsset, { start, end });
+  };
+
+  const cancelVideoTrimmer = () => {
+    setVideoTrimmerVisible(false);
+    setVideoTrimmerAsset(null);
+    setTrimmerPlaying(false);
   };
 
   const cancelVideoEdit = () => {
@@ -4711,7 +4746,7 @@ const IndividualChatScreen = () => {
   const sendMediaMessage = async (
     messageType: 'image' | 'video' | 'file' | 'audio',
     uri: string,
-    fileData: { name: string; size: string; type: string }
+    fileData: { name: string; size: string; type: string; trimStart?: number; trimEnd?: number }
   ) => {
     const tempId = `temp-${Date.now()}`;
     try {
@@ -4736,9 +4771,11 @@ const IndividualChatScreen = () => {
           type: fileData.type,
           url: uri,
         } : undefined,
-        metadata: messageType === 'audio' && audioDurationSeconds ? {
-          audioDuration: audioDurationSeconds,
-        } : undefined,
+        metadata: messageType === 'video' && (fileData.trimStart !== undefined || fileData.trimEnd !== undefined)
+          ? { trimStart: fileData.trimStart, trimEnd: fileData.trimEnd }
+          : (messageType === 'audio' && audioDurationSeconds ? {
+              audioDuration: audioDurationSeconds,
+            } : undefined),
       };
       
       // Store duration in local state for quick access
@@ -4754,9 +4791,11 @@ const IndividualChatScreen = () => {
         conversationId: chatId,
         messageType,
         content: messageType === 'audio' ? `Voice message (${audioDurationSeconds}s)` : '',
-        metadata: messageType === 'audio' && audioDurationSeconds ? {
-          audioDuration: audioDurationSeconds,
-        } : undefined,
+        metadata: messageType === 'video' && (fileData.trimStart !== undefined || fileData.trimEnd !== undefined)
+          ? { trimStart: fileData.trimStart, trimEnd: fileData.trimEnd }
+          : (messageType === 'audio' && audioDurationSeconds ? {
+              audioDuration: audioDurationSeconds,
+            } : undefined),
       });
 
       console.log('✅ Message created with ID:', createdMessage.id);
@@ -7044,9 +7083,100 @@ const IndividualChatScreen = () => {
             <Ionicons name="send" size={20} color="#FFFFFF" />
             <Text style={styles.videoEditorControlText}>Send</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.videoEditorControlButton} onPress={editAndSendVideo}>
+          <TouchableOpacity style={styles.videoEditorControlButton} onPress={openVideoTrimmer}>
             <Ionicons name="cut" size={20} color="#FFFFFF" />
             <Text style={styles.videoEditorControlText}>Trim</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // Render custom video trimmer modal
+  const renderVideoTrimmerModal = () => (
+    <Modal
+      visible={videoTrimmerVisible}
+      transparent={false}
+      animationType="slide"
+      onRequestClose={cancelVideoTrimmer}
+    >
+      <View style={styles.videoTrimmerContainer}>
+        <View style={styles.videoTrimmerHeader}>
+          <TouchableOpacity onPress={cancelVideoTrimmer} style={styles.videoTrimmerCloseButton}>
+            <Ionicons name="close" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.videoTrimmerTitle}>Trim Video</Text>
+          <View style={styles.videoTrimmerCloseButton} />
+        </View>
+
+        <View style={styles.videoTrimmerContent}>
+          <View style={styles.videoTrimmerPlayerWrapper}>
+            <VideoView
+              style={styles.videoTrimmerPlayer}
+              player={trimVideoPlayer}
+              contentFit="contain"
+            />
+          </View>
+
+          <View style={styles.videoTrimmerTimeRow}>
+            <Text style={styles.videoTrimmerTimeText}>
+              Current: {trimmerCurrentTime.toFixed(2)}s
+            </Text>
+          </View>
+
+          <View style={styles.videoTrimmerTimeRow}>
+            <Text style={styles.videoTrimmerTimeText}>
+              Start: {trimStartTime.toFixed(2)}s
+            </Text>
+            <Text style={styles.videoTrimmerTimeText}>
+              End: {trimEndTime.toFixed(2)}s
+            </Text>
+          </View>
+
+          <View style={styles.videoTrimmerControls}>
+            <TouchableOpacity
+              style={styles.videoTrimmerControlButton}
+              onPress={() => {
+                if (trimmerPlaying) {
+                  trimVideoPlayer.pause();
+                  setTrimmerPlaying(false);
+                } else {
+                  trimVideoPlayer.play();
+                  setTrimmerPlaying(true);
+                }
+              }}
+            >
+              <Ionicons name={trimmerPlaying ? 'pause' : 'play'} size={24} color="#FFFFFF" />
+              <Text style={styles.videoTrimmerControlText}>{trimmerPlaying ? 'Pause' : 'Play'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.videoTrimmerControlButton}
+              onPress={() => {
+                const start = Math.max(0, Math.min(trimmerCurrentTime, trimEndTime - 0.1));
+                setTrimStartTime(start);
+                trimVideoPlayer.currentTime = start;
+              }}
+            >
+              <Ionicons name="locate" size={24} color="#FFFFFF" />
+              <Text style={styles.videoTrimmerControlText}>Set Start</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.videoTrimmerControlButton}
+              onPress={() => {
+                const end = Math.max(trimStartTime + 0.1, Math.min(trimmerCurrentTime, trimVideoPlayer.duration || 0));
+                setTrimEndTime(end);
+              }}
+            >
+              <Ionicons name="locate-outline" size={24} color="#FFFFFF" />
+              <Text style={styles.videoTrimmerControlText}>Set End</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.videoTrimmerFooter}>
+          <TouchableOpacity style={styles.videoTrimmerFooterButton} onPress={confirmVideoTrim}>
+            <Ionicons name="checkmark" size={24} color="#FFFFFF" />
+            <Text style={styles.videoTrimmerFooterText}>Confirm Trim</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -7108,7 +7238,15 @@ const IndividualChatScreen = () => {
                 flatListRef.current?.scrollToEnd({ animated: true });
               }
             }}
-            getItemLayout={(data, index) => ({ length: 80, offset: 80 * index, index })}
+            onScrollToIndexFailed={(info) => {
+              setTimeout(() => {
+                flatListRef.current?.scrollToIndex({
+                  index: info.index,
+                  animated: true,
+                  viewPosition: 0.5,
+                });
+              }, 100);
+            }}
           />
         ) : (
           <View style={styles.emptyState}>
@@ -7129,6 +7267,7 @@ const IndividualChatScreen = () => {
       {renderVideoPlayer()}
       {renderImageEditorModal()}
       {renderVideoEditorModal()}
+      {renderVideoTrimmerModal()}
       
       {/* Gift Modal for Calls */}
       <GiftSelectorModal
@@ -9111,6 +9250,94 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginTop: 4,
+  },
+  videoTrimmerContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  videoTrimmerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 50,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+  },
+  videoTrimmerCloseButton: {
+    padding: 8,
+    width: 44,
+  },
+  videoTrimmerTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  videoTrimmerContent: {
+    flex: 1,
+    justifyContent: 'flex-start',
+    padding: 16,
+  },
+  videoTrimmerPlayerWrapper: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    backgroundColor: '#111111',
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  videoTrimmerPlayer: {
+    flex: 1,
+  },
+  videoTrimmerTimeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  videoTrimmerTimeText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  videoTrimmerControls: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  videoTrimmerControlButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    minWidth: 90,
+  },
+  videoTrimmerControlText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 6,
+  },
+  videoTrimmerFooter: {
+    paddingHorizontal: 16,
+    paddingVertical: 24,
+    paddingBottom: 40,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+  },
+  videoTrimmerFooterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F39C12',
+    borderRadius: 12,
+    paddingVertical: 16,
+  },
+  videoTrimmerFooterText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    marginLeft: 8,
   },
 });
 
