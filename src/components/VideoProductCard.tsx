@@ -81,6 +81,8 @@ const VideoProductCard: React.FC<{
     }
   };
 
+  const minMediaHeight = screenWidth * 0.56;
+
   return (
     <View
       onLayout={onLayout}
@@ -95,26 +97,65 @@ const VideoProductCard: React.FC<{
           overflow: 'hidden',
         }}
       >
-        {displayMediaUrl && displayMediaType === 'video' ? (
-          <ProductVideoPlayer
-            videoUri={displayMediaUrl}
-            shouldAutoPlay={isVisible}
-            containerWidth={screenWidth - 24}
-          />
-        ) : (
-          <Image
-            source={{ uri: displayMediaUrl || 'https://via.placeholder.com/400x250?text=Product' }}
-            style={{ width: '100%', height: screenWidth * 0.56 }}
-            resizeMode="cover"
-          />
-        )}
+        <View style={{
+          width: '100%',
+          minHeight: minMediaHeight,
+          backgroundColor: '#000',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}>
+          {displayMediaUrl && displayMediaType === 'video' ? (
+            <ProductVideoPlayer
+              videoUri={displayMediaUrl}
+              shouldAutoPlay={isVisible}
+              containerWidth={screenWidth - 24}
+            />
+          ) : (
+            <Image
+              source={{ uri: displayMediaUrl || 'https://via.placeholder.com/400x250?text=Product' }}
+              style={{ width: '100%', height: minMediaHeight }}
+              resizeMode="cover"
+            />
+          )}
+
+          {item.media_type === 'video' && (
+            <View style={{
+              position: 'absolute',
+              top: 12,
+              left: 12,
+              backgroundColor: 'rgba(255,255,255,0.9)',
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: 12,
+              flexDirection: 'row',
+              alignItems: 'center',
+            }}>
+              <Ionicons name="videocam" size={12} color="#FF4757" />
+              <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold', marginLeft: 4 }}>
+                VIDEO
+              </Text>
+            </View>
+          )}
+
+          {isMultiItem && (
+            <View style={{
+              position: 'absolute',
+              top: 12,
+              right: 12,
+              backgroundColor: 'rgba(155,89,182,0.9)',
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: 12,
+            }}>
+              <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>
+                {galleryItems.length} ITEMS
+              </Text>
+            </View>
+          )}
+        </View>
 
         <View style={{
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          backgroundColor: 'rgba(0,0,0,0.7)',
+          backgroundColor: 'rgba(0,0,0,0.85)',
           padding: 12,
         }}>
           {isMultiItem && (
@@ -251,41 +292,6 @@ const VideoProductCard: React.FC<{
             )}
           </View>
         </View>
-
-        {item.media_type === 'video' && (
-          <View style={{
-            position: 'absolute',
-            top: 12,
-            left: 12,
-            backgroundColor: 'rgba(255,255,255,0.9)',
-            paddingHorizontal: 8,
-            paddingVertical: 4,
-            borderRadius: 12,
-            flexDirection: 'row',
-            alignItems: 'center',
-          }}>
-            <Ionicons name="videocam" size={12} color="#FF4757" />
-            <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold', marginLeft: 4 }}>
-              VIDEO
-            </Text>
-          </View>
-        )}
-
-        {isMultiItem && (
-          <View style={{
-            position: 'absolute',
-            top: 12,
-            right: 12,
-            backgroundColor: 'rgba(155,89,182,0.9)',
-            paddingHorizontal: 8,
-            paddingVertical: 4,
-            borderRadius: 12,
-          }}>
-            <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>
-              {galleryItems.length} ITEMS
-            </Text>
-          </View>
-        )}
       </TouchableOpacity>
     </View>
   );

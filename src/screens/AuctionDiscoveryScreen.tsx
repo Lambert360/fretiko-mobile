@@ -138,7 +138,7 @@ const AuctionDiscoveryScreen = () => {
 
       // Fetch full active list separately for accurate category counts (non-blocking)
       try {
-        const allActiveResponse = await auctionsAPI.getAuctions({ status: 'active', limit: 1000, sort: 'time_asc' });
+        const allActiveResponse = await auctionsAPI.getAuctions({ status: 'active', limit: 100, sort: 'time_asc' });
         const allActiveAuctions = (allActiveResponse.auctions || []) as AuctionWithDetails[];
         allActiveAuctionsRef.current = new Map(
           allActiveAuctions.filter(isAuctionDisplayable).map((a) => [a.id, a])

@@ -1237,12 +1237,12 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         </View>
 
         {/* Rewards Section */}
-        {rewards && rewards.can_redeem && (
+        {false && rewards && rewards?.can_redeem && (
           <View style={styles.section}>
             <View style={styles.rewardsContainer}>
               <View style={styles.rewardsHeader}>
                 <Text style={styles.sectionTitle}>Rewards Available ⭐</Text>
-                <Text style={styles.rewardsBalance}>{rewards.display_available}</Text>
+                <Text style={styles.rewardsBalance}>{rewards?.display_available}</Text>
               </View>
               
               <TouchableOpacity
@@ -1287,7 +1287,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                     <TouchableOpacity
                       style={styles.rewardsAdjustButton}
                       onPress={() => setRewardsAmount(Math.min(
-                        rewards.max_redeemable, 
+                        rewards?.max_redeemable ?? 0, 
                         rewardsAmount + 1
                       ))}
                     >
@@ -1424,7 +1424,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
               <Text style={styles.summaryValue}>Free</Text>
             </View>
 
-            {useRewards && rewardsAmount > 0 && (
+            {false && useRewards && rewardsAmount > 0 && (
               <View style={styles.summaryRow}>
                 <Text style={[styles.summaryLabel, styles.discountLabel]}>
                   Rewards Discount ⭐

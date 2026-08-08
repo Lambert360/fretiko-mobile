@@ -3236,6 +3236,22 @@ const HomeScreen = () => {
         )
       : [];
 
+    if (feedItems.length === 0 && loading) {
+      return (
+        <View style={{
+          flex: 1,
+          backgroundColor: '#000',
+          justifyContent: 'center',
+          alignItems: 'center'
+        }}>
+          <ActivityIndicator size="large" color="#F39C12" />
+          <Text style={{ color: '#888', fontSize: 16, fontWeight: '600', marginTop: 16 }}>
+            Getting your reels ready...
+          </Text>
+        </View>
+      );
+    }
+
     if (feedItems.length === 0) {
       return (
         <View style={{ 

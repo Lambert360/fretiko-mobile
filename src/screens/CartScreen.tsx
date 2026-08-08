@@ -376,6 +376,43 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
       return;
     }
 
+    // Validate that all selected items are from vendors in the same state/country
+    const selectedCartItems = cartItems.filter(item => selectedItems.has(item.id));
+
+    const uniqueCountries = new Set(
+      selectedCartItems
+        .map(item => (item.sellerLocation?.country || '').toLowerCase().trim())
+        .filter(Boolean)
+    );
+
+    const uniqueStateCountryPairs = new Set(
+      selectedCartItems
+        .map(item => {
+          const state = (item.sellerLocation?.state || '').toLowerCase().trim();
+          const country = (item.sellerLocation?.country || '').toLowerCase().trim();
+          return `${country}::${state}`;
+        })
+        .filter(pair => pair !== '::')
+    );
+
+    if (uniqueCountries.size > 1) {
+      Alert.alert(
+        'Items from Different Countries',
+        'Your selected items include vendors from different countries. Please deselect items and checkout each country separately.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    if (uniqueStateCountryPairs.size > 1) {
+      Alert.alert(
+        'Items from Different States',
+        'Your selected items include vendors from different states. Please deselect items and checkout each state separately.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     // Animate button press
     Animated.sequence([
       Animated.timing(scaleAnim, { toValue: 0.95, duration: 100, useNativeDriver: true }),
@@ -391,9 +428,6 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
     // Debug: Log selected items
     console.log('✅ SELECTED CART ITEM IDs:', Array.from(selectedItems));
 
-    // Get the actual product/service IDs from selected cart items
-    const selectedCartItems = cartItems.filter(item => selectedItems.has(item.id));
-    
     console.log('🎯 FILTERED CART ITEMS:');
     selectedCartItems.forEach(item => {
       console.log(`  - ${item.productName}: cart_item_id=${item.id}, product/service_id=${item.productId || item.serviceId}`);
