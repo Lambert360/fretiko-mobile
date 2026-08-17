@@ -28,7 +28,10 @@
           "voip"
         ],
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "associatedDomains": [
+        "applinks:fretiko.com"
+      ]
     },
     "android": {
       "adaptiveIcon": {
@@ -49,7 +52,7 @@
         "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
         "android.permission.USE_FULL_SCREEN_INTENT"
       ],
-      "versionCode": 5,
+      "versionCode": 7,
       "package": "com.kinging.fretikomobile",
       "googleServicesFile": "./google-services.json",
       "useNextNotificationsApi": true

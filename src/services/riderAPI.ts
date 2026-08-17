@@ -34,6 +34,7 @@ export interface Rider {
   isOnline: boolean;
   trustScore?: number;
   completionRate?: number;
+  isCurrentlyDelivering?: boolean; // NEW: Indicates if rider is currently on an active delivery
 }
 
 export interface RiderAvailabilityRequest {

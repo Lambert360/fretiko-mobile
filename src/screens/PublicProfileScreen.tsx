@@ -11,7 +11,8 @@ import {
   RefreshControl,
   ActivityIndicator,
   Dimensions,
-  Modal
+  Modal,
+  Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
@@ -304,6 +305,20 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
     // Content will be loaded automatically by useEffect when activeTab changes
   };
 
+  const handleShare = async () => {
+    if (!profile) return;
+
+    try {
+      const shareUrl = `https://fretiko.com/profile/${profile.id}`;
+      await Share.share({
+        message: `Check out ${profile.username}'s profile on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
+        url: shareUrl,
+      });
+    } catch (error) {
+      console.error('Error sharing profile:', error);
+    }
+  };
+
   const getUserRole = () => {
     if (profile?.isRider && profile?.isSeller) return 'Vendor & Rider';
     if (profile?.isRider) return 'Rider';
@@ -367,7 +382,12 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
             <Text style={styles.headerTitle}>
               {profile?.username || 'Profile'}
             </Text>
-            <View style={styles.headerSpacer} />
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={handleShare}
+            >
+              <Ionicons name="share-outline" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
           </View>
 
           {/* User Info Overlay */}

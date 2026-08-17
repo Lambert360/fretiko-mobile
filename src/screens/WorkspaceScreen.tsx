@@ -699,6 +699,14 @@ const WorkspaceScreen: React.FC = () => {
         onClose={() => setShowLiveStreamAnalytics(false)}
       />
 
+      {/* Schedule Calendar FAB */}
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => navigation.navigate('ScheduleCalendar')}
+      >
+        <Ionicons name="calendar-outline" size={24} color="white" />
+      </TouchableOpacity>
+
       {/* PIN Verification Modal */}
       <PINInputModal
         visible={pinModalVisible}
@@ -1074,6 +1082,22 @@ const styles = StyleSheet.create({
     color: '#666',
     textAlign: 'center',
     lineHeight: 24,
+  },
+  fab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#0066FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
 });
 

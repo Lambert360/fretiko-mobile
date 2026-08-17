@@ -3,10 +3,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Dimensions, FlatList, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 import { userAPI, UserStats } from '../services/userAPI';
 import { walletAPI, Wallet, WalletStats } from '../services/walletAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
 import { giftAPI, UserGift } from '../services/giftAPI';
+import { giftCardAPI, GiftCard } from '../services/giftCardAPI';
 import { productsAPI, Product } from '../services/productsAPI';
 import { postsAPI } from '../services/postsAPI';
 import { searchAPI, SearchType } from '../services/searchAPI';
@@ -42,6 +44,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
   const [walletStats, setWalletStats] = useState<WalletStats | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [gifts, setGifts] = useState<UserGift[]>([]);
+  const [giftCards, setGiftCards] = useState<GiftCard[]>([]);
   const [trendingProducts, setTrendingProducts] = useState<Product[]>([]);
   const [postsCount, setPostsCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -130,14 +133,22 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
 
   const loadProfile = async () => {
     try {
-      // Load profile, stats, wallet, orders, gifts, and trending products in parallel
-      const [profileData, statsData, walletData, walletStatsData, ordersData, giftsData, featuredData] = await Promise.all([
+      // Load profile, stats, wallet, orders, gifts, gift cards, and trending products in parallel
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+
+      const [profileData, statsData, walletData, walletStatsData, ordersData, giftsData, giftCardsData, featuredData] = await Promise.all([
         userAPI.getProfile(),
         userAPI.getStats(),
         walletAPI.getWallet(),
         walletAPI.getWalletStats(),
         ordersAPI.getMyOrders({ status: ['delivered', 'shipped', 'processing', 'cancelled'] }),
         giftAPI.getUserGifts().catch(() => ({ gifts: [], total_gifts: 0, total_value: 0 })), // Gracefully handle errors
+        giftCardAPI.getMyGiftCards(token).catch(() => []), // Gracefully handle errors
         searchAPI.getFeaturedContent(SearchType.PRODUCTS, undefined, 10).catch(() => ({ products: [] })) // Get featured/trending products
       ]);
       
@@ -149,6 +160,8 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
       setOrders(ordersData.slice(0, 10));
       // Get latest 10 gifts for profile display
       setGifts(giftsData.gifts.slice(0, 10));
+      // Get latest 10 gift cards for profile display
+      setGiftCards(giftCardsData.slice(0, 10));
       // Set trending products from featured content
       setTrendingProducts(featuredData.products || []);
 
@@ -839,6 +852,78 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
               )}
             </Animated.View>
 
+            {/* My Gift Cards Section */}
+            <Animated.View style={[styles.modernCard]}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.sectionTitle}>My Gift Cards</Text>
+                <TouchableOpacity 
+                  style={styles.viewAllButton}
+                  onPress={() => navigation.navigate('GiftCardStore' as never)}
+                >
+                  <Text style={styles.viewAllText}>Get More</Text>
+                  <Ionicons name="chevron-forward" size={14} color="#3498DB" />
+                </TouchableOpacity>
+              </View>
+              {giftCards.length > 0 ? (
+                <FlatList
+                  data={giftCards}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.giftCardCard}
+                      onPress={() => navigation.navigate('GiftCardDetails' as never, { giftCardId: item.id })}
+                    >
+                      <View style={styles.giftCardContainer}>
+                        <Image 
+                          source={{ uri: item.design?.preview_url || 'https://via.placeholder.com/100x60.png?text=Gift+Card' }} 
+                          style={styles.giftCardImage}
+                        />
+                        <View style={[
+                          styles.giftCardStatusBadge,
+                          {
+                            backgroundColor:
+                              item.status === 'active' ? '#FF9800' :
+                              item.status === 'claimed' ? '#4CAF50' :
+                              item.status === 'redeemed' ? '#9E9E9E' :
+                              item.status === 'expired' ? '#F44336' :
+                              '#9E9E9E'
+                          }
+                        ]}>
+                          <Text style={styles.giftCardStatusText}>
+                            {item.status === 'active' ? 'Pending' :
+                             item.status === 'claimed' ? 'Available' :
+                             item.status === 'redeemed' ? 'Used' :
+                             item.status === 'expired' ? 'Expired' :
+                             item.status}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.giftCardDetails}>
+                        <Text style={styles.giftCardAmount}>{walletAPI.formatFreti(item.current_balance)}</Text>
+                        <Text style={styles.giftCardDesign}>{item.design?.name || 'Gift Card'}</Text>
+                        <Text style={styles.giftCardExpiry}>
+                          {new Date(item.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.giftCardList}
+                />
+              ) : (
+                <TouchableOpacity 
+                  style={styles.emptyGiftCardsContainer}
+                  onPress={() => navigation.navigate('GiftCardStore' as never)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="card-outline" size={48} color="rgba(255,255,255,0.3)" />
+                  <Text style={styles.emptyGiftCardsText}>No gift cards yet</Text>
+                  <Text style={styles.emptyGiftCardsSubtext}>Purchase gift cards for yourself or send to friends</Text>
+                </TouchableOpacity>
+              )}
+            </Animated.View>
+
             {/* Enhanced Trends Section */}
             <Animated.View style={[styles.modernCard]}>
               <View style={styles.cardHeader}>
@@ -928,6 +1013,12 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                 <Ionicons name="document-text-outline" size={20} color="#FFFFFF" />
               </View>
               <Text style={styles.modalText}>My Posts</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalOption} onPress={() => handleButtonPress(() => { navigation.navigate('ReferralScreen'); setIsOptionsVisible(false); })}>
+              <View style={styles.modalIconContainer}>
+                <Ionicons name="card-outline" size={20} color="#FF8A00" />
+              </View>
+              <Text style={styles.modalText}>Referral Card</Text>
             </TouchableOpacity>
             {(profile?.isSeller || profile?.isRider) && (
               <TouchableOpacity style={styles.modalOption} onPress={() => handleButtonPress(() => { navigation.navigate('PublicStore', { userId: user?.id, profile, isOwnStore: true }); setIsOptionsVisible(false); })}>
@@ -1611,6 +1702,73 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.5)',
     fontSize: 14,
     fontStyle: 'italic',
+  },
+  giftCardCard: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 16,
+    marginRight: 16,
+    padding: 12,
+    width: 160,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  giftCardContainer: {
+    position: 'relative',
+    marginBottom: 12,
+  },
+  giftCardImage: {
+    width: '100%',
+    height: 80,
+    borderRadius: 12,
+  },
+  giftCardStatusBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  giftCardStatusText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  giftCardDetails: {
+    gap: 4,
+  },
+  giftCardAmount: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  giftCardDesign: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+  },
+  giftCardExpiry: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 11,
+  },
+  giftCardList: {
+    paddingHorizontal: 16,
+  },
+  emptyGiftCardsContainer: {
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyGiftCardsText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 12,
+  },
+  emptyGiftCardsSubtext: {
+    color: 'rgba(255,255,255,0.3)',
+    fontSize: 12,
+    marginTop: 4,
+    textAlign: 'center',
   },
   loginContainer: {
     flex: 1,

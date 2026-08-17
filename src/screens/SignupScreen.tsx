@@ -44,9 +44,14 @@ const parseJwt = (token: string): any => {
 
 interface SignupScreenProps {
   navigation: any;
+  route?: {
+    params?: {
+      referralCode?: string;
+    };
+  };
 }
 
-export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
+export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation, route }) => {
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -55,6 +60,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
     confirmPassword: '',
     dateOfBirth: '',
     gender: '',
+    referralCode: route?.params?.referralCode || '',
   });
   const [isLoading, setIsLoading] = useState(false);
   const [showGenderPicker, setShowGenderPicker] = useState(false);
@@ -115,6 +121,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                   firstName: profileUser.firstName || googleUser.givenName || '',
                   lastName: profileUser.lastName || googleUser.familyName || '',
                   avatarUrl: profileUser.avatar_url || googleUser.photo || '',
+                  referralCode: formData.referralCode,
                 }),
               },
             ]
@@ -142,6 +149,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
               firstName: googleUser.givenName || '',
               lastName: googleUser.familyName || '',
               avatarUrl: googleUser.photo || '',
+              referralCode: formData.referralCode,
             }),
           },
         ]
@@ -196,6 +204,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
         firstName,
         lastName,
         avatarUrl,
+        referralCode: formData.referralCode,
       });
     } catch (error: any) {
       if (error.code === 'ERR_CANCELED' || error.code === 'ERR_REQUEST_CANCELED') {
@@ -215,6 +224,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
               firstName,
               lastName,
               avatarUrl,
+              referralCode: formData.referralCode,
             }),
           },
         ]
@@ -293,6 +303,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
         dateOfBirth: formData.dateOfBirth?.trim(), // Now required
         gender: formData.gender?.trim(),
         hasAcceptedTerms,
+        referralCode: formData.referralCode?.trim(),
       };
 
       // Debug logging - show actual values
@@ -304,6 +315,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
         dateOfBirth: signupData.dateOfBirth,
         gender: signupData.gender,
         hasAcceptedTerms: signupData.hasAcceptedTerms,
+        referralCode: signupData.referralCode,
       });
 
       // Call backend to send verification email only (don't create user yet)

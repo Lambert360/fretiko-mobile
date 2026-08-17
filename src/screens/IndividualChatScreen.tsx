@@ -50,6 +50,7 @@ import ScheduleModal, { ScheduleActivityData } from '../components/ScheduleModal
 import { WishlistShareModal } from '../components/WishlistShareModal';
 import WishlistMessageCard from '../components/WishlistMessageCard';
 import DocumentMessageCard from '../components/DocumentMessageCard';
+import GiftCardMessage from '../components/GiftCardMessage';
 import * as Sharing from 'expo-sharing';
 import AdaptiveText from '../components/AdaptiveText';
 
@@ -5319,6 +5320,18 @@ const IndividualChatScreen = () => {
           wishlistData={wishlistInfo}
           isCurrentUser={isCurrentUser}
           onPress={handleWishlistCardPress}
+        />
+      );
+    }
+
+    // 🎴 Render gift card messages
+    if ((item as any).messageType === 'gift_card' && item.metadata?.giftCardData) {
+      return wrapWithReplyGesture(
+        item,
+        <GiftCardMessage
+          message={item}
+          isOwn={isCurrentUser}
+          currentUserId={user?.id || ''}
         />
       );
     }

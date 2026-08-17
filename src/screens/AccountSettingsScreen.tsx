@@ -289,6 +289,17 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
 
           <TouchableOpacity
             style={styles.settingItem}
+            onPress={() => navigation.navigate('ReferralScreen')}
+          >
+            <View style={styles.settingInfo}>
+              <Ionicons name="card-outline" size={20} color="#FF8A00" />
+              <Text style={styles.settingLabel}>Referral Card</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#B0B0B0" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
             onPress={() => Alert.alert('Coming Soon', 'Account management will be available soon!')}
           >
             <View style={styles.settingInfo}>

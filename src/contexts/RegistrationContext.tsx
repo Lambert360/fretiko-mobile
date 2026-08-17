@@ -11,6 +11,7 @@ export interface RegistrationData {
   dateOfBirth?: string;
   gender?: string;
   hasAcceptedTerms: boolean;
+  referralCode?: string;
 
   // Stage 2: Role Selection
   user_role: 'citizen' | 'vendor' | 'rider';

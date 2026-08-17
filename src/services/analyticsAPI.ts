@@ -685,6 +685,49 @@ class AnalyticsAPI {
       throw error;
     }
   }
+
+  /**
+   * Get conversion metrics (time to first purchase)
+   */
+  async getConversionMetrics(): Promise<{
+    averageTimeToFirstPurchaseHours: number;
+    medianTimeToFirstPurchaseHours: number;
+    conversionRate: number;
+    totalUsers: number;
+    purchasers: number;
+    nonPurchasers: number;
+    timeBuckets: {
+      within24Hours: number;
+      within7Days: number;
+      within30Days: number;
+      over30Days: number;
+    };
+    timeBucketsPercentage: {
+      within24Hours: number;
+      within7Days: number;
+      within30Days: number;
+      over30Days: number;
+    };
+  }> {
+    try {
+      const headers = await getAuthHeaders();
+
+      const response = await fetch(`${API_BASE_URL}/admin/analytics/conversion-metrics`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`Failed to fetch conversion metrics: ${response.status} ${errorData}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get conversion metrics error:', error);
+      throw error;
+    }
+  }
 }
 
 export const analyticsAPI = new AnalyticsAPI();

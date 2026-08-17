@@ -9,6 +9,7 @@ import {
   Dimensions,
   ActivityIndicator,
   Image,
+  Share,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -137,9 +138,18 @@ const ServiceDetailsScreen = () => {
     console.log('Open comments for service:', service?.id);
   };
 
-  const handleShare = () => {
-    // TODO: Implement share functionality
-    console.log('Share service:', service?.id);
+  const handleShare = async () => {
+    if (!service) return;
+
+    try {
+      const shareUrl = `https://fretiko.com/service/${service.id}`;
+      await Share.share({
+        message: `Check out this amazing service: ${service.title} for ₣${(service.price || 0).toFixed(2)} on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
+        url: shareUrl,
+      });
+    } catch (error) {
+      console.error('Error sharing service:', error);
+    }
   };
 
   const handleBookNow = () => {

@@ -15,6 +15,7 @@ import {
   RefreshControl,
   KeyboardAvoidingView,
   Platform,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -517,36 +518,44 @@ const AuctionDetailsScreen = () => {
       try {
         const updatedAuction = await auctionsAPI.getAuction(auctionId);
         setAuction(updatedAuction);
-      } catch (reloadError) {
-        console.error('Error reloading auction data:', reloadError);
-        // Don't show error to user - local state already updated
+      } catch (error) {
+        console.error('Error refreshing auction data:', error);
       }
-
-    } catch (error: any) {
-      console.error('Watchlist toggle error:', error);
-      console.error('Error response:', error?.response);
-      console.error('Error response data:', error?.response?.data);
-      
-      // State wasn't updated since API call failed, so no need to revert
-      // Extract error message from various possible error formats
+    } catch (error) {
+      console.error('Error toggling watchlist:', error);
+      Alert.alert('Error', 'Failed to update watchlist. Please try again.');
       let errorMessage = 'Failed to update watchlist. Please try again.';
       
-      if (error?.response?.data) {
+      if ((error as any)?.response?.data) {
         // NestJS error format
-        if (Array.isArray(error.response.data.message)) {
-          errorMessage = error.response.data.message.join(', ');
-        } else if (error.response.data.message) {
-          errorMessage = error.response.data.message;
-        } else if (typeof error.response.data === 'string') {
-          errorMessage = error.response.data;
+        if (Array.isArray((error as any).response.data.message)) {
+          errorMessage = (error as any).response.data.message.join(', ');
+        } else if ((error as any).response.data.message) {
+          errorMessage = (error as any).response.data.message;
+        } else if (typeof (error as any).response.data === 'string') {
+          errorMessage = (error as any).response.data;
         }
-      } else if (error?.message) {
-        errorMessage = error.message;
+      } else if ((error as any)?.message) {
+        errorMessage = (error as any).message;
       }
       
       Alert.alert('Error', errorMessage);
     } finally {
       setWatchlistLoading(false);
+    }
+  };
+
+  const handleShare = async () => {
+    if (!auction) return;
+
+    try {
+      const shareUrl = `https://fretiko.com/auction/${auction.id}`;
+      await Share.share({
+        message: `Check out this auction: ${auction.title} - Current bid: ₣${(auction.current_bid || 0).toFixed(2)} on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
+        url: shareUrl,
+      });
+    } catch (error) {
+      console.error('Error sharing auction:', error);
     }
   };
 
@@ -717,6 +726,13 @@ const AuctionDetailsScreen = () => {
               color={auction.is_watched_by_user ? "#F39C12" : "white"}
             />
           )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.headerButton}
+          onPress={handleShare}
+        >
+          <Ionicons name="share-outline" size={24} color="white" />
         </TouchableOpacity>
       </View>
 

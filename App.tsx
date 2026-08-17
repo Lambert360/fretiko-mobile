@@ -126,6 +126,7 @@ import { StoryDeepLinkScreen } from './src/screens/StoryDeepLinkScreen';
 
 // Import workspace screens
 import WorkspaceScreen from './src/screens/WorkspaceScreen';
+import ScheduleCalendarScreen from './src/screens/ScheduleCalendarScreen';
 import AnalyticsScreen from './src/screens/AnalyticsScreen';
 import VendorOrderDetailsScreen from './src/screens/VendorOrderDetailsScreen';
 
@@ -155,6 +156,8 @@ import BookmarksScreen from './src/screens/BookmarksScreen';
 import CreatePostScreen from './src/screens/CreatePostScreen';
 import PostDetailsScreen from './src/screens/PostDetailsScreen';
 import MyPostsScreen from './src/screens/MyPostsScreen';
+import ReferralScreen from './src/screens/ReferralScreen';
+import ReferralHandlerScreen from './src/screens/ReferralHandlerScreen';
 
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
 
@@ -219,6 +222,36 @@ const linking: any = {
         path: 'post/:postId',
         parse: {
           postId: (postId: string) => postId,
+        },
+      },
+      PublicProfile: {
+        path: 'profile/:userId',
+        parse: {
+          userId: (userId: string) => userId,
+        },
+      },
+      ProductDetails: {
+        path: 'product/:productId',
+        parse: {
+          productId: (productId: string) => productId,
+        },
+      },
+      ServiceDetails: {
+        path: 'service/:serviceId',
+        parse: {
+          serviceId: (serviceId: string) => serviceId,
+        },
+      },
+      AuctionDetails: {
+        path: 'auction/:auctionId',
+        parse: {
+          auctionId: (auctionId: string) => auctionId,
+        },
+      },
+      ReferralHandler: {
+        path: 'r/:referralCode',
+        parse: {
+          referralCode: (referralCode: string) => referralCode,
         },
       },
     },
@@ -536,6 +569,8 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="CreatePost" component={CreatePostScreen} />
               <Stack.Screen name="PostDetails" component={PostDetailsScreen} />
               <Stack.Screen name="MyPosts" component={MyPostsScreen} />
+              <Stack.Screen name="ReferralScreen" component={ReferralScreen} />
+              <Stack.Screen name="ReferralHandler" component={ReferralHandlerScreen as any} />
               <Stack.Screen name="EditProfile" component={EditProfileScreen as any} />
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
               <Stack.Screen name="RiderVerification" component={RiderVerificationScreen} />
@@ -615,6 +650,7 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="ShareStory" component={ShareStoryScreen} />
               <Stack.Screen name="StoryDeepLink" component={StoryDeepLinkScreen} />
               <Stack.Screen name="Workspace" component={WorkspaceScreen} />
+              <Stack.Screen name="ScheduleCalendar" component={ScheduleCalendarScreen} />
               <Stack.Screen name="Analytics" component={AnalyticsScreen} />
               <Stack.Screen name="VendorOrderDetails" component={VendorOrderDetailsScreen} />
               <Stack.Screen name="Disputes" component={DisputesScreen} />
@@ -638,6 +674,7 @@ const AppNavigator: React.FC = () => {
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Signup" component={SignupScreen} />
             <Stack.Screen name="SocialSignUp" component={SocialSignUpScreen} />
+            <Stack.Screen name="ReferralHandler" component={ReferralHandlerScreen as any} />
             <Stack.Screen name="RoleSelection" component={RoleSelectionScreen as any} />
             <Stack.Screen name="EmailVerification" component={EmailVerificationScreen as any} />
             <Stack.Screen name="Welcome" component={WelcomeScreen} />

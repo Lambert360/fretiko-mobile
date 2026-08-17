@@ -44,6 +44,7 @@ export interface SocialSignInPayload {
   is_seller?: boolean;
   is_rider?: boolean;
   hasAcceptedTerms: boolean;
+  referralCode?: string;
 }
 
 export interface AuthState {
@@ -69,7 +70,8 @@ export interface AuthContextType extends AuthState {
     hasAcceptedTerms?: boolean,
     user_role?: 'citizen' | 'vendor' | 'rider',
     is_seller?: boolean,
-    is_rider?: boolean
+    is_rider?: boolean,
+    referralCode?: string
   ) => Promise<void>;
   socialSignIn: (payload: SocialSignInPayload) => Promise<void>;
   migrate: (email: string, newPassword: string) => Promise<void>;
@@ -738,7 +740,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const checkAccountStatus = useCallback(async (accessTokenOverride?: string | null): Promise<boolean> => {
+  const checkAccountStatus = useCallback(async (accessTokenOverride?: string | null, retryCount: number = 0): Promise<boolean> => {
     // Use the explicitly provided token when available (avoids relying on a
     // possibly-stale authStateRef right after signin/refresh), otherwise fall
     // back to whatever is currently stored in the auth state.
@@ -786,6 +788,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return isSuspended || isDeleted;
     } catch (error: any) {
       console.error('❌ Error checking account status:', error);
+      // If we get a 401 error, the token is expired - try to refresh it
+      if (error?.message?.includes('401') || error?.message?.includes('Unauthorized') || error?.status === 401) {
+        // Prevent infinite retry loops
+        if (retryCount >= 1) {
+          console.error('❌ Max retry attempts reached for account status check');
+          setAuthState(prev => ({ ...prev, isCheckingSuspension: false }));
+          return authStateRef.current.isSuspended || authStateRef.current.isDeleted;
+        }
+        console.log('🔄 Token expired during account status check, attempting refresh...');
+        const refreshSuccess = await refreshAccessToken();
+        if (!refreshSuccess) {
+          // Token refresh failed, user will be logged out by refreshAccessToken
+          return false;
+        }
+        // Retry with the fresh token from authState (updated by refreshAccessToken)
+        const newToken = authStateRef.current.accessToken;
+        if (newToken) {
+          return checkAccountStatus(newToken, retryCount + 1);
+        }
+        return false;
+      }
       // Don't overwrite a previously-known suspended/deleted state just
       // because this particular check failed (e.g. transient network error)
       setAuthState(prev => ({ ...prev, isCheckingSuspension: false }));
@@ -806,7 +829,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }, 5 * 60 * 1000); // every 5 minutes
 
     return () => clearInterval(interval);
-  }, [authState.isAuthenticated, authState.accessToken, authState.isSuspended, authState.isDeleted, checkAccountStatus]);
+  }, [authState.isAuthenticated, authState.accessToken, authState.isSuspended, authState.isDeleted]);
 
   const signin = useCallback(async (email: string, password: string) => {
     try {
@@ -928,7 +951,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     hasAcceptedTerms?: boolean,
     user_role?: 'citizen' | 'vendor' | 'rider',
     is_seller?: boolean,
-    is_rider?: boolean
+    is_rider?: boolean,
+    referralCode?: string
   ) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
@@ -945,6 +969,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         is_seller: is_seller || false,
         is_rider: is_rider || false,
         is_verified: false,
+        referralCode,
       });
 
       // Handle the wrapped response from backend
@@ -1001,6 +1026,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         hasIdToken: !!payload.idToken,
         hasCode: !!payload.code,
         redirectUri: payload.redirectUri,
+        referralCode: payload.referralCode,
       });
 
       const response = await fetch(`${API_CONFIG.BASE_URL}/auth/social/signin`, {

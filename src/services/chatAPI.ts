@@ -23,7 +23,7 @@ export interface ChatMessage {
   senderId: string;
   senderName: string;
   content: string;
-  messageType: 'text' | 'image' | 'audio' | 'video' | 'file' | 'livestream' | 'auction' | 'system' | 'invoice' | 'wishlist';
+  messageType: 'text' | 'image' | 'audio' | 'video' | 'file' | 'livestream' | 'auction' | 'system' | 'invoice' | 'wishlist' | 'gift_card';
   status: 'sending' | 'sent' | 'delivered' | 'read';
   mediaUrl?: string;
   fileData?: {
@@ -48,6 +48,7 @@ export interface ChatMessage {
     [key: string]: any;
     wishlistData?: any;
     productData?: any;
+    giftCardData?: any;
   };
   timestamp: string;
   createdAt: string;
@@ -56,7 +57,7 @@ export interface ChatMessage {
 
 export interface SendMessageRequest {
   conversationId: string;
-  messageType: 'text' | 'image' | 'audio' | 'video' | 'file';
+  messageType: 'text' | 'image' | 'audio' | 'video' | 'file' | 'gift_card';
   content?: string;
   mediaUrl?: string;
   fileData?: {

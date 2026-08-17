@@ -206,9 +206,10 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
     if (!product) return;
 
     try {
+      const shareUrl = `https://fretiko.com/product/${product.id}`;
       await Share.share({
-        message: `Check out this amazing product: ${product.name} for ₣${(product.price || 0).toFixed(2)} on Fretiko!`,
-        url: `fretiko://product/${product.id}`,
+        message: `Check out this amazing product: ${product.name} for ₣${(product.price || 0).toFixed(2)} on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
+        url: shareUrl,
       });
     } catch (error) {
       console.error('Error sharing product:', error);

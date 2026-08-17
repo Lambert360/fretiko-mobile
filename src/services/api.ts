@@ -261,6 +261,7 @@ export const authAPI = {
     is_seller?: boolean;
     is_rider?: boolean;
     is_verified?: boolean;
+    referralCode?: string;
   }) => {
     try {
       // Use fetch instead of axios for local HTTP requests in React Native Expo

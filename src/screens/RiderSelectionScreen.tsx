@@ -58,6 +58,7 @@ export interface Rider {
   specialties: string[];
   isOnline: boolean;
   deliveryPromise?: string; // Delivery promise message from rider profile
+  isCurrentlyDelivering?: boolean; // NEW: Indicates if rider is currently on an active delivery
 }
 
 const RiderSelectionScreen: React.FC<RiderSelectionScreenProps> = ({ navigation, route }) => {
@@ -121,17 +122,45 @@ const RiderSelectionScreen: React.FC<RiderSelectionScreenProps> = ({ navigation,
         return riders
           .filter(rider => rider.isAvailable)
           .sort((a, b) => {
+            // NEW: Deprioritize riders currently delivering active orders
+            if (a.isCurrentlyDelivering !== b.isCurrentlyDelivering) {
+              return a.isCurrentlyDelivering ? 1 : -1;
+            }
             // Sort by: availability > rating > distance
             if (a.isAvailable !== b.isAvailable) return a.isAvailable ? -1 : 1;
             if (Math.abs(a.rating - b.rating) > 0.1) return b.rating - a.rating;
             return a.distanceFromPickup - b.distanceFromPickup;
           });
       case 'cars':
-        return riders.filter(rider => rider.vehicleType === 'car');
+        return riders
+          .filter(rider => rider.vehicleType === 'car')
+          .sort((a, b) => {
+            // NEW: Deprioritize riders currently delivering active orders
+            if (a.isCurrentlyDelivering !== b.isCurrentlyDelivering) {
+              return a.isCurrentlyDelivering ? 1 : -1;
+            }
+            return a.distanceFromPickup - b.distanceFromPickup;
+          });
       case 'bikes':
-        return riders.filter(rider => rider.vehicleType === 'bike');
+        return riders
+          .filter(rider => rider.vehicleType === 'bike')
+          .sort((a, b) => {
+            // NEW: Deprioritize riders currently delivering active orders
+            if (a.isCurrentlyDelivering !== b.isCurrentlyDelivering) {
+              return a.isCurrentlyDelivering ? 1 : -1;
+            }
+            return a.distanceFromPickup - b.distanceFromPickup;
+          });
       case 'wheelbarrows':
-        return riders.filter(rider => rider.vehicleType === 'wheelbarrow');
+        return riders
+          .filter(rider => rider.vehicleType === 'wheelbarrow')
+          .sort((a, b) => {
+            // NEW: Deprioritize riders currently delivering active orders
+            if (a.isCurrentlyDelivering !== b.isCurrentlyDelivering) {
+              return a.isCurrentlyDelivering ? 1 : -1;
+            }
+            return a.distanceFromPickup - b.distanceFromPickup;
+          });
       default:
         return riders;
     }
@@ -235,6 +264,13 @@ const RiderSelectionScreen: React.FC<RiderSelectionScreenProps> = ({ navigation,
         <View style={styles.deliveryPromiseContainer}>
           <Ionicons name="flash" size={14} color="#F39C12" />
           <Text style={styles.deliveryPromiseText}>{rider.deliveryPromise}</Text>
+        </View>
+      )}
+
+      {rider.isCurrentlyDelivering && (
+        <View style={styles.deliveringBadge}>
+          <Ionicons name="bicycle" size={12} color="#FFF" />
+          <Text style={styles.deliveringText}>On Delivery</Text>
         </View>
       )}
 
@@ -559,6 +595,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     fontStyle: 'italic',
+  },
+  deliveringBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(231, 76, 60, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 8,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(231, 76, 60, 0.3)',
+  },
+  deliveringText: {
+    color: '#E74C3C',
+    fontSize: 12,
+    fontWeight: '600',
   },
   specialtiesContainer: {
     flexDirection: 'row',

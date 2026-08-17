@@ -62,7 +62,7 @@ export const SocialSignUpScreen: React.FC<SocialSignUpScreenProps> = ({ navigati
   const insets = useSafeAreaInsets();
   const { socialSignIn } = useAuth();
 
-  const { provider, idToken, code, redirectUri, email, firstName = '', lastName = '', avatarUrl } = route.params;
+  const { provider, idToken, code, redirectUri, email, firstName = '', lastName = '', avatarUrl, referralCode = '' } = route.params;
 
   const [formData, setFormData] = useState({
     firstName: firstName,
@@ -71,6 +71,7 @@ export const SocialSignUpScreen: React.FC<SocialSignUpScreenProps> = ({ navigati
     gender: '',
     user_role: 'citizen' as 'citizen' | 'vendor' | 'rider',
     hasAcceptedTerms: false,
+    referralCode: referralCode,
   });
 
   const [isLoading, setIsLoading] = useState(false);
@@ -128,7 +129,7 @@ export const SocialSignUpScreen: React.FC<SocialSignUpScreenProps> = ({ navigati
     setIsLoading(true);
 
     try {
-      console.log('🧩 SocialSignUp payload:', { provider, hasIdToken: !!idToken, hasCode: !!code, redirectUri });
+      console.log('🧩 SocialSignUp payload:', { provider, hasIdToken: !!idToken, hasCode: !!code, redirectUri, referralCode: formData.referralCode });
 
       await socialSignIn({
         provider,
@@ -141,6 +142,7 @@ export const SocialSignUpScreen: React.FC<SocialSignUpScreenProps> = ({ navigati
         is_seller: formData.user_role === 'vendor',
         is_rider: formData.user_role === 'rider',
         hasAcceptedTerms: true,
+        referralCode: formData.referralCode,
       });
     } catch (error: any) {
       console.error('❌ Social sign up error:', error);
