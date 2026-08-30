@@ -70,7 +70,7 @@ const withVoipPushNotification = (config) => {
     const groupKey = config.modResults.findPBXGroupKey({ name: projectName });
     if (groupKey) {
       config.modResults.addHeaderFile('FretikoPushKitManager.h', {}, groupKey);
-      config.modResults.addSourceFile('FretikoPushKitManager.m', { target: projectName }, groupKey);
+      config.modResults.addSourceFile('FretikoPushKitManager.m', {}, groupKey);
     }
 
     // Make sure the bridging header path is set in the build settings
