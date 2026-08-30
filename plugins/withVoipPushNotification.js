@@ -60,9 +60,9 @@ const withVoipPushNotification = (config) => {
     const hPath = path.join(targetDir, 'FretikoPushKitManager.h');
     const mPath = path.join(targetDir, 'FretikoPushKitManager.m');
 
-    const hContents = `\n#import <Foundation/Foundation.h>\n#import <PushKit/PushKit.h>\n\n@interface FretikoPushKitManager : NSObject\n+ (void)fretikoUpdatePushCredentials:(PKPushCredentials *)credentials forType:(NSString *)type;\n+ (void)fretikoHandleIncomingPush:(PKPushPayload *)payload forType:(NSString *)type;\n@end\n`;
+    const hContents = `\n#import <Foundation/Foundation.h>\n#import <PushKit/PushKit.h>\n\n@interface FretikoPushKitManager : NSObject\n+ (void)fretikoHandleTokenUpdate:(PKPushCredentials *)credentials forType:(NSString *)type;\n+ (void)fretikoHandlePushPayload:(PKPushPayload *)payload forType:(NSString *)type;\n@end\n`;
 
-    const mContents = `\n#import "FretikoPushKitManager.h"\n#import <RNVoipPushNotification/RNVoipPushNotificationManager.h>\n\n@implementation FretikoPushKitManager\n+ (void)fretikoUpdatePushCredentials:(PKPushCredentials *)credentials forType:(NSString *)type {\n    [RNVoipPushNotificationManager didUpdatePushCredentials:credentials forType:type];\n}\n+ (void)fretikoHandleIncomingPush:(PKPushPayload *)payload forType:(NSString *)type {\n    [RNVoipPushNotificationManager didReceiveIncomingPushWithPayload:payload forType:type];\n}\n@end\n`;
+    const mContents = `\n#import "FretikoPushKitManager.h"\n#import <RNVoipPushNotification/RNVoipPushNotificationManager.h>\n\n@implementation FretikoPushKitManager\n+ (void)fretikoHandleTokenUpdate:(PKPushCredentials *)credentials forType:(NSString *)type {\n    [RNVoipPushNotificationManager didUpdatePushCredentials:credentials forType:type];\n}\n+ (void)fretikoHandlePushPayload:(PKPushPayload *)payload forType:(NSString *)type {\n    [RNVoipPushNotificationManager didReceiveIncomingPushWithPayload:payload forType:type];\n}\n@end\n`;
 
     fs.writeFileSync(hPath, hContents);
     fs.writeFileSync(mPath, mContents);
@@ -116,7 +116,7 @@ const withVoipPushNotification = (config) => {
     }
 
     // Append the PKPushRegistryDelegate methods before ReactNativeDelegate
-    if (!newContents.includes('FretikoPushKitManager.fretikoUpdatePushCredentials')) {
+    if (!newContents.includes('FretikoPushKitManager.fretikoHandleTokenUpdate')) {
       const pushDelegateMethods = `
 
   // MARK: - PKPushRegistryDelegate
@@ -126,7 +126,7 @@ const withVoipPushNotification = (config) => {
     didUpdate pushCredentials: PKPushCredentials,
     for type: PKPushType
   ) {
-    FretikoPushKitManager.fretikoUpdatePushCredentials(pushCredentials, forType: type.rawValue)
+    FretikoPushKitManager.fretikoHandleTokenUpdate(pushCredentials, forType: type.rawValue)
   }
 
   public func pushRegistry(
@@ -134,7 +134,7 @@ const withVoipPushNotification = (config) => {
     didReceiveIncomingPushWith payload: PKPushPayload,
     for type: PKPushType
   ) {
-    FretikoPushKitManager.fretikoHandleIncomingPush(payload, forType: type.rawValue)
+    FretikoPushKitManager.fretikoHandlePushPayload(payload, forType: type.rawValue)
   }
 `;
       newContents = newContents.replace(
