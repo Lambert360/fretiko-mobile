@@ -1216,13 +1216,13 @@ const IndividualChatScreen = () => {
     });
 
     const unsubscribeCallEvent = realtimeAPI.subscribe('call_event', (data) => {
-      // Agora call routing now lives entirely in CallContext + CallScreen.
-      // This subscription is kept only so Iko's own call state (which still
-      // reuses these same local state setters) is never touched by real calls.
-      return;
-
-      // eslint-disable-next-line no-unreachable
       console.log('📞 Call event received:', data);
+
+      // Only handle events for this conversation
+      if (data.conversationId !== chatId) {
+        console.log('🚫 Call event for different conversation, ignoring');
+        return;
+      }
 
       // Only handle events for this conversation
       if (data.conversationId !== chatId) {

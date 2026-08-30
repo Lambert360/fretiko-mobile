@@ -1023,6 +1023,10 @@ export const CallProvider: React.FC<{
 
   useEffect(() => {
     const unsubscribe = realtimeAPI.subscribe('call_event', (data) => {
+    return () => {
+      unsubscribe();
+    };
+  }, []);
       const { eventType, callData, conversationId } = data;
 
       if (eventType === 'incoming_call') {
