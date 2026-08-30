@@ -97,7 +97,7 @@ const withVoipPushNotification = (config) => {
     }
 
     // Append the PKPushRegistryDelegate methods before ReactNativeDelegate
-    if (!newContents.includes('pushRegistry(_:didUpdate:for:)')) {
+    if (!newContents.includes('RNVoipPushNotificationManager.didUpdatePushCredentials')) {
       const pushDelegateMethods = `
 
   // MARK: - PKPushRegistryDelegate
@@ -105,7 +105,7 @@ const withVoipPushNotification = (config) => {
   public func pushRegistry(
     _ registry: PKPushRegistry,
     didUpdate pushCredentials: PKPushCredentials,
-    for type: PKPushType
+    forType type: PKPushType
   ) {
     RNVoipPushNotificationManager.didUpdatePushCredentials(pushCredentials, forType: type.rawValue)
   }
@@ -113,14 +113,14 @@ const withVoipPushNotification = (config) => {
   public func pushRegistry(
     _ registry: PKPushRegistry,
     didReceiveIncomingPushWith payload: PKPushPayload,
-    for type: PKPushType
+    forType type: PKPushType
   ) {
     RNVoipPushNotificationManager.didReceiveIncomingPushWithPayload(payload, forType: type.rawValue)
   }
 `;
       newContents = newContents.replace(
         '}\n\nclass ReactNativeDelegate: ExpoReactNativeFactoryDelegate {',
-        `}${pushDelegateMethods}\n\nclass ReactNativeDelegate: ExpoReactNativeFactoryDelegate {`
+        `${pushDelegateMethods}\n}\n\nclass ReactNativeDelegate: ExpoReactNativeFactoryDelegate {`
       );
     }
 
