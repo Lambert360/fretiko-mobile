@@ -129,25 +129,28 @@ const withVoipPushNotification = (config) => {
   });
 
   // 5. Update the bridging header so the Swift code can see RNVoipPushNotificationManager
-  config = withDangerousMod(config, ['ios'], (config) => {
-    const targetName = getProjectName(config.modRequest.projectRoot);
-    const bridgingHeaderPath = path.join(
-      config.modRequest.platformProjectRoot,
-      targetName,
-      `${targetName}-Bridging-Header.h`
-    );
+  config = withDangerousMod(config, [
+    'ios',
+    (config) => {
+      const targetName = getProjectName(config.modRequest.projectRoot);
+      const bridgingHeaderPath = path.join(
+        config.modRequest.platformProjectRoot,
+        targetName,
+        `${targetName}-Bridging-Header.h`
+      );
 
-    if (fs.existsSync(bridgingHeaderPath)) {
-      const importLine = '#import <RNVoipPushNotification/RNVoipPushNotificationManager.h>';
-      let contents = fs.readFileSync(bridgingHeaderPath, 'utf8');
-      if (!contents.includes(importLine)) {
-        contents = `${contents.trim()}\n${importLine}\n`;
-        fs.writeFileSync(bridgingHeaderPath, contents);
+      if (fs.existsSync(bridgingHeaderPath)) {
+        const importLine = '#import <RNVoipPushNotification/RNVoipPushNotificationManager.h>';
+        let contents = fs.readFileSync(bridgingHeaderPath, 'utf8');
+        if (!contents.includes(importLine)) {
+          contents = `${contents.trim()}\n${importLine}\n`;
+          fs.writeFileSync(bridgingHeaderPath, contents);
+        }
       }
-    }
 
-    return config;
-  });
+      return config;
+    },
+  ]);
 
   return config;
 };
