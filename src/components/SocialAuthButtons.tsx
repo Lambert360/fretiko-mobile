@@ -64,10 +64,10 @@ export const SocialAuthButtons: React.FC<SocialAuthButtonsProps> = ({
           disabled={appleLoading || isLoading}
         >
           {appleLoading ? (
-            <ActivityIndicator color="#FFF" size="small" />
+            <ActivityIndicator color="#000" size="small" />
           ) : (
             <>
-              <Ionicons name="logo-apple" size={20} color="#FFF" />
+              <Ionicons name="logo-apple" size={20} color="#000" />
               <Text style={[styles.socialButtonText, styles.appleButtonText]}>
                 Continue with Apple
               </Text>
@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
     borderColor: '#DDD',
   },
   appleButton: {
-    backgroundColor: '#000',
+    backgroundColor: '#FFF', // white, same as Google
   },
   socialButtonText: {
     fontSize: 16,
@@ -127,6 +127,6 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   appleButtonText: {
-    color: '#FFF',
+    color: '#000',
   },
 });

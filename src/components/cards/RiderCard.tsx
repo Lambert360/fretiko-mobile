@@ -99,7 +99,7 @@ export const RiderCard: React.FC<RiderCardProps> = ({
       return (
         <Image 
           source={{ 
-            uri: rider?.avatar || `https://picsum.photos/400/400?random=${rider?.id}` 
+            uri: rider?.avatar 
           }} 
           style={[styles.mediaContent, { height: getMediaHeight() }]} 
         />
@@ -197,7 +197,7 @@ export const RiderCard: React.FC<RiderCardProps> = ({
       <View style={styles.compactAvatarContainer}>
         <Image 
           source={{ 
-            uri: rider?.avatar || `https://picsum.photos/50/50?random=${rider?.id}` 
+            uri: rider?.avatar 
           }} 
           style={styles.compactAvatar} 
         />
@@ -238,7 +238,7 @@ export const RiderCard: React.FC<RiderCardProps> = ({
     <TouchableOpacity style={styles.selectionCard} onPress={() => onPress?.(rider)}>
       <Image 
         source={{ 
-          uri: rider?.avatar || `https://picsum.photos/60/60?random=${rider?.id}` 
+          uri: rider?.avatar 
         }} 
         style={styles.selectionAvatar} 
       />

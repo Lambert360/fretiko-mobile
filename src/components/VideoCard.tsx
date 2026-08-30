@@ -97,6 +97,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
   // UI State Management
   const [isUIVisible, setIsUIVisible] = useState(true);
   const [isPlayButtonVisible, setIsPlayButtonVisible] = useState(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   
   // Animation References
   const uiOpacity = useRef(new Animated.Value(1)).current;
@@ -449,6 +450,8 @@ const VideoCard: React.FC<VideoCardProps> = ({
     }
   }, [isActive, isUIVisible]);
 
+  const hasLongDescription = String(item.description || '').length > 120;
+
   return (
     <View style={styles.container}>
         {renderMedia()}
@@ -513,9 +516,46 @@ const VideoCard: React.FC<VideoCardProps> = ({
             </TouchableOpacity>
 
             {/* Description */}
-            <RichText style={styles.description} numberOfLines={3}>
-              {String(item.description || '')}
-            </RichText>
+            <View
+              style={[
+                styles.descriptionBox,
+                isDescriptionExpanded && styles.descriptionBoxExpanded,
+              ]}
+            >
+              {isDescriptionExpanded ? (
+                <ScrollView
+                  style={styles.descriptionScroll}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                >
+                  <RichText style={styles.description}>
+                    {String(item.description || '')}
+                  </RichText>
+                </ScrollView>
+              ) : (
+                <RichText style={styles.description} numberOfLines={3}>
+                  {String(item.description || '')}
+                </RichText>
+              )}
+
+              {hasLongDescription && !isDescriptionExpanded && (
+                <TouchableOpacity
+                  onPress={() => setIsDescriptionExpanded(true)}
+                  style={styles.seeMoreButton}
+                >
+                  <Text style={styles.seeMoreText}>See more</Text>
+                </TouchableOpacity>
+              )}
+
+              {hasLongDescription && isDescriptionExpanded && (
+                <TouchableOpacity
+                  onPress={() => setIsDescriptionExpanded(false)}
+                  style={styles.seeMoreButton}
+                >
+                  <Text style={styles.seeMoreText}>See less</Text>
+                </TouchableOpacity>
+              )}
+            </View>
 
             {/* Service Details */}
             <View style={styles.serviceTagsContainer}>
@@ -762,7 +802,24 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 15,
     lineHeight: 20,
+  },
+  descriptionBox: {
     marginBottom: 8,
+    maxWidth: '100%',
+  },
+  descriptionBoxExpanded: {
+    maxHeight: 180,
+  },
+  descriptionScroll: {
+    maxHeight: 150,
+  },
+  seeMoreButton: {
+    marginTop: 4,
+  },
+  seeMoreText: {
+    color: '#9ECFFF',
+    fontSize: 12,
+    fontWeight: '500',
   },
   serviceDetails: {
     flexDirection: 'row',

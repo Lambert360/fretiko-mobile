@@ -166,6 +166,29 @@ class ProductsAPI {
     throw new Error(errorMessage);
   }
 
+  // Optional/fallback fetch with one silent retry for non-critical product sections
+  private async fetchOptionalWithRetry<T>(url: string, config?: any): Promise<T | null> {
+    try {
+      const response = await api.get(url, config);
+      return response.data;
+    } catch (error: any) {
+      const isTimeout = error.code === 'ECONNABORTED' || error.message?.includes('timeout');
+      if (isTimeout) {
+        console.warn(`⏱️ ${url} timed out, retrying once...`);
+        try {
+          const retryResponse = await api.get(url, config);
+          return retryResponse.data;
+        } catch (retryError) {
+          console.warn(`⏱️ ${url} retry also failed — hiding section`);
+          return null;
+        }
+      }
+
+      console.warn(`⚠️ ${url} failed, hiding section:`, error.message || error);
+      return null;
+    }
+  }
+
   // Get all product categories with caching and fallback
   async getCategories(): Promise<ProductCategory[]> {
     const cacheKey = 'product_categories';
@@ -283,12 +306,8 @@ class ProductsAPI {
     limit?: number;
     offset?: number;
   }): Promise<Product[]> {
-    try {
-      const response = await api.get('/products/ranked', { params, timeout: 8000 });
-      return response.data;
-    } catch (error) {
-      return this.handleError(error, 'Failed to fetch ranked products', false);
-    }
+    const data = await this.fetchOptionalWithRetry<Product[]>('/products/ranked', { params, timeout: 8000 });
+    return data ?? [];
   }
 
   // Record a product engagement event (click, cart_add, etc.) for ranking feedback.
@@ -303,28 +322,14 @@ class ProductsAPI {
 
   // Get trending products based on real order activity
   async getTrending(params?: { limit?: number; region?: string }): Promise<Product[]> {
-    try {
-      const response = await api.get('/products/trending', {
-        params,
-        timeout: 5000,
-      });
-      return response.data;
-    } catch (error) {
-      return this.handleError(error, 'Failed to fetch trending products', false);
-    }
+    const data = await this.fetchOptionalWithRetry<Product[]>('/products/trending', { params, timeout: 5000 });
+    return data ?? [];
   }
 
   // Get seasonal products based on current season/holidays
   async getSeasonal(params?: { limit?: number; region?: string }): Promise<Product[]> {
-    try {
-      const response = await api.get('/products/seasonal', {
-        params,
-        timeout: 5000,
-      });
-      return response.data;
-    } catch (error) {
-      return this.handleError(error, 'Failed to fetch seasonal products', false);
-    }
+    const data = await this.fetchOptionalWithRetry<Product[]>('/products/seasonal', { params, timeout: 5000 });
+    return data ?? [];
   }
 
 

@@ -136,6 +136,14 @@ class ChatAPI {
             if (!msg) return '';
             if (typeof msg === 'string') return msg;
             if (msg.content) return msg.content;
+
+            if (msg.messageType === 'gift_card') {
+              const amount = msg.metadata?.giftCardData?.amount;
+              return amount
+                ? `🎁 Gift Card • ${Number(amount).toLocaleString()} FRETI`
+                : '🎁 Gift Card';
+            }
+
             const typeLabels: Record<string, string> = {
               image: '📷 Image', video: '🎥 Video', audio: '🎤 Voice message',
               file: '📄 Document', invoice: '🧾 Invoice', wishlist: '🛍️ Wishlist',
@@ -626,6 +634,14 @@ class ChatAPI {
             if (!msg) return '';
             if (typeof msg === 'string') return msg;
             if (msg.content) return msg.content;
+
+            if (msg.messageType === 'gift_card') {
+              const amount = msg.metadata?.giftCardData?.amount;
+              return amount
+                ? `🎁 Gift Card • ${Number(amount).toLocaleString()} FRETI`
+                : '🎁 Gift Card';
+            }
+
             const typeLabels: Record<string, string> = {
               image: '📷 Image', video: '🎥 Video', audio: '🎤 Voice message',
               file: '📄 Document', invoice: '🧾 Invoice', wishlist: '🛍️ Wishlist',

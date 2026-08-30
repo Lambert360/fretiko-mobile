@@ -123,6 +123,7 @@ export const mapPersonToCard = (apiPerson: any): PersonData => {
     mediaAspectRatio: apiPerson.mediaAspectRatio || 'portrait',
     mediaType: apiPerson.media_type || apiPerson.mediaType,
     engagementRate: apiPerson.engagement_rate || apiPerson.engagementRate,
+    connectionStatus: apiPerson.connection_status || apiPerson.connectionStatus,
   };
 };
 

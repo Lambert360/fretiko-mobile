@@ -43,8 +43,8 @@ class RealtimeAPI {
   private reconnectAttempts = 0; // General socket reconnect attempts
   private chatReconnectAttempts = 0; // Chat socket reconnect attempts
   private maxReconnectAttempts = 10; // Increased for better resilience
-  private heartbeatInterval: NodeJS.Timeout | null = null;
-  private chatHeartbeatInterval: NodeJS.Timeout | null = null;
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private chatHeartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private pauseReconnections = false; // Flag to pause reconnections during AI calls
   private joinedRooms = new Set<string>(); // 🔥 FIX: Track joined rooms to prevent duplicates
 
@@ -186,7 +186,7 @@ class RealtimeAPI {
         // 🔥 FIX: Handle ping/pong for heartbeat
         this.chatSocket.on('ping', (data) => {
           console.log('🏓 PING received, sending PONG');
-          this.chatSocket.emit('pong', { timestamp: Date.now() });
+          this.chatSocket?.emit('pong', { timestamp: Date.now() });
         });
 
         // Handle chat-specific real-time events
@@ -388,7 +388,8 @@ class RealtimeAPI {
       this.chatSocket.disconnect();
     }
 
-    this.chatSocket = io('http://192.168.43.135:3000/chat', {
+    const chatSocketUrl = `${API_CONFIG.BASE_URL || 'http://localhost:3000'}/chat`;
+    this.chatSocket = io(chatSocketUrl, {
       auth: token ? { token } : undefined,
       transports: ['polling', 'websocket'],
       timeout: 15000,
@@ -433,7 +434,7 @@ class RealtimeAPI {
     // 🔥 FIX: Handle ping/pong for heartbeat on reconnect
     this.chatSocket.on('ping', (data) => {
       console.log('🏓 PING received (reconnect), sending PONG');
-      this.chatSocket.emit('pong', { timestamp: Date.now() });
+      this.chatSocket?.emit('pong', { timestamp: Date.now() });
     });
 
     // Re-setup chat event handlers

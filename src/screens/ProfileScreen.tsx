@@ -1,9 +1,8 @@
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Animated, Dimensions, FlatList, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
 import { userAPI, UserStats } from '../services/userAPI';
 import { walletAPI, Wallet, WalletStats } from '../services/walletAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
@@ -15,6 +14,7 @@ import { searchAPI, SearchType } from '../services/searchAPI';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeImage } from '../components/SafeImage';
 import AdaptiveText from '../components/AdaptiveText';
+import GiftLottieThumbnail from '../components/GiftLottieThumbnail';
 
 interface UserProfile {
   id: string;
@@ -37,7 +37,7 @@ interface ProfileScreenProps {
 
 const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
   const insets = useSafeAreaInsets();
-  const { user, logout, refreshUserProfile } = useAuth();
+  const { user, logout, refreshUserProfile, accessToken } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -127,17 +127,11 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
     return () => scrollY.removeListener(listener);
   }, [scrollY, fadeAnim, topSectionHeight]);
 
-  useEffect(() => {
-    loadProfile();
-  }, []);
-
-  const loadProfile = async () => {
+  const loadProfile = useCallback(async () => {
     try {
       // Load profile, stats, wallet, orders, gifts, gift cards, and trending products in parallel
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      if (!token) {
+      // Use accessToken from AuthContext instead of Supabase session
+      if (!accessToken) {
         throw new Error('No authentication token found');
       }
 
@@ -148,7 +142,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         walletAPI.getWalletStats(),
         ordersAPI.getMyOrders({ status: ['delivered', 'shipped', 'processing', 'cancelled'] }),
         giftAPI.getUserGifts().catch(() => ({ gifts: [], total_gifts: 0, total_value: 0 })), // Gracefully handle errors
-        giftCardAPI.getMyGiftCards(token).catch(() => []), // Gracefully handle errors
+        giftCardAPI.getMyGiftCards(accessToken).catch(() => []), // Gracefully handle errors
         searchAPI.getFeaturedContent(SearchType.PRODUCTS, undefined, 10).catch(() => ({ products: [] })) // Get featured/trending products
       ]);
       
@@ -205,7 +199,14 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [accessToken, logout]);
+
+  useEffect(() => {
+    // Only load profile if we have an access token
+    if (accessToken) {
+      loadProfile();
+    }
+  }, [accessToken, loadProfile]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -373,7 +374,8 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
     if (product.images && product.images.length > 0) {
       return Array.isArray(product.images) ? product.images[0] : product.images[0];
     }
-    return 'https://via.placeholder.com/150?text=No+Image';
+    // Return null instead of placeholder to handle missing images gracefully
+    return null as any;
   };
 
   // Helper function to calculate trend percentage (based on view/like growth)
@@ -724,7 +726,7 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                     
                     // Helper function to get product image from order item
                     const getOrderItemImage = (orderItem: any): string => {
-                      if (!orderItem) return 'https://via.placeholder.com/100?text=No+Image';
+                      if (!orderItem) return null as any;
                       
                       // Try multiple paths to get the image
                       if (orderItem.image) return orderItem.image;
@@ -740,8 +742,8 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                         return primaryImage?.image_url || orderItem.images[0]?.image_url || orderItem.images[0];
                       }
                       
-                      // Fallback placeholder
-                      return 'https://via.placeholder.com/100?text=No+Image';
+                      // Return null to handle missing images gracefully
+                      return null as any;
                     };
                     
                     const displayImage = getOrderItemImage(firstItem);
@@ -753,11 +755,17 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                         onPress={() => navigation.navigate('OrderTracking', { orderId: item.id })}
                       >
                         <View style={styles.orderImageContainer}>
-                          <Image 
-                            source={{ uri: displayImage }} 
-                            style={styles.orderImage}
-                            onError={() => console.log('Failed to load order image:', displayImage)}
-                          />
+                          {displayImage ? (
+                            <SafeImage 
+                              source={{ uri: displayImage }} 
+                              style={styles.orderImage}
+                              fallbackText="📦"
+                            />
+                          ) : (
+                            <View style={[styles.orderImage, styles.orderImagePlaceholder]}>
+                              <Text style={styles.orderImagePlaceholderText}>📦</Text>
+                            </View>
+                          )}
                           <View
                             style={[
                               styles.statusBadge,
@@ -822,7 +830,11 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                       onPress={() => navigation.navigate('MyGifts' as never)}
                     >
                       <View style={styles.giftEmojiContainer}>
-                        <Text style={styles.giftEmoji}>{item.emoji}</Text>
+                        {item.display_lottie_url ? (
+                          <GiftLottieThumbnail source={item.display_lottie_url} size={52} />
+                        ) : (
+                          <Text style={styles.giftEmoji}>{item.emoji}</Text>
+                        )}
                         {item.quantity > 1 && (
                           <View style={styles.giftQuantityBadge}>
                             <Text style={styles.giftQuantityText}>{item.quantity}</Text>
@@ -875,10 +887,16 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                       onPress={() => navigation.navigate('GiftCardDetails' as never, { giftCardId: item.id })}
                     >
                       <View style={styles.giftCardContainer}>
-                        <Image 
-                          source={{ uri: item.design?.preview_url || 'https://via.placeholder.com/100x60.png?text=Gift+Card' }} 
-                          style={styles.giftCardImage}
-                        />
+                        {item.design?.preview_url ? (
+                          <Image 
+                            source={{ uri: item.design.preview_url }} 
+                            style={styles.giftCardImage}
+                          />
+                        ) : (
+                          <View style={[styles.giftCardImage, styles.giftCardPlaceholder]}>
+                            <Text style={styles.giftCardPlaceholderText}>Gift Card</Text>
+                          </View>
+                        )}
                         <View style={[
                           styles.giftCardStatusBadge,
                           {
@@ -947,7 +965,6 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                         <SafeImage 
                           source={{ uri: getProductImage(item) }} 
                           style={styles.trendImage}
-                          fallbackSource={{ uri: 'https://via.placeholder.com/60x60.png?text=Product' }}
                           fallbackText="Product"
                         />
                         <View style={styles.trendBadge}>
@@ -1570,6 +1587,14 @@ const styles = StyleSheet.create({
     height: 80,
     borderRadius: 12,
   },
+  orderImagePlaceholder: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  orderImagePlaceholderText: {
+    fontSize: 32,
+  },
   statusBadge: {
     position: 'absolute',
     top: 8,
@@ -1720,6 +1745,19 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 80,
     borderRadius: 12,
+  },
+  giftCardPlaceholder: {
+    width: '100%',
+    height: 80,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  giftCardPlaceholderText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    fontWeight: '600',
   },
   giftCardStatusBadge: {
     position: 'absolute',

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import {
   Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-// VideoView removed for performance - using thumbnails instead
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,6 +21,7 @@ import { liveSalesAPI, LiveStream } from '../services/liveSalesAPI';
 import { userAPI } from '../services/userAPI';
 import { liveStreamSocket, StreamStatusUpdate } from '../services/liveStreamSocket';
 import AdaptiveText from '../components/AdaptiveText';
+import { HeroMedia } from '../components/HeroMedia';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -84,7 +85,7 @@ const PluggedVendorCard = ({
   );
 };
 
-// Enhanced main stream card with thumbnail preview
+// Enhanced main stream card with thumbnail or video preview
 const LiveStreamCard = ({
   stream,
   onPress,
@@ -100,6 +101,21 @@ const LiveStreamCard = ({
     return count.toString();
   };
 
+  const hasPreviewVideo = Boolean(stream.preview_video_url);
+  const player = useVideoPlayer(stream.preview_video_url || '', p => {
+    p.muted = true;
+    p.loop = true;
+  });
+
+  useEffect(() => {
+    if (!hasPreviewVideo) return;
+    if (isFocused) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [isFocused, hasPreviewVideo, player]);
+
   const formatSalesAmount = (amount: number) => {
     if (amount >= 1000000) return `₣${(amount / 1000000).toFixed(1)}M`;
     if (amount >= 1000) return `₣${(amount / 1000).toFixed(1)}K`;
@@ -112,15 +128,27 @@ const LiveStreamCard = ({
       onPress={onPress}
       activeOpacity={0.9}
     >
-      {/* Stream thumbnail preview */}
+      {/* Stream thumbnail or preview video */}
       <View style={styles.thumbnailContainer}>
-        <Image
-          source={{
-            uri: stream.thumbnail_url || stream.vendor.avatar_url || 'https://via.placeholder.com/400x600'
-          }}
-          style={styles.thumbnail}
-          resizeMode="cover"
-        />
+        {hasPreviewVideo ? (
+          <VideoView
+            player={player}
+            style={styles.thumbnail}
+            contentFit="cover"
+            nativeControls={false}
+            allowsFullscreen={false}
+            allowsPictureInPicture={false}
+            pointerEvents="none"
+          />
+        ) : (
+          <Image
+            source={{
+              uri: stream.thumbnail_url || stream.vendor.avatar_url || 'https://via.placeholder.com/400x600'
+            }}
+            style={styles.thumbnail}
+            resizeMode="cover"
+          />
+        )}
 
         {/* Dark overlay for readability */}
         <View style={styles.overlay} />
@@ -237,6 +265,7 @@ const LiveSalesScreen = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
+  const [heroImages, setHeroImages] = useState<any[]>([]);
   
   // Screen focus tracking
   const [isScreenFocused, setIsScreenFocused] = useState(true);
@@ -276,6 +305,18 @@ const LiveSalesScreen = () => {
       });
     } catch (error) {
       console.error('Error loading profile:', error);
+    }
+  };
+
+  // Load hero images for sign posts
+  const loadHeroImages = async () => {
+    try {
+      const { heroImagesAPI } = await import('../services/heroImagesAPI');
+      const images = await heroImagesAPI.getHeroImages('live_sales');
+      setHeroImages(images);
+    } catch (error) {
+      console.warn('Failed to load live sales hero images:', error);
+      setHeroImages([]);
     }
   };
 
@@ -347,6 +388,7 @@ const LiveSalesScreen = () => {
   const loadAllData = async (isRefresh = false) => {
     await Promise.all([
       loadProfile(),
+      loadHeroImages(),
       loadPluggedStreams(),
       loadMainStreams(isRefresh)
     ]);
@@ -558,6 +600,9 @@ const LiveSalesScreen = () => {
         <Text style={styles.headerTitle}>Live Sales</Text>
         
         <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.headerIcon} onPress={() => navigation.navigate('TopVendorLeaderboard')}>
+            <Ionicons name="trophy-outline" size={24} color="white" />
+          </TouchableOpacity>
           <TouchableOpacity style={styles.headerIcon}>
             <Ionicons name="search" size={24} color="white" />
           </TouchableOpacity>
@@ -576,35 +621,40 @@ const LiveSalesScreen = () => {
           { paddingBottom: insets.bottom + (isVendor ? 100 : 20) }
         ]}
         ListHeaderComponent={() => (
-          <Animated.View 
-            style={[
-              styles.pluggedVendorsSection,
-              {
-                height: pluggedSectionHeight.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, pluggedStreams.length > 0 ? 180 : 0],
-                }),
-                opacity: pluggedSectionHeight,
-              }
-            ]}
-          >
-            {pluggedStreams.length > 0 && (
-              <>
-                <View style={styles.pluggedHeader}>
-                  <Text style={styles.pluggedTitle}>Your Plugs</Text>
-                  <Text style={styles.pluggedSubtitle}>{pluggedStreams.length} vendors live</Text>
-                </View>
-                <FlatList
-                  data={pluggedStreams}
-                  renderItem={renderPluggedVendorItem}
-                  keyExtractor={(item) => `plugged-${item.id}`}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.pluggedList}
-                />
-              </>
+          <View>
+            {heroImages.length > 0 && (
+              <HeroMedia hero={heroImages[0]} height={160} />
             )}
-          </Animated.View>
+            <Animated.View 
+              style={[
+                styles.pluggedVendorsSection,
+                {
+                  height: pluggedSectionHeight.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, pluggedStreams.length > 0 ? 180 : 0],
+                  }),
+                  opacity: pluggedSectionHeight,
+                }
+              ]}
+            >
+              {pluggedStreams.length > 0 && (
+                <>
+                  <View style={styles.pluggedHeader}>
+                    <Text style={styles.pluggedTitle}>Your Plugs</Text>
+                    <Text style={styles.pluggedSubtitle}>{pluggedStreams.length} vendors live</Text>
+                  </View>
+                  <FlatList
+                    data={pluggedStreams}
+                    renderItem={renderPluggedVendorItem}
+                    keyExtractor={(item) => `plugged-${item.id}`}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.pluggedList}
+                  />
+                </>
+              )}
+            </Animated.View>
+          </View>
         )}
         refreshControl={
           <RefreshControl

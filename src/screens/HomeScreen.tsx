@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import PagerView from 'react-native-pager-view';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
 import React, { memo, useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   ActivityIndicator,
@@ -30,6 +30,7 @@ import { ScrollView as RNGHScrollView } from 'react-native-gesture-handler';
 import ProductCard from '../components/ProductCard';
 import VideoCard from '../components/VideoCard';
 import PostCard from '../components/PostCard';
+import { LiveStreamFeedCard } from '../components/LiveStreamFeedCard';
 import GiftSelectorModal from '../components/GiftSelectorModal';
 import LikesListModal from '../components/LikesListModal';
 import { postsAPI, Post, UnifiedFeedItem } from '../services/postsAPI';
@@ -41,6 +42,7 @@ import LocationSelector from '../components/LocationSelector';
 import FilterDropdown, { FilterOptions } from '../components/FilterDropdown';
 import ServiceVideoPlayer from '../components/ServiceVideoPlayer';
 import ProductVideoPlayer from '../components/ProductVideoPlayer';
+import { HeroMedia } from '../components/HeroMedia';
 import VideoProductCard from '../components/VideoProductCard';
 import { productsAPI, Product, ProductCategory } from '../services/productsAPI';
 
@@ -65,7 +67,7 @@ import {
 import { auctionsAPI, AuctionWithDetails } from '../services/auctionsAPI';
 import AuctionCard from '../components/AuctionCard';
 import { getActiveAuctions, getUpcomingAuctions } from '../utils/auctionMappers';
-import { liveSalesAPI, LiveStream, LiveStreamProduct, LiveStreamService } from '../services/liveSalesAPI';
+import { liveSalesAPI, LiveStream, LiveStreamProduct } from '../services/liveSalesAPI';
 import ProductsTab from '../components/ProductsTab';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -127,6 +129,7 @@ const FallbackCard = ({ error }: { error?: string }) => (
 
 const HomeScreen = () => {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
 
@@ -164,13 +167,6 @@ const HomeScreen = () => {
     title: string;
     price: number;
     image?: string;
-  }>>([]);
-  const [liveServices, setLiveServices] = useState<Array<{
-    streamId: string;
-    serviceId: string;
-    title: string;
-    price: number;
-    description?: string;
   }>>([]);
   const [heroIndex, setHeroIndex] = useState(0);
 
@@ -374,29 +370,12 @@ const HomeScreen = () => {
               }))
             ) || [];
 
-        const liveServiceItems =
-          liveStreams
-            ?.filter(stream => stream.status === 'live' && stream.stream_type === 'services' && stream.services?.length)
-            .slice(0, 5)
-            .flatMap(stream =>
-              (stream.services || []).slice(0, 1).map((s: LiveStreamService) => ({
-                streamId: stream.id,
-                serviceId: s.service_id,
-                title: s.service?.name || stream.title,
-                price: s.live_price,
-                description: s.service?.description,
-              }))
-            ) || [];
-
         // Use real API data - remove mock data dependency
         const finalLiveProducts = liveProductItems;
-        const finalLiveServices = liveServiceItems;
         setLiveProducts(finalLiveProducts);
-        setLiveServices(finalLiveServices);
       } catch (liveError) {
         console.warn('🔴 Error loading live sales, using empty arrays:', liveError);
         setLiveProducts([]);
-        setLiveServices([]);
       }
 
     } catch (error) {
@@ -1068,58 +1047,22 @@ const HomeScreen = () => {
     return filtered;
   }, [products, selectedCategory, categories, isScreenFocused, filters]);
 
-  // Map live services into video-like items for the services tab
-  const liveServiceVideos = useMemo(() => {
-    return (liveServices || []).map((item): VideoFeedItem => {
-      // Ensure all string fields are properly converted and never undefined
-      const safeItem: VideoFeedItem = {
-        id: `live-service-${String(item.serviceId || 'unknown')}`,
-        videoUri: undefined, // no video; will fall back to thumbnail
-        thumbnail: 'https://via.placeholder.com/600x900.png?text=Live+Service',
-        title: String(item.title || 'Live Service'),
-        description: String(item.description || 'Live service session'),
-        username: String((item as any).serviceProvider || 'Live Service'),
-        userId: String((item as any).userId || ''),
-        userAvatar: String((item as any).userAvatar || 'https://via.placeholder.com/40x40'),
-        price: typeof item.price === 'number' ? item.price : 0,
-        rating: typeof (item as any).rating === 'number' ? (item as any).rating : 0,
-        likes: '0',
-        comments: '0',
-        shares: '0',
-        isLiked: false,
-        isBookmarked: false,
-        location: (item as any).location || '',
-        serviceProvider: String((item as any).serviceProvider || 'Live Service'),
-        completedJobs: String((item as any).completedJobs || '0'),
-        // Add liveStreamId for navigation
-        liveStreamId: String(item.streamId || ''),
-      } as VideoFeedItem & { liveStreamId?: string };
-      return safeItem;
-    });
-  }, [liveServices]);
-
-  // Memoize filtered and sorted services including live service videos
+  // Memoize filtered services for the filter count banner
   const filteredServices = useMemo(() => {
     if (!isScreenFocused) {
       return [];
     }
-    
-    // Prepend live services to the feed
-    let merged = [...liveServiceVideos, ...videoFeedData];
-    
-    let filtered = merged.filter(service => {
+
+    let filtered = videoFeedData.filter(service => {
       // Price range (if price exists)
       if (filters.priceRange && typeof service.price === 'number') {
         const priceMatch = service.price >= filters.priceRange.min && service.price <= filters.priceRange.max;
         if (!priceMatch) return false;
       }
-      
-      // Location filter not applied (live services may not have location)
-      // Rating filter skipped for live services
-      
+
       return true;
     });
-    
+
     // Sorting
     switch (filters.sortBy) {
       case 'price_asc':
@@ -1144,9 +1087,9 @@ const HomeScreen = () => {
         // Services don't have created_at in VideoFeedItem consistently; keep order
         break;
     }
-    
+
     return filtered;
-  }, [videoFeedData, isScreenFocused, filters, liveServiceVideos]);
+  }, [videoFeedData, isScreenFocused, filters]);
   // Filter auctions (MVP: apply category filter only)
   const filteredActiveAuctions = useMemo(() => {
     if (selectedCategory === 'all') return activeAuctions;
@@ -1174,6 +1117,18 @@ const HomeScreen = () => {
     const targetPage = tab === 'services' ? 0 : 1;
     mainPagerRef.current?.setPage(targetPage);
   };
+
+  // Allow other screens (e.g. sign-post hero banners) to deep-link into a specific
+  // internal Home tab via navigation.navigate('Home', { initialTab: 'products' | 'services' })
+  useFocusEffect(
+    React.useCallback(() => {
+      const targetTab = route.params?.initialTab;
+      if (targetTab === 'products' || targetTab === 'services') {
+        handleTabPress(targetTab);
+        navigation.setParams({ initialTab: undefined });
+      }
+    }, [route.params?.initialTab])
+  );
 
   const toggleSidebar = () => {
     // Add haptic feedback for sidebar toggle
@@ -1674,58 +1629,6 @@ const HomeScreen = () => {
     );
   };
 
-  // Live services strip
-  const renderLiveServicesStrip = () => {
-    if (activeTab !== 'services') return null;
-    if (!liveServices || liveServices.length === 0) return null;
-
-    return (
-      <View style={{ paddingHorizontal: 12, paddingTop: insets.top + 10, paddingBottom: 8, backgroundColor: '#000' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Live Sales (Services)</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Ionicons name="radio" size={16} color="#E74C3C" style={{ marginRight: 4 }} />
-            <Text style={{ color: '#888', fontSize: 12 }}>{liveServices.length} live</Text>
-          </View>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {liveServices.map((item, idx) => (
-            <TouchableOpacity
-              key={`live-service-${item.streamId || 'unknown'}-${item.serviceId || 'unknown'}-${idx}`}
-              activeOpacity={0.9}
-              onPress={() => navigation.navigate('LiveStreamViewer', { streamId: item.streamId || '' })}
-              style={{
-                width: 220,
-                marginRight: 12,
-                backgroundColor: '#0d0d0d',
-                borderRadius: 12,
-                padding: 12,
-                borderWidth: 1,
-                borderColor: '#1f1f1f',
-              }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <View style={{ backgroundColor: '#E74C3C', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="radio" size={12} color="#FFF" style={{ marginRight: 4 }} />
-                  <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '700' }}>LIVE</Text>
-                </View>
-              </View>
-              <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }} numberOfLines={2}>{String(item.title || '')}</Text>
-              {item.description ? (
-                <Text style={{ color: '#888', fontSize: 12, marginTop: 4 }} numberOfLines={2}>{String(item.description)}</Text>
-              ) : null}
-              <Text style={{ color: '#8EE186', fontSize: 13, fontWeight: '700', marginTop: 6 }}>₣{(item.price || 0).toFixed(2)}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
-                <Text style={{ color: '#888', fontSize: 12 }}>Watch / Book</Text>
-                <Ionicons name="arrow-forward" size={14} color="#888" />
-              </View>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-    );
-  };
-
   // Horizontal product section renderer (for curated sections)
   const renderHorizontalProductSection = (title: string, subtitle: string, items: Product[]) => {
     if (!items || items.length === 0) return null;
@@ -1756,127 +1659,6 @@ const HomeScreen = () => {
 
   // Build For You items (products, video products, live products, auctions)
   type ForYouItem = { kind: 'product' | 'video' | 'auction' | 'live'; data: any };
-  const forYouItems = useMemo<ForYouItem[]>(() => {
-    const items: ForYouItem[] = [];
-
-    products.forEach(p => {
-      if (p.media_type === 'video' && p.primary_video_url) {
-        items.push({ kind: 'video', data: p });
-      } else {
-        items.push({ kind: 'product', data: p });
-      }
-    });
-
-    // Live products as video-style cards
-    liveProducts.forEach(lp => items.push({ kind: 'live', data: lp }));
-
-    // Auctions (active + upcoming)
-    const auctionsCombined = [...filteredActiveAuctions, ...filteredUpcomingAuctions];
-    auctionsCombined.forEach(a => items.push({ kind: 'auction', data: a }));
-
-    // Simple shuffle for recommendation feel
-    for (let i = items.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [items[i], items[j]] = [items[j], items[i]];
-    }
-
-    return items;
-  }, [products, liveProducts, filteredActiveAuctions, filteredUpcomingAuctions]);
-
-  // Render For You list (vertical, endless with periodic banners)
-  const renderForYouList = () => {
-    if (!forYouItems || forYouItems.length === 0) return null;
-
-    let bannerCycle = heroIndex;
-
-    const renderForYouCard = (item: ForYouItem, index: number) => {
-      switch (item.kind) {
-        case 'auction':
-          return (
-            <View key={`for-you-auction-${index}`} style={{ width: '100%', marginBottom: 16 }}>
-              <AuctionCard
-                auction={item.data}
-                variant="horizontal"
-                onPress={(a) => navigation.navigate('AuctionDetails', { auctionId: a.id })}
-              />
-            </View>
-          );
-        case 'live':
-          return (
-            <TouchableOpacity
-              key={`for-you-live-${index}`}
-              activeOpacity={0.9}
-              onPress={() => navigation.navigate('LiveStreamViewer', { streamId: item.data.streamId })}
-              style={{
-                width: '100%',
-                backgroundColor: '#0d0d0d',
-                borderRadius: 12,
-                overflow: 'hidden',
-                marginBottom: 16,
-                borderWidth: 1,
-                borderColor: '#1f1f1f',
-              }}
-            >
-              <View style={{ width: '100%', height: 200, backgroundColor: '#111' }}>
-                <Image
-                  source={{ uri: item.data.image || 'https://via.placeholder.com/400x250?text=Live+Product' }}
-                  style={{ width: '100%', height: '100%' }}
-                  resizeMode="cover"
-                />
-                <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: '#E74C3C', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="radio" size={14} color="#FFF" style={{ marginRight: 4 }} />
-                  <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '700' }}>LIVE</Text>
-                </View>
-              </View>
-              <View style={{ padding: 12, gap: 6 }}>
-                <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '700' }} numberOfLines={2}>{item.data.title}</Text>
-                <Text style={{ color: '#8EE186', fontSize: 14, fontWeight: '700' }}>₣{(item.data.price || 0).toFixed(2)}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text style={{ color: '#888', fontSize: 12 }}>Watch live</Text>
-                  <Ionicons name="arrow-forward" size={14} color="#888" />
-                </View>
-              </View>
-            </TouchableOpacity>
-          );
-        case 'video':
-          return (
-            <View key={`for-you-video-${index}`} style={{ width: '100%', marginBottom: 16 }}>
-              {renderVideoProductCard(item.data)}
-            </View>
-          );
-        case 'product':
-        default:
-          return (
-            <View key={`for-you-product-${index}`} style={{ width: '100%', marginBottom: 16 }}>
-              {renderEnhancedProductCard(item.data, false)}
-            </View>
-          );
-      }
-    };
-
-    const renderedItems: React.ReactNode[] = [];
-    forYouItems.forEach((item, idx) => {
-      renderedItems.push(renderForYouCard(item, idx));
-      if ((idx + 1) % 10 === 0 && heroImages.length > 0) {
-        renderedItems.push(
-          <View key={`for-you-banner-${idx}`} style={{ marginBottom: 16 }}>
-            {renderPeriodicHero(heroImages[bannerCycle % heroImages.length], bannerCycle)}
-          </View>
-        );
-        bannerCycle += 1;
-      }
-    });
-
-    setHeroIndex(bannerCycle % Math.max(heroImages.length, 1));
-
-    return (
-      <View style={{ marginTop: 12, paddingHorizontal: 12 }}>
-        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 8 }}>For You 🎯</Text>
-        {renderedItems}
-      </View>
-    );
-  };
-
   // More for You Section - random products from all
   const renderMoreForYouSection = () => {
     const randomProducts = getRandomProducts(products, 6);
@@ -2080,7 +1862,7 @@ const HomeScreen = () => {
     const loadHeroImages = async () => {
       try {
         const { heroImagesAPI } = await import('../services/heroImagesAPI');
-        const images = await heroImagesAPI.getHeroImages();
+        const images = await heroImagesAPI.getHeroImages('home');
         setHeroImages(images);
       } catch (error) {
         console.warn('Failed to load hero images, using local fallback');
@@ -2422,42 +2204,7 @@ const HomeScreen = () => {
   // Alibaba-style Component Functions
   const renderPeriodicHero = (hero: any, index: number) => {
     if (!hero || !hero.url) return null;
-
-    const heroSource = typeof hero.url === 'string' ? { uri: hero.url } : hero.url;
-    
-    return (
-      <View key={`hero-${index}`} style={{ marginHorizontal: 16, marginVertical: 20 }}>
-        <TouchableOpacity
-          style={{
-            height: 180,
-            borderRadius: 16,
-            overflow: 'hidden',
-            position: 'relative',
-          }}
-        >
-          <Image 
-            source={heroSource}
-            style={{ width: '100%', height: '100%' }} 
-            resizeMode="cover"
-          />
-          <View style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            backgroundColor: 'rgba(0,0,0,0.6)',
-            padding: 16,
-          }}>
-            <Text style={{ color: 'white', fontSize: 20, fontWeight: 'bold', marginBottom: 4 }}>
-              {hero.title || 'Discover Deals! 🛍️'}
-            </Text>
-            <Text style={{ color: '#E0E0E0', fontSize: 14 }}>
-              {hero.subtitle || 'Amazing products await you'}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      </View>
-    );
+    return <HeroMedia key={`hero-${index}`} hero={hero} height={180} />;
   };
 
   const renderDynamicSection = (title: string, subtitle: string, products: Product[], index: number) => {
@@ -3218,21 +2965,14 @@ const HomeScreen = () => {
   };
 
   const renderServicesTab = () => {
-    // Don't render content when screen is unfocused to prevent background processing
-    if (!isScreenFocused) {
-      return (
-        <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
-          <Text style={{ color: '#888', fontSize: 16 }}>Screen not focused</Text>
-        </View>
-      );
-    }
-
     // Filter out any feed items that lack renderable data — PagerView children
     // must be valid React elements; null/undefined children cause
     // 'Cannot read property 'props' of null' in react-native-pager-view.
     const feedItems = unifiedFeedData.length > 0
       ? unifiedFeedData.filter((item) =>
-          item.type === 'post' ? item.postData : item.serviceData
+          item.type === 'post' ? item.postData :
+          item.type === 'service' ? item.serviceData :
+          item.liveStreamData
         )
       : [];
 
@@ -3315,7 +3055,7 @@ const HomeScreen = () => {
           ref={videoPagerRef}
           style={{ flex: 1 }}
           orientation="vertical"
-          initialPage={0}
+          initialPage={currentVideoIndex}
           scrollEnabled={true}
           onPageSelected={(e) => {
             const newIndex = e.nativeEvent.position;
@@ -3388,14 +3128,16 @@ const HomeScreen = () => {
           }}
         >
           {feedItems.map((item, index) => {
-            // Check if item is a post or service
+            // Check item type for the feed
             const isPost = item.type === 'post';
-            const serviceItem = isPost ? undefined : (item as any).serviceData;
+            const isLiveStream = item.type === 'live_stream';
+            const serviceItem = isPost || isLiveStream ? undefined : (item as any).serviceData;
+            const liveStreamItem = isLiveStream ? (item as any).liveStreamData : undefined;
             const postItem = isPost ? (item as any).postData : undefined;
             
-            // For services tab, render all items (posts and services)
-            // For posts, use PostCard. For services, use VideoCard
-            const shouldRenderVideo = !isPost && Math.abs(index - currentVideoIndex) <= 1;
+            // For services tab, render all items (posts, services, and live streams)
+            // For posts, use PostCard. For services, use VideoCard. For live streams, use LiveStreamFeedCard.
+            const shouldRenderVideo = !isPost && !isLiveStream && Math.abs(index - currentVideoIndex) <= 1;
             const isCurrentVideo = index === currentVideoIndex;
             const shouldPlay = activeTab === 'services' && isPlaying && isCurrentVideo;
 
@@ -3534,6 +3276,24 @@ const HomeScreen = () => {
                       }}
                     />
                   </PageOuter>
+                );
+              }
+
+              // Render LiveStreamFeedCard for live streams
+              if (isLiveStream && liveStreamItem) {
+                return (
+                  <View
+                    key={`live-stream-${item.id}-${index}`}
+                    style={{ width: screenWidth, height: screenHeight, backgroundColor: '#000' }}
+                  >
+                    <LiveStreamFeedCard
+                      liveStream={liveStreamItem}
+                      isActive={index === currentVideoIndex}
+                      tabBarHeight={tabBarHeightFromContext}
+                      onPress={(streamId) => navigation.navigate('LiveStreamViewer', { streamId })}
+                      onVendorPress={(userId) => navigation.navigate('PublicProfile', { userId })}
+                    />
+                  </View>
                 );
               }
 
@@ -3707,34 +3467,10 @@ const HomeScreen = () => {
                       </View>
                     )}
 
-                    {/* LIVE indicator for live services */}
-                    {item.itemId?.startsWith('live-service-') && (
-                      <View style={{
-                        position: 'absolute',
-                        top: insets.top + 60,
-                        left: 16,
-                        backgroundColor: '#E74C3C',
-                        paddingHorizontal: 12,
-                        paddingVertical: 6,
-                        borderRadius: 12,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        zIndex: 1000
-                      }}>
-                        <Ionicons name="radio" size={14} color="#FFF" style={{ marginRight: 4 }} />
-                        <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>LIVE</Text>
-                      </View>
-                    )}
+
                   </>
                 ) : (
-                <TouchableWithoutFeedback onPress={() => {
-                  // If it's a live service, navigate to LiveStreamViewer
-                  if (item.id.startsWith('live-service-') && (item as any).liveStreamId) {
-                    navigation.navigate('LiveStreamViewer', { streamId: (item as any).liveStreamId });
-                  } else {
-                    handleVideoTap();
-                  }
-                }}>
+                <TouchableWithoutFeedback onPress={handleVideoTap}>
                   <View style={{
                     width: screenWidth,
                     height: screenHeight,
@@ -3771,24 +3507,7 @@ const HomeScreen = () => {
                       />
                     )}
                     
-                    {/* LIVE indicator for live services */}
-                    {item.itemId?.startsWith('live-service-') && (
-                      <View style={{
-                        position: 'absolute',
-                        top: insets.top + 60,
-                        left: 16,
-                        backgroundColor: '#E74C3C',
-                        paddingHorizontal: 12,
-                        paddingVertical: 6,
-                        borderRadius: 12,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        zIndex: 1000
-                      }}>
-                        <Ionicons name="radio" size={14} color="#FFF" style={{ marginRight: 4 }} />
-                        <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>LIVE</Text>
-                      </View>
-                    )}
+
                   </View>
                 </TouchableWithoutFeedback>
                 )}
@@ -4321,28 +4040,9 @@ const HomeScreen = () => {
       >
         <View key="services" style={{ flex: 1 }}>
           {activeTab === 'services' ? (
-            <>
-              {/* Invisible swipe area on left edge to go back to products.
-                  Starts below the Services header row so it doesn't cover
-                  the menu-outline icon (which sits at zIndex 2000). */}
-              <View style={{
-                position: 'absolute',
-                left: 0,
-                top: insets.top + 56,
-                bottom: 0,
-                width: 50,
-                zIndex: 1500,
-              }}>
-            <TouchableOpacity
-              style={{ flex: 1 }}
-              onPress={() => mainPagerRef.current?.setPage(1)}
-            >
-            </TouchableOpacity>
-          </View>
-          <View style={{ flex: 1 }}>
-            {renderServicesTab()}
-          </View>
-            </>
+            <View style={{ flex: 1 }}>
+              {renderServicesTab()}
+            </View>
           ) : (
             <View style={{ flex: 1, backgroundColor: '#000' }} />
           )}

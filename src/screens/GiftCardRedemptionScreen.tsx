@@ -1,9 +1,22 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NavigationProp } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuth } from '../contexts/AuthContext';
 import giftCardAPI, { RedeemGiftCardData } from '../services/giftCardAPI';
-import { supabase } from '../lib/supabase';
 
 type RootStackParamList = {
   Checkout: { giftCardApplied: number; transactionId: string };
@@ -11,11 +24,14 @@ type RootStackParamList = {
 
 const GiftCardRedemptionScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
-  
+  const insets = useSafeAreaInsets();
+  const { accessToken } = useAuth();
+
   const [cardNumber, setCardNumber] = useState('');
   const [pin, setPin] = useState('');
   const [orderTotal, setOrderTotal] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checkingBalance, setCheckingBalance] = useState(false);
   const [balance, setBalance] = useState<number | null>(null);
 
   const handleCheckBalance = async () => {
@@ -24,12 +40,14 @@ const GiftCardRedemptionScreen: React.FC = () => {
       return;
     }
 
+    setCheckingBalance(true);
     try {
       const result = await giftCardAPI.checkBalance({ cardNumber, pin });
       setBalance(result.balance);
-      Alert.alert('Card Balance', `Available balance: ${result.balance} FRETI`);
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to check balance');
+    } finally {
+      setCheckingBalance(false);
     }
   };
 
@@ -45,31 +63,26 @@ const GiftCardRedemptionScreen: React.FC = () => {
       return;
     }
 
+    if (!accessToken) {
+      Alert.alert('Authentication Error', 'Please log in to redeem gift cards');
+      return;
+    }
+
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
-
       const redeemData: RedeemGiftCardData = {
         cardNumber,
         pin,
         orderTotal: total,
       };
 
-      const result = await giftCardAPI.redeemGiftCard(token, redeemData);
-      
+      const result = await giftCardAPI.redeemGiftCard(accessToken, redeemData);
+
       Alert.alert(
         'Success! 🎉',
         `${result.appliedAmount} FRETI applied to your order`,
         [
-          { 
-            text: 'OK', 
-            onPress: () => navigation.goBack()
-          }
+          { text: 'OK', onPress: () => navigation.goBack() },
         ]
       );
     } catch (error: any) {
@@ -80,150 +93,260 @@ const GiftCardRedemptionScreen: React.FC = () => {
   };
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={[styles.container, { paddingTop: insets.top }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Redeem Gift Card</Text>
-        <Text style={styles.subtitle}>Apply your gift card at checkout</Text>
+        <TouchableOpacity style={styles.headerButton} onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Redeem Gift Card</Text>
+        <View style={styles.headerButton} />
       </View>
 
-      <View style={styles.form}>
-        <Text style={styles.label}>Card Number</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Enter 16-digit card number"
-          value={cardNumber}
-          onChangeText={setCardNumber}
-          keyboardType="numeric"
-          maxLength={16}
-        />
-
-        <Text style={styles.label}>PIN</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Enter 4-digit PIN"
-          value={pin}
-          onChangeText={setPin}
-          keyboardType="numeric"
-          maxLength={4}
-          secureTextEntry
-        />
-
-        <Text style={styles.label}>Order Total (FRETI)</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Enter order total"
-          value={orderTotal}
-          onChangeText={setOrderTotal}
-          keyboardType="numeric"
-        />
-
-        <TouchableOpacity 
-          style={styles.checkButton}
-          onPress={handleCheckBalance}
-        >
-          <Text style={styles.checkButtonText}>Check Balance</Text>
-        </TouchableOpacity>
-
-        {balance !== null && (
-          <View style={styles.balanceDisplay}>
-            <Text style={styles.balanceLabel}>Available Balance:</Text>
-            <Text style={styles.balanceValue}>{balance} FRETI</Text>
+      <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+        <View style={styles.introRow}>
+          <View style={styles.introIconWrap}>
+            <Ionicons name="gift" size={26} color="#F39C12" />
           </View>
-        )}
+          <Text style={styles.introText}>Apply your gift card balance at checkout</Text>
+        </View>
 
-        <TouchableOpacity 
-          style={styles.redeemButton}
+        <View style={styles.form}>
+          <Text style={styles.label}>Card Number</Text>
+          <View style={styles.inputWrap}>
+            <Ionicons name="card-outline" size={18} color="#666666" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Enter 16-digit card number"
+              placeholderTextColor="#666666"
+              value={cardNumber}
+              onChangeText={setCardNumber}
+              keyboardType="numeric"
+              maxLength={16}
+            />
+          </View>
+
+          <Text style={styles.label}>PIN</Text>
+          <View style={styles.inputWrap}>
+            <Ionicons name="key-outline" size={18} color="#666666" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Enter 4-digit PIN"
+              placeholderTextColor="#666666"
+              value={pin}
+              onChangeText={setPin}
+              keyboardType="numeric"
+              maxLength={4}
+              secureTextEntry
+            />
+          </View>
+
+          <Text style={styles.label}>Order Total (FRETI)</Text>
+          <View style={styles.inputWrap}>
+            <Ionicons name="cash-outline" size={18} color="#666666" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Enter order total"
+              placeholderTextColor="#666666"
+              value={orderTotal}
+              onChangeText={setOrderTotal}
+              keyboardType="numeric"
+            />
+          </View>
+
+          <TouchableOpacity
+            style={styles.checkButton}
+            onPress={handleCheckBalance}
+            disabled={checkingBalance}
+            activeOpacity={0.8}
+          >
+            {checkingBalance ? (
+              <ActivityIndicator color="#3498DB" size="small" />
+            ) : (
+              <>
+                <Ionicons name="search-outline" size={18} color="#3498DB" />
+                <Text style={styles.checkButtonText}>Check Balance</Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          {balance !== null && (
+            <View style={styles.balanceDisplay}>
+              <Ionicons name="checkmark-circle" size={22} color="#27AE60" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.balanceLabel}>Available Balance</Text>
+                <Text style={styles.balanceValue}>{balance.toLocaleString()} FRETI</Text>
+              </View>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <TouchableOpacity
+          style={[styles.redeemButton, loading && styles.redeemButtonDisabled]}
           onPress={handleRedeem}
           disabled={loading}
+          activeOpacity={0.85}
         >
           {loading ? (
-            <ActivityIndicator color="white" />
+            <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.redeemButtonText}>Redeem Gift Card</Text>
+            <>
+              <Ionicons name="gift-outline" size={20} color="#FFFFFF" />
+              <Text style={styles.redeemButtonText}>Redeem Gift Card</Text>
+            </>
           )}
         </TouchableOpacity>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#000000',
   },
   header: {
-    padding: 30,
-    backgroundColor: '#4CAF50',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1A1A',
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: 'white',
+  headerButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  subtitle: {
-    fontSize: 16,
-    color: 'white',
-    marginTop: 5,
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  introRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 8,
+  },
+  introIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: 'rgba(243, 156, 18, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(243, 156, 18, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  introText: {
+    flex: 1,
+    color: '#CCCCCC',
+    fontSize: 14,
+    lineHeight: 20,
   },
   form: {
     padding: 20,
   },
   label: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#999999',
     marginBottom: 8,
-    marginTop: 15,
+    marginTop: 16,
+  },
+  inputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#2A2A2A',
+    paddingHorizontal: 14,
+  },
+  inputIcon: {
+    marginRight: 8,
   },
   input: {
-    backgroundColor: 'white',
-    padding: 15,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#ddd',
-    fontSize: 16,
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 15,
+    paddingVertical: 14,
   },
   checkButton: {
-    backgroundColor: '#2196F3',
-    padding: 15,
-    borderRadius: 10,
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 20,
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(52, 152, 219, 0.4)',
+    paddingVertical: 14,
+    borderRadius: 14,
+    marginTop: 24,
   },
   checkButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
+    color: '#3498DB',
+    fontSize: 15,
+    fontWeight: '700',
   },
   balanceDisplay: {
-    backgroundColor: '#e8f5e9',
-    padding: 20,
-    borderRadius: 10,
-    marginTop: 15,
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(39, 174, 96, 0.3)',
+    padding: 16,
+    borderRadius: 14,
+    marginTop: 16,
   },
   balanceLabel: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 12,
+    color: '#999999',
   },
   balanceValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-    marginTop: 5,
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#27AE60',
+    marginTop: 2,
+  },
+  footer: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#1A1A1A',
   },
   redeemButton: {
-    backgroundColor: '#4CAF50',
-    padding: 15,
-    borderRadius: 10,
+    flexDirection: 'row',
+    backgroundColor: '#F39C12',
+    paddingVertical: 16,
+    borderRadius: 14,
     alignItems: 'center',
-    marginTop: 20,
+    justifyContent: 'center',
+    gap: 8,
+  },
+  redeemButtonDisabled: {
+    opacity: 0.7,
   },
   redeemButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
 });
 

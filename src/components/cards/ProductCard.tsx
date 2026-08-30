@@ -91,9 +91,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const getImageUri = () => {
     const isVideo = product.mediaType === 'video';
     if (isVideo) {
-      return product.image || `https://picsum.photos/400/400?random=${product.id}`;
+      return product.image;
     }
-    return product.image || product.mediaUrl || `https://picsum.photos/400/400?random=${product.id}`;
+    return product.image || product.mediaUrl;
   };
 
 
@@ -107,8 +107,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           source={{ uri: imageUri }}
           style={styles.mediaContent}
           resizeMode="cover"
-          fallbackSource={{ uri: 'https://via.placeholder.com/300x300.png?text=Product' }}
-          fallbackText="Product image"
         />
 
         {isVideo && (
@@ -203,10 +201,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           onPress={() => onVendorPress?.(product.vendor?.id)}
         >
           <SafeImage
-            source={{ uri: product.vendor?.avatar || `https://picsum.photos/30/30?random=${product.vendor?.id || 'default'}` }}
+            source={{ uri: product.vendor?.avatar }}
             style={styles.vendorAvatar}
-            fallbackSource={{ uri: 'https://via.placeholder.com/30x30.png?text=Vendor' }}
-            fallbackText="Vendor"
           />
           <View style={styles.vendorDetails}>
             <AdaptiveText style={styles.vendorName} baseFontSize={12} minFontSize={9} maxChars={18} numberOfLines={1}>{String(product.vendor?.name || 'Unknown Vendor')}</AdaptiveText>

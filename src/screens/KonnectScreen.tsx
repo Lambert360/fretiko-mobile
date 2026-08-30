@@ -286,7 +286,9 @@ const KonnectScreen = () => {
           chat.id === data.conversationId
             ? {
                 ...chat,
-                lastMessage: data.message?.content || data.message || chat.lastMessage,
+                lastMessage: data.message?.messageType
+                  ? data.message
+                  : (data.message?.content || data.message || chat.lastMessage),
                 // Only increment unread count if message is from another user
                 unreadCount: data.message?.senderId === user?.id
                   ? chat.unreadCount
@@ -433,6 +435,49 @@ const KonnectScreen = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFilter]);
+
+  // Format the last message preview for the conversation list,
+  // handling special message types like gift cards, media, invoices, etc.
+  const getLastMessagePreview = (chat: ChatItem): string => {
+    const lastMessage = chat.lastMessage as any;
+
+    if (!lastMessage) return 'No message';
+
+    // Handle real-time typing / string-only last messages
+    if (typeof lastMessage === 'string') {
+      return lastMessage || 'No message';
+    }
+
+    const messageType = lastMessage.messageType;
+    const content = lastMessage.content || '';
+
+    switch (messageType) {
+      case 'gift_card':
+        const amount = lastMessage.metadata?.giftCardData?.amount;
+        return amount ? `🎁 Gift Card • ${Number(amount).toLocaleString()} FRETI` : '🎁 Gift Card';
+      case 'image':
+        return content || '📷 Photo';
+      case 'audio':
+        return '🎙️ Voice message';
+      case 'video':
+        return '📹 Video';
+      case 'file':
+        return '📎 File';
+      case 'invoice':
+        return `🧾 Invoice${lastMessage.metadata?.invoiceData?.totalAmount ? ` • ${Number(lastMessage.metadata.invoiceData.totalAmount).toLocaleString()} FRETI` : ''}`;
+      case 'wishlist':
+        return '🎁 Wishlist';
+      case 'livestream':
+        return '🔴 Livestream';
+      case 'auction':
+        return '📦 Auction';
+      case 'system':
+        return content || 'System message';
+      case 'text':
+      default:
+        return content || 'No message';
+    }
+  };
 
   // Format timestamp to relative time (e.g., "2m ago", "1h ago", "Yesterday")
   const formatTimestamp = (timestamp: string): string => {
@@ -657,12 +702,8 @@ const KonnectScreen = () => {
   const filteredChats = React.useMemo(() => {
     return chats
       .filter(chat => {
-        // Search filter with null checks and object handling
-        const lastMessageText = typeof chat.lastMessage === 'string'
-          ? chat.lastMessage
-          : (chat.lastMessage && typeof chat.lastMessage === 'object' && 'content' in chat.lastMessage)
-            ? (chat.lastMessage as any).content || ''
-            : '';
+        // Search filter with gift card and media preview support
+        const lastMessageText = getLastMessagePreview(chat);
 
         const matchesSearch = (chat.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
           (lastMessageText || '').toLowerCase().includes(searchQuery.toLowerCase());
@@ -1134,12 +1175,7 @@ const KonnectScreen = () => {
                 </View>
               ) : (
                 <Text style={styles.lastMessage} numberOfLines={1}>
-                  {typeof item.lastMessage === 'string'
-                    ? item.lastMessage
-                    : (item.lastMessage && typeof item.lastMessage === 'object' && 'content' in item.lastMessage)
-                      ? (item.lastMessage as any).content || 'No message'
-                      : 'No message'
-                  }
+                  {getLastMessagePreview(item)}
                 </Text>
               )}
               {item.unreadCount > 0 && (

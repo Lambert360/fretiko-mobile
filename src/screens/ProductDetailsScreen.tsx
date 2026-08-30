@@ -299,7 +299,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
             >
               <ProductVideoPlayer
                 videoUri={activeMediaUrl!}
-                shouldAutoPlay={true}
+                shouldAutoPlay={!mediaViewerVisible}
                 containerWidth={screenWidth}
                 maxHeight={screenHeight * 0.4}
               />

@@ -35,6 +35,7 @@ export interface UserResult {
   trustScore?: number;
   isOnline?: boolean;
   mutualConnections?: number;
+  connectionStatus?: 'none' | 'pending' | 'accepted' | 'blocked';
 }
 
 export interface RiderResult {
@@ -176,28 +177,8 @@ export const searchAPI = {
       const response = await api.get(API_CONFIG.ENDPOINTS.SEARCH.DISCOVER);
       return response.data;
     } catch (error: any) {
-      console.error('❌ Failed to get discover content, using fallback data:', error);
-      // Return fallback data instead of throwing error
-      return {
-        trending: [
-          { query: 'iPhone 15', count: 1250, category: 'Electronics' },
-          { query: 'Web Development', count: 890, category: 'Services' },
-          { query: 'Fashion Lagos', count: 567, category: 'Fashion' },
-        ],
-        featured: {
-          products: [],
-          services: [],
-          people: [],
-          providers: [],
-        },
-        recommendations: {
-          products: [],
-          services: [],
-          people: [],
-          providers: [],
-        },
-        timestamp: new Date().toISOString(),
-      };
+      console.error('❌ Failed to get discover content:', error);
+      throw new Error(error.response?.data?.message || 'Failed to get discover content');
     }
   },
 

@@ -14,11 +14,13 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { liveSalesAPI, CreateStreamData, TimeSlot } from '../services/liveSalesAPI';
 import { productsAPI, Product } from '../services/productsAPI';
 import { servicesAPI, Service } from '../services/servicesAPI';
+import { postsAPI } from '../services/postsAPI';
 
 /**
  * Live Stream Setup Screen
@@ -50,6 +52,20 @@ const LiveStreamSetupScreen = () => {
   const [description, setDescription] = useState('');
   const [streamType, setStreamType] = useState<'products' | 'services'>('products');
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
+  const [previewVideoUri, setPreviewVideoUri] = useState<string | null>(null);
+
+  const previewPlayer = useVideoPlayer(previewVideoUri || '', player => {
+    player.muted = true;
+    player.loop = true;
+  });
+
+  useEffect(() => {
+    if (previewVideoUri) {
+      previewPlayer.play();
+    } else {
+      previewPlayer.pause();
+    }
+  }, [previewVideoUri, previewPlayer]);
 
   // Available items
   const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
@@ -99,17 +115,32 @@ const LiveStreamSetupScreen = () => {
     }
   };
 
-  // Select thumbnail image
-  const selectThumbnail = async () => {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
+  // Select a static cover image
+  const selectImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
       aspect: [16, 9],
-        quality: 0.8,
-      });
+      quality: 0.8,
+    });
 
-      if (!result.canceled && result.assets[0]) {
+    if (!result.canceled && result.assets[0]) {
       setThumbnailUri(result.assets[0].uri);
+      setPreviewVideoUri(null);
+    }
+  };
+
+  // Select a short video clip for the live discovery card
+  const selectVideo = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      allowsEditing: false,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setPreviewVideoUri(result.assets[0].uri);
+      setThumbnailUri(null);
     }
   };
 
@@ -262,11 +293,42 @@ const LiveStreamSetupScreen = () => {
     try {
       setCreating(true);
 
+      let thumbnailUrl: string | undefined;
+      if (thumbnailUri) {
+        const isRemote =
+          thumbnailUri.startsWith('http://') || thumbnailUri.startsWith('https://');
+        if (isRemote) {
+          thumbnailUrl = thumbnailUri;
+        } else {
+          const fileName =
+            thumbnailUri.split('/').pop() || `thumbnail-${Date.now()}.jpg`;
+          const fileType = fileName.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+          const uploadResult = await postsAPI.uploadMedia(thumbnailUri, fileType, fileName);
+          thumbnailUrl = uploadResult.url;
+        }
+      }
+
+      let previewVideoUrl: string | undefined;
+      if (previewVideoUri) {
+        const isRemote =
+          previewVideoUri.startsWith('http://') || previewVideoUri.startsWith('https://');
+        if (isRemote) {
+          previewVideoUrl = previewVideoUri;
+        } else {
+          const fileName =
+            previewVideoUri.split('/').pop() || `preview-video-${Date.now()}.mp4`;
+          const fileType = fileName.toLowerCase().endsWith('.mov') ? 'video/quicktime' : 'video/mp4';
+          const uploadResult = await postsAPI.uploadMedia(previewVideoUri, fileType, fileName);
+          previewVideoUrl = uploadResult.url;
+        }
+      }
+
       const streamData: CreateStreamData = {
         title: title.trim(),
         description: description.trim() || undefined,
         stream_type: streamType,
-        thumbnail_url: thumbnailUri || undefined,
+        thumbnail_url: thumbnailUrl,
+        preview_video_url: previewVideoUrl,
         products: streamType === 'products' ? selectedProducts.map(p => ({
           product_id: p.product_id,
           live_price: p.live_price,
@@ -398,19 +460,62 @@ const LiveStreamSetupScreen = () => {
           <Text style={styles.charCount}>{description.length}/500</Text>
         </View>
 
-        {/* Thumbnail */}
+        {/* Cover Preview */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Thumbnail (Optional)</Text>
-          <TouchableOpacity style={styles.thumbnailButton} onPress={selectThumbnail}>
+          <Text style={styles.sectionTitle}>Cover Preview (Optional)</Text>
+          <Text style={{ color: '#888', fontSize: 12, marginBottom: 10 }}>
+            Add an image or a short video clip that appears on the live discovery feed.
+          </Text>
+
+          <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+            <TouchableOpacity
+              style={[styles.thumbnailButton, { flex: 1 }]}
+              onPress={selectImage}
+            >
+              <View style={styles.thumbnailPlaceholder}>
+                <Ionicons name="image-outline" size={28} color="#666" />
+                <Text style={styles.thumbnailPlaceholderText}>Image</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.thumbnailButton, { flex: 1 }]}
+              onPress={selectVideo}
+            >
+              <View style={styles.thumbnailPlaceholder}>
+                <Ionicons name="videocam-outline" size={28} color="#666" />
+                <Text style={styles.thumbnailPlaceholderText}>Video</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={styles.thumbnailButton}
+            onPress={thumbnailUri ? selectImage : previewVideoUri ? selectVideo : selectImage}
+          >
             {thumbnailUri ? (
               <Image source={{ uri: thumbnailUri }} style={styles.thumbnailImage} />
+            ) : previewVideoUri ? (
+              <VideoView player={previewPlayer} style={styles.thumbnailImage} contentFit="cover" />
             ) : (
               <View style={styles.thumbnailPlaceholder}>
                 <Ionicons name="image-outline" size={40} color="#666" />
-                <Text style={styles.thumbnailPlaceholderText}>Tap to select thumbnail</Text>
+                <Text style={styles.thumbnailPlaceholderText}>Tap an option to select a cover</Text>
               </View>
             )}
           </TouchableOpacity>
+
+          {(thumbnailUri || previewVideoUri) && (
+            <TouchableOpacity
+              onPress={() => {
+                setThumbnailUri(null);
+                setPreviewVideoUri(null);
+              }}
+              style={{ marginTop: 10, alignSelf: 'flex-start' }}
+            >
+              <Text style={{ color: '#E74C3C', fontSize: 13 }}>Remove cover</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Time Slots Section - Only for Services */}
@@ -1229,6 +1334,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
+  },
+  modalContent: {
+    flex: 1,
+    backgroundColor: '#000',
   },
   saveButton: {
     backgroundColor: '#3498DB',

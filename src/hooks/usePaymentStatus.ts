@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { walletAPI, DepositResponse } from '../services/walletAPI';
 import { AppState, AppStateStatus } from 'react-native';
 
 interface UsePaymentStatusOptions {
   depositId: string;
+  enabled?: boolean; // Whether the hook should actively poll/fetch
   onSuccess?: (deposit: DepositResponse) => void;
   onFailure?: (deposit: DepositResponse) => void;
   pollInterval?: number; // milliseconds
@@ -27,6 +28,7 @@ interface UsePaymentStatusReturn {
 export const usePaymentStatus = (options: UsePaymentStatusOptions): UsePaymentStatusReturn => {
   const {
     depositId,
+    enabled = true,
     onSuccess,
     onFailure,
     pollInterval = 5000, // Poll every 5 seconds
@@ -42,8 +44,32 @@ export const usePaymentStatus = (options: UsePaymentStatusOptions): UsePaymentSt
   const pollAttemptsRef = useRef(0);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
+  const onSuccessRef = useRef(onSuccess);
+  const onFailureRef = useRef(onFailure);
+
+  useEffect(() => { onSuccessRef.current = onSuccess; }, [onSuccess]);
+  useEffect(() => { onFailureRef.current = onFailure; }, [onFailure]);
+
+  const depositRef = useRef<DepositResponse | null>(deposit);
+  useEffect(() => { depositRef.current = deposit; }, [deposit]);
+
+  // Stop polling
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearTimeout(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    setIsPolling(false);
+  }, []);
+
   // Fetch deposit status
-  const fetchDeposit = async () => {
+  const fetchDeposit = useCallback(async () => {
+    if (!enabled || !depositId) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     try {
       setError(null);
       const deposits = await walletAPI.getDeposits();
@@ -53,7 +79,7 @@ export const usePaymentStatus = (options: UsePaymentStatusOptions): UsePaymentSt
         setError('Deposit not found');
         stopPolling();
         // Trigger failure callback with error info
-        onFailure?.({
+        onFailureRef.current?.({
           id: depositId,
           status: 'failed',
           failureReason: 'Deposit record not found. Please check your transaction history.',
@@ -66,10 +92,10 @@ export const usePaymentStatus = (options: UsePaymentStatusOptions): UsePaymentSt
       // Check if payment is complete
       if (foundDeposit.status === 'completed') {
         stopPolling();
-        onSuccess?.(foundDeposit);
+        onSuccessRef.current?.(foundDeposit);
       } else if (foundDeposit.status === 'failed' || foundDeposit.status === 'cancelled') {
         stopPolling();
-        onFailure?.(foundDeposit);
+        onFailureRef.current?.(foundDeposit);
       }
     } catch (err: any) {
       console.error('Error fetching deposit status:', err);
@@ -77,11 +103,11 @@ export const usePaymentStatus = (options: UsePaymentStatusOptions): UsePaymentSt
     } finally {
       setLoading(false);
     }
-  };
+  }, [depositId, enabled, stopPolling]);
 
   // Start polling
-  const startPolling = () => {
-    if (isPolling) return;
+  const startPolling = useCallback(() => {
+    if (!enabled || !depositId || isPolling) return;
 
     setIsPolling(true);
     pollAttemptsRef.current = 0;
@@ -98,7 +124,7 @@ export const usePaymentStatus = (options: UsePaymentStatusOptions): UsePaymentSt
       await fetchDeposit();
 
       // Continue polling if deposit is still pending
-      if (deposit?.status === 'pending' || deposit?.status === 'processing') {
+      if (depositRef.current?.status === 'pending' || depositRef.current?.status === 'processing') {
         pollIntervalRef.current = setTimeout(poll, pollInterval);
       } else {
         stopPolling();
@@ -107,27 +133,20 @@ export const usePaymentStatus = (options: UsePaymentStatusOptions): UsePaymentSt
 
     // Start polling immediately
     poll();
-  };
-
-  // Stop polling
-  const stopPolling = () => {
-    if (pollIntervalRef.current) {
-      clearTimeout(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    setIsPolling(false);
-  };
+  }, [depositId, enabled, fetchDeposit, isPolling, maxPollAttempts, pollInterval, stopPolling]);
 
   // Refresh manually
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setLoading(true);
     await fetchDeposit();
-  };
+  }, [fetchDeposit]);
 
   // Initial fetch
   useEffect(() => {
-    fetchDeposit();
-  }, [depositId]);
+    if (enabled && depositId) {
+      fetchDeposit();
+    }
+  }, [enabled, depositId]);
 
   // Handle app state changes (resume polling when app comes to foreground)
   useEffect(() => {

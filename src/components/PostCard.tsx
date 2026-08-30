@@ -541,13 +541,27 @@ const PostCard: React.FC<PostCardProps> = ({
               </TouchableOpacity>
 
               {post.content && (
-                <View style={styles.descriptionBox}>
-                  <RichText
-                    style={styles.postText as any}
-                    numberOfLines={isDescriptionExpanded ? undefined : 3}
-                  >
-                    {post.content || ''}
-                  </RichText>
+                <View
+                  style={[
+                    styles.descriptionBox,
+                    isDescriptionExpanded && styles.descriptionBoxExpanded,
+                  ]}
+                >
+                  {isDescriptionExpanded ? (
+                    <ScrollView
+                      style={styles.descriptionScroll}
+                      nestedScrollEnabled
+                      showsVerticalScrollIndicator={true}
+                    >
+                      <RichText style={styles.postText as any}>
+                        {post.content || ''}
+                      </RichText>
+                    </ScrollView>
+                  ) : (
+                    <RichText style={styles.postText as any} numberOfLines={3}>
+                      {post.content || ''}
+                    </RichText>
+                  )}
 
                   {hasLongCaption && !isDescriptionExpanded && (
                     <TouchableOpacity
@@ -854,6 +868,12 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     maxWidth: '90%',
   },
+  descriptionBoxExpanded: {
+    maxHeight: 180,
+  },
+  descriptionScroll: {
+    maxHeight: 150,
+  },
   seeMoreButton: {
     marginTop: 4,
   },
@@ -885,8 +905,7 @@ const styles = StyleSheet.create({
   },
   reactionsContainer: {
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    borderRadius: 24,
+    backgroundColor: 'transparent',
     paddingVertical: 10,
     paddingHorizontal: 6,
     marginBottom: 4,

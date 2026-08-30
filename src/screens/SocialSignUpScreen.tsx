@@ -230,6 +230,20 @@ export const SocialSignUpScreen: React.FC<SocialSignUpScreenProps> = ({ navigati
             ))}
           </View>
 
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Referral Code (Optional)</Text>
+            <TextInput
+              style={styles.input}
+              value={formData.referralCode}
+              onChangeText={(value) => updateFormData('referralCode', value.toUpperCase())}
+              placeholder="Enter referral code"
+              placeholderTextColor="#666"
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={10}
+            />
+          </View>
+
           <Text style={styles.sectionTitle}>Choose your role</Text>
           <View style={styles.roleContainer}>
             {ROLE_OPTIONS.map((option) => (

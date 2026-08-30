@@ -20,7 +20,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { userAPI, UserStats } from '../services/userAPI';
 import { productsAPI, Product } from '../services/productsAPI';
 import { servicesAPI, VideoFeedItem } from '../services/servicesAPI';
-import { fileUploadService } from '../services/fileUploadService';
+import { postsAPI } from '../services/postsAPI';
 import * as ImagePicker from 'expo-image-picker';
 import ProductCard from '../components/ProductCard';
 import VideoCard from '../components/VideoCard';
@@ -70,7 +70,8 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
   const [loading, setLoading] = useState(!initialProfile);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<'products' | 'services'>('services');
-  const [isPlugged, setIsPlugged] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'none' | 'pending' | 'accepted' | 'blocked'>('none');
+  const [connectionId, setConnectionId] = useState<string | undefined>();
   const [products, setProducts] = useState<Product[]>([]);
   const [services, setServices] = useState<VideoFeedItem[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
@@ -140,6 +141,10 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
     loadUserContent();
   }, [activeTab]);
 
+  useEffect(() => {
+    loadConnectionStatus();
+  }, [userId]);
+
   const loadProfile = async () => {
     try {
       const profileData = await userAPI.getPublicProfile(userId);
@@ -165,29 +170,28 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
 
   const loadUserStats = async () => {
     try {
-      const userStats = await userAPI.getStats();
-      // Map the stats from userAPI and add defaults for missing fields
-      setStats({
-        plugsCount: userStats.plugsCount || 0,
-        clientsCount: userStats.clientsCount || 0,
-        connectionRequestsCount: userStats.connectionRequestsCount || 0,
-        totalOrders: 0, // TODO: Implement from orders API
-        totalRevenue: 0, // TODO: Implement from orders/wallet API
-        averageRating: 0, // TODO: Implement from reviews API
-        totalReviews: 0 // TODO: Implement from reviews API
-      });
+      const userStats = await userAPI.getPublicStats(userId);
+      setStats(userStats);
     } catch (error: any) {
-      console.error('Error loading user stats:', error);
+      console.error('Error loading public user stats:', error);
       // Don't show error for stats, just use defaults
       setStats({
         plugsCount: 0,
         clientsCount: 0,
-        connectionRequestsCount: 0,
-        totalOrders: 0,
-        totalRevenue: 0,
-        averageRating: 0,
-        totalReviews: 0
+        connectionRequestsCount: 0
       });
+    }
+  };
+
+  const loadConnectionStatus = async () => {
+    try {
+      const status = await userAPI.getConnectionStatus(userId);
+      setConnectionStatus(status.status as 'none' | 'pending' | 'accepted' | 'blocked');
+      setConnectionId(status.connectionId);
+    } catch (error) {
+      console.error('Error loading connection status:', error);
+      setConnectionStatus('none');
+      setConnectionId(undefined);
     }
   };
 
@@ -232,11 +236,47 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
     loadProfile();
     loadUserStats();
     loadUserContent();
+    loadConnectionStatus();
   };
 
-  const handlePlugToggle = () => {
-    setIsPlugged(!isPlugged);
-    // Here you would typically make an API call to follow/unfollow
+  const handleConnect = async () => {
+    try {
+      if (connectionStatus === 'none') {
+        const newConnection = await userAPI.sendConnectionRequest(userId);
+        setConnectionStatus('pending');
+        setConnectionId(newConnection.id);
+        Alert.alert('Success', 'Connection request sent!');
+      } else if (connectionStatus === 'pending') {
+        if (connectionId) {
+          await userAPI.deleteConnection(connectionId);
+          setConnectionStatus('none');
+          setConnectionId(undefined);
+          Alert.alert('Success', 'Connection request cancelled');
+        }
+      } else if (connectionStatus === 'accepted') {
+        if (connectionId) {
+          Alert.alert(
+            'Disconnect',
+            'Are you sure you want to unplug from this user?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Unplug',
+                style: 'destructive',
+                onPress: async () => {
+                  await userAPI.deleteConnection(connectionId);
+                  setConnectionStatus('none');
+                  setConnectionId(undefined);
+                  Alert.alert('Success', 'Successfully unplugged!');
+                }
+              }
+            ]
+          );
+        }
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update connection');
+    }
   };
 
   const handleButtonPress = (callback: () => void) => {
@@ -272,7 +312,10 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
           setUploadingBackground(true);
         }
 
-        const uploadedUrl = await fileUploadService.uploadImage(imageUri, `${type}s`);
+        const fileName = imageUri.split('/').pop() || `${type}-${Date.now()}.jpg`;
+        const fileType = fileName.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+        const uploadResult = await postsAPI.uploadMedia(imageUri, fileType, fileName);
+        const uploadedUrl = uploadResult.url;
 
         if (type === 'avatar') {
           await userAPI.updateProfile({ avatarUrl: uploadedUrl });
@@ -587,11 +630,24 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
 
               {!isOwnStore && (
                 <TouchableOpacity
-                  style={[styles.plugButton, isPlugged && styles.pluggedButton]}
-                  onPress={handlePlugToggle}
+                  style={[
+                    styles.plugButton,
+                    connectionStatus === 'accepted' && styles.pluggedButton,
+                    connectionStatus === 'pending' && styles.pendingButton,
+                    connectionStatus === 'blocked' && styles.blockedButton
+                  ]}
+                  onPress={handleConnect}
+                  disabled={connectionStatus === 'blocked'}
                 >
-                  <Text style={[styles.plugButtonText, isPlugged && styles.pluggedButtonText]}>
-                    {isPlugged ? 'Plugged' : 'Plug'}
+                  <Text style={[
+                    styles.plugButtonText,
+                    connectionStatus === 'accepted' && styles.pluggedButtonText,
+                    connectionStatus === 'pending' && styles.pendingButtonText,
+                    connectionStatus === 'blocked' && styles.blockedButtonText
+                  ]}>
+                    {connectionStatus === 'accepted' ? 'Plugged' :
+                     connectionStatus === 'pending' ? 'Pending' :
+                     connectionStatus === 'blocked' ? 'Blocked' : 'Plug'}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -672,10 +728,10 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
                 {services.map((item) => (
                   <View key={item.id} style={styles.gridItem}>
                     <GridMediaCard
-                      imageUrl={item.thumbnailUrl || item.videoUrl || 'https://via.placeholder.com/300x300/333/fff?text=No+Video'}
+                      imageUrl={item.thumbnail || item.videoUri || 'https://via.placeholder.com/300x300/333/fff?text=No+Video'}
                       onPress={() => navigation.navigate('ServiceDetails', { serviceId: item.id })}
                       onLongPress={() => handleLongPress(item.id, 'service')}
-                      isVideo={true}
+                      isVideo={!!item.videoUri}
                     />
                   </View>
                 ))}
@@ -1107,6 +1163,22 @@ const styles = StyleSheet.create({
   },
   pluggedButtonText: {
     color: '#007AFF',
+  },
+  pendingButton: {
+    backgroundColor: '#333',
+    borderWidth: 1,
+    borderColor: '#F1C40F',
+  },
+  pendingButtonText: {
+    color: '#F1C40F',
+  },
+  blockedButton: {
+    backgroundColor: '#222',
+    borderWidth: 1,
+    borderColor: '#E74C3C',
+  },
+  blockedButtonText: {
+    color: '#E74C3C',
   },
   tabsContainer: {
     flexDirection: 'row',

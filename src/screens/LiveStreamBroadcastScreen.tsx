@@ -29,7 +29,7 @@ import { productsAPI, Product } from '../services/productsAPI';
 import { workspaceAPI, WorkspaceOrder } from '../services/workspaceAPI';
 import { useAuctionSounds } from '../services/auctionSoundService';
 import * as ImagePicker from 'expo-image-picker';
-import GiftAnimation from '../components/GiftAnimation';
+import LottieGiftEffect from '../components/LottieGiftEffect';
 
 // Import basic Agora SDK
 import { createAgoraRtcEngine, ChannelProfileType, ClientRoleType, IRtcEngine, ChannelMediaOptions, RtcSurfaceView, RenderModeType, VideoCanvas } from 'react-native-agora';
@@ -94,10 +94,18 @@ const LiveStreamBroadcastScreen = () => {
   const [reactions, setReactions] = useState<LiveReaction[]>([]);
 
   // Gift animations
-  const [activeGiftAnimations, setActiveGiftAnimations] = useState<Array<{
+  const [activeGiftEffects, setActiveGiftEffects] = useState<Array<{
     id: string;
-    emoji: string;
-    quantity: number;
+    gift: {
+      id: string;
+      name: string;
+      emoji: string;
+      quantity: number;
+      display_lottie_url?: string;
+      lottie_config?: any;
+      sound_url?: string;
+      animation_type?: string;
+    };
   }>>([]);
 
   // Product/Service showcase
@@ -539,16 +547,27 @@ const LiveStreamBroadcastScreen = () => {
   const handleNewGift = (giftData: LiveGift | any) => {
     console.log('🎁 Gift received on host screen:', giftData);
 
-    const emoji = giftData?.giftEmoji || giftData?.emoji || '🎁';
     const quantity = giftData?.quantity || 1;
     const amount = giftData?.amount || giftData?.total_value || giftData?.total_amount || 0;
+    const meta = giftData?.giftMetadata || {};
 
     const animationId = `gift-${Date.now()}-${Math.random()}`;
-    setActiveGiftAnimations(prev => [...prev, { id: animationId, emoji, quantity }]);
-
-    setTimeout(() => {
-      setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animationId));
-    }, 5000);
+    setActiveGiftEffects((prev) => [
+      ...prev,
+      {
+        id: animationId,
+        gift: {
+          id: meta.id || giftData?.giftId || giftData?.gift_id || '',
+          name: meta.name || giftData?.giftName || giftData?.giftType || '',
+          emoji: meta.emoji || giftData?.giftEmoji || giftData?.emoji || '🎁',
+          quantity,
+          display_lottie_url: meta.display_lottie_url,
+          lottie_config: meta.lottie_config,
+          sound_url: meta.sound_url,
+          animation_type: meta.animation_type,
+        },
+      },
+    ]);
 
     setAnalytics(prev => ({
       ...prev,
@@ -1351,20 +1370,15 @@ const LiveStreamBroadcastScreen = () => {
       )}
 
       {/* Gift Animations - Render above video */}
-      {activeGiftAnimations.length > 0 && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9998, pointerEvents: 'none' }}>
-          {activeGiftAnimations.map((animation) => (
-            <GiftAnimation
-              key={animation.id}
-              emoji={animation.emoji}
-              quantity={animation.quantity}
-              onComplete={() => {
-                setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animation.id));
-              }}
-            />
-          ))}
-        </View>
-      )}
+      {activeGiftEffects.map((animation) => (
+        <LottieGiftEffect
+          key={animation.id}
+          gift={animation.gift}
+          onComplete={() => {
+            setActiveGiftEffects((prev) => prev.filter((anim) => anim.id !== animation.id));
+          }}
+        />
+      ))}
 
       {/* Stream Title Overlay */}
       <View style={styles.streamTitleOverlay}>

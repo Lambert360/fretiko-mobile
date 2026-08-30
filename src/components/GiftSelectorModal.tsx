@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { UserGift } from '../services/giftAPI';
+import GiftLottieThumbnail from './GiftLottieThumbnail';
 
 const { height: screenHeight } = Dimensions.get('window');
 
@@ -86,7 +87,13 @@ const GiftSelectorModal: React.FC<GiftSelectorModalProps> = ({
         onPress={() => handleSelectGift(item)}
         disabled={item.quantity === 0}
       >
-        <Text style={styles.giftEmoji}>{item.emoji}</Text>
+        {item.display_lottie_url ? (
+          <View style={styles.thumbnailContainer}>
+            <GiftLottieThumbnail source={item.display_lottie_url} size={56} />
+          </View>
+        ) : (
+          <Text style={styles.giftEmoji}>{item.emoji}</Text>
+        )}
         <Text style={styles.giftName} numberOfLines={1}>
           {item.gift_name}
         </Text>
@@ -275,6 +282,13 @@ const styles = StyleSheet.create({
   giftEmoji: {
     fontSize: 40,
     marginBottom: 8,
+  },
+  thumbnailContainer: {
+    marginBottom: 8,
+    width: 56,
+    height: 56,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   giftName: {
     color: '#FFF',

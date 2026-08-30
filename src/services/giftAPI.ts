@@ -11,6 +11,11 @@ export interface VirtualGift {
   credit_value: number;
   is_active: boolean;
   sort_order: number;
+  display_lottie_url?: string;
+  lottie_config?: any;
+  sound_id?: string;
+  sound_url?: string;
+  animation_type?: 'lottie_single' | 'lottie_combo' | 'lottie_overlap';
   created_at: string;
   updated_at: string;
 }
@@ -27,6 +32,11 @@ export interface UserGift {
   total_value: number;
   source: 'purchased' | 'received_call' | 'received_stream' | 'received_auction';
   received_at: string;
+  display_lottie_url?: string;
+  lottie_config?: any;
+  sound_id?: string;
+  sound_url?: string;
+  animation_type?: 'lottie_single' | 'lottie_combo' | 'lottie_overlap';
 }
 
 /**

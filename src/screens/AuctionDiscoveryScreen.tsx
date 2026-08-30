@@ -18,6 +18,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { auctionsAPI, auctionSocket, AuctionCategoryWithStats, AuctionWithDetails } from '../services/auctionsAPI';
 import { userAPI, UserProfile } from '../services/userAPI';
+import { HeroMedia } from '../components/HeroMedia';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -42,6 +43,7 @@ const AuctionDiscoveryScreen = () => {
   const [endingSoonAuctions, setEndingSoonAuctions] = useState<AuctionWithDetails[]>([]);
   const [upcomingAuctions, setUpcomingAuctions] = useState<AuctionWithDetails[]>([]);
   const [myAuctions, setMyAuctions] = useState<AuctionWithDetails[]>([]);
+  const [heroImages, setHeroImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -82,6 +84,18 @@ const AuctionDiscoveryScreen = () => {
       }))
     );
   }, [isAuctionDisplayable]);
+
+  // Load hero images for sign posts
+  const loadHeroImages = async () => {
+    try {
+      const { heroImagesAPI } = await import('../services/heroImagesAPI');
+      const images = await heroImagesAPI.getHeroImages('auctions');
+      setHeroImages(images);
+    } catch (error) {
+      console.warn('Failed to load auction hero images:', error);
+      setHeroImages([]);
+    }
+  };
 
   // Load auction data
   const loadAuctionData = async () => {
@@ -191,6 +205,7 @@ const AuctionDiscoveryScreen = () => {
 
   useEffect(() => {
     loadAuctionData();
+    loadHeroImages();
 
     // Connect to WebSocket for real-time updates
     auctionSocket.connect();
@@ -851,19 +866,23 @@ const AuctionDiscoveryScreen = () => {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Hero Section */}
-        <View style={styles.heroSection}>
-          <View style={styles.heroContent}>
-            <Text style={styles.heroTitle}>Discover Unique Auctions</Text>
-            <Text style={styles.heroSubtitle}>
-              Bid on exclusive items from verified sellers
-            </Text>
-          </View>
+        {/* Hero Section — admin-controlled sign post with fallback to static hero */}
+        {heroImages.length > 0 ? (
+          <HeroMedia hero={heroImages[0]} height={180} />
+        ) : (
+          <View style={styles.heroSection}>
+            <View style={styles.heroContent}>
+              <Text style={styles.heroTitle}>Discover Unique Auctions</Text>
+              <Text style={styles.heroSubtitle}>
+                Bid on exclusive items from verified sellers
+              </Text>
+            </View>
 
-          <View style={styles.heroIcon}>
-            <Ionicons name="hammer" size={48} color="#8E44AD" />
+            <View style={styles.heroIcon}>
+              <Ionicons name="hammer" size={48} color="#8E44AD" />
+            </View>
           </View>
-        </View>
+        )}
 
         {/* My Lots - Only for sellers */}
         {profile?.isSeller && myAuctions.length > 0 && (

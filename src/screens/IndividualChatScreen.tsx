@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { useNavigation, useRoute, useIsFocused } from '@react-navigation/native';
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
@@ -37,7 +38,7 @@ import { agoraCallService, AgoraCallConfig } from '../services/agoraCallService'
 import { RtcSurfaceView, RenderModeType } from 'react-native-agora';
 // Gift imports
 import { giftAPI, VirtualGift, UserGift } from '../services/giftAPI';
-import GiftAnimation from '../components/GiftAnimation';
+import LottieGiftEffect from '../components/LottieGiftEffect';
 import GiftSelectorModal from '../components/GiftSelectorModal';
 import { walletAPI } from '../services/walletAPI';
 import * as ImagePicker from 'expo-image-picker';
@@ -301,10 +302,18 @@ const IndividualChatScreen = () => {
   const [availableGifts, setAvailableGifts] = useState<UserGift[]>([]);
   const [loadingGifts, setLoadingGifts] = useState(false);
   // Gift animation states - array of active animations
-  const [activeGiftAnimations, setActiveGiftAnimations] = useState<Array<{
+  const [activeGiftEffects, setActiveGiftEffects] = useState<Array<{
     id: string;
-    emoji: string;
-    quantity: number;
+    gift: {
+      id: string;
+      name: string;
+      emoji: string;
+      quantity: number;
+      display_lottie_url?: string;
+      lottie_config?: any;
+      sound_url?: string;
+      animation_type?: string;
+    };
   }>>([]);
   
 
@@ -2489,30 +2498,28 @@ const IndividualChatScreen = () => {
           break;
 
         case 'gift_animation':
-          // Handle gift animation event - display floating emoji animation
+          // Handle gift animation event - display Lottie/sound effect
           console.log('🎁 Gift animation signal received:', data.data);
-          console.log('🎁 Current activeGiftAnimations count:', activeGiftAnimations.length);
-          if (data.data && data.data.giftEmoji && data.data.quantity) {
+          console.log('🎁 Current activeGiftEffects count:', activeGiftEffects.length);
+          if (data.data && data.data.quantity) {
+            const meta = data.data.giftMetadata || {};
             const animationId = `gift-${Date.now()}-${Math.random()}`;
-            console.log('🎁 Adding gift animation:', { id: animationId, emoji: data.data.giftEmoji, quantity: data.data.quantity });
-            setActiveGiftAnimations(prev => {
-              const updated = [...prev, {
+            setActiveGiftEffects((prev) => [
+              ...prev,
+              {
                 id: animationId,
-                emoji: data.data.giftEmoji,
-                quantity: data.data.quantity || 1,
-              }];
-              console.log('🎁 Updated activeGiftAnimations count:', updated.length);
-              return updated;
-            });
-            
-            // Remove animation after it completes (component will call this)
-            setTimeout(() => {
-              setActiveGiftAnimations(prev => {
-                const filtered = prev.filter(anim => anim.id !== animationId);
-                console.log('🎁 Removed animation, remaining count:', filtered.length);
-                return filtered;
-              });
-            }, 5000); // Clean up after 5 seconds (longer to ensure visibility)
+                gift: {
+                  id: meta.id || data.data.giftId || data.data.gift_id || '',
+                  name: meta.name || data.data.giftName || '',
+                  emoji: meta.emoji || data.data.giftEmoji || '🎁',
+                  quantity: data.data.quantity || 1,
+                  display_lottie_url: meta.display_lottie_url,
+                  lottie_config: meta.lottie_config,
+                  sound_url: meta.sound_url,
+                  animation_type: meta.animation_type,
+                },
+              },
+            ]);
           } else {
             console.warn('🎁 Gift animation signal missing required data:', data.data);
           }
@@ -3178,34 +3185,49 @@ const IndividualChatScreen = () => {
         session_id: activeCallSessionId,
       });
 
+      const gift = availableGifts.find((g) => g.gift_id === giftId);
+
       // Send real-time notification via WebSocket
       if (realtimeAPI.isConnected() && activeCallSessionId) {
         realtimeAPI.sendCallSignal(activeCallSessionId, 'gift_sent', {
           giftId,
           quantity,
           senderId: userProfile?.id,
+          giftMetadata: gift
+            ? {
+                id: gift.gift_id,
+                name: gift.gift_name,
+                emoji: gift.emoji,
+                display_lottie_url: gift.display_lottie_url,
+                lottie_config: gift.lottie_config,
+                sound_url: gift.sound_url,
+                animation_type: gift.animation_type,
+              }
+            : undefined,
         });
       }
 
       setShowGiftModal(false);
-      
+
       // Trigger local animation immediately (don't wait for websocket confirmation)
-      // The backend will also emit the event, so both users see it
       const animationId = `gift-local-${Date.now()}-${Math.random()}`;
-      
-      // Get gift emoji from available gifts
-      const gift = availableGifts.find(g => g.gift_id === giftId);
-      if (gift && gift.emoji) {
-        setActiveGiftAnimations(prev => [...prev, {
-          id: animationId,
-          emoji: gift.emoji,
-          quantity: quantity,
-        }]);
-        
-        // Remove animation after it completes
-        setTimeout(() => {
-          setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animationId));
-        }, 3000);
+      if (gift) {
+        setActiveGiftEffects((prev) => [
+          ...prev,
+          {
+            id: animationId,
+            gift: {
+              id: gift.gift_id,
+              name: gift.gift_name,
+              emoji: gift.emoji,
+              quantity,
+              display_lottie_url: gift.display_lottie_url,
+              lottie_config: gift.lottie_config,
+              sound_url: gift.sound_url,
+              animation_type: gift.animation_type,
+            },
+          },
+        ]);
       }
       
       // Don't show alert - animation handles the visual feedback
@@ -3366,7 +3388,9 @@ const IndividualChatScreen = () => {
       console.log('🎤 Starting audio recording...');
 
       // Check if running in Expo Go on iOS (voice recording not supported)
-      const isExpoGo = __DEV__ && Platform.OS === 'ios';
+      const isExpoGo =
+        Platform.OS === 'ios' &&
+        Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
       if (isExpoGo) {
         Alert.alert(
@@ -5325,7 +5349,9 @@ const IndividualChatScreen = () => {
     }
 
     // 🎴 Render gift card messages
-    if ((item as any).messageType === 'gift_card' && item.metadata?.giftCardData) {
+    // Note: backend stores gift card fields flat on `metadata` (not nested under
+    // `metadata.giftCardData`), so check for the flat shape too.
+    if ((item as any).messageType === 'gift_card' && (item.metadata?.giftCardData || item.metadata?.giftCardId)) {
       return wrapWithReplyGesture(
         item,
         <GiftCardMessage
@@ -6367,25 +6393,22 @@ const IndividualChatScreen = () => {
         style={styles.inCallOverlay}
       >
         {/* Gift Animations - Render above video */}
-        {activeGiftAnimations.length > 0 && (
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, pointerEvents: 'none' }}>
-            {activeGiftAnimations.map((animation) => {
-              console.log('🎁 Rendering GiftAnimation:', animation.id, animation.emoji);
-              return (
-                <GiftAnimation
-                  key={animation.id}
-                  emoji={animation.emoji}
-                  quantity={animation.quantity}
-                  onComplete={() => {
-                    // Animation completed - remove from active animations
-                    console.log('🎁 GiftAnimation onComplete called for:', animation.id);
-                    setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animation.id));
-                  }}
-                />
-              );
-            })}
-          </View>
-        )}
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, pointerEvents: 'none' }}>
+          {activeGiftEffects.map((animation) => {
+            console.log('🎁 Rendering LottieGiftEffect:', animation.id, animation.gift.emoji);
+            return (
+              <LottieGiftEffect
+                key={animation.id}
+                gift={animation.gift}
+                onComplete={() => {
+                  // Animation completed - remove from active effects
+                  console.log('🎁 LottieGiftEffect onComplete called for:', animation.id);
+                  setActiveGiftEffects((prev) => prev.filter((anim) => anim.id !== animation.id));
+                }}
+              />
+            );
+          })}
+        </View>
 
         {/* Full Screen Primary Video - Remote (Default) or Local (When Swapped) */}
         {/* Always show video UI when in video call - keep containers visible */}

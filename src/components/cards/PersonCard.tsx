@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AdaptiveText from '../AdaptiveText';
@@ -25,13 +25,15 @@ export interface PersonData {
   posts?: number;
   following?: number;
   engagementRate?: number;
+  // Connection state
+  connectionStatus?: 'none' | 'pending' | 'accepted' | 'blocked';
 }
 
 interface PersonCardProps {
   person: PersonData;
   variant?: 'featured' | 'compact' | 'trending';
   onPress?: (person: PersonData) => void;
-  onConnect?: (person: PersonData) => void;
+  onConnect?: (person: PersonData) => Promise<void> | void;
 }
 
 export const PersonCard: React.FC<PersonCardProps> = ({
@@ -44,6 +46,34 @@ export const PersonCard: React.FC<PersonCardProps> = ({
   if (!person) {
     return null;
   }
+
+  const [connectionStatus, setConnectionStatus] = useState(person.connectionStatus || 'none');
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    setConnectionStatus(person.connectionStatus || 'none');
+  }, [person.id, person.connectionStatus]);
+
+  const connectLabel = connectionStatus === 'accepted'
+    ? 'Plugged'
+    : connectionStatus === 'pending'
+      ? 'Pending'
+      : 'Plug';
+  const isConnectable = connectionStatus === 'none' && !isLoading;
+
+  const handleConnectPress = async () => {
+    if (!onConnect || !isConnectable) return;
+    setIsLoading(true);
+    try {
+      await onConnect(person);
+      setConnectionStatus('pending');
+    } catch (error) {
+      // Parent handles the error
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const getMediaHeight = () => {
     if (!person?.mediaUrl) return 200;
     
@@ -60,7 +90,7 @@ export const PersonCard: React.FC<PersonCardProps> = ({
       return (
         <Image 
           source={{ 
-            uri: person?.avatar || `https://picsum.photos/400/400?random=${person?.id || 'default'}` 
+            uri: person?.avatar 
           }} 
           style={[styles.mediaContent, { height: getMediaHeight() }]} 
         />
@@ -154,9 +184,10 @@ export const PersonCard: React.FC<PersonCardProps> = ({
         {onConnect && (
           <TouchableOpacity 
             style={styles.connectButton} 
-            onPress={() => onConnect(person)}
+            onPress={handleConnectPress}
+            disabled={!isConnectable}
           >
-            <Text style={styles.connectButtonText}>Connect</Text>
+            <Text style={styles.connectButtonText}>{connectLabel}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -167,7 +198,7 @@ export const PersonCard: React.FC<PersonCardProps> = ({
     <TouchableOpacity style={styles.compactCard} onPress={() => onPress?.(person)}>
       <Image 
         source={{ 
-          uri: person?.avatar || `https://picsum.photos/60/60?random=${person?.id || 'default'}` 
+          uri: person?.avatar 
         }} 
         style={styles.compactAvatar} 
       />
@@ -188,9 +219,10 @@ export const PersonCard: React.FC<PersonCardProps> = ({
       {!!onConnect && (
         <TouchableOpacity 
           style={styles.compactConnectButton} 
-          onPress={() => onConnect(person)}
+          onPress={handleConnectPress}
+          disabled={!isConnectable}
         >
-          <Text style={styles.compactConnectText}>Connect</Text>
+          <Text style={styles.compactConnectText}>{connectLabel}</Text>
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -200,7 +232,7 @@ export const PersonCard: React.FC<PersonCardProps> = ({
     <TouchableOpacity style={styles.trendingCard} onPress={() => onPress?.(person)}>
       <Image 
         source={{ 
-          uri: person?.avatar || `https://picsum.photos/40/40?random=${person?.id || 'default'}` 
+          uri: person?.avatar 
         }} 
         style={styles.trendingAvatar} 
       />

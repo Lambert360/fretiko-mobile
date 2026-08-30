@@ -19,6 +19,7 @@ import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ProductCard as ModernProductCard } from './cards/ProductCard';
 import ProductVideoPlayer from './ProductVideoPlayer';
+import { HeroMedia } from './HeroMedia';
 import VideoProductCard from './VideoProductCard';
 import AuctionCard from './AuctionCard';
 import { Product, ProductCategory, productsAPI } from '../services/productsAPI';
@@ -104,13 +105,14 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
   const scrollYRef = useRef(0);
   const lastScrollYRef = useRef(0);
   const scrollViewRef = useRef<ScrollView>(null);
+  const hasLoadedRef = useRef(false);
 
   // Load hero images
   useEffect(() => {
     const loadHeroImages = async () => {
       try {
         const { heroImagesAPI } = await import('../services/heroImagesAPI');
-        const images = await heroImagesAPI.getHeroImages();
+        const images = await heroImagesAPI.getHeroImages('products');
         setHeroImages(images);
       } catch {
         setHeroImages([
@@ -134,34 +136,38 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
         import('../services/auctionsAPI')
       ]);
 
-      const [productsData, categoriesData, trendingData, seasonalData] = await Promise.all([
-        productsAPI.getRanked({ limit: PRODUCTS_PAGE_SIZE, offset: 0 }),
-        productsAPI.getCategories(),
-        productsAPI.getTrending({ limit: 12 }),
-        productsAPI.getSeasonal({ limit: 12 }),
-      ]);
-
+      // Main product feed — the user waits for this; it now fails softly on timeout
+      const productsData = await productsAPI.getRanked({ limit: PRODUCTS_PAGE_SIZE, offset: 0 });
       const initialProducts = productsData || [];
       setProducts(initialProducts);
-      setCategories(categoriesData || []);
-      setTrendingProducts(trendingData || []);
-      setSeasonalProducts(seasonalData || []);
       setProductsOffset(initialProducts.length);
       setHasMoreProducts(initialProducts.length >= PRODUCTS_PAGE_SIZE);
       setLoadingMoreProducts(false);
 
-      // Load auctions
-      try {
-        const [activeResp, upcomingResp] = await Promise.all([
-          auctionsAPI.getAuctions({ status: 'active', limit: 5 }),
-          auctionsAPI.getAuctions({ status: 'scheduled', limit: 5 }),
-        ]);
-        setActiveAuctions(activeResp.auctions || []);
-        setUpcomingAuctions(upcomingResp.auctions || []);
-      } catch {
-        setActiveAuctions([]);
-        setUpcomingAuctions([]);
-      }
+      // Everything below is non-critical; load it in the background.
+      // A slow/timeout in any of these will no longer block the product grid.
+      productsAPI.getCategories()
+        .then(categoriesData => setCategories(categoriesData || []))
+        .catch(error => {
+          console.warn('Product categories load failed, continuing without filters:', error);
+          setCategories([]);
+        });
+
+      productsAPI.getTrending({ limit: 12 })
+        .then(data => setTrendingProducts(data || []))
+        .catch(() => setTrendingProducts([]));
+
+      productsAPI.getSeasonal({ limit: 12 })
+        .then(data => setSeasonalProducts(data || []))
+        .catch(() => setSeasonalProducts([]));
+
+      auctionsAPI.getAuctions({ status: 'active', limit: 5 })
+        .then(activeResp => setActiveAuctions(activeResp.auctions || []))
+        .catch(() => setActiveAuctions([]));
+
+      auctionsAPI.getAuctions({ status: 'scheduled', limit: 5 })
+        .then(upcomingResp => setUpcomingAuctions(upcomingResp.auctions || []))
+        .catch(() => setUpcomingAuctions([]));
     } catch (error) {
       console.error('Error loading products:', error);
       setErrorState('Failed to load products');
@@ -172,7 +178,8 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
   }, []);
 
   useEffect(() => {
-    if (isScreenFocused) {
+    if (isScreenFocused && !hasLoadedRef.current) {
+      hasLoadedRef.current = true;
       loadData();
     }
   }, [isScreenFocused, loadData]);
@@ -203,8 +210,6 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
 
   // Filtered products - FIXED: stable dependencies
   const filteredProducts = useMemo(() => {
-    if (!isScreenFocused) return [];
-
     let filtered = products.filter(product => {
       // Category filter
       if (selectedCategory !== 'all' && product.category_id !== selectedCategory) {
@@ -246,7 +251,7 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
     }
 
     return filtered;
-  }, [products, selectedCategory, productFilters, isScreenFocused]);
+  }, [products, selectedCategory, productFilters]);
 
   // Active filter count
   const activeFilterCount = useMemo(() => {
@@ -518,41 +523,7 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
 
   const renderHeroBanner = (hero: any, index: number) => {
     if (!hero || !hero.url) return null;
-
-    const heroSource = typeof hero.url === 'string' ? { uri: hero.url } : hero.url;
-
-    return (
-      <View style={{ marginHorizontal: 16, marginVertical: 12 }}>
-        <TouchableOpacity
-          style={{
-            height: 180,
-            borderRadius: 16,
-            overflow: 'hidden',
-          }}
-        >
-          <Image
-            source={heroSource}
-            style={{ width: '100%', height: '100%' }}
-            resizeMode="cover"
-          />
-          <View style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            backgroundColor: 'rgba(0,0,0,0.6)',
-            padding: 16,
-          }}>
-            <Text style={{ color: 'white', fontSize: 20, fontWeight: 'bold' }}>
-              {hero.title || 'Discover Deals! 🛍️'}
-            </Text>
-            <Text style={{ color: '#E0E0E0', fontSize: 14 }}>
-              {hero.subtitle || 'Amazing products await you'}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      </View>
-    );
+    return <HeroMedia key={`hero-${index}`} hero={hero} height={180} />;
   };
 
   const renderHorizontalSection = (title: string, subtitle: string, items: Product[]) => {
@@ -730,14 +701,6 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
   );
 
   // Main render
-  if (!isScreenFocused) {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
-        <Text style={{ color: '#888' }}>Screen not focused</Text>
-      </View>
-    );
-  }
-
   if (loading) {
     return renderLoadingSkeleton();
   }

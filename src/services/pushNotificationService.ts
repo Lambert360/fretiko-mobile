@@ -8,6 +8,7 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { notificationsAPI } from './notificationsAPI';
 import { realtimeAPI } from './realtimeAPI';
+import { callkeepService } from './callkeepService';
 
 // Configure how notifications should be handled when app is in foreground
 Notifications.setNotificationHandler({
@@ -23,8 +24,22 @@ Notifications.setNotificationHandler({
 
         return {
           shouldShowAlert: !isRealtimeConnected,
-          shouldPlaySound: !isRealtimeConnected,
+          shouldPlaySound: true,
           shouldSetBadge: true,
+        };
+      }
+
+      if (type === 'call_ended') {
+        if (data?.callSessionId) {
+          callkeepService.endCallkeepCall(data.callSessionId);
+          callkeepService.setActiveCall(null);
+          Notifications.dismissAllNotificationsAsync();
+          Notifications.setBadgeCountAsync(0);
+        }
+        return {
+          shouldShowAlert: false,
+          shouldPlaySound: false,
+          shouldSetBadge: false,
         };
       }
 

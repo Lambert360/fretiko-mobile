@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   Dimensions,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -17,6 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { liveSalesAPI } from '../services/liveSalesAPI';
 import { checkoutAPI } from '../services/checkoutAPI';
 import { walletAPI } from '../services/walletAPI';
+import giftCardAPI from '../services/giftCardAPI';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -80,6 +82,16 @@ const LiveMiniCheckoutScreen = () => {
   });
   const [useEscrow, setUseEscrow] = useState(true); // Default to escrow for safety
   const [escrowBypass, setEscrowBypass] = useState<any>(null);
+
+  // Gift card state
+  const [showGiftCardForm, setShowGiftCardForm] = useState(false);
+  const [giftCardNumber, setGiftCardNumber] = useState('');
+  const [giftCardPin, setGiftCardPin] = useState('');
+  const [giftCardApplying, setGiftCardApplying] = useState(false);
+  const [giftCardApplied, setGiftCardApplied] = useState(false);
+  const [giftCardBalance, setGiftCardBalance] = useState(0);
+  const [giftCardError, setGiftCardError] = useState<string | null>(null);
+  const [giftCardCustomAmount, setGiftCardCustomAmount] = useState('');
 
   // Load payment methods
   const loadPaymentMethods = async () => {
@@ -190,12 +202,96 @@ const LiveMiniCheckoutScreen = () => {
     setSelectedPayment(method);
   };
 
+  // Maximum amount of the gift card that could be applied, given the current total
+  const computeMaxGiftCardApplicable = (balance: number) => {
+    return Math.max(0, Math.min(balance, orderSummary.total));
+  };
+
+  // Amount of the gift card that will actually be applied - custom amount if valid,
+  // otherwise the maximum applicable amount.
+  const getGiftCardDiscount = () => {
+    if (!giftCardApplied) return 0;
+    const maxApplicable = computeMaxGiftCardApplicable(giftCardBalance);
+    const customAmount = parseFloat(giftCardCustomAmount);
+    if (!isNaN(customAmount) && customAmount > 0) {
+      return Math.min(customAmount, maxApplicable);
+    }
+    return maxApplicable;
+  };
+
+  const calculateFinalTotal = () => {
+    return Math.max(0, orderSummary.total - getGiftCardDiscount());
+  };
+
+  const handleApplyGiftCard = async () => {
+    const cardNumber = giftCardNumber.trim();
+    const pin = giftCardPin.trim();
+
+    if (!cardNumber || !pin) {
+      setGiftCardError('Please enter both card number and PIN');
+      return;
+    }
+
+    setGiftCardApplying(true);
+    setGiftCardError(null);
+    try {
+      const result = await giftCardAPI.checkBalance({ cardNumber, pin });
+
+      if (!result.balance || result.balance <= 0) {
+        setGiftCardError('This gift card has no remaining balance');
+        return;
+      }
+      if (result.status === 'expired') {
+        setGiftCardError('This gift card has expired');
+        return;
+      }
+      if (result.status === 'blocked') {
+        setGiftCardError('This gift card is blocked');
+        return;
+      }
+
+      setGiftCardBalance(result.balance);
+      setGiftCardApplied(true);
+      const maxApplicable = computeMaxGiftCardApplicable(result.balance);
+      setGiftCardCustomAmount(maxApplicable > 0 ? maxApplicable.toFixed(2) : '');
+    } catch (error: any) {
+      setGiftCardError(error.message || 'Invalid card number or PIN');
+    } finally {
+      setGiftCardApplying(false);
+    }
+  };
+
+  const handleGiftCardAmountBlur = () => {
+    const maxApplicable = computeMaxGiftCardApplicable(giftCardBalance);
+    const parsed = parseFloat(giftCardCustomAmount);
+    if (isNaN(parsed) || parsed <= 0) {
+      setGiftCardCustomAmount(maxApplicable > 0 ? maxApplicable.toFixed(2) : '');
+      return;
+    }
+    if (parsed > maxApplicable) {
+      setGiftCardCustomAmount(maxApplicable.toFixed(2));
+    }
+  };
+
+  const handleRemoveGiftCard = () => {
+    setGiftCardApplied(false);
+    setGiftCardBalance(0);
+    setGiftCardNumber('');
+    setGiftCardPin('');
+    setGiftCardError(null);
+    setGiftCardCustomAmount('');
+  };
+
   // Process payment
   const processPayment = async () => {
     if (!selectedPayment || !item) return;
     
     setLoading(true);
     try {
+      const giftCard = giftCardApplied
+        ? { cardNumber: giftCardNumber.trim(), pin: giftCardPin.trim(), amount: getGiftCardDiscount() }
+        : undefined;
+
       if (item.type === 'product') {
         const purchaseData = {
           stream_id: streamId,
@@ -206,6 +302,7 @@ const LiveMiniCheckoutScreen = () => {
           delivery_address: deliveryAddress,
           payment_method: selectedPayment.id,
           use_escrow: useEscrow,
+          giftCard,
         };
         
         await liveSalesAPI.purchaseProduct(purchaseData);
@@ -219,6 +316,7 @@ const LiveMiniCheckoutScreen = () => {
           continue_watching: false,
           payment_method: selectedPayment.id,
           use_escrow: useEscrow,
+          giftCard,
         };
 
         // For now, we'll use purchaseProduct for service bookings too
@@ -232,6 +330,7 @@ const LiveMiniCheckoutScreen = () => {
           delivery_address: deliveryAddress,
           payment_method: selectedPayment.id,
           use_escrow: useEscrow,
+          giftCard,
         };
 
         await liveSalesAPI.purchaseProduct(purchaseData);
@@ -389,12 +488,106 @@ const LiveMiniCheckoutScreen = () => {
                 <Text style={styles.summaryValue}>₣{orderSummary.escrowFee.toFixed(2)}</Text>
               </View>
             )}
+
+            {giftCardApplied && getGiftCardDiscount() > 0 && (
+              <View style={styles.summaryRow}>
+                <Text style={[styles.summaryLabel, styles.discountLabel]}>Gift Card Discount 🎁</Text>
+                <Text style={[styles.summaryValue, styles.discountValue]}>-₣{getGiftCardDiscount().toFixed(2)}</Text>
+              </View>
+            )}
             
             <View style={[styles.summaryRow, styles.totalRow]}>
               <Text style={styles.totalLabel}>Total</Text>
-              <Text style={styles.totalValue}>₣{orderSummary.total.toFixed(2)}</Text>
+              <Text style={styles.totalValue}>₣{calculateFinalTotal().toFixed(2)}</Text>
             </View>
           </View>
+        </View>
+
+        {/* Gift Card */}
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.giftCardHeaderRow}
+            onPress={() => setShowGiftCardForm(!showGiftCardForm)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.giftCardHeaderLeft}>
+              <Ionicons name="gift-outline" size={20} color="#F39C12" />
+              <Text style={styles.sectionTitle}>Have a Gift Card?</Text>
+            </View>
+            <Ionicons name={showGiftCardForm ? 'chevron-up' : 'chevron-down'} size={20} color="#666666" />
+          </TouchableOpacity>
+
+          {showGiftCardForm && !giftCardApplied && (
+            <View style={styles.giftCardForm}>
+              <TextInput
+                style={styles.giftCardInput}
+                placeholder="16-digit card number"
+                placeholderTextColor="#666666"
+                value={giftCardNumber}
+                onChangeText={(text) => { setGiftCardNumber(text); setGiftCardError(null); }}
+                keyboardType="numeric"
+                maxLength={16}
+              />
+              <TextInput
+                style={styles.giftCardInput}
+                placeholder="4-digit PIN"
+                placeholderTextColor="#666666"
+                value={giftCardPin}
+                onChangeText={(text) => { setGiftCardPin(text); setGiftCardError(null); }}
+                keyboardType="numeric"
+                maxLength={4}
+                secureTextEntry
+              />
+              {giftCardError && <Text style={styles.giftCardErrorText}>{giftCardError}</Text>}
+              <TouchableOpacity
+                style={styles.giftCardApplyButton}
+                onPress={handleApplyGiftCard}
+                disabled={giftCardApplying}
+              >
+                <Text style={styles.giftCardApplyButtonText}>
+                  {giftCardApplying ? 'Checking...' : 'Apply Gift Card'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {giftCardApplied && (
+            <View style={styles.giftCardAppliedRow}>
+              <View style={styles.giftCardAppliedLeft}>
+                <Ionicons name="checkmark-circle" size={18} color="#27AE60" />
+                <Text style={styles.giftCardAppliedText}>
+                  Gift card applied • ₣{giftCardBalance.toFixed(2)} available
+                </Text>
+              </View>
+              <TouchableOpacity onPress={handleRemoveGiftCard}>
+                <Text style={styles.giftCardRemoveText}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {giftCardApplied && (
+            <View style={styles.giftCardAmountRow}>
+              <Text style={styles.giftCardAmountLabel}>Amount to use</Text>
+              <View style={styles.giftCardAmountInputWrapper}>
+                <Text style={styles.giftCardAmountCurrency}>₣</Text>
+                <TextInput
+                  style={styles.giftCardAmountInput}
+                  value={giftCardCustomAmount}
+                  onChangeText={setGiftCardCustomAmount}
+                  onBlur={handleGiftCardAmountBlur}
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  placeholderTextColor="#666666"
+                />
+              </View>
+              <Text style={styles.giftCardAmountHint}>
+                Max: ₣{computeMaxGiftCardApplicable(giftCardBalance).toFixed(2)} • Remaining after order: ₣{Math.max(0, giftCardBalance - getGiftCardDiscount()).toFixed(2)}
+              </Text>
+              <Text style={styles.giftCardDisclaimerText}>
+                Unclaimed gift cards can be redeemed by anyone with the card number and PIN. Claim it in your account to restrict it to you.
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Escrow Protection Toggle */}
@@ -524,7 +717,7 @@ const LiveMiniCheckoutScreen = () => {
             <>
               <Ionicons name="card" size={20} color="white" />
               <Text style={styles.paymentButtonText}>
-                Pay ₣{orderSummary.total.toFixed(2)}
+                Pay ₣{calculateFinalTotal().toFixed(2)}
               </Text>
             </>
           )}
@@ -700,6 +893,117 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 14,
     fontWeight: '600',
+  },
+  discountLabel: {
+    color: '#27AE60',
+  },
+  discountValue: {
+    color: '#27AE60',
+  },
+  giftCardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  giftCardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  giftCardForm: {
+    marginTop: 12,
+    gap: 10,
+  },
+  giftCardInput: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 8,
+    padding: 12,
+    color: '#FFFFFF',
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  giftCardErrorText: {
+    color: '#E74C3C',
+    fontSize: 12,
+  },
+  giftCardApplyButton: {
+    backgroundColor: '#F39C12',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  giftCardApplyButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  giftCardAppliedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(39, 174, 96, 0.3)',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 12,
+  },
+  giftCardAppliedLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  giftCardAppliedText: {
+    color: '#27AE60',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  giftCardRemoveText: {
+    color: '#E74C3C',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  giftCardAmountRow: {
+    marginTop: 12,
+    gap: 6,
+  },
+  giftCardAmountLabel: {
+    color: '#AAAAAA',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  giftCardAmountInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 12,
+  },
+  giftCardAmountCurrency: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 4,
+  },
+  giftCardAmountInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 14,
+    paddingVertical: 12,
+  },
+  giftCardAmountHint: {
+    color: '#888888',
+    fontSize: 11,
+  },
+  giftCardDisclaimerText: {
+    color: '#F39C12',
+    fontSize: 11,
+    marginTop: 2,
   },
   totalRow: {
     borderTopWidth: 1,

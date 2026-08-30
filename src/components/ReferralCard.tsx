@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  Image,
   Dimensions,
 } from 'react-native';
 
@@ -17,11 +16,12 @@ import Svg, {
 } from 'react-native-svg';
 
 import QRCode from 'react-native-qrcode-svg';
+import { Ionicons } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
 
 const CARD_WIDTH = Math.min(width - 32, 350);
-const CARD_HEIGHT = CARD_WIDTH * 0.56;
+const CARD_HEIGHT = CARD_WIDTH * 0.68;
 
 // Theme definitions based on reference images
 type ThemeType = 'original' | 'emerald' | 'royal';
@@ -177,9 +177,9 @@ const ReferralCard = forwardRef<View, ReferralCardProps>(
             strokeWidth="1"
           />
 
-          {/* Glowing divider */}
+          {/* Glowing divider (chevron) */}
           <Path
-            d="M 52% 0 L 65% 50% L 52% 100%"
+            d={`M ${CARD_WIDTH * 0.6} 0 L ${CARD_WIDTH * 0.72} ${CARD_HEIGHT * 0.5} L ${CARD_WIDTH * 0.6} ${CARD_HEIGHT}`}
             fill="none"
             stroke="url(#dividerGradient)"
             strokeWidth="4"
@@ -199,43 +199,45 @@ const ReferralCard = forwardRef<View, ReferralCardProps>(
           </Text>
         </View>
 
-        {/* Horse watermark */}
-        <Image
-          source={require('../assets/horse.png')}
-          style={styles.horse}
-          resizeMode="contain"
-        />
-
         {/* User information */}
         <View style={styles.userSection}>
 
-          <Text style={styles.name}>
+          <Text style={styles.name} numberOfLines={1} ellipsizeMode="tail">
             {name.toUpperCase()}
           </Text>
 
           <View style={[styles.gradientLine, { backgroundColor: colors.primary }]} />
 
           <View style={styles.infoBox}>
-            <Text style={styles.label}>
-              USERNAME
-            </Text>
-
-            <Text style={styles.value}>
-              @{username.replace('@', '')}
-            </Text>
+            <View style={[styles.infoIconWrap, { borderColor: colors.primary }]}>
+              <Ionicons name="person-outline" size={CARD_WIDTH * 0.028} color={colors.primary} />
+            </View>
+            <View style={styles.infoTextWrap}>
+              <Text style={styles.label}>
+                USERNAME
+              </Text>
+              <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
+                @{username.replace('@', '')}
+              </Text>
+            </View>
           </View>
 
           <View style={styles.infoBox}>
-            <Text style={styles.label}>
-              EMAIL
-            </Text>
-
-            <Text
-              style={styles.value}
-              numberOfLines={1}
-            >
-              {email}
-            </Text>
+            <View style={[styles.infoIconWrap, { borderColor: colors.quaternary }]}>
+              <Ionicons name="mail-outline" size={CARD_WIDTH * 0.028} color={colors.quaternary} />
+            </View>
+            <View style={styles.infoTextWrap}>
+              <Text style={styles.label}>
+                EMAIL
+              </Text>
+              <Text
+                style={styles.value}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {email}
+              </Text>
+            </View>
           </View>
 
           {/* Referral Stats */}
@@ -265,12 +267,12 @@ const ReferralCard = forwardRef<View, ReferralCardProps>(
             THE FUTURE
           </Text>
 
-          <View style={styles.qrContainer}>
+          <View style={[styles.qrContainer, { borderColor: colors.primary }]}>
             <QRCode
               value={referralUrl}
               size={CARD_WIDTH * 0.17}
-              backgroundColor="#050505"
-              color="#FFFFFF"
+              backgroundColor="#FFFFFF"
+              color="#000000"
             />
           </View>
 
@@ -340,20 +342,11 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
-  horse: {
-    position: 'absolute',
-    width: '40%',
-    height: '65%',
-    left: '2%',
-    top: '27%',
-    opacity: 0.10,
-  },
-
   userSection: {
     position: 'absolute',
     left: '7%',
-    top: '39%',
-    width: '39%',
+    top: '26%',
+    width: '52%',
   },
 
   name: {
@@ -366,19 +359,39 @@ const styles = StyleSheet.create({
   gradientLine: {
     width: '50%',
     height: 2,
-    marginTop: 12,
-    marginBottom: 16,
+    marginTop: 6,
+    marginBottom: 10,
     backgroundColor: '#FF7A00',
   },
 
   infoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    width: '100%',
     backgroundColor: '#0D0D0D',
     borderWidth: 1,
     borderColor: '#242424',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginBottom: 10,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 6,
+  },
+
+  infoIconWrap: {
+    width: CARD_WIDTH * 0.06,
+    height: CARD_WIDTH * 0.06,
+    borderRadius: CARD_WIDTH * 0.03,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    flexShrink: 0,
+  },
+
+  infoTextWrap: {
+    flex: 1,
+    minWidth: 0,
   },
 
   label: {
@@ -397,8 +410,8 @@ const styles = StyleSheet.create({
   statsContainer: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    marginTop: 8,
-    marginBottom: 8,
+    marginTop: 4,
+    marginBottom: 4,
   },
 
   statsLabel: {
@@ -415,7 +428,7 @@ const styles = StyleSheet.create({
   },
 
   cardType: {
-    marginTop: 15,
+    marginTop: 6,
     color: '#FF8A00',
     fontSize: CARD_WIDTH * 0.011,
     letterSpacing: 4,
@@ -423,9 +436,9 @@ const styles = StyleSheet.create({
 
   qrSection: {
     position: 'absolute',
-    right: '7%',
-    top: '25%',
-    width: '28%',
+    right: '5%',
+    bottom: '6%',
+    width: '30%',
     alignItems: 'center',
   },
 
@@ -444,11 +457,10 @@ const styles = StyleSheet.create({
   },
 
   qrContainer: {
-    padding: 12,
+    padding: 10,
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
     borderWidth: 2,
-    borderColor: '#00BFFF',
   },
 
   invite: {

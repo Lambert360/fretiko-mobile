@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -47,6 +47,7 @@ const ServiceDetailsScreen = () => {
   const [mediaViewerUris, setMediaViewerUris] = useState<string[] | undefined>(undefined);
   const [mediaViewerInitialIndex, setMediaViewerInitialIndex] = useState(0);
   const [bookingModalVisible, setBookingModalVisible] = useState(false);
+  const wasPlayingRef = useRef(true);
 
   const serviceId = route.params?.serviceId;
 
@@ -56,6 +57,10 @@ const ServiceDetailsScreen = () => {
     uris?: string[],
     initialIndex = 0,
   ) => {
+    if (type === 'video') {
+      wasPlayingRef.current = isPlaying;
+      setIsPlaying(false);
+    }
     setMediaViewerType(type);
     setMediaViewerUri(uri);
     setMediaViewerUris(uris);
@@ -475,7 +480,10 @@ const ServiceDetailsScreen = () => {
 
       <MediaViewerModal
         visible={mediaViewerVisible}
-        onClose={() => setMediaViewerVisible(false)}
+        onClose={() => {
+          setMediaViewerVisible(false);
+          setIsPlaying(wasPlayingRef.current);
+        }}
         type={mediaViewerType}
         uri={mediaViewerUri}
         uris={mediaViewerUris}

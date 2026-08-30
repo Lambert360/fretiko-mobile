@@ -1,6 +1,5 @@
 import { supabase } from '../lib/supabase';
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
+import { API_CONFIG } from '../config/api';
 
 export interface GiftCardDesign {
   id: string;
@@ -24,6 +23,7 @@ export interface GiftCard {
   id: string;
   card_number: string;
   pin: string; // Added PIN field
+  claim_code: string; // Added claim code field
   initial_balance: number;
   current_balance: number;
   status: 'active' | 'claimed' | 'redeemed' | 'expired' | 'blocked';
@@ -54,10 +54,27 @@ export interface PurchaseGiftCardData {
   deliveryPreference?: 'email' | 'chat' | 'both';
 }
 
+export interface PurchaseGiftCardResult {
+  id: string;
+  cardNumber: string;
+  amount: number;
+  design: {
+    name: string;
+    designUrl: string;
+    previewUrl: string;
+  };
+  deliveryMethod: string;
+  autoClaimed: boolean;
+  // True if delivery via email or chat was attempted but failed to send.
+  // The gift card itself was still created and charged successfully.
+  deliveryFailed?: boolean;
+}
+
 export interface RedeemGiftCardData {
   cardNumber: string;
   pin: string;
   orderTotal: number;
+  amount?: number; // Optional: manually specify how much of the card balance to use
 }
 
 export interface CheckBalanceData {
@@ -69,9 +86,9 @@ export const giftCardAPI = {
   /**
    * Purchase a gift card
    */
-  async purchaseGiftCard(token: string, data: PurchaseGiftCardData) {
+  async purchaseGiftCard(token: string, data: PurchaseGiftCardData): Promise<PurchaseGiftCardResult> {
     try {
-      const response = await fetch(`${API_URL}/gift-cards/purchase`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/gift-cards/purchase`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -97,7 +114,7 @@ export const giftCardAPI = {
    */
   async claimGiftCard(token: string, claimCode: string) {
     try {
-      const response = await fetch(`${API_URL}/gift-cards/claim`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/gift-cards/claim`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -123,7 +140,7 @@ export const giftCardAPI = {
    */
   async redeemGiftCard(token: string, data: RedeemGiftCardData) {
     try {
-      const response = await fetch(`${API_URL}/gift-cards/redeem`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/gift-cards/redeem`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -149,7 +166,7 @@ export const giftCardAPI = {
    */
   async checkBalance(data: CheckBalanceData) {
     try {
-      const response = await fetch(`${API_URL}/gift-cards/check-balance`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/gift-cards/check-balance`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -174,7 +191,7 @@ export const giftCardAPI = {
    */
   async getMyGiftCards(token: string): Promise<GiftCard[]> {
     try {
-      const response = await fetch(`${API_URL}/gift-cards/my-cards`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/gift-cards/my-cards`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -182,14 +199,16 @@ export const giftCardAPI = {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Failed to fetch gift cards');
+        // If endpoint doesn't exist (404) or other error, return empty array gracefully
+        console.warn('Gift cards endpoint returned:', response.status, response.statusText);
+        return [];
       }
 
       return await response.json();
     } catch (error) {
       console.error('Get gift cards error:', error);
-      throw error;
+      // Return empty array instead of throwing to prevent profile screen from breaking
+      return [];
     }
   },
 
@@ -263,6 +282,38 @@ export const giftCardAPI = {
       return data;
     } catch (error) {
       console.error('Get gift card by claim code error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get public claim status of a gift card by claim code
+   */
+  async getClaimStatus(token: string, claimCode: string): Promise<{
+    claimCode: string;
+    status: string;
+    claimedBy?: string;
+    claimedAt?: string;
+    isClaimed: boolean;
+    isClaimedByMe: boolean;
+    isRecipient: boolean;
+  }> {
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/gift-cards/claim-status/${encodeURIComponent(claimCode)}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to check gift card claim status');
+      }
+
+      return await response.json();
+    } catch (error: any) {
+      console.error('Get claim status error:', error);
       throw error;
     }
   },

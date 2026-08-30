@@ -114,6 +114,7 @@
       "expo-web-browser",
       "expo-apple-authentication",
       "expo-asset",
+      "./plugins/withVoipPushNotification",
       [
         "@react-native-google-signin/google-signin",
         {

@@ -10,7 +10,6 @@ import {
   Text, 
   TouchableOpacity, 
   View,
-  Linking,
   AppState
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +18,7 @@ import { walletAPI, DepositResponse } from '../services/walletAPI';
 import DualCurrencyInput from '../components/DualCurrencyInput';
 import { currencyAPI } from '../services/currencyAPI';
 import { usePaymentStatus } from '../hooks/usePaymentStatus';
+import * as WebBrowser from 'expo-web-browser';
 
 interface WalletDepositScreenProps {
   navigation: any;
@@ -112,6 +112,7 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
   // Poll for payment status if there's a pending deposit
   const { deposit: pendingDeposit, isPolling, startPolling, stopPolling } = usePaymentStatus({
     depositId: pendingDepositId || '',
+    enabled: !!pendingDepositId,
     onSuccess: (deposit) => {
       // Check if this deposit was already processed
       if (processedDeposits.current.has(deposit.id)) {
@@ -197,11 +198,9 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
     };
   }, [pendingDepositId, isPolling, startPolling]);
 
-  // Cleanup state when component unmounts
+  // Stop polling when component unmounts
   useEffect(() => {
     return () => {
-      setAlertShown(false);
-      setIsProcessing(false);
       stopPolling();
     };
   }, [stopPolling]);
@@ -322,14 +321,9 @@ const WalletDepositScreen = ({ navigation }: WalletDepositScreenProps) => {
               text: 'Continue to Payment', 
               onPress: async () => {
                 try {
-                  const canOpen = await Linking.canOpenURL(result.paymentLink!);
-                  if (canOpen) {
-                    // Start polling for status
-                    startPolling();
-                    await Linking.openURL(result.paymentLink!);
-                  } else {
-                    Alert.alert('Error', 'Unable to open payment link');
-                  }
+                  // Start polling for status
+                  startPolling();
+                  await WebBrowser.openBrowserAsync(result.paymentLink!);
                 } catch (error) {
                   console.error('Error opening payment link:', error);
                   Alert.alert('Error', 'Failed to open payment link');

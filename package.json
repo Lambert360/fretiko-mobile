@@ -73,6 +73,7 @@
     "react-native-swiper": "^1.6.0",
     "react-native-url-polyfill": "^2.0.0",
     "react-native-view-shot": "4.0.3",
+    "react-native-voip-push-notification": "^3.3.3",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {

@@ -22,6 +22,7 @@ import { ordersAPI } from '../services/ordersAPI';
 import { Rider } from './RiderSelectionScreen';
 import { riderSelectionBridge } from '../utils/riderSelectionBridge';
 import { addressSelectionBridge } from '../utils/addressSelectionBridge';
+import giftCardAPI from '../services/giftCardAPI';
 
 interface DeliveryAddress {
   id?: string;
@@ -74,6 +75,17 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
   });
   const [showAddressModal, setShowAddressModal] = useState(false);
 
+  // Gift card state - one shared gift card can be applied across all won items,
+  // allocated sequentially as each item's order is created.
+  const [showGiftCardForm, setShowGiftCardForm] = useState(false);
+  const [giftCardNumber, setGiftCardNumber] = useState('');
+  const [giftCardPin, setGiftCardPin] = useState('');
+  const [giftCardApplying, setGiftCardApplying] = useState(false);
+  const [giftCardApplied, setGiftCardApplied] = useState(false);
+  const [giftCardBalance, setGiftCardBalance] = useState(0);
+  const [giftCardError, setGiftCardError] = useState<string | null>(null);
+  const [giftCardCustomAmount, setGiftCardCustomAmount] = useState('');
+
   useEffect(() => {
     loadCheckoutData();
   }, []);
@@ -103,6 +115,86 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
     return itemsTotal + deliveryFee;
   };
 
+  // Maximum amount of the gift card that could be applied, given the current total
+  const computeMaxGiftCardApplicable = (balance: number) => {
+    return Math.max(0, Math.min(balance, calculateTotal()));
+  };
+
+  // Amount of the gift card that will actually be applied - custom amount if valid,
+  // otherwise the maximum applicable amount.
+  const getGiftCardDiscount = () => {
+    if (!giftCardApplied) return 0;
+    const maxApplicable = computeMaxGiftCardApplicable(giftCardBalance);
+    const customAmount = parseFloat(giftCardCustomAmount);
+    if (!isNaN(customAmount) && customAmount > 0) {
+      return Math.min(customAmount, maxApplicable);
+    }
+    return maxApplicable;
+  };
+
+  const calculateFinalTotal = () => {
+    return Math.max(0, calculateTotal() - getGiftCardDiscount());
+  };
+
+  const handleApplyGiftCard = async () => {
+    const cardNumber = giftCardNumber.trim();
+    const pin = giftCardPin.trim();
+
+    if (!cardNumber || !pin) {
+      setGiftCardError('Please enter both card number and PIN');
+      return;
+    }
+
+    setGiftCardApplying(true);
+    setGiftCardError(null);
+    try {
+      const result = await giftCardAPI.checkBalance({ cardNumber, pin });
+
+      if (!result.balance || result.balance <= 0) {
+        setGiftCardError('This gift card has no remaining balance');
+        return;
+      }
+      if (result.status === 'expired') {
+        setGiftCardError('This gift card has expired');
+        return;
+      }
+      if (result.status === 'blocked') {
+        setGiftCardError('This gift card is blocked');
+        return;
+      }
+
+      setGiftCardBalance(result.balance);
+      setGiftCardApplied(true);
+      const maxApplicable = computeMaxGiftCardApplicable(result.balance);
+      setGiftCardCustomAmount(maxApplicable > 0 ? maxApplicable.toFixed(2) : '');
+    } catch (error: any) {
+      setGiftCardError(error.message || 'Invalid card number or PIN');
+    } finally {
+      setGiftCardApplying(false);
+    }
+  };
+
+  const handleGiftCardAmountBlur = () => {
+    const maxApplicable = computeMaxGiftCardApplicable(giftCardBalance);
+    const parsed = parseFloat(giftCardCustomAmount);
+    if (isNaN(parsed) || parsed <= 0) {
+      setGiftCardCustomAmount(maxApplicable > 0 ? maxApplicable.toFixed(2) : '');
+      return;
+    }
+    if (parsed > maxApplicable) {
+      setGiftCardCustomAmount(maxApplicable.toFixed(2));
+    }
+  };
+
+  const handleRemoveGiftCard = () => {
+    setGiftCardApplied(false);
+    setGiftCardBalance(0);
+    setGiftCardNumber('');
+    setGiftCardPin('');
+    setGiftCardError(null);
+    setGiftCardCustomAmount('');
+  };
+
   const handleCheckout = () => {
     // Validate that user has selected a delivery option
     if (!selectedRider) {
@@ -129,19 +221,24 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
     }
 
     const total = calculateTotal();
+    const finalTotal = calculateFinalTotal();
     
-    if (walletBalance < total) {
+    if (walletBalance < finalTotal) {
       Alert.alert(
         'Insufficient Balance',
-        `You need ₣${(total || 0).toFixed(2)} but only have ₣${(walletBalance || 0).toFixed(2)} in your wallet. Please top up your wallet.`,
+        `You need ₣${(finalTotal || 0).toFixed(2)} but only have ₣${(walletBalance || 0).toFixed(2)} in your wallet. Please top up your wallet.`,
         [{ text: 'OK' }]
       );
       return;
     }
 
+    const giftCardNote = giftCardApplied && getGiftCardDiscount() > 0
+      ? ` (Gift Card: -₣${getGiftCardDiscount().toFixed(2)})`
+      : '';
+
     Alert.alert(
       'Complete Purchase',
-      `You are about to checkout ${wonItems.length} won auction item(s) for ₣${(total || 0).toFixed(2)}. Continue?`,
+      `You are about to checkout ${wonItems.length} won auction item(s) for ₣${(finalTotal || 0).toFixed(2)}${giftCardNote}. Continue?`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Confirm Purchase', onPress: processAuctionCheckout },
@@ -262,6 +359,10 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
       const createdOrders: string[] = [];
       const errors: string[] = [];
 
+      // If a gift card is applied, it's shared across every won item. Track how much
+      // is still available to allocate as each item's order is created sequentially.
+      let remainingGiftCard = giftCardApplied ? getGiftCardDiscount() : 0;
+
       for (let i = 0; i < wonItems.length; i++) {
         const item = wonItems[i];
         try {
@@ -269,6 +370,15 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
 
           // Get checkout summary for this auction
           const summary = await checkoutAPI.getAuctionCheckoutSummary(item.auctionId);
+
+          let giftCard: { cardNumber: string; pin: string; amount: number } | undefined;
+          if (remainingGiftCard > 0 && summary?.total > 0) {
+            const allocation = Math.min(remainingGiftCard, summary.total);
+            if (allocation > 0) {
+              giftCard = { cardNumber: giftCardNumber.trim(), pin: giftCardPin.trim(), amount: allocation };
+              remainingGiftCard -= allocation;
+            }
+          }
 
           // Create order directly (like live sales checkout)
           const orderData = {
@@ -279,6 +389,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
             paymentMethodId: 'wallet', // Auctions use wallet payment
             useEscrow: true, // Auctions always use escrow
             selectedRider: riderInfo,
+            giftCard,
           };
 
           const order = await checkoutAPI.createOrder(orderData);
@@ -355,6 +466,8 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
   }
 
   const total = calculateTotal();
+  const finalTotal = calculateFinalTotal();
+  const giftCardDiscount = getGiftCardDiscount();
 
   return (
     <KeyboardAvoidingView
@@ -590,11 +703,105 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
               </View>
             )}
 
+            {giftCardApplied && giftCardDiscount > 0 && (
+              <View style={styles.summaryRow}>
+                <Text style={[styles.summaryLabel, styles.discountLabel]}>Gift Card Discount 🎁</Text>
+                <Text style={[styles.summaryValue, styles.discountValue]}>-₣{giftCardDiscount.toFixed(2)}</Text>
+              </View>
+            )}
+
             <View style={[styles.summaryRow, styles.summaryTotal]}>
               <Text style={styles.summaryTotalLabel}>Total</Text>
-              <Text style={styles.summaryTotalValue}>₣{(calculateTotal() || 0).toFixed(2)}</Text>
+              <Text style={styles.summaryTotalValue}>₣{(finalTotal || 0).toFixed(2)}</Text>
             </View>
           </View>
+        </View>
+
+        {/* Gift Card */}
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.giftCardHeaderRow}
+            onPress={() => setShowGiftCardForm(!showGiftCardForm)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.giftCardHeaderLeft}>
+              <Ionicons name="gift-outline" size={20} color="#F39C12" />
+              <Text style={styles.sectionTitle}>Have a Gift Card?</Text>
+            </View>
+            <Ionicons name={showGiftCardForm ? 'chevron-up' : 'chevron-down'} size={20} color="#666666" />
+          </TouchableOpacity>
+
+          {showGiftCardForm && !giftCardApplied && (
+            <View style={styles.giftCardForm}>
+              <TextInput
+                style={styles.giftCardInput}
+                placeholder="16-digit card number"
+                placeholderTextColor="#666666"
+                value={giftCardNumber}
+                onChangeText={(text) => { setGiftCardNumber(text); setGiftCardError(null); }}
+                keyboardType="numeric"
+                maxLength={16}
+              />
+              <TextInput
+                style={styles.giftCardInput}
+                placeholder="4-digit PIN"
+                placeholderTextColor="#666666"
+                value={giftCardPin}
+                onChangeText={(text) => { setGiftCardPin(text); setGiftCardError(null); }}
+                keyboardType="numeric"
+                maxLength={4}
+                secureTextEntry
+              />
+              {giftCardError && <Text style={styles.giftCardErrorText}>{giftCardError}</Text>}
+              <TouchableOpacity
+                style={styles.giftCardApplyButton}
+                onPress={handleApplyGiftCard}
+                disabled={giftCardApplying}
+              >
+                <Text style={styles.giftCardApplyButtonText}>
+                  {giftCardApplying ? 'Checking...' : 'Apply Gift Card'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {giftCardApplied && (
+            <View style={styles.giftCardAppliedRow}>
+              <View style={styles.giftCardAppliedLeft}>
+                <Ionicons name="checkmark-circle" size={18} color="#27AE60" />
+                <Text style={styles.giftCardAppliedText}>
+                  Gift card applied • ₣{giftCardBalance.toFixed(2)} available
+                </Text>
+              </View>
+              <TouchableOpacity onPress={handleRemoveGiftCard}>
+                <Text style={styles.giftCardRemoveText}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {giftCardApplied && (
+            <View style={styles.giftCardAmountRow}>
+              <Text style={styles.giftCardAmountLabel}>Amount to use</Text>
+              <View style={styles.giftCardAmountInputWrapper}>
+                <Text style={styles.giftCardAmountCurrency}>₣</Text>
+                <TextInput
+                  style={styles.giftCardAmountInput}
+                  value={giftCardCustomAmount}
+                  onChangeText={setGiftCardCustomAmount}
+                  onBlur={handleGiftCardAmountBlur}
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  placeholderTextColor="#666666"
+                />
+              </View>
+              <Text style={styles.giftCardAmountHint}>
+                Max: ₣{computeMaxGiftCardApplicable(giftCardBalance).toFixed(2)} • Remaining after order: ₣{Math.max(0, giftCardBalance - giftCardDiscount).toFixed(2)}
+              </Text>
+              <Text style={styles.giftCardDisclaimerText}>
+                Unclaimed gift cards can be redeemed by anyone with the card number and PIN. Claim it in your account to restrict it to you.
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Wallet Balance */}
@@ -605,7 +812,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
               <Text style={styles.walletLabel}>Available Balance</Text>
               <Text style={styles.walletBalance}>₣{(walletBalance || 0).toFixed(2)}</Text>
             </View>
-            {walletBalance < calculateTotal() && (
+            {walletBalance < finalTotal && (
               <TouchableOpacity
                 style={styles.topUpButton}
                 onPress={() => navigation.navigate('Wallet')}
@@ -622,17 +829,17 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
         <TouchableOpacity
           style={[
             styles.checkoutButton,
-            (loading || walletBalance < calculateTotal()) && styles.checkoutButtonDisabled
+            (loading || walletBalance < finalTotal) && styles.checkoutButtonDisabled
           ]}
           onPress={handleCheckout}
-          disabled={loading || walletBalance < calculateTotal()}
+          disabled={loading || walletBalance < finalTotal}
         >
               {loading ? (
                 <ActivityIndicator size="small" color="white" />
               ) : (
                 <>
                   <Text style={styles.checkoutButtonText}>
-                    Complete Purchase - ₣{(calculateTotal() || 0).toFixed(2)}
+                    Complete Purchase - ₣{(finalTotal || 0).toFixed(2)}
                   </Text>
                   <Ionicons name="arrow-forward" size={20} color="white" />
                 </>
@@ -883,6 +1090,117 @@ const styles = StyleSheet.create({
   summaryValue: {
     color: '#FFF',
     fontSize: 14,
+  },
+  discountLabel: {
+    color: '#27AE60',
+  },
+  discountValue: {
+    color: '#27AE60',
+  },
+  giftCardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  giftCardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  giftCardForm: {
+    marginTop: 12,
+    gap: 10,
+  },
+  giftCardInput: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 8,
+    padding: 12,
+    color: '#FFFFFF',
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  giftCardErrorText: {
+    color: '#E74C3C',
+    fontSize: 12,
+  },
+  giftCardApplyButton: {
+    backgroundColor: '#F39C12',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  giftCardApplyButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  giftCardAppliedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(39, 174, 96, 0.3)',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 12,
+  },
+  giftCardAppliedLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  giftCardAppliedText: {
+    color: '#27AE60',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  giftCardRemoveText: {
+    color: '#E74C3C',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  giftCardAmountRow: {
+    marginTop: 12,
+    gap: 6,
+  },
+  giftCardAmountLabel: {
+    color: '#AAAAAA',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  giftCardAmountInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 12,
+  },
+  giftCardAmountCurrency: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 4,
+  },
+  giftCardAmountInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 14,
+    paddingVertical: 12,
+  },
+  giftCardAmountHint: {
+    color: '#888888',
+    fontSize: 11,
+  },
+  giftCardDisclaimerText: {
+    color: '#F39C12',
+    fontSize: 11,
+    marginTop: 2,
   },
   summaryTotal: {
     marginTop: 8,

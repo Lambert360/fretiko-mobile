@@ -4,7 +4,7 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 export type MediaType = 'text' | 'image' | 'video' | 'mixed';
 export type PrivacyLevel = 'public' | 'friends' | 'private';
 export type InteractionType = 'like' | 'comment' | 'share' | 'gift';
-export type FeedItemType = 'post' | 'service';
+export type FeedItemType = 'post' | 'service' | 'live_stream';
 
 export interface UserInfo {
   id: string;
@@ -63,6 +63,29 @@ export interface PostInteraction {
   isGifted?: boolean;
 }
 
+export interface LiveStreamData {
+  id: string;
+  vendorId: string;
+  vendor: UserInfo;
+  title: string;
+  description: string | null;
+  thumbnailUrl: string | null;
+  streamUrl: string | null;
+  streamType: 'products' | 'services';
+  status: 'setup' | 'live' | 'ended' | 'paused';
+  viewerCount: number;
+  currentViewers: number;
+  totalViewers: number;
+  totalReactions: number;
+  totalGifts: number;
+  totalSales: number;
+  totalTransactions: number;
+  price?: number;
+  previewVideoUrl: string | null;
+  createdAt: string;
+  startedAt: string | null;
+}
+
 export interface UnifiedFeedItem {
   id: string;
   type: FeedItemType;
@@ -72,6 +95,7 @@ export interface UnifiedFeedItem {
   createdAt: string;
   postData?: Post;
   serviceData?: any; // Will be VideoFeedItem when needed
+  liveStreamData?: LiveStreamData;
 }
 
 export interface CreatePostRequest {

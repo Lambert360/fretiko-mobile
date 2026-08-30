@@ -13,7 +13,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { RtcSurfaceView, RenderModeType } from 'react-native-agora';
 import { useCallContext } from '../contexts/CallContext';
-import GiftAnimation from '../components/GiftAnimation';
+import { UserGift } from '../services/giftAPI';
+import LottieGiftEffect from '../components/LottieGiftEffect';
+import GiftSelectorModal from '../components/GiftSelectorModal';
 import AdaptiveText from '../components/AdaptiveText';
 
 interface CallScreenParams {
@@ -56,6 +58,7 @@ const CallScreen: React.FC = () => {
     showCallOverlay,
     showGiftModal,
     availableGifts,
+    loadingGifts,
     activeGiftAnimations,
     incomingCallForBanner,
     declineIncomingCall,
@@ -343,21 +346,33 @@ const CallScreen: React.FC = () => {
     );
   };
 
+  const giftsForSelector = availableGifts.map((g) => ({
+    id: g.id,
+    gift_id: g.id,
+    gift_name: g.name,
+    emoji: g.emoji,
+    quantity: g.quantity,
+    total_value: g.total_value,
+    source: 'purchased' as const,
+    received_at: new Date().toISOString(),
+    display_lottie_url: g.display_lottie_url,
+    lottie_config: g.lottie_config,
+    sound_url: g.sound_url,
+    animation_type: g.animation_type,
+  })) as UserGift[];
+
   // === Connected / in-call UI ===
   const renderInCallUI = () => (
     <View style={styles.inCallOverlay}>
-      {activeGiftAnimations.length > 0 && (
-        <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
-          {activeGiftAnimations.map((animation) => (
-            <GiftAnimation
-              key={animation.id}
-              emoji={animation.emoji}
-              quantity={animation.quantity}
-              onComplete={() => removeGiftAnimation(animation.id)}
-            />
-          ))}
-        </View>
-      )}
+      <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+        {activeGiftAnimations.map((animation) => (
+          <LottieGiftEffect
+            key={animation.id}
+            gift={animation.gift}
+            onComplete={() => removeGiftAnimation(animation.id)}
+          />
+        ))}
+      </View>
 
       {callType === 'video' && showVideoUI && (
         <TouchableOpacity
@@ -587,6 +602,18 @@ const CallScreen: React.FC = () => {
           ? renderIncomingCallUI()
           : isInCall ? renderInCallUI() : renderCallingUI()}
       </TouchableOpacity>
+
+      <GiftSelectorModal
+        visible={showGiftModal}
+        onClose={() => setShowGiftModal(false)}
+        gifts={giftsForSelector}
+        loading={loadingGifts}
+        title="Send a Gift"
+        subtitle="Select a gift to send"
+        onSendGift={async (giftId, quantity) => {
+          await sendGift(giftId, quantity);
+        }}
+      />
     </View>
   );
 };

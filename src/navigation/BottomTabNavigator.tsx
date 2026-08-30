@@ -13,6 +13,7 @@ import SearchScreen from '../screens/SearchScreen';
 import KonnectScreen from '../screens/KonnectScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
+import GiftLottiePreviewScreen from '../screens/GiftLottiePreviewScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -82,6 +83,16 @@ const TabIcon: React.FC<TabIconProps> = ({ focused, iconName, size = 24, badgeCo
                 </Text>
               </View>
             )}
+          </View>
+        );
+      case 'Preview':
+        return (
+          <View style={[styles.iconContainer, { transform: [{ scale }] }]}>
+            <Ionicons
+              name={focused ? 'film' : 'film-outline'}
+              size={size}
+              color={iconColor}
+            />
           </View>
         );
       case 'Profile':
@@ -292,6 +303,18 @@ export const BottomTabNavigator: React.FC = () => {
                 .catch(err => console.error('Error refreshing unread count:', err));
             }
           },
+        }}
+      />
+      <Tab.Screen 
+        name="Preview" 
+        component={GiftLottiePreviewScreen}
+        options={{
+          tabBarIcon: ({ focused, color, size }) => (
+            <TabIcon focused={focused} color={color} size={size} iconName="Preview" />
+          ),
+          tabBarLabel: ({ focused, color, children }) => (
+            <TabLabel focused={focused} color={color}>{children}</TabLabel>
+          ),
         }}
       />
       <Tab.Screen 

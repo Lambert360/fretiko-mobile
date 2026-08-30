@@ -113,14 +113,14 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
     // For video services, use the image if available, otherwise use placeholder
     // Never try to render video URL as an image
     const isVideo = service.mediaType === 'video';
-    let imageUri: string;
+    let imageUri: string | undefined;
 
     if (isVideo) {
       // Video service: use image thumbnail or placeholder
-      imageUri = service.image || `https://picsum.photos/400/400?random=${service.id}`;
+      imageUri = service.image;
     } else {
       // Image service: use mediaUrl or image
-      imageUri = service.mediaUrl || service.image || `https://picsum.photos/400/400?random=${service.id}`;
+      imageUri = service.mediaUrl || service.image;
     }
 
     return (
@@ -197,7 +197,7 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
         >
           <Image 
             source={{ 
-              uri: service.provider?.avatar || `https://picsum.photos/30/30?random=${service.provider?.id || 'default'}` 
+              uri: service.provider?.avatar 
             }} 
             style={styles.providerAvatar} 
           />

@@ -17,6 +17,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { giftAPI, VirtualGift } from '../services/giftAPI';
 import { walletAPI } from '../services/walletAPI';
+import GiftLottieThumbnail from '../components/GiftLottieThumbnail';
 
 interface GiftSelection {
   gift_id: string;
@@ -144,7 +145,11 @@ const GiftMarketplaceScreen = () => {
     return (
       <View style={styles.giftCard}>
         <View style={styles.giftEmojiContainer}>
-          <Text style={styles.giftEmoji}>{item.emoji}</Text>
+          {item.display_lottie_url ? (
+            <GiftLottieThumbnail source={item.display_lottie_url} size={52} />
+          ) : (
+            <Text style={styles.giftEmoji}>{item.emoji}</Text>
+          )}
         </View>
         <Text style={styles.giftName}>{item.name}</Text>
         <Text style={styles.giftPrice}>{walletAPI.formatFreti(item.credit_value)}</Text>

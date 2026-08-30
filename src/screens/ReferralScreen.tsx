@@ -8,6 +8,8 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Share,
+  Platform,
 } from 'react-native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useAuth } from '../contexts/AuthContext';
@@ -64,11 +66,24 @@ const ReferralScreen: React.FC<Props> = ({ navigation }) => {
 
       const shareMessage = `Join me on Fretiko 🚀\n\nScan my referral card or use my code: ${referralData.code}\n\n${referralData.url}`;
 
-      if (await Sharing.isAvailableAsync()) {
+      if (Platform.OS === 'ios') {
+        // iOS share sheet supports attaching the image AND a text caption together
+        await Share.share({
+          url: uri,
+          message: shareMessage,
+        });
+      } else if (await Sharing.isAvailableAsync()) {
+        // Android's native Share API can't attach a local file + custom text together,
+        // so we copy the link to the clipboard so it travels with the card share.
+        await Clipboard.setStringAsync(shareMessage);
         await Sharing.shareAsync(uri, {
           mimeType: 'image/png',
           dialogTitle: 'Share Referral Card',
         });
+        Alert.alert(
+          'Link copied!',
+          'Your referral link has been copied to the clipboard. Paste it into the chat along with your card.'
+        );
       } else {
         Alert.alert('Share', shareMessage);
       }

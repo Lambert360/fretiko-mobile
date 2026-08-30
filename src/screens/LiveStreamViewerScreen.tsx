@@ -24,9 +24,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { liveSalesAPI, LiveStream, LiveStreamProduct, LiveStreamService, LivePortfolioService, GiftType } from '../services/liveSalesAPI';
 import { liveStreamSocket, LiveComment, LiveReaction, LiveGift, ViewerCountUpdate } from '../services/liveStreamSocket';
-import { giftAPI, VirtualGift } from '../services/giftAPI';
+import { giftAPI, VirtualGift, UserGift } from '../services/giftAPI';
 import { useAuth } from '../contexts/AuthContext';
-import GiftAnimation from '../components/GiftAnimation';
+import LottieGiftEffect from '../components/LottieGiftEffect';
+import GiftSelectorModal from '../components/GiftSelectorModal';
+import WatchRewardPill from '../components/WatchRewardPill';
 
 // Import Agora RTC SDK for direct streaming (industry standard)
 import {
@@ -96,10 +98,18 @@ const LiveStreamViewerScreen = () => {
   const [heartAnimations, setHeartAnimations] = useState<any[]>([]);
 
   // Gift animations
-  const [activeGiftAnimations, setActiveGiftAnimations] = useState<Array<{
+  const [activeGiftEffects, setActiveGiftEffects] = useState<Array<{
     id: string;
-    emoji: string;
-    quantity: number;
+    gift: {
+      id: string;
+      name: string;
+      emoji: string;
+      quantity: number;
+      display_lottie_url?: string;
+      lottie_config?: any;
+      sound_url?: string;
+      animation_type?: string;
+    };
   }>>([]);
 
   // Modals/Drawers
@@ -114,7 +124,7 @@ const LiveStreamViewerScreen = () => {
   // Shop/Gift data
   const [shopItems, setShopItems] = useState<(LiveStreamProduct | LiveStreamService)[]>([]);
   const [portfolioItems, setPortfolioItems] = useState<LivePortfolioService[]>([]);
-  const [availableGifts, setAvailableGifts] = useState<Array<{id: string, emoji: string, name: string, quantity: number}>>([]);
+  const [availableGifts, setAvailableGifts] = useState<UserGift[]>([]);
   const [loadingGifts, setLoadingGifts] = useState(false);
   const [selectedUsers, setSelectedUsers] = useState<any[]>([]);
 
@@ -545,26 +555,29 @@ const LiveStreamViewerScreen = () => {
 
   const handleNewGift = (giftData: LiveGift | any) => {
     console.log('🎁 Gift received on viewer screen:', giftData);
-    
+
     // Handle both LiveGift format and backend format
     const giftType = giftData.gift_type || giftData.giftType;
     const quantity = giftData.quantity || 1;
-    
-    // Get emoji from gift data (backend now includes giftEmoji)
-    const emoji = giftData.giftEmoji || giftData.emoji || '🎁';
-    
-    // Add gift animation
+
+    const meta = giftData.giftMetadata || {};
     const animationId = `gift-${Date.now()}-${Math.random()}`;
-    setActiveGiftAnimations(prev => [...prev, {
-      id: animationId,
-      emoji,
-      quantity,
-    }]);
-    
-    // Remove animation after it completes
-    setTimeout(() => {
-      setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animationId));
-    }, 5000);
+    setActiveGiftEffects((prev) => [
+      ...prev,
+      {
+        id: animationId,
+        gift: {
+          id: meta.id || giftData.giftId || giftData.gift_id || '',
+          name: meta.name || giftData.giftName || giftData.gift_type || '',
+          emoji: meta.emoji || giftData.giftEmoji || giftData.emoji || '🎁',
+          quantity,
+          display_lottie_url: meta.display_lottie_url,
+          lottie_config: meta.lottie_config,
+          sound_url: meta.sound_url,
+          animation_type: meta.animation_type,
+        },
+      },
+    ]);
   };
 
   const handleViewerCountUpdate = (data: ViewerCountUpdate | any) => {
@@ -813,24 +826,34 @@ const LiveStreamViewerScreen = () => {
       const userGiftsResponse = await giftAPI.getUserGifts();
       
       // Group gifts by gift_id and sum quantities
-      const giftMap = new Map<string, {id: string, emoji: string, name: string, quantity: number}>();
-      
+      const giftMap = new Map<string, UserGift>();
+
       userGiftsResponse.gifts.forEach((userGift) => {
         const existing = giftMap.get(userGift.gift_id);
         if (existing) {
           existing.quantity += userGift.quantity;
+          existing.total_value += userGift.total_value || 0;
         } else {
           giftMap.set(userGift.gift_id, {
-            id: userGift.gift_id,
+            id: userGift.id,
+            gift_id: userGift.gift_id,
+            gift_name: userGift.gift_name,
             emoji: userGift.emoji,
-            name: userGift.gift_name,
             quantity: userGift.quantity,
+            total_value: userGift.total_value || 0,
+            source: userGift.source,
+            received_at: userGift.received_at,
+            display_lottie_url: userGift.display_lottie_url,
+            lottie_config: userGift.lottie_config,
+            sound_id: userGift.sound_id,
+            sound_url: userGift.sound_url,
+            animation_type: userGift.animation_type,
           });
         }
       });
-      
+
       // Convert map to array and filter out gifts with 0 quantity
-      const ownedGifts = Array.from(giftMap.values()).filter(gift => gift.quantity > 0);
+      const ownedGifts = Array.from(giftMap.values()).filter((gift) => gift.quantity > 0);
       setAvailableGifts(ownedGifts);
     } catch (error: any) {
       console.error('Error loading gifts:', error);
@@ -1201,6 +1224,9 @@ const LiveStreamViewerScreen = () => {
         )}
       </TouchableOpacity>
 
+      {/* Watch Reward Countdown */}
+      {stream?.id && <WatchRewardPill streamId={stream.id} />}
+
       {/* Pause Overlay - Creative Design */}
       {isStreamPaused && stream.status === 'live' && (
         <Animated.View style={styles.pauseOverlay} pointerEvents="none">
@@ -1427,20 +1453,15 @@ const LiveStreamViewerScreen = () => {
       )}
 
       {/* Gift Animations - Render above video */}
-      {activeGiftAnimations.length > 0 && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9998, pointerEvents: 'none' }}>
-          {activeGiftAnimations.map((animation) => (
-            <GiftAnimation
-              key={animation.id}
-              emoji={animation.emoji}
-              quantity={animation.quantity}
-              onComplete={() => {
-                setActiveGiftAnimations(prev => prev.filter(anim => anim.id !== animation.id));
-              }}
-            />
-          ))}
-        </View>
-      )}
+      {activeGiftEffects.map((animation) => (
+        <LottieGiftEffect
+          key={animation.id}
+          gift={animation.gift}
+          onComplete={() => {
+            setActiveGiftEffects((prev) => prev.filter((anim) => anim.id !== animation.id));
+          }}
+        />
+      ))}
 
       {/* Middle Comments */}
       {showComments && comments.length > 0 && (
@@ -1557,6 +1578,7 @@ const LiveStreamViewerScreen = () => {
             onAddToCart={addToLiveCart}
             onOpenCart={() => setShowMiniCart(true)}
             insetsBottom={insets.bottom || 0}
+            streamId={stream?.id}
           />
       </Modal>
 
@@ -1594,78 +1616,54 @@ const LiveStreamViewerScreen = () => {
           />
       </Modal>
 
-      {/* Gift Modal */}
-      <Modal
+      {/* Gift Selector Modal */}
+      <GiftSelectorModal
         visible={showGiftModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowGiftModal(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalBackdrop}
-          activeOpacity={1}
-          onPress={() => setShowGiftModal(false)}
-        />
-        <GiftModal
-            visible={showGiftModal}
-            onClose={() => setShowGiftModal(false)}
-            availableGifts={availableGifts}
-            loadingGifts={loadingGifts}
-            modalHeight={giftModalHeight}
-            onHeightChange={setGiftModalHeight}
-            insetsBottom={insets.bottom || 0}
-            onSendGift={async (giftId: string, quantity: number, message?: string) => {
-              try {
-                // Validate stream and user info
-                if (!stream?.vendor?.id || !user?.id) {
-                  Alert.alert('Error', 'Cannot send gift: missing stream or user info');
-                  return;
-                }
+        onClose={() => setShowGiftModal(false)}
+        gifts={availableGifts}
+        loading={loadingGifts}
+        title="Send a Gift"
+        subtitle="Select a gift to send to the stream"
+        onSendGift={async (giftId: string, quantity: number) => {
+          try {
+            if (!stream?.vendor?.id || !user?.id) {
+              Alert.alert('Error', 'Cannot send gift: missing stream or user info');
+              return;
+            }
+            if (!stream?.id) {
+              Alert.alert('Error', 'Cannot send gift: stream session not active');
+              return;
+            }
+            if (quantity <= 0 || quantity > 10) {
+              Alert.alert('Error', 'Gift quantity must be between 1 and 10');
+              return;
+            }
 
-                // Validate stream session is active
-                if (!streamId) {
-                  Alert.alert('Error', 'Cannot send gift: stream session not active');
-                  return;
-                }
+            const gift = availableGifts.find((g) => g.gift_id === giftId);
+            if (!gift) {
+              Alert.alert('Error', 'Gift not found in your inventory');
+              return;
+            }
+            if (gift.quantity < quantity) {
+              Alert.alert('Insufficient Gifts', `You only have ${gift.quantity} of this gift.`);
+              return;
+            }
 
-                // Validate quantity
-                if (quantity <= 0 || quantity > 10) {
-                  Alert.alert('Error', 'Gift quantity must be between 1 and 10');
-                  return;
-                }
-
-                // Check if user has enough gifts
-                const gift = availableGifts.find(g => g.id === giftId);
-                if (!gift) {
-                  Alert.alert('Error', 'Gift not found in your inventory');
-                  return;
-                }
-                if (gift.quantity < quantity) {
-                  Alert.alert('Insufficient Gifts', `You only have ${gift.quantity} of this gift.`);
-                  return;
-                }
-                
-                // Send via WebSocket (backend handles inventory deduction + broadcast)
-                liveStreamSocket.sendGift(gift.id, quantity, message);
-
-                // Reload gifts to update quantities after sending
-                await loadAvailableGifts();
-              } catch (error: any) {
-                console.error('Error sending gift:', error);
-                const errorMessage = error.message || 'Failed to send gift';
-                
-                // Provide user-friendly error messages
-                if (errorMessage.includes('only have') || errorMessage.includes('Insufficient')) {
-                  Alert.alert('Insufficient Gifts', errorMessage);
-                } else if (errorMessage.includes('not found')) {
-                  Alert.alert('Gift Not Found', 'The selected gift is no longer available');
-                } else {
-                  Alert.alert('Error', errorMessage);
-                }
-              }
-            }}
-          />
-      </Modal>
+            liveStreamSocket.sendGift(gift.gift_id, quantity);
+            await loadAvailableGifts();
+          } catch (error: any) {
+            console.error('Error sending gift:', error);
+            const errorMessage = error.message || 'Failed to send gift';
+            if (errorMessage.includes('only have') || errorMessage.includes('Insufficient')) {
+              Alert.alert('Insufficient Gifts', errorMessage);
+            } else if (errorMessage.includes('not found')) {
+              Alert.alert('Gift Not Found', 'The selected gift is no longer available');
+            } else {
+              Alert.alert('Error', errorMessage);
+            }
+          }
+        }}
+      />
 
       {/* Share Modal */}
       <Modal
@@ -2913,7 +2911,7 @@ const styles = StyleSheet.create({
 });
 
 // Shop Modal Component
-const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHeightChange, cartItems, onAddToCart, onOpenCart, insetsBottom = 0 }: any) => {
+const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHeightChange, cartItems, onAddToCart, onOpenCart, insetsBottom = 0, streamId }: any) => {
   const panRef = useRef<any>(null);
   const baseHeight = useRef(modalHeight);
   const animatedHeight = useRef(new Animated.Value(modalHeight)).current;
@@ -3388,6 +3386,10 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
             bounces={false}
             scrollEventThrottle={16}
           >
+            {streamId ? (
+              <WatchRewardPill streamId={streamId} mode="inline" />
+            ) : null}
+
             {/* Regular Shop Items */}
             {items.length > 0 && (
               <View style={styles.shopSection}>
@@ -3433,7 +3435,7 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
 };
 
 // Gift Modal Component
-const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight, onHeightChange, onSendGift, insetsBottom = 0 }: any) => {
+const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight, onHeightChange, onSendGift, insetsBottom = 0, streamId }: any) => {
   const panRef = useRef<any>(null);
   const baseHeight = useRef(modalHeight);
   const animatedHeight = useRef(new Animated.Value(modalHeight)).current;
@@ -3572,6 +3574,10 @@ const GiftModal = ({ visible, onClose, availableGifts, loadingGifts, modalHeight
               <Ionicons name="close" size={24} color="white" />
             </TouchableOpacity>
           </View>
+
+          {streamId ? (
+            <WatchRewardPill streamId={streamId} mode="inline" />
+          ) : null}
 
           {loadingGifts ? (
             <View style={styles.giftLoadingContainer}>

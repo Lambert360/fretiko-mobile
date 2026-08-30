@@ -540,6 +540,20 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation, route })
                 )}
               </View>
 
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Referral Code (Optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={formData.referralCode}
+                  onChangeText={(value) => updateFormData('referralCode', value.toUpperCase())}
+                  placeholder="Enter referral code"
+                  placeholderTextColor="#666"
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  maxLength={10}
+                />
+              </View>
+
               {/* Terms and Conditions */}
               <View style={styles.termsContainer}>
                 <TouchableOpacity

@@ -16,6 +16,7 @@ import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { giftAPI, UserGift } from '../services/giftAPI';
 import { walletAPI } from '../services/walletAPI';
+import GiftLottieThumbnail from '../components/GiftLottieThumbnail';
 import { realtimeAPI } from '../services/realtimeAPI';
 import { useAuth } from '../contexts/AuthContext';
 import { useFocusEffect } from '@react-navigation/native';
@@ -182,7 +183,11 @@ const MyGiftsScreen = () => {
             </View>
           )}
           <View style={styles.giftEmojiContainer}>
-            <Text style={styles.giftEmoji}>{item.emoji}</Text>
+            {item.display_lottie_url ? (
+              <GiftLottieThumbnail source={item.display_lottie_url} size={52} />
+            ) : (
+              <Text style={styles.giftEmoji}>{item.emoji}</Text>
+            )}
           </View>
           <Text style={styles.giftName}>{item.gift_name}</Text>
           <Text style={styles.giftQuantity}>x{item.quantity}</Text>

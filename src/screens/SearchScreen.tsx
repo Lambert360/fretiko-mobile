@@ -15,10 +15,13 @@ import {
   Modal,
   ActivityIndicator,
   Switch,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { searchAPI, SearchType, UserResult, RiderResult } from '../services/searchAPI';
+import { userAPI } from '../services/userAPI';
 import { api } from '../services/api';
+import { tagsAPI, type TagContentItem } from '../services/tagsAPI';
 import { useSearch, useDiscoverContent, useSearchSuggestions } from '../hooks/useSearch';
 import {
   PersonCard,
@@ -58,7 +61,10 @@ const SearchScreen = () => {
     sortBy: 'relevance', // 'relevance', 'price_low', 'price_high', 'newest', 'rating'
   });
   const [trendingTags, setTrendingTags] = useState<Array<{ id: string; name: string; display_name: string; usage_count: number }>>([]);
-  
+  const [tagContent, setTagContent] = useState<TagContentItem[] | null>(null);
+  const [tagContentLoading, setTagContentLoading] = useState(false);
+  const [tagContentError, setTagContentError] = useState<string | null>(null);
+
   // Debounce timer
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
@@ -197,6 +203,22 @@ const SearchScreen = () => {
       return;
     }
 
+    // Hashtag search: load tag content from the tags endpoint
+    if (query.trim().startsWith('#')) {
+      setTagContentLoading(true);
+      setTagContentError(null);
+      try {
+        const items = await tagsAPI.getTagContent(query.trim());
+        setTagContent(items);
+      } catch (error: any) {
+        console.error('Hashtag search error:', error);
+        setTagContentError(error.message || 'Failed to load hashtag content');
+      } finally {
+        setTagContentLoading(false);
+      }
+      return;
+    }
+
     try {
       // Map tab to search type
       let searchType = SearchType.ALL;
@@ -231,12 +253,14 @@ const SearchScreen = () => {
     }
   }, [activeTab, search]);
 
-  const handleSearch = (query: string) => {
+  const handleSearch = useCallback((query: string) => {
     setSearchQuery(query);
     
     // Clear search if query is empty
     if (query.trim().length === 0) {
       clearSearch();
+      setTagContent(null);
+      setTagContentError(null);
       if (debounceTimer.current) {
         clearTimeout(debounceTimer.current);
       }
@@ -252,17 +276,33 @@ const SearchScreen = () => {
     debounceTimer.current = setTimeout(() => {
       performSearch(query);
     }, 500);
-  };
+  }, [clearSearch, performSearch]);
+
+  const lastProcessedInitialQuery = useRef<string | null>(null);
+  const initialQueryParam = (route as any)?.params?.initialQuery;
 
   useEffect(() => {
-    const params = (route as any)?.params;
-    const initialQuery = params?.initialQuery;
-
-    if (initialQuery && typeof initialQuery === 'string') {
-      setSearchQuery(initialQuery);
-      handleSearch(initialQuery);
+    if (
+      initialQueryParam &&
+      typeof initialQueryParam === 'string' &&
+      initialQueryParam !== lastProcessedInitialQuery.current
+    ) {
+      lastProcessedInitialQuery.current = initialQueryParam;
+      handleSearch(initialQueryParam);
     }
-  }, [route, handleSearch]);
+  }, [initialQueryParam, handleSearch]);
+
+  const handleConnect = async (person: any) => {
+    if (!person?.id) return;
+
+    try {
+      await userAPI.sendConnectionRequest(person.id);
+      Alert.alert('Success', `Plug sent to @${person.username || 'user'}!`);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to send plug');
+      throw error;
+    }
+  };
 
   const renderHeader = () => (
     <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
@@ -474,7 +514,7 @@ const SearchScreen = () => {
       person={item}
       variant="featured"
       onPress={(person) => navigation.navigate('PublicProfile', { userId: person.id })}
-      onConnect={(person) => console.log('Connect with:', person.username)}
+      onConnect={handleConnect}
     />
   );
 
@@ -515,7 +555,7 @@ const SearchScreen = () => {
       person={{
         id: item?.id || '',
         username: item?.username || 'Unknown',
-        avatar: item?.avatar || `https://picsum.photos/400/400?random=${item?.id || 'default'}`,
+        avatar: item?.avatar,
         followers: item?.followers || 0,
         location: item?.location || 'Unknown',
         recentActivity: item?.activity || 'No recent activity',
@@ -533,15 +573,16 @@ const SearchScreen = () => {
         username: item?.username || 'Unknown',
         firstName: item?.firstName || '',
         lastName: item?.lastName || '',
-        avatar: item?.avatarUrl || `https://picsum.photos/400/400?random=${item?.id || 'default'}`,
+        avatar: item?.avatarUrl,
         location: item?.location || 'Unknown',
         trustScore: item?.trustScore || 0,
         isOnline: item?.isOnline || false,
         mutualConnections: item?.mutualConnections || 0,
+        connectionStatus: item?.connectionStatus,
       }}
       variant="compact"
       onPress={(person) => navigation.navigate('PublicProfile', { userId: person.id })}
-      onConnect={(person) => console.log('Connect with user:', person.username)}
+      onConnect={handleConnect}
     />
   );
 
@@ -554,8 +595,86 @@ const SearchScreen = () => {
     />
   );
 
+  const handleTagContentPress = (item: TagContentItem) => {
+    if (item.type === 'product') {
+      navigation.navigate('ProductDetails', { productId: item.id });
+    } else if (item.type === 'service') {
+      navigation.navigate('ServiceDetails', { serviceId: item.id });
+    } else if (item.type === 'post') {
+      navigation.navigate('PostDetails', { postId: item.id });
+    } else if (item.type === 'story' && item.authorId) {
+      navigation.navigate('PublicProfile', { userId: item.authorId });
+    } else if (item.authorId) {
+      navigation.navigate('PublicProfile', { userId: item.authorId });
+    } else {
+      Alert.alert(item.type.toUpperCase(), item.title);
+    }
+  };
+
+  const renderTagContentItem = ({ item }: { item: TagContentItem }) => (
+    <TouchableOpacity
+      style={styles.tagContentCard}
+      onPress={() => handleTagContentPress(item)}
+    >
+      {item.image ? (
+        <Image source={{ uri: item.image }} style={styles.tagContentImage} resizeMode="cover" />
+      ) : (
+        <View style={[styles.tagContentImage, { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' }]}>
+          <Ionicons name="image-outline" size={24} color="#666" />
+        </View>
+      )}
+      <View style={styles.tagContentInfo}>
+        <Text style={styles.tagContentType}>{item.type.toUpperCase()}</Text>
+        <Text style={styles.tagContentTitle} numberOfLines={2}>{item.title}</Text>
+        {!!item.content && (
+          <Text style={styles.tagContentExcerpt} numberOfLines={2}>{item.content}</Text>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+
+  const renderTagContent = () => (
+    <ScrollView style={styles.searchResults} contentContainerStyle={styles.contentContainer}>
+      <Text style={styles.searchResultsTitle}>#{searchQuery.trim().replace(/^#/, '')}</Text>
+
+      {tagContentLoading && (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#3498DB" />
+          <Text style={styles.loadingText}>Loading hashtag content...</Text>
+        </View>
+      )}
+
+      {tagContentError && (
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle" size={24} color="#E74C3C" />
+          <Text style={styles.errorText}>{tagContentError}</Text>
+        </View>
+      )}
+
+      {!tagContentLoading && tagContent && tagContent.length === 0 && (
+        <View style={styles.noResultsContainer}>
+          <Ionicons name="search-outline" size={48} color="rgba(255,255,255,0.3)" />
+          <Text style={styles.noResultsText}>No content for this hashtag</Text>
+        </View>
+      )}
+
+      {!tagContentLoading && tagContent && tagContent.length > 0 && (
+        <FlatList
+          data={tagContent}
+          renderItem={renderTagContentItem}
+          keyExtractor={(item) => `${item.type}-${item.id}`}
+          numColumns={2}
+          scrollEnabled={false}
+          columnWrapperStyle={styles.tagContentColumn}
+        />
+      )}
+    </ScrollView>
+  );
+
   const renderContent = () => {
-    if (searchQuery.length > 0) {
+    if (searchQuery.trim().startsWith('#')) {
+      return renderTagContent();
+    } else if (searchQuery.length > 0) {
       return (
         <ScrollView style={styles.searchResults} contentContainerStyle={styles.contentContainer}>
           <Text style={styles.searchResultsTitle}>Search Results for "{searchQuery}"</Text>
@@ -586,6 +705,7 @@ const SearchScreen = () => {
                         person={item}
                         variant="compact"
                         onPress={() => navigation.navigate('PublicProfile', { userId: item.id })}
+                        onConnect={handleConnect}
                       />
                     )}
                     keyExtractor={(item) => item.id}
@@ -2364,6 +2484,44 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+
+  // Hashtag content styles
+  tagContentCard: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 16,
+    margin: 6,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  tagContentImage: {
+    width: '100%',
+    height: 140,
+  },
+  tagContentInfo: {
+    padding: 12,
+  },
+  tagContentType: {
+    color: '#3498DB',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  tagContentTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  tagContentExcerpt: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+  },
+  tagContentColumn: {
+    gap: 0,
   },
 });
 

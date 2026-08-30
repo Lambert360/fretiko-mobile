@@ -15,7 +15,7 @@ import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import './src/utils/base64-polyfill';
 import { createStackNavigator } from '@react-navigation/stack';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Text, Platform } from 'react-native';
 
 // Import contexts
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
@@ -30,6 +30,7 @@ import MinimizedCallBar from './src/components/MinimizedCallBar';
 // Import services
 import { pushNotificationService } from './src/services/pushNotificationService';
 import { callkeepService } from './src/services/callkeepService';
+import { initializeVoipPushNotifications } from './src/services/voipPushNotification';
 
 // Import auth screens
 import { SplashScreen } from './src/screens/SplashScreen';
@@ -106,6 +107,7 @@ import AuctionBidHistoryScreen from './src/screens/AuctionBidHistoryScreen';
 import AuctionWatchlistScreen from './src/screens/AuctionWatchlistScreen';
 import CreateAuctionScreen from './src/screens/CreateAuctionScreen';
 import LiveStreamViewerScreen from './src/screens/LiveStreamViewerScreen';
+import TopVendorLeaderboardScreen from './src/screens/TopVendorLeaderboardScreen';
 import LiveStreamHostScreen from './src/screens/LiveStreamHostScreen';
 import LiveStreamBroadcastScreen from './src/screens/LiveStreamBroadcastScreen';
 import LiveStreamSetupScreen from './src/screens/LiveStreamSetupScreen';
@@ -151,7 +153,14 @@ import SharedWishlistScreen from './src/screens/SharedWishlistScreen';
 
 // Import gift screens
 import MyGiftsScreen from './src/screens/MyGiftsScreen';
+import GiftLottiePreviewScreen from './src/screens/GiftLottiePreviewScreen';
 import GiftMarketplaceScreen from './src/screens/GiftMarketplaceScreen';
+import GiftCardStoreScreen from './src/screens/GiftCardStoreScreen';
+import GiftCardDesignSelection from './src/screens/GiftCardDesignSelection';
+import GiftCardDetailsScreen from './src/screens/GiftCardDetailsScreen';
+import GiftCardRedemptionScreen from './src/screens/GiftCardRedemptionScreen';
+import MyGiftCardsScreen from './src/screens/MyGiftCardsScreen';
+import RecipientSelectionScreen from './src/screens/RecipientSelectionScreen';
 import BookmarksScreen from './src/screens/BookmarksScreen';
 import CreatePostScreen from './src/screens/CreatePostScreen';
 import PostDetailsScreen from './src/screens/PostDetailsScreen';
@@ -191,6 +200,12 @@ const linking: any = {
         path: 'story/:storyId',
         parse: {
           storyId: (storyId: string) => storyId,
+        },
+      },
+      GiftCardDetails: {
+        path: 'gift-cards/claim/:claimCode',
+        parse: {
+          claimCode: (claimCode: string) => claimCode,
         },
       },
       WalletDeposit: {
@@ -292,7 +307,7 @@ class ErrorBoundary extends React.Component<
 
 // Navigation component that handles auth state
 const AppNavigator: React.FC = () => {
-  const { isAuthenticated, isLoading, isNewUser, isSuspended, isDeleted, isCheckingSuspension } = useAuth();
+  const { isAuthenticated, isLoading, isNewUser, isSuspended, isDeleted } = useAuth();
   const navigationRef = useRef<any>(null);
   const rootViewRef = useRef<any>(null);
   const hasHandledInitialNotificationRef = useRef(false);
@@ -345,6 +360,13 @@ const AppNavigator: React.FC = () => {
     initializePushNotifications();
   }, []);
 
+  // Initialize iOS PushKit / VoIP push notifications on app startup
+  useEffect(() => {
+    if (Platform.OS === 'ios') {
+      initializeVoipPushNotifications();
+    }
+  }, []);
+
   // Setup notification handlers
   useEffect(() => {
     console.log('📱 Setting up notification handlers...');
@@ -362,10 +384,15 @@ const AppNavigator: React.FC = () => {
         // hasn't (yet) delivered the call_event for this call.
         if (data?.type === 'call_incoming') {
           handleIncomingCallPush(data);
+        } else if (data?.type === 'call_ended' && data?.callSessionId) {
+          // Dismiss the native call UI when the other side ends/declines the call
+          callkeepService.endCallkeepCall(data.callSessionId);
+          callkeepService.setActiveCall(null);
+          pushNotificationService.clearAllNotifications();
         }
 
-        // Update badge count
-        pushNotificationService.setBadgeCount(1);
+        // Update badge count (reset for call_ended)
+        pushNotificationService.setBadgeCount(data?.type === 'call_ended' ? 0 : 1);
 
         // Optional: Show a custom in-app notification banner
         // You can implement a custom notification component here if needed
@@ -468,6 +495,16 @@ const AppNavigator: React.FC = () => {
           handleIncomingCallPush(data);
           break;
 
+        case 'call_ended':
+          // Dismiss the native call UI when the other side ends/declines the call
+          if (data.callSessionId) {
+            callkeepService.endCallkeepCall(data.callSessionId);
+            callkeepService.setActiveCall(null);
+            pushNotificationService.clearAllNotifications();
+            pushNotificationService.setBadgeCount(0);
+          }
+          break;
+
         case 'delivery_update':
         case 'rider_assigned':
           if (orderId) {
@@ -516,8 +553,14 @@ const AppNavigator: React.FC = () => {
     }
   };
 
-  // Show loading screen while checking auth state or suspension status
-  if (isLoading || isCheckingSuspension) {
+  // Show loading screen only during the initial auth check on app boot.
+  // IMPORTANT: Do NOT include isCheckingSuspension here - it flips true/false
+  // on every periodic background account-status re-check (every 5 minutes)
+  // and every AppState foreground-return check. Gating this render on it
+  // caused the entire CallProvider/NavigationContainer/Stack tree to unmount
+  // and remount on every check, dropping the user back on the Home tab and
+  // tearing down all active sockets mid-session.
+  if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#3498DB" />
@@ -609,6 +652,13 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="GroupedOrder" component={GroupedOrderScreen as any} />
               <Stack.Screen name="MyGifts" component={MyGiftsScreen} />
               <Stack.Screen name="GiftMarketplace" component={GiftMarketplaceScreen} />
+              <Stack.Screen name="GiftCardStore" component={GiftCardStoreScreen} />
+              <Stack.Screen name="GiftCardDesignSelection" component={GiftCardDesignSelection} />
+              <Stack.Screen name="GiftCardDetails" component={GiftCardDetailsScreen} />
+              <Stack.Screen name="GiftCardRedemption" component={GiftCardRedemptionScreen} />
+              <Stack.Screen name="MyGiftCards" component={MyGiftCardsScreen} />
+              <Stack.Screen name="GiftLottiePreview" component={GiftLottiePreviewScreen} />
+              <Stack.Screen name="RecipientSelection" component={RecipientSelectionScreen} />
               <Stack.Screen name="Bookmarks" component={BookmarksScreen} />
               <Stack.Screen 
                 name="RateOrder" 
@@ -636,6 +686,7 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="CreateInvoice" component={CreateInvoiceScreen} />
               <Stack.Screen name="InvoiceDetails" component={InvoiceDetailsScreen} />
               <Stack.Screen name="LiveSales" component={LiveSalesScreen} />
+              <Stack.Screen name="TopVendorLeaderboard" component={TopVendorLeaderboardScreen} options={{ title: 'Top Vendors' }} />
               <Stack.Screen name="LiveStreamViewer" component={LiveStreamViewerScreen} />
               <Stack.Screen name="LiveStreamHost" component={LiveStreamHostScreen} />
               <Stack.Screen name="LiveStreamBroadcast" component={LiveStreamBroadcastScreen} />

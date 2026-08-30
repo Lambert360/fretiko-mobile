@@ -31,8 +31,16 @@ export type CallStatus = 'idle' | 'incoming' | 'calling' | 'connecting' | 'ringi
 
 export interface GiftAnimationItem {
   id: string;
-  emoji: string;
-  quantity: number;
+  gift: {
+    id: string;
+    name: string;
+    emoji: string;
+    quantity: number;
+    display_lottie_url?: string;
+    lottie_config?: any;
+    sound_url?: string;
+    animation_type?: string;
+  };
 }
 
 interface CallContextValue {
@@ -67,7 +75,17 @@ interface CallContextValue {
   isLocalVideoPrimary: boolean;
   showCallOverlay: boolean;
   showGiftModal: boolean;
-  availableGifts: Array<{ id: string; emoji: string; name: string; quantity: number }>;
+  availableGifts: Array<{
+    id: string;
+    emoji: string;
+    name: string;
+    quantity: number;
+    total_value: number;
+    display_lottie_url?: string;
+    lottie_config?: any;
+    sound_url?: string;
+    animation_type?: string;
+  }>;
   loadingGifts: boolean;
   activeGiftAnimations: GiftAnimationItem[];
 
@@ -135,7 +153,17 @@ export const CallProvider: React.FC<{
   const [isLocalVideoPrimary, setIsLocalVideoPrimary] = useState(false);
   const [showCallOverlay, setShowCallOverlay] = useState(true);
   const [showGiftModal, setShowGiftModal] = useState(false);
-  const [availableGifts, setAvailableGifts] = useState<Array<{ id: string; emoji: string; name: string; quantity: number }>>([]);
+  const [availableGifts, setAvailableGifts] = useState<Array<{
+    id: string;
+    emoji: string;
+    name: string;
+    quantity: number;
+    total_value: number;
+    display_lottie_url?: string;
+    lottie_config?: any;
+    sound_url?: string;
+    animation_type?: string;
+  }>>([]);
   const [loadingGifts, setLoadingGifts] = useState(false);
   const [activeGiftAnimations, setActiveGiftAnimations] = useState<GiftAnimationItem[]>([]);
 
@@ -209,6 +237,7 @@ export const CallProvider: React.FC<{
   // === Show incoming call (full-screen UI) ===
   const showIncomingCall = useCallback((info: IncomingCallInfo) => {
     if (incomingCallRef.current) return; // Already showing an incoming call
+    if (currentCallSessionIdRef.current) return; // Already in a call
 
     setChatId(info.conversationId);
     chatIdRef.current = info.conversationId;
@@ -349,11 +378,19 @@ export const CallProvider: React.FC<{
         setRemoteVideoEnabled(true);
         setRemoteMuted(false);
         setCallStatus('connected');
+        setIsInCall(true);
         setCallStartTime(Date.now());
         stopCallSounds();
       },
-      onUserOffline: () => {
+      onUserOffline: (connection: any, remoteUid: number, reason: number) => {
+        console.log('📞 Remote user left call:', { remoteUid, reason });
         setRemoteUid(null);
+        if (reason === 0) {
+          // Remote user hung up
+          endCallRef.current('completed', true);
+        } else {
+          setCallStatus('reconnecting');
+        }
       },
       onConnectionStateChanged: (state: number, reason: number) => {
         if (state === 1) {
@@ -489,6 +526,7 @@ export const CallProvider: React.FC<{
         clearInterval(callTimerRef.current);
         callTimerRef.current = null;
       }
+      callkeepService.setActiveCall(null);
       isEndingCallRef.current = false;
     }
   }, [stopCallSounds]);
@@ -562,6 +600,7 @@ export const CallProvider: React.FC<{
       const callData = await chatAPI.startCall(params.chatId, params.callType, participantIds);
       setCurrentCallSessionId(callData.callSessionId);
       currentCallSessionIdRef.current = callData.callSessionId;
+      callkeepService.setActiveCall(callData.callSessionId);
 
       const rawConfig = callData.agoraConfig || callData.rtcConfiguration;
       if (!rawConfig) {
@@ -607,6 +646,7 @@ export const CallProvider: React.FC<{
       const joinResult = await chatAPI.joinCall(info.callSessionId);
       setCurrentCallSessionId(info.callSessionId);
       currentCallSessionIdRef.current = info.callSessionId;
+      callkeepService.setActiveCall(info.callSessionId);
 
       const rawConfig = joinResult.agoraConfig || joinResult.rtcConfiguration;
       if (!rawConfig) {
@@ -654,16 +694,25 @@ export const CallProvider: React.FC<{
     try {
       switch (data.signalType) {
         case 'gift_animation':
-          if (data.data && data.data.giftEmoji && data.data.quantity) {
+          if (data.data && data.data.quantity) {
+            const meta = data.data.giftMetadata || {};
             const animationId = `gift-${Date.now()}-${Math.random()}`;
-            setActiveGiftAnimations((prev) => [...prev, {
-              id: animationId,
-              emoji: data.data.giftEmoji,
-              quantity: data.data.quantity || 1,
-            }]);
-            setTimeout(() => {
-              setActiveGiftAnimations((prev) => prev.filter((anim) => anim.id !== animationId));
-            }, 5000);
+            setActiveGiftAnimations((prev) => [
+              ...prev,
+              {
+                id: animationId,
+                gift: {
+                  id: meta.id || data.data.giftId || data.data.gift_id || '',
+                  name: meta.name || data.data.giftName || '',
+                  emoji: meta.emoji || data.data.giftEmoji || '🎁',
+                  quantity: data.data.quantity || 1,
+                  display_lottie_url: meta.display_lottie_url,
+                  lottie_config: meta.lottie_config,
+                  sound_url: meta.sound_url,
+                  animation_type: meta.animation_type,
+                },
+              },
+            ]);
           }
           break;
 
@@ -680,7 +729,13 @@ export const CallProvider: React.FC<{
           setTimeout(() => {
             stopCallSounds();
             playCallSound('busy');
-            endCallRef.current('declined');
+            endCallRef.current('declined', true);
+          }, 0);
+          break;
+
+        case 'call_ended':
+          setTimeout(() => {
+            endCallRef.current(data.data?.reason || 'completed', true);
           }, 0);
           break;
 
@@ -786,17 +841,33 @@ export const CallProvider: React.FC<{
     try {
       setLoadingGifts(true);
       const userGiftsResponse = await giftAPI.getUserGifts();
-      const giftMap = new Map<string, { id: string; emoji: string; name: string; quantity: number }>();
+      const giftMap = new Map<string, {
+        id: string;
+        emoji: string;
+        name: string;
+        quantity: number;
+        total_value: number;
+        display_lottie_url?: string;
+        lottie_config?: any;
+        sound_url?: string;
+        animation_type?: string;
+      }>();
       userGiftsResponse.gifts.forEach((userGift) => {
         const existing = giftMap.get(userGift.gift_id);
         if (existing) {
           existing.quantity += userGift.quantity;
+          existing.total_value += userGift.total_value || 0;
         } else {
           giftMap.set(userGift.gift_id, {
             id: userGift.gift_id,
             emoji: userGift.emoji,
             name: userGift.gift_name,
             quantity: userGift.quantity,
+            total_value: userGift.total_value || 0,
+            display_lottie_url: userGift.display_lottie_url,
+            lottie_config: userGift.lottie_config,
+            sound_url: userGift.sound_url,
+            animation_type: userGift.animation_type,
           });
         }
       });
@@ -841,23 +912,47 @@ export const CallProvider: React.FC<{
         session_id: activeCallSessionId,
       });
 
+      const gift = availableGifts.find((g) => g.id === giftId);
+
       if (realtimeAPI.isConnected()) {
         realtimeAPI.sendCallSignal(activeCallSessionId, 'gift_sent', {
           giftId,
           quantity,
           senderId: userIdRef.current,
+          giftMetadata: gift
+            ? {
+                id: gift.id,
+                name: gift.name,
+                emoji: gift.emoji,
+                display_lottie_url: gift.display_lottie_url,
+                lottie_config: gift.lottie_config,
+                sound_url: gift.sound_url,
+                animation_type: gift.animation_type,
+              }
+            : undefined,
         });
       }
 
       setShowGiftModal(false);
 
       const animationId = `gift-local-${Date.now()}-${Math.random()}`;
-      const gift = availableGifts.find((g) => g.id === giftId);
-      if (gift && gift.emoji) {
-        setActiveGiftAnimations((prev) => [...prev, { id: animationId, emoji: gift.emoji, quantity }]);
-        setTimeout(() => {
-          setActiveGiftAnimations((prev) => prev.filter((anim) => anim.id !== animationId));
-        }, 3000);
+      if (gift) {
+        setActiveGiftAnimations((prev) => [
+          ...prev,
+          {
+            id: animationId,
+            gift: {
+              id: gift.id,
+              name: gift.name,
+              emoji: gift.emoji,
+              quantity,
+              display_lottie_url: gift.display_lottie_url,
+              lottie_config: gift.lottie_config,
+              sound_url: gift.sound_url,
+              animation_type: gift.animation_type,
+            },
+          },
+        ]);
       }
     } catch (error: any) {
       console.error('Error sending gift:', error);

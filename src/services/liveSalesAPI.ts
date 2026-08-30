@@ -22,6 +22,7 @@ export interface LiveStream {
   total_viewers: number;
   total_sales: number;
   thumbnail_url?: string;
+  preview_video_url?: string;
   stream_url?: string;
   products?: LiveStreamProduct[];
   services?: LiveStreamService[];
@@ -144,6 +145,7 @@ export interface CreateStreamData {
   description?: string;
   stream_type: 'products' | 'services';
   thumbnail_url?: string;
+  preview_video_url?: string;
   products?: {
     product_id: string;
     live_price: number;
@@ -159,6 +161,12 @@ export interface CreateStreamData {
   }>;
 }
 
+export interface LiveGiftCardData {
+  cardNumber: string;
+  pin: string;
+  amount?: number; // Optional: manually specify how much of the card balance to use
+}
+
 export interface LivePurchaseData {
   stream_id: string;
   product_id: string;
@@ -166,6 +174,7 @@ export interface LivePurchaseData {
   continue_watching?: boolean;
   rider_id?: string;
   delivery_address?: any;
+  giftCard?: LiveGiftCardData;
 }
 
 export interface LiveBookingData {
@@ -175,6 +184,7 @@ export interface LiveBookingData {
   service_time: string;
   service_notes?: string;
   continue_watching?: boolean;
+  giftCard?: LiveGiftCardData;
 }
 
 export interface UploadPortfolioServiceData {
@@ -194,6 +204,49 @@ export interface UploadPortfolioServiceData {
     end_time: string;
     duration_minutes: number;
   }>;
+}
+
+// =====================
+// GAMIFICATION TYPES
+// =====================
+
+export interface GamificationConfig {
+  watch_rewards_enabled: boolean;
+  watch_time_minutes: number;
+  freti_per_reward: number;
+  daily_cap_per_user: number;
+  per_stream_cap_per_user: number;
+  notifications_enabled: boolean;
+  leaderboard_enabled: boolean;
+  special_event_enabled: boolean;
+  special_event_name?: string;
+}
+
+export interface ViewerRewardProgress {
+  stream_id: string;
+  user_id: string;
+  session_start: string;
+  minutes_accrued: number;
+  total_credited_freti: number;
+  watch_time_minutes: number;
+  seconds_remaining: number;
+}
+
+export interface LeaderboardEntry {
+  vendor_id: string;
+  vendor_name: string;
+  avatar_url?: string;
+  rank: number;
+  score: number;
+  total_streams: number;
+  total_orders: number;
+  total_viewers: number;
+  total_revenue: number;
+  orders_per_stream: number;
+  avg_viewers_per_stream: number;
+  revenue_per_stream: number;
+  is_live?: boolean;
+  stream_id?: string;
 }
 
 // =====================
@@ -695,6 +748,7 @@ class LiveSalesAPI {
     service_date: string;
     service_time: string;
     service_notes?: string;
+    giftCard?: LiveGiftCardData;
   }): Promise<void> {
     try {
       await this.request('/live-sales/portfolio/book', {
@@ -765,6 +819,48 @@ class LiveSalesAPI {
     } catch (error) {
       console.error('Error fetching detailed analytics:', error);
       throw error;
+    }
+  }
+
+  // =====================
+  // GAMIFICATION
+  // =====================
+
+  async getGamificationConfig(): Promise<GamificationConfig | null> {
+    try {
+      return await this.request<GamificationConfig | null>('/live-sales/gamification/config');
+    } catch (error) {
+      console.error('Error fetching gamification config:', error);
+      return null;
+    }
+  }
+
+  async getWatchRewardProgress(streamId: string): Promise<ViewerRewardProgress | null> {
+    try {
+      return await this.request<ViewerRewardProgress | null>(`/live-sales/gamification/progress/${streamId}`);
+    } catch (error) {
+      console.error('Error fetching watch reward progress:', error);
+      return null;
+    }
+  }
+
+  async getVendorLeaderboard(
+    period: 'daily' | 'weekly' | 'monthly' | 'event' = 'weekly',
+    eventName?: string,
+    limit = 50,
+  ): Promise<LeaderboardEntry[]> {
+    try {
+      const params = new URLSearchParams();
+      params.append('period', period);
+      params.append('limit', limit.toString());
+      if (eventName) {
+        params.append('event_name', eventName);
+      }
+
+      return await this.request<LeaderboardEntry[]>(`/live-sales/gamification/leaderboard?${params.toString()}`);
+    } catch (error) {
+      console.error('Error fetching vendor leaderboard:', error);
+      return [];
     }
   }
 }

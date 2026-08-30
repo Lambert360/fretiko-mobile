@@ -99,6 +99,12 @@ export interface CreateOrderRequest {
   rewardsAmount?: number;
   // NEW: Selective checkout - product/service IDs to include
   selectedItemIds?: string[];
+  // Gift card applied at checkout
+  giftCard?: {
+    cardNumber: string;
+    pin: string;
+    amount?: number; // Optional: manually specify how much of the card balance to use
+  };
 }
 
 export interface Order {

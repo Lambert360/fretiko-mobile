@@ -150,7 +150,6 @@ class NotificationsAPIService {
       const response = await fetch(url, {
         method: 'GET',
         headers: this.getHeaders(token),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -175,7 +174,6 @@ class NotificationsAPIService {
         body: JSON.stringify({
           is_read: true,
         }),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -200,7 +198,6 @@ class NotificationsAPIService {
         body: JSON.stringify({
           is_deleted: true,
         }),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -226,7 +223,6 @@ class NotificationsAPIService {
           notification_ids: notificationIds,
           is_read: true,
         }),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -249,7 +245,6 @@ class NotificationsAPIService {
         method: 'PUT',
         headers: this.getHeaders(token),
         body: JSON.stringify({}),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -275,7 +270,6 @@ class NotificationsAPIService {
       const response = await fetch(`${this.baseURL}/stats`, {
         method: 'GET',
         headers: this.getHeaders(token),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -297,7 +291,6 @@ class NotificationsAPIService {
       const response = await fetch(`${this.baseURL}/unread-count`, {
         method: 'GET',
         headers: this.getHeaders(token),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -319,7 +312,6 @@ class NotificationsAPIService {
       const response = await fetch(`${this.baseURL}/recent`, {
         method: 'GET',
         headers: this.getHeaders(token),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -341,7 +333,6 @@ class NotificationsAPIService {
       const response = await fetch(`${this.baseURL}/urgent`, {
         method: 'GET',
         headers: this.getHeaders(token),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -367,7 +358,6 @@ class NotificationsAPIService {
       const response = await fetch(`${this.baseURL}/settings`, {
         method: 'GET',
         headers: this.getHeaders(token),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -390,7 +380,6 @@ class NotificationsAPIService {
         method: 'PUT',
         headers: this.getHeaders(token),
         body: JSON.stringify(settings),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -413,7 +402,6 @@ class NotificationsAPIService {
         method: 'POST',
         headers: this.getHeaders(token),
         body: JSON.stringify({ token: expoPushToken }),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -436,7 +424,6 @@ class NotificationsAPIService {
         method: 'DELETE',
         headers: this.getHeaders(token),
         body: JSON.stringify({ token: expoPushToken }),
-        timeout: API_CONFIG.TIMEOUT,
       });
 
       if (!response.ok) {
@@ -446,6 +433,50 @@ class NotificationsAPIService {
       return await response.json();
     } catch (error) {
       console.error('Error unregistering push token:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Register iOS VoIP (PushKit) device token for call push notifications
+   */
+  async registerVoipPushToken(token: string, voipToken: string): Promise<{ success: boolean }> {
+    try {
+      const response = await fetch(`${this.baseURL}/voip-push-token`, {
+        method: 'POST',
+        headers: this.getHeaders(token),
+        body: JSON.stringify({ token: voipToken }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to register VoIP push token: ${response.status} ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error registering VoIP push token:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Unregister iOS VoIP (PushKit) device token
+   */
+  async unregisterVoipPushToken(token: string, voipToken: string): Promise<{ success: boolean }> {
+    try {
+      const response = await fetch(`${this.baseURL}/voip-push-token`, {
+        method: 'DELETE',
+        headers: this.getHeaders(token),
+        body: JSON.stringify({ token: voipToken }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to unregister VoIP push token: ${response.status} ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error unregistering VoIP push token:', error);
       throw error;
     }
   }

@@ -1,7 +1,10 @@
 import { api } from './api';
 
+export type HeroMediaType = 'image' | 'video';
+
 export interface HeroImage {
   id: string;
+  signPostId?: string;
   name: string;
   url: string;
   title?: string;
@@ -9,11 +12,16 @@ export interface HeroImage {
   action_url?: string;
   is_active: boolean;
   sort_order: number;
+  media_type: HeroMediaType;
+  thumbnail_url?: string;
+  screen_target?: string;
+  countdown_enabled?: boolean;
+  countdown_target?: string;
 }
 
 class HeroImagesAPI {
   private cache = new Map<string, { data: HeroImage[]; timestamp: number }>();
-  private cacheTimeout = 15 * 60 * 1000; // 15 minutes
+  private cacheTimeout = 5 * 60 * 1000; // 5 minutes (content may change quickly)
 
   // Fallback local hero images
   private localHeroImages: HeroImage[] = [
@@ -25,7 +33,8 @@ class HeroImagesAPI {
       subtitle: 'Shop the latest trends',
       action_url: '',
       is_active: true,
-      sort_order: 1
+      sort_order: 1,
+      media_type: 'image',
     },
     {
       id: 'local-2', 
@@ -35,7 +44,8 @@ class HeroImagesAPI {
       subtitle: 'Connect, buy, sell, repeat',
       action_url: '',
       is_active: true,
-      sort_order: 2
+      sort_order: 2,
+      media_type: 'image',
     },
     {
       id: 'local-3',
@@ -45,7 +55,8 @@ class HeroImagesAPI {
       subtitle: 'Discover, share, connect',
       action_url: '',
       is_active: true,
-      sort_order: 3
+      sort_order: 3,
+      media_type: 'image',
     },
     {
       id: 'local-4',
@@ -55,12 +66,13 @@ class HeroImagesAPI {
       subtitle: 'Best deals, best prices',
       action_url: '',
       is_active: true, 
-      sort_order: 4
+      sort_order: 4,
+      media_type: 'image',
     }
   ];
 
-  async getHeroImages(): Promise<HeroImage[]> {
-    const cacheKey = 'hero_images';
+  async getHeroImages(screen: string = 'home'): Promise<HeroImage[]> {
+    const cacheKey = `hero_images_${screen}`;
     
     try {
       // Check cache first
@@ -70,40 +82,46 @@ class HeroImagesAPI {
         return cached.data;
       }
 
-      console.log('🌐 Fetching hero images from Supabase');
+      console.log('🌐 Fetching hero images from backend');
       
-      // Try to get images from backend API (which connects to Supabase)
-      const response = await api.get('/hero-images');
+      // Try to get hero media from backend API
+      const response = await api.get('/hero-images', { params: { screen } });
       const files = response.data;
 
       if (!files || files.length === 0) {
-        console.log('No hero images found in storage, using local images');
+        console.log('No hero images found, using local fallback');
         return this.localHeroImages;
       }
 
       // Convert API response to HeroImage objects
       const heroImages: HeroImage[] = files
-        .filter((file: any) => file.name.match(/\.(jpg|jpeg|png|webp)$/i))
-        .map((file: any, index: number) => ({
-          id: file.id || `hero-${index}`,
-          name: file.name,
-          url: file.public_url || file.url,
-          title: file.title || this.getTitleFromFileName(file.name),
-          subtitle: file.subtitle || this.getSubtitleFromFileName(file.name),
+        .map((file: any) => ({
+          id: file.id || `hero-${Math.random().toString(36).substring(7)}`,
+          signPostId: file.signPostId,
+          name: file.name || 'Hero Image',
+          url: file.url,
+          title: file.title || this.getTitleFromFileName(file.name || ''),
+          subtitle: file.subtitle || this.getSubtitleFromFileName(file.name || ''),
           action_url: file.action_url || '',
           is_active: file.is_active !== false,
-          sort_order: file.sort_order || index + 1
+          sort_order: file.sort_order ?? 0,
+          media_type: file.media_type || 'image',
+          thumbnail_url: file.thumbnail_url,
+          screen_target: file.screen_target,
+          countdown_enabled: file.countdown_enabled,
+          countdown_target: file.countdown_target,
         }))
-        .sort((a, b) => a.sort_order - b.sort_order);
+        .filter((item: HeroImage) => item.media_type === 'image' || item.media_type === 'video')
+        .sort((a: HeroImage, b: HeroImage) => (a.sort_order - b.sort_order));
 
       // Cache the results
       this.cache.set(cacheKey, { data: heroImages, timestamp: Date.now() });
       
-      console.log(`✅ Loaded ${heroImages.length} hero images from Supabase`);
+      console.log(`✅ Loaded ${heroImages.length} hero media from backend`);
       return heroImages;
 
     } catch (error: any) {
-      console.warn('Failed to fetch hero images from Supabase, using local fallback:', error);
+      console.warn('Failed to fetch hero images from backend, using local fallback:', error);
       return this.localHeroImages;
     }
   }

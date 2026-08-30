@@ -100,9 +100,10 @@ class AgoraCallService {
       }
 
       // Set audio profile and scenario for voice/video calls
-      // SpeechStandard optimises for voice; ChatRoom scenario handles mic routing correctly
+      // SpeechStandard optimises for voice; Default scenario gives the app control
+      // over the audio route (earpiece / speaker) via setDefaultAudioRouteToSpeakerphone.
       this.engine.setAudioProfile(AudioProfileType.AudioProfileSpeechStandard);
-      this.engine.setAudioScenario(AudioScenarioType.AudioScenarioChatroom);
+      this.engine.setAudioScenario(AudioScenarioType.AudioScenarioDefault);
       console.log('✅ Audio profile and scenario configured for calls');
 
       console.log('✅ Agora engine initialized with Communication profile');

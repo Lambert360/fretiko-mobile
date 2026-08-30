@@ -11,6 +11,7 @@ import {
   SafeAreaView,
   ActivityIndicator,
   ImageBackground,
+  ScrollView,
   Dimensions,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
@@ -328,7 +329,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
           <View style={styles.overlay} />
         </ImageBackground>
 
-        <View style={[styles.content, { paddingBottom: 40 + (insets.bottom || 0) }]}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: 40 + (insets.bottom || 0) }
+          ]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
           {/* Logo/Title */}
           <View style={styles.header}>
             <Text style={styles.title}>
@@ -455,7 +464,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
             onGoogleSignIn={handleGoogleSignIn}
             onAppleSignIn={handleAppleSignIn}
           />
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -483,8 +492,11 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.4)',
   },
-  content: {
+  scrollView: {
     flex: 1,
+  },
+  content: {
+    flexGrow: 1,
     padding: 20,
     justifyContent: 'flex-end',
   },

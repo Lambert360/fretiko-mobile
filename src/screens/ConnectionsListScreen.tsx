@@ -182,6 +182,7 @@ export const ConnectionsListScreen: React.FC<ConnectionsListScreenProps> = ({
     if (!user) return null;
 
     const isPatronage = section.title === 'Patronage';
+    const patronage = isPatronage ? (item as ClientRelationship) : null;
 
     return (
       <TouchableOpacity
@@ -218,15 +219,15 @@ export const ConnectionsListScreen: React.FC<ConnectionsListScreenProps> = ({
           </View>
         </View>
 
-        {isPatronage && (
+        {patronage && (
           <View style={styles.clientStats}>
-            {item.totalOrders > 0 ? (
+            {patronage.totalOrders > 0 ? (
               <>
                 <Text style={styles.statText}>
-                  {item.totalOrders} orders
+                  {patronage.totalOrders} orders
                 </Text>
                 <Text style={styles.statText}>
-                  ₣{item.totalSpent.toFixed(2)}
+                  ₣{patronage.totalSpent.toFixed(2)}
                 </Text>
               </>
             ) : (
@@ -241,7 +242,7 @@ export const ConnectionsListScreen: React.FC<ConnectionsListScreenProps> = ({
   };
 
   const renderSectionHeader = ({ section, index }: { section: ConnectionSection; index: number }) => {
-    const count = section.data.length;
+    const count = (section as any).originalCount ?? section.data.length;
 
     return (
       <TouchableOpacity
@@ -338,6 +339,7 @@ export const ConnectionsListScreen: React.FC<ConnectionsListScreenProps> = ({
           sections={sections.map((section, index) => ({
             ...section,
             data: section.collapsed ? [] : section.data,
+            originalCount: section.data.length,
             index,
           }))}
           renderItem={renderConnectionItem}

@@ -15,6 +15,7 @@ type EndHandler = (callUUID: string) => void;
 class CallkeepService {
   private isSetup = false;
   private pendingCalls = new Map<string, CallkeepCallInfo>(); // uuid → call info
+  private activeCallSessionId: string | null = null;
   private answerHandler: AnswerHandler | null = null;
   private endHandler: EndHandler | null = null;
 
@@ -96,6 +97,12 @@ class CallkeepService {
       return;
     }
 
+    // Skip if we are already in an active call
+    if (this.activeCallSessionId) {
+      console.log('📞 CallKeep already in an active call, skipping incoming:', info.uuid);
+      return;
+    }
+
     try {
       this.pendingCalls.set(info.uuid, info);
       RNCallKeep.displayIncomingCall(
@@ -122,6 +129,10 @@ class CallkeepService {
 
   getCallInfo(uuid: string): CallkeepCallInfo | undefined {
     return this.pendingCalls.get(uuid);
+  }
+
+  setActiveCall(sessionId: string | null) {
+    this.activeCallSessionId = sessionId;
   }
 
   setAvailable(available: boolean) {

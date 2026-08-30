@@ -28,12 +28,14 @@ export const mentionsAPI = {
     if (typeof options.offset === 'number') params.offset = options.offset;
 
     const response = await api.get('/mentions/me', { params });
-    return response.data as Mention[];
+    const data = Array.isArray(response.data) ? response.data : (response.data as { data?: Mention[] })?.data;
+    return data || [];
   },
 
   async resolveCommentParent(commentId: string): Promise<{ parent_type: 'post' | 'story'; parent_id: string } | null> {
     const response = await api.get(`/mentions/resolve-comment/${commentId}`);
-    return response.data || null;
+    const data = (response.data as any)?.data;
+    return data || null;
   },
 
   async markAllRead(): Promise<void> {

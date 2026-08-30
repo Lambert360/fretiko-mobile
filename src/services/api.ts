@@ -199,9 +199,9 @@ api.interceptors.response.use(
 
     // Handle common errors here
     if (error.code === 'ECONNABORTED') {
-      console.error('Request timeout - is your backend running?');
+      console.warn('Request timeout - is your backend running?');
     } else if (error.message === 'Network Error') {
-      console.error('Network error - check your backend URL and connection');
+      console.warn('Network error - check your backend URL and connection');
     }
     
     return Promise.reject(error);
