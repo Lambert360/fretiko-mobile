@@ -21,12 +21,12 @@ const handleRegister = async (token: string) => {
   }
 };
 
-const handleNotification = (notification: any) => {
+const handleNotification = async (notification: any) => {
   const data = notification || {};
   const callSessionId = data.callSessionId || data.uuid;
 
   if (data.type === 'call_incoming') {
-    callkeepService.displayIncomingCall({
+    await callkeepService.displayIncomingCall({
       uuid: data.callSessionId,
       callSessionId: data.callSessionId,
       conversationId: data.conversationId,
@@ -34,10 +34,10 @@ const handleNotification = (notification: any) => {
       callType: data.callType || 'audio',
     });
   } else if (data.type === 'call_ended' && callSessionId) {
-    callkeepService.endCallkeepCall(callSessionId);
+    await callkeepService.endCallkeepCall(callSessionId);
     callkeepService.setActiveCall(null);
-    pushNotificationService.clearAllNotifications();
-    pushNotificationService.setBadgeCount(0);
+    await pushNotificationService.clearAllNotifications();
+    await pushNotificationService.setBadgeCount(0);
   }
 
   const completionUuid = callSessionId || data.uuid;

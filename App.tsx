@@ -363,6 +363,8 @@ const AppNavigator: React.FC = () => {
   // Initialize iOS PushKit / VoIP push notifications on app startup
   useEffect(() => {
     if (Platform.OS === 'ios') {
+      // Set up CallKeep first so it's ready the moment a VoIP push arrives.
+      callkeepService.setup().catch(() => {});
       initializeVoipPushNotifications();
     }
   }, []);
@@ -373,7 +375,7 @@ const AppNavigator: React.FC = () => {
 
     // Setup notification listeners
     pushNotificationService.setupNotificationListeners({
-      onNotificationReceived: (notification) => {
+      onNotificationReceived: async (notification) => {
         console.log('📬 Notification received in foreground:', notification.request.content);
 
         const data = notification.request.content.data as any;
@@ -383,16 +385,16 @@ const AppNavigator: React.FC = () => {
         // where the app is foregrounded/backgrounded but the realtime socket
         // hasn't (yet) delivered the call_event for this call.
         if (data?.type === 'call_incoming') {
-          handleIncomingCallPush(data);
+          await handleIncomingCallPush(data);
         } else if (data?.type === 'call_ended' && data?.callSessionId) {
           // Dismiss the native call UI when the other side ends/declines the call
-          callkeepService.endCallkeepCall(data.callSessionId);
+          await callkeepService.endCallkeepCall(data.callSessionId);
           callkeepService.setActiveCall(null);
-          pushNotificationService.clearAllNotifications();
+          await pushNotificationService.clearAllNotifications();
         }
 
         // Update badge count (reset for call_ended)
-        pushNotificationService.setBadgeCount(data?.type === 'call_ended' ? 0 : 1);
+        await pushNotificationService.setBadgeCount(data?.type === 'call_ended' ? 0 : 1);
 
         // Optional: Show a custom in-app notification banner
         // You can implement a custom notification component here if needed
@@ -446,13 +448,13 @@ const AppNavigator: React.FC = () => {
   // Display the native incoming-call UI (CallKeep) for a call_incoming push.
   // Called both when the push is received (foreground/background delivery)
   // and when the user taps it, so the device rings without requiring a tap.
-  const handleIncomingCallPush = (data: any) => {
+  const handleIncomingCallPush = async (data: any) => {
     const convId = data?.conversationId;
     const callSessionId = data?.callSessionId;
 
     if (!convId || !callSessionId) return;
 
-    callkeepService.displayIncomingCall({
+    await callkeepService.displayIncomingCall({
       uuid: callSessionId,
       callerName: data.callerName || 'Unknown',
       callType: data.callType || 'audio',
@@ -462,7 +464,7 @@ const AppNavigator: React.FC = () => {
   };
 
   // Handle navigation based on notification data
-  const handleNotificationNavigation = (data: any) => {
+  const handleNotificationNavigation = async (data: any) => {
     console.log('🧭 Handling notification navigation:', data);
 
     try {
@@ -492,16 +494,16 @@ const AppNavigator: React.FC = () => {
           // ringtone is presented even when the app was backgrounded or killed.
           // The full-screen incoming call UI is handled by CallContext's
           // realtime call_event subscription which calls showIncomingCall().
-          handleIncomingCallPush(data);
+          await handleIncomingCallPush(data);
           break;
 
         case 'call_ended':
           // Dismiss the native call UI when the other side ends/declines the call
           if (data.callSessionId) {
-            callkeepService.endCallkeepCall(data.callSessionId);
+            await callkeepService.endCallkeepCall(data.callSessionId);
             callkeepService.setActiveCall(null);
-            pushNotificationService.clearAllNotifications();
-            pushNotificationService.setBadgeCount(0);
+            await pushNotificationService.clearAllNotifications();
+            await pushNotificationService.setBadgeCount(0);
           }
           break;
 
