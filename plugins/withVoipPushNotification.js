@@ -73,21 +73,6 @@ const withVoipPushNotification = (config) => {
       config.modResults.addSourceFile('FretikoPushKitManager.m', {}, groupKey);
     }
 
-    // Make sure the bridging header path is set in the build settings
-    const bridgingHeaderValue = `$(PROJECT_DIR)/${projectName}/${projectName}-Bridging-Header.h`;
-    config.modResults.updateBuildProperty(
-      'SWIFT_OBJC_BRIDGING_HEADER',
-      bridgingHeaderValue,
-      'Debug',
-      projectName
-    );
-    config.modResults.updateBuildProperty(
-      'SWIFT_OBJC_BRIDGING_HEADER',
-      bridgingHeaderValue,
-      'Release',
-      projectName
-    );
-
     return config;
   });
 
