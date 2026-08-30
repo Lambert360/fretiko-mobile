@@ -105,7 +105,7 @@ const withVoipPushNotification = (config) => {
   public func pushRegistry(
     _ registry: PKPushRegistry,
     didUpdate pushCredentials: PKPushCredentials,
-    forType type: PKPushType
+    for type: PKPushType
   ) {
     RNVoipPushNotificationManager.didUpdatePushCredentials(pushCredentials, forType: type.rawValue)
   }
@@ -113,7 +113,7 @@ const withVoipPushNotification = (config) => {
   public func pushRegistry(
     _ registry: PKPushRegistry,
     didReceiveIncomingPushWith payload: PKPushPayload,
-    forType type: PKPushType
+    for type: PKPushType
   ) {
     RNVoipPushNotificationManager.didReceiveIncomingPushWithPayload(payload, forType: type.rawValue)
   }
@@ -122,6 +122,22 @@ const withVoipPushNotification = (config) => {
         '}\n\nclass ReactNativeDelegate: ExpoReactNativeFactoryDelegate {',
         `${pushDelegateMethods}\n}\n\nclass ReactNativeDelegate: ExpoReactNativeFactoryDelegate {`
       );
+    }
+
+    // Make sure the bridging header also imports RNVoipPushNotificationManager for Swift
+    const targetName = getProjectName(config.modRequest.projectRoot);
+    const bridgingHeaderPath = path.join(
+      config.modRequest.platformProjectRoot,
+      targetName,
+      `${targetName}-Bridging-Header.h`
+    );
+    if (fs.existsSync(bridgingHeaderPath)) {
+      const importLine = '#import <RNVoipPushNotification/RNVoipPushNotificationManager.h>';
+      let bridgingContents = fs.readFileSync(bridgingHeaderPath, 'utf8');
+      if (!bridgingContents.includes(importLine)) {
+        bridgingContents = `${bridgingContents.trim()}\n${importLine}\n`;
+        fs.writeFileSync(bridgingHeaderPath, bridgingContents);
+      }
     }
 
     config.modResults.contents = newContents;
