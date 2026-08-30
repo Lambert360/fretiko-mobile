@@ -3,6 +3,7 @@ const {
   withXcodeProject,
   withAppDelegate,
   withEntitlementsPlist,
+  withDangerousMod,
 } = require('@expo/config-plugins');
 const {
   addFramework,
@@ -18,7 +19,8 @@ const path = require('path');
  * - Info.plist UIBackgroundModes (audio, remote-notification, voip)
  * - aps-environment entitlement
  * - Link PushKit.framework
- * - Add an Objective-C wrapper so Swift can call RNVoipPushNotificationManager
+ * - Patch the library header with explicit NS_SWIFT_NAME attributes so the
+ *   renamed SDK selectors compile cleanly from Swift
  * - Insert PushKit setup and delegate methods into AppDelegate.swift
  */
 const withVoipPushNotification = (config) => {
@@ -46,7 +48,6 @@ const withVoipPushNotification = (config) => {
   });
 
   // 3. Link the PushKit system framework in the Xcode project
-  //    and add a small Objective-C wrapper so Swift can call RNVoipPushNotificationManager
   config = withXcodeProject(config, (config) => {
     const projectName = getProjectName(config.modRequest.projectRoot);
     addFramework({
@@ -54,29 +55,42 @@ const withVoipPushNotification = (config) => {
       projectName,
       framework: 'PushKit.framework',
     });
-
-    const nativeProjectRoot = config.modRequest.platformProjectRoot;
-    const targetDir = path.join(nativeProjectRoot, projectName);
-    const hPath = path.join(targetDir, 'FretikoPushKitManager.h');
-    const mPath = path.join(targetDir, 'FretikoPushKitManager.m');
-
-    const hContents = `\n#import <Foundation/Foundation.h>\n#import <PushKit/PushKit.h>\n\n@interface FretikoPushKitManager : NSObject\n+ (void)fretikoHandleTokenUpdate:(PKPushCredentials *)credentials forType:(NSString *)type;\n+ (void)fretikoHandlePushPayload:(PKPushPayload *)payload forType:(NSString *)type;\n@end\n`;
-
-    const mContents = `\n#import "FretikoPushKitManager.h"\n#import <RNVoipPushNotification/RNVoipPushNotificationManager.h>\n\n@implementation FretikoPushKitManager\n+ (void)fretikoHandleTokenUpdate:(PKPushCredentials *)credentials forType:(NSString *)type {\n    [RNVoipPushNotificationManager didUpdatePushCredentials:credentials forType:type];\n}\n+ (void)fretikoHandlePushPayload:(PKPushPayload *)payload forType:(NSString *)type {\n    [RNVoipPushNotificationManager didReceiveIncomingPushWithPayload:payload forType:type];\n}\n@end\n`;
-
-    fs.writeFileSync(hPath, hContents);
-    fs.writeFileSync(mPath, mContents);
-
-    const groupKey = config.modResults.findPBXGroupKey({ name: projectName });
-    if (groupKey) {
-      config.modResults.addHeaderFile('FretikoPushKitManager.h', {}, groupKey);
-      config.modResults.addSourceFile('FretikoPushKitManager.m', {}, groupKey);
-    }
-
     return config;
   });
 
-  // 4. Modify AppDelegate.swift to set up the PKPushRegistry and delegate methods
+  // 4. Patch react-native-voip-push-notification's header to add explicit
+  //    NS_SWIFT_NAME attributes before pod install picks it up.
+  config = withDangerousMod(config, ['ios', (config) => {
+    const projectRoot = config.modRequest.projectRoot;
+    const headerPath = path.join(
+      projectRoot,
+      'node_modules',
+      'react-native-voip-push-notification',
+      'ios',
+      'RNVoipPushNotification',
+      'RNVoipPushNotificationManager.h'
+    );
+
+    if (fs.existsSync(headerPath)) {
+      let header = fs.readFileSync(headerPath, 'utf8');
+
+      if (!header.includes('NS_SWIFT_NAME')) {
+        header = header.replace(
+          '+ (void)didUpdatePushCredentials:(PKPushCredentials *)credentials forType:(NSString *)type;',
+          '+ (void)didUpdatePushCredentials:(PKPushCredentials *)credentials forType:(NSString *)type NS_SWIFT_NAME(didUpdate(_:forType:));'
+        );
+        header = header.replace(
+          '+ (void)didReceiveIncomingPushWithPayload:(PKPushPayload *)payload forType:(NSString *)type;',
+          '+ (void)didReceiveIncomingPushWithPayload:(PKPushPayload *)payload forType:(NSString *)type NS_SWIFT_NAME(didReceiveIncomingPush(with:forType:));'
+        );
+        fs.writeFileSync(headerPath, header);
+      }
+    }
+
+    return config;
+  }]);
+
+  // 5. Modify AppDelegate.swift to set up the PKPushRegistry and delegate methods
   config = withAppDelegate(config, (config) => {
     const { contents, language } = config.modResults;
     if (language !== 'swift' || !contents) {
@@ -116,7 +130,7 @@ const withVoipPushNotification = (config) => {
     }
 
     // Append the PKPushRegistryDelegate methods before ReactNativeDelegate
-    if (!newContents.includes('FretikoPushKitManager.fretikoHandleTokenUpdate')) {
+    if (!newContents.includes('RNVoipPushNotificationManager.didUpdate')) {
       const pushDelegateMethods = `
 
   // MARK: - PKPushRegistryDelegate
@@ -126,7 +140,7 @@ const withVoipPushNotification = (config) => {
     didUpdate pushCredentials: PKPushCredentials,
     for type: PKPushType
   ) {
-    FretikoPushKitManager.fretikoHandleTokenUpdate(pushCredentials, forType: type.rawValue)
+    RNVoipPushNotificationManager.didUpdate(pushCredentials, forType: type.rawValue)
   }
 
   public func pushRegistry(
@@ -134,7 +148,7 @@ const withVoipPushNotification = (config) => {
     didReceiveIncomingPushWith payload: PKPushPayload,
     for type: PKPushType
   ) {
-    FretikoPushKitManager.fretikoHandlePushPayload(payload, forType: type.rawValue)
+    RNVoipPushNotificationManager.didReceiveIncomingPush(with: payload, forType: type.rawValue)
   }
 `;
       newContents = newContents.replace(
@@ -143,7 +157,7 @@ const withVoipPushNotification = (config) => {
       );
     }
 
-    // Make sure the bridging header imports the wrapper so Swift can see it
+    // Make sure the bridging header imports the VoIP manager
     const targetName = getProjectName(config.modRequest.projectRoot);
     const bridgingHeaderPath = path.join(
       config.modRequest.platformProjectRoot,
@@ -154,8 +168,8 @@ const withVoipPushNotification = (config) => {
     if (!fs.existsSync(bridgingHeaderPath)) {
       fs.writeFileSync(bridgingHeaderPath, '// Bridging header\n');
     }
-    const importLine = '#import "FretikoPushKitManager.h"';
-    const oldImportLine = '#import <RNVoipPushNotification/RNVoipPushNotificationManager.h>';
+    const importLine = '#import <RNVoipPushNotification/RNVoipPushNotificationManager.h>';
+    const oldImportLine = '#import "FretikoPushKitManager.h"';
     let bridgingContents = fs.readFileSync(bridgingHeaderPath, 'utf8');
     bridgingContents = bridgingContents.replace(oldImportLine, '');
     if (!bridgingContents.includes(importLine)) {
