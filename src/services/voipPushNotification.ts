@@ -34,24 +34,27 @@ const handleNotification = async (notification: any) => {
   const data = notification || {};
   const callSessionId = data.callSessionId || data.uuid;
 
-  if (data.type === 'call_incoming') {
-    await callkeepService.displayIncomingCall({
-      uuid: data.callSessionId,
-      callSessionId: data.callSessionId,
-      conversationId: data.conversationId,
-      callerName: data.callerName || 'Unknown Caller',
-      callType: data.callType || 'audio',
-    });
-  } else if (data.type === 'call_ended' && callSessionId) {
-    await callkeepService.endCallkeepCall(callSessionId);
-    callkeepService.setActiveCall(null);
-    await pushNotificationService.clearAllNotifications();
-    await pushNotificationService.setBadgeCount(0);
-  }
-
-  const completionUuid = callSessionId || data.uuid;
-  if (completionUuid) {
-    RNVoipPushNotification.onVoipNotificationCompleted(completionUuid);
+  try {
+    if (data.type === 'call_incoming') {
+      await callkeepService.displayIncomingCall({
+        uuid: callSessionId,
+        callSessionId,
+        conversationId: data.conversationId,
+        callerName: data.callerName || 'Unknown Caller',
+        callType: data.callType || 'audio',
+      });
+    } else if (data.type === 'call_ended' && callSessionId) {
+      await callkeepService.endCallkeepCall(callSessionId);
+      callkeepService.setActiveCall(null);
+      await pushNotificationService.clearAllNotifications();
+      await pushNotificationService.setBadgeCount(0);
+    }
+  } finally {
+    // Always complete the PushKit notification so iOS does not penalise us.
+    const completionUuid = callSessionId || data.uuid;
+    if (completionUuid) {
+      RNVoipPushNotification.onVoipNotificationCompleted(completionUuid);
+    }
   }
 };
 
