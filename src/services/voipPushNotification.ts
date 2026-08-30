@@ -1,23 +1,32 @@
 import { Platform } from 'react-native';
 import RNVoipPushNotification from 'react-native-voip-push-notification';
-import { supabase } from '../lib/supabase';
 import { notificationsAPI } from './notificationsAPI';
 import { callkeepService } from './callkeepService';
 import { pushNotificationService } from './pushNotificationService';
 
 let isInitialized = false;
+let pendingVoipToken: string | null = null;
+let pendingAuthToken: string | null = null;
 
-const handleRegister = async (token: string) => {
+const registerVoipTokenIfPossible = async () => {
+  if (!pendingVoipToken || !pendingAuthToken) return;
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) {
-      await notificationsAPI.registerVoipPushToken(session.access_token, token);
-      console.log('✅ VoIP token registered:', token);
-    } else {
-      console.warn('⚠️ No active session to register VoIP token');
-    }
+    await notificationsAPI.registerVoipPushToken(pendingAuthToken, pendingVoipToken);
+    console.log('✅ VoIP token registered:', pendingVoipToken);
   } catch (error) {
     console.error('❌ Failed to register VoIP token:', error);
+  }
+};
+
+const handleRegister = async (token: string) => {
+  pendingVoipToken = token;
+  await registerVoipTokenIfPossible();
+};
+
+export const setVoipAuthToken = (token: string | null) => {
+  pendingAuthToken = token ?? null;
+  if (pendingAuthToken) {
+    registerVoipTokenIfPossible();
   }
 };
 
@@ -46,14 +55,14 @@ const handleNotification = async (notification: any) => {
   }
 };
 
-const handleDidLoadWithEvents = (events: any[]) => {
-  events?.forEach((event: any) => {
+const handleDidLoadWithEvents = async (events: any[]) => {
+  for (const event of events || []) {
     if (event.name === RNVoipPushNotification.RNVoipPushRemoteNotificationsRegisteredEvent) {
-      handleRegister(event.data);
+      await handleRegister(event.data);
     } else if (event.name === RNVoipPushNotification.RNVoipPushRemoteNotificationReceivedEvent) {
-      handleNotification(event.data);
+      await handleNotification(event.data);
     }
-  });
+  }
 };
 
 export const initializeVoipPushNotifications = () => {
@@ -62,9 +71,12 @@ export const initializeVoipPushNotifications = () => {
 
   isInitialized = true;
 
+  // didLoadWithEvents must be added first. startObserving fires it as soon
+  // as any listener is attached, so this listener has to be in place before
+  // that first addEventListener triggers the native didLoadWithEvents event.
+  RNVoipPushNotification.addEventListener('didLoadWithEvents', handleDidLoadWithEvents);
   RNVoipPushNotification.addEventListener('register', handleRegister);
   RNVoipPushNotification.addEventListener('notification', handleNotification);
-  RNVoipPushNotification.addEventListener('didLoadWithEvents', handleDidLoadWithEvents);
 
   RNVoipPushNotification.registerVoipToken();
   console.log('✅ VoIP push notifications initialized');

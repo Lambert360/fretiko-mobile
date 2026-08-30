@@ -470,6 +470,7 @@ class PushNotificationService {
             lightColor: '#FF27AE60',
             enableVibrate: true,
             showBadge: false,
+            bypassDnd: true,
           },
         ];
 

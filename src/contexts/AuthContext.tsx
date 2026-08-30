@@ -5,6 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 import { authAPI } from '../services/api';
 import { warningsAPI } from '../services/warningsAPI';
 import { pushNotificationService } from '../services/pushNotificationService';
+import { setVoipAuthToken } from '../services/voipPushNotification';
 import { API_CONFIG } from '../config/api';
 
 // Custom error class for unauthorized access
@@ -470,6 +471,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           console.error('❌ Error registering push token:', error);
         }
       }
+
+      // Provide the auth token to the VoIP service so it can register
+      // the iOS PushKit token with the backend when one is available.
+      setVoipAuthToken(authState.accessToken);
     };
 
     registerPushToken();

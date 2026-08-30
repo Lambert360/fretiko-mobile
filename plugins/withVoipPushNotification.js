@@ -150,6 +150,22 @@ const withVoipPushNotification = (config) => {
   ) {
     RNVoipPushNotificationManager.didReceiveIncomingPush(with: payload, forType: type.rawValue)
   }
+
+  public func pushRegistry(
+    _ registry: PKPushRegistry,
+    didReceiveIncomingPushWith payload: PKPushPayload,
+    for type: PKPushType,
+    completion: @escaping () -> Void
+  ) {
+    // iOS 11+ requires calling the completion handler. Use the VoIP
+    // payload's callSessionId as the completion key so JS can call
+    // onVoipNotificationCompleted(data.callSessionId) after it finishes.
+    let callSessionId = payload.dictionaryPayload["callSessionId"] as? String
+      ?? payload.dictionaryPayload["uuid"] as? String
+      ?? UUID().uuidString
+    RNVoipPushNotificationManager.addCompletionHandler(callSessionId, completionHandler: completion)
+    RNVoipPushNotificationManager.didReceiveIncomingPush(with: payload, forType: type.rawValue)
+  }
 `;
       newContents = newContents.replace(
         '}\n\nclass ReactNativeDelegate: ExpoReactNativeFactoryDelegate {',

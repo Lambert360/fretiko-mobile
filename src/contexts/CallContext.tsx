@@ -480,10 +480,10 @@ export const CallProvider: React.FC<{
     if (isEndingCallRef.current) return;
     isEndingCallRef.current = true;
 
+    const activeCallSessionId = currentCallSessionIdRef.current;
+
     try {
       stopCallSounds();
-
-      const activeCallSessionId = currentCallSessionIdRef.current;
 
       await agoraCallService.cleanup();
       setRemoteUid(null);
@@ -522,6 +522,13 @@ export const CallProvider: React.FC<{
       setActiveGiftAnimations([]);
       setChatId(null);
       setOtherUserId(null);
+      if (activeCallSessionId) {
+        try {
+          await callkeepService.endCallkeepCall(activeCallSessionId);
+        } catch (e) {
+          console.warn('CallKeep endCall failed:', e);
+        }
+      }
       if (callTimerRef.current) {
         clearInterval(callTimerRef.current);
         callTimerRef.current = null;
