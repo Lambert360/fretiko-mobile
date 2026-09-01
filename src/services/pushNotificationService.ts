@@ -33,6 +33,7 @@ Notifications.setNotificationHandler({
         if (data?.callSessionId) {
           callkeepService.endCallkeepCall(data.callSessionId);
           callkeepService.setActiveCall(null);
+          callkeepService.notifyRemoteCallEnded(data.callSessionId, (data as any)?.reason);
           Notifications.dismissAllNotificationsAsync();
           Notifications.setBadgeCountAsync(0);
         }
@@ -76,8 +77,10 @@ export interface PushNotificationCallback {
 
 class PushNotificationService {
   private expoPushToken: string | null = null;
+  private fcmToken: string | null = null;
   private notificationListener: Notifications.Subscription | null = null;
   private responseListener: Notifications.Subscription | null = null;
+  private fcmMessageListener: (() => void) | null = null;
   private callbacks: PushNotificationCallback = {};
 
   /**
@@ -98,10 +101,10 @@ class PushNotificationService {
   }
 
   /**
-   * Get the current Expo push token
+   * Get the current stored push token (Expo or FCM)
    */
   getStoredExpoPushToken(): string | null {
-    return this.expoPushToken;
+    return this.expoPushToken || this.fcmToken;
   }
 
   /**
@@ -171,22 +174,59 @@ class PushNotificationService {
   }
 
   /**
+   * Get FCM token for this Android device
+   */
+  async getFcmToken(): Promise<string | null> {
+    try {
+      if (Platform.OS !== 'android') return null;
+
+      const messaging = require('@react-native-firebase/messaging').default;
+
+      const hasPermission = await this.requestPermissions();
+      if (!hasPermission) return null;
+
+      const token = await messaging().getToken();
+      this.fcmToken = token;
+
+      messaging().onTokenRefresh(async (newToken: string) => {
+        if (this.fcmToken !== newToken) {
+          this.fcmToken = newToken;
+          // Token will be re-registered on next login by AuthContext
+          console.log('🔄 FCM token refreshed:', newToken);
+        }
+      });
+
+      console.log('✅ FCM token obtained:', token);
+      return token;
+    } catch (error) {
+      console.error('❌ Error getting FCM token:', error);
+      return null;
+    }
+  }
+
+  /**
    * Register push token with backend
    */
   async registerPushToken(userToken: string): Promise<boolean> {
     try {
-      // Get Expo push token
-      const expoPushToken = await this.getExpoPushToken();
-      
-      if (!expoPushToken) {
+      let pushToken: string | null = null;
+      const type = Platform.OS === 'ios' ? 'expo' : 'fcm';
+
+      if (type === 'expo') {
+        pushToken = await this.getExpoPushToken();
+      } else {
+        pushToken = await this.getFcmToken();
+      }
+
+      if (!pushToken) {
         console.warn('⚠️ No push token to register');
         return false;
       }
 
       // Register with backend
       console.log('📤 Registering push token with backend...');
-      await notificationsAPI.registerPushToken(userToken, expoPushToken);
-      
+      await notificationsAPI.registerPushToken(userToken, pushToken, type);
+
       console.log('✅ Push token registered successfully');
       return true;
     } catch (error) {
@@ -198,20 +238,26 @@ class PushNotificationService {
   /**
    * Register a specific push token with backend (used when token is already cached)
    */
-  async registerPushTokenWithToken(userToken: string, expoPushToken: string): Promise<boolean> {
+  async registerPushTokenWithToken(userToken: string, pushToken: string): Promise<boolean> {
     try {
-      if (!expoPushToken) {
+      if (!pushToken) {
         console.warn('⚠️ No push token provided');
         return false;
       }
 
+      const type = pushToken.includes('ExponentPushToken') ? 'expo' : 'fcm';
+
       // Store the token
-      this.expoPushToken = expoPushToken;
+      if (type === 'expo') {
+        this.expoPushToken = pushToken;
+      } else {
+        this.fcmToken = pushToken;
+      }
 
       // Register with backend
       console.log('📤 Registering push token with backend...');
-      await notificationsAPI.registerPushToken(userToken, expoPushToken);
-      
+      await notificationsAPI.registerPushToken(userToken, pushToken, type);
+
       console.log('✅ Push token registered successfully');
       return true;
     } catch (error) {
@@ -225,16 +271,20 @@ class PushNotificationService {
    */
   async unregisterPushToken(userToken: string): Promise<boolean> {
     try {
-      if (!this.expoPushToken) {
+      const token = this.expoPushToken || this.fcmToken;
+      if (!token) {
         console.warn('⚠️ No push token to unregister');
         return false;
       }
 
+      const type = this.expoPushToken ? 'expo' : 'fcm';
+
       console.log('📤 Unregistering push token from backend...');
-      await notificationsAPI.unregisterPushToken(userToken, this.expoPushToken);
-      
+      await notificationsAPI.unregisterPushToken(userToken, token, type);
+
       console.log('✅ Push token unregistered successfully');
       this.expoPushToken = null;
+      this.fcmToken = null;
       return true;
     } catch (error) {
       console.error('❌ Error unregistering push token:', error);
@@ -247,8 +297,13 @@ class PushNotificationService {
    */
   setupNotificationListeners(callbacks: PushNotificationCallback): void {
     console.log('🎧 Setting up notification listeners...');
-    
+
     this.callbacks = callbacks;
+
+    // Android FCM foreground listener (expo-notifications does not receive FCM on Android)
+    if (Platform.OS === 'android') {
+      this.setupFcmForegroundListener();
+    }
 
     // Listener for notifications received while app is foregrounded
     this.notificationListener = Notifications.addNotificationReceivedListener(
@@ -280,7 +335,7 @@ class PushNotificationService {
    */
   removeNotificationListeners(): void {
     console.log('🔇 Removing notification listeners...');
-    
+
     if (this.notificationListener) {
       this.notificationListener.remove();
       this.notificationListener = null;
@@ -291,8 +346,69 @@ class PushNotificationService {
       this.responseListener = null;
     }
 
+    if (this.fcmMessageListener) {
+      this.fcmMessageListener();
+      this.fcmMessageListener = null;
+    }
+
     this.callbacks = {};
     console.log('✅ Notification listeners removed');
+  }
+
+  /**
+   * Set up the foreground FCM listener on Android.
+   * expo-notifications no longer owns the FCM service, so we receive remote
+   * payloads directly and turn non-call messages into local notifications.
+   */
+  private setupFcmForegroundListener(): void {
+    try {
+      const messaging = require('@react-native-firebase/messaging').default;
+
+      this.fcmMessageListener = messaging().onMessage(async (remoteMessage: any) => {
+        const data = remoteMessage?.data || {};
+
+        if (data.type === 'call_incoming') {
+          const { callSessionId, callerName, conversationId, callType } = data;
+          if (callSessionId) {
+            await callkeepService.displayIncomingCall({
+              uuid: callSessionId,
+              callSessionId,
+              callerName: callerName || 'Incoming call',
+              conversationId: conversationId || '',
+              callType: callType === 'video' ? 'video' : 'audio',
+            });
+          }
+          return;
+        }
+
+        if (data.type === 'call_ended' && data.callSessionId) {
+          callkeepService.endCallkeepCall(data.callSessionId);
+          callkeepService.setActiveCall(null);
+          callkeepService.notifyRemoteCallEnded(data.callSessionId, data.reason);
+          await Notifications.dismissAllNotificationsAsync();
+          await Notifications.setBadgeCountAsync(0);
+          return;
+        }
+
+        // All other FCM payloads become a local notification.
+        // FCM titles come through remoteMessage.notification in the foreground.
+        const title = remoteMessage?.notification?.title || data.title;
+        const body = remoteMessage?.notification?.body || data.body;
+        if (title || body) {
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title,
+              body,
+              data,
+              sound: true,
+            },
+            trigger: null,
+          });
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error setting up FCM foreground listener:', error);
+    }
   }
 
   /**
@@ -486,10 +602,10 @@ class PushNotificationService {
   }
 
   /**
-   * Get current Expo push token
+   * Get current push token
    */
   getCurrentToken(): string | null {
-    return this.expoPushToken;
+    return this.expoPushToken || this.fcmToken;
   }
 
   /**

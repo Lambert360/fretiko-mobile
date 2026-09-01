@@ -396,12 +396,12 @@ class NotificationsAPIService {
   /**
    * Register device token for push notifications
    */
-  async registerPushToken(token: string, expoPushToken: string): Promise<{ success: boolean }> {
+  async registerPushToken(token: string, pushToken: string, type: 'expo' | 'fcm' = 'expo'): Promise<{ success: boolean }> {
     try {
       const response = await fetch(`${this.baseURL}/push-token`, {
         method: 'POST',
         headers: this.getHeaders(token),
-        body: JSON.stringify({ token: expoPushToken }),
+        body: JSON.stringify({ token: pushToken, type }),
       });
 
       if (!response.ok) {
@@ -418,12 +418,12 @@ class NotificationsAPIService {
   /**
    * Unregister device token for push notifications
    */
-  async unregisterPushToken(token: string, expoPushToken: string): Promise<{ success: boolean }> {
+  async unregisterPushToken(token: string, pushToken: string, type: 'expo' | 'fcm' = 'expo'): Promise<{ success: boolean }> {
     try {
       const response = await fetch(`${this.baseURL}/push-token`, {
         method: 'DELETE',
         headers: this.getHeaders(token),
-        body: JSON.stringify({ token: expoPushToken }),
+        body: JSON.stringify({ token: pushToken, type }),
       });
 
       if (!response.ok) {

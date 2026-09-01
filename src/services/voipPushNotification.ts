@@ -46,6 +46,9 @@ const handleNotification = async (notification: any) => {
     } else if (data.type === 'call_ended' && callSessionId) {
       await callkeepService.endCallkeepCall(callSessionId);
       callkeepService.setActiveCall(null);
+      // If the app JS context is alive (foreground/background), tell CallContext
+      // to tear down the active Agora call/UI the same way FCM does on Android.
+      callkeepService.notifyRemoteCallEnded(callSessionId, data.reason);
       await pushNotificationService.clearAllNotifications();
       await pushNotificationService.setBadgeCount(0);
     }

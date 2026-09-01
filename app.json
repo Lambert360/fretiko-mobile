@@ -50,7 +50,10 @@
         "android.permission.MANAGE_OWN_CALLS",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
-        "android.permission.USE_FULL_SCREEN_INTENT"
+        "android.permission.USE_FULL_SCREEN_INTENT",
+        "android.permission.READ_PHONE_STATE",
+        "android.permission.READ_PHONE_NUMBERS",
+        "android.permission.WAKE_LOCK"
       ],
       "versionCode": 7,
       "package": "com.kinging.fretikomobile",
@@ -110,11 +113,13 @@
       ],
       "expo-font",
       "expo-maps",
+      "./plugins/withFirebaseAndroidGradle",
       "./plugins/withCallkeep",
       "expo-web-browser",
       "expo-apple-authentication",
       "expo-asset",
       "./plugins/withVoipPushNotification",
+      "./plugins/withAndroidDisableExpoFcm",
       [
         "@react-native-google-signin/google-signin",
         {

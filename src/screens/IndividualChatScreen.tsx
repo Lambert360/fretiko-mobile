@@ -5105,7 +5105,10 @@ const IndividualChatScreen = () => {
   const messagesWithSeparators = useMemo((): MessageListItem[] => {
     const result: MessageListItem[] = [];
     let lastDateKey = '';
-    messages.forEach((msg) => {
+    const sortedMessages = [...messages].sort(
+      (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
+    );
+    sortedMessages.forEach((msg) => {
       const msgDate = msg.timestamp instanceof Date ? msg.timestamp : new Date(msg.timestamp);
       const dateKey = `${msgDate.getFullYear()}-${msgDate.getMonth()}-${msgDate.getDate()}`;
       if (dateKey !== lastDateKey) {
@@ -5271,6 +5274,14 @@ const IndividualChatScreen = () => {
         callIcon = isOutgoing ? 'call-outline' : 'call-outline';
         callIconColor = '#E74C3C'; // Red for missed calls
         callStatus = 'Missed';
+      } else if (content.includes('not answered') || content.includes('Not answered')) {
+        callIcon = isOutgoing ? 'call-outline' : 'call-outline';
+        callIconColor = '#E74C3C'; // Red for not answered calls
+        callStatus = 'Not answered';
+      } else if (content.includes('cancelled') || content.includes('Cancelled')) {
+        callIcon = isOutgoing ? 'call-outline' : 'call-outline';
+        callIconColor = '#E67E22'; // Orange for cancelled calls
+        callStatus = 'Cancelled';
       } else if (content.includes('ended')) {
         // Extract duration from message like "Call ended - Duration: 1m 23s"
         const durationMatch = content.match(/Duration: (.+?)$/);

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,401 +9,87 @@ import {
   Dimensions,
   ImageBackground,
   Modal,
-  Animated,
+  ActivityIndicator,
 } from 'react-native';
-import LottieView from 'lottie-react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAudioPlayer } from 'expo-audio';
 import { useNavigation } from '@react-navigation/native';
+import LottieGiftEffect from '../components/LottieGiftEffect';
+import { giftAPI, VirtualGift } from '../services/giftAPI';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-const LOTTIE_WIDTH = screenWidth * 0.7;
-const LOTTIE_HEIGHT = LOTTIE_WIDTH;
-
-type PreviewStep = {
-  label: string;
-  lottieSource: any;
-};
-
-type SoundId =
-  | 'rose'
-  | 'star'
-  | 'heart'
-  | 'celebration'
-  | 'rocket'
-  | 'diamond'
-  | 'winner1'
-  | 'crowd'
-  | 'cheer';
-
-// Sounds are loaded once via useAudioPlayer and reused (seekTo(0) + play())
-// instead of being re-created on every tap. Re-creating a player on every
-// tap (createAudioPlayer) is async under the hood and calling play()
-// immediately can race with the native player still initializing, which is
-// why the sound would sometimes not play on the first tap.
-const SOUND_MODULES: Record<SoundId, any> = {
-  rose: require('../../assets/sounds/rose.MP3'),
-  star: require('../../assets/sounds/star.MP3'),
-  heart: require('../../assets/sounds/heart.MP3'),
-  celebration: require('../../assets/sounds/celebration.MP3'),
-  rocket: require('../../assets/sounds/rocket.MP3'),
-  diamond: require('../../assets/sounds/diamond.MP3'),
-  winner1: require('../../assets/sounds/winner1.MP3'),
-  crowd: require('../../assets/sounds/crowd_sound.MP3'),
-  cheer: require('../../assets/sounds/cheer.MP3'),
-};
-
-type ComboItem = {
-  type: 'combo';
-  id: string;
-  label: string;
-  soundId: SoundId;
-  steps: PreviewStep[];
-  /** If set, the second lottie starts after this many milliseconds while the first is still playing */
-  overlap?: number;
-  /** Optional lottie to render on top of a specific step */
-  overlay?: {
-    lottieSource: any;
-    stepIndex: number;
-  };
-};
-
-type SingleItem = {
-  type: 'single';
-  id: string;
-  label: string;
-  lottieSource: any;
-  soundId: SoundId;
-};
-
-type PreviewItem = ComboItem | SingleItem;
-
-const PREVIEW_ITEMS: PreviewItem[] = [
-  {
-    type: 'combo',
-    id: 'rose',
-    label: 'Rose',
-    soundId: 'rose',
-    overlap: 220,
-    steps: [
-      { label: 'Rose 1', lottieSource: require('../../assets/lottie/rose1.lottie') },
-      { label: 'Rose 2', lottieSource: require('../../assets/lottie/Rose2.lottie') },
-    ],
-  },
-  {
-    type: 'combo',
-    id: 'star',
-    label: 'Star',
-    soundId: 'star',
-    steps: [
-      { label: 'Star 2', lottieSource: require('../../assets/lottie/star2.lottie') },
-      { label: 'Star 1', lottieSource: require('../../assets/lottie/star1.lottie') },
-    ],
-  },
-  {
-    type: 'combo',
-    id: 'heart',
-    label: 'Heart',
-    soundId: 'heart',
-    steps: [
-      { label: 'Heart 1', lottieSource: require('../../assets/lottie/heart1.lottie') },
-      { label: 'Heart 2', lottieSource: require('../../assets/lottie/heart2.lottie') },
-    ],
-  },
-  {
-    type: 'combo',
-    id: 'celebration',
-    label: 'Celebration',
-    soundId: 'celebration',
-    steps: [
-      { label: 'Celebration 1', lottieSource: require('../../assets/lottie/Celebration1.lottie') },
-      { label: 'Celebration 2', lottieSource: require('../../assets/lottie/celebration2.lottie') },
-    ],
-  },
-  {
-    type: 'combo',
-    id: 'rocket',
-    label: 'Rocket',
-    soundId: 'rocket',
-    steps: [
-      { label: 'Rocket 1', lottieSource: require('../../assets/lottie/rocket1.lottie') },
-      { label: 'Rocket 2', lottieSource: require('../../assets/lottie/rocket2.lottie') },
-    ],
-  },
-  {
-    type: 'single',
-    id: 'diamond',
-    label: 'Diamond',
-    lottieSource: require('../../assets/lottie/diamond.lottie'),
-    soundId: 'diamond',
-  },
-  {
-    type: 'single',
-    id: 'money-gun',
-    label: 'Money Gun',
-    lottieSource: require('../../assets/lottie/money-gun.lottie'),
-    soundId: 'winner1',
-  },
-  {
-    type: 'single',
-    id: 'shooting-game',
-    label: 'Shooting Game',
-    lottieSource: require('../../assets/lottie/shooting-game.lottie'),
-    soundId: 'crowd',
-  },
-  {
-    type: 'single',
-    id: 'singer',
-    label: 'Singer in Studio',
-    lottieSource: require('../../assets/lottie/singer-in-studio.lottie'),
-    soundId: 'cheer',
-  },
-];
-
 const GiftLottiePreviewScreen = () => {
   const navigation = useNavigation();
-  const [activeItem, setActiveItem] = useState<PreviewItem | null>(null);
-  const [activeStep, setActiveStep] = useState(0);
-  const [overlapStep, setOverlapStep] = useState(0);
-  const [replayKey, setReplayKey] = useState(0);
+  const [gifts, setGifts] = useState<VirtualGift[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeGift, setActiveGift] = useState<VirtualGift | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
-  const [lottieDone, setLottieDone] = useState(false);
-  const [soundDone, setSoundDone] = useState(false);
-  const overlapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const overlapTriggeredRef = useRef(false);
-  const soundTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fadeAnim = useRef(new Animated.Value(1)).current;
-
-  // Pre-create one persistent player per sound (mirrors useAuctionSounds
-  // pattern). Re-using players via seekTo(0) + play() avoids the async
-  // native-init race condition that createAudioPlayer() has when called
-  // fresh on every button tap.
-  const rosePlayer = useAudioPlayer(SOUND_MODULES.rose);
-  const starPlayer = useAudioPlayer(SOUND_MODULES.star);
-  const heartPlayer = useAudioPlayer(SOUND_MODULES.heart);
-  const celebrationPlayer = useAudioPlayer(SOUND_MODULES.celebration);
-  const rocketPlayer = useAudioPlayer(SOUND_MODULES.rocket);
-  const diamondPlayer = useAudioPlayer(SOUND_MODULES.diamond);
-  const winner1Player = useAudioPlayer(SOUND_MODULES.winner1);
-  const crowdPlayer = useAudioPlayer(SOUND_MODULES.crowd);
-  const cheerPlayer = useAudioPlayer(SOUND_MODULES.cheer);
-
-  const soundPlayers: Record<SoundId, ReturnType<typeof useAudioPlayer>> = {
-    rose: rosePlayer,
-    star: starPlayer,
-    heart: heartPlayer,
-    celebration: celebrationPlayer,
-    rocket: rocketPlayer,
-    diamond: diamondPlayer,
-    winner1: winner1Player,
-    crowd: crowdPlayer,
-    cheer: cheerPlayer,
-  };
 
   useEffect(() => {
-    if (overlapTimerRef.current) {
-      clearTimeout(overlapTimerRef.current);
-      overlapTimerRef.current = null;
-    }
-    overlapTriggeredRef.current = false;
-
-    if (!activeItem || activeItem.type !== 'combo' || !activeItem.overlap) {
-      setOverlapStep(0);
-      return;
-    }
-
-    setOverlapStep(0);
-    // Fallback timer: if onAnimationLoaded never fires, the second lottie
-    // still appears after the configured overlap.
-    overlapTimerRef.current = setTimeout(() => {
-      if (!overlapTriggeredRef.current) {
-        overlapTriggeredRef.current = true;
-        setOverlapStep(1);
+    let mounted = true;
+    (async () => {
+      try {
+        setLoading(true);
+        const data = await giftAPI.getAvailableGifts();
+        if (mounted) setGifts(data);
+      } catch (err: any) {
+        if (mounted) setError(err.message || 'Failed to load gifts');
+      } finally {
+        if (mounted) setLoading(false);
       }
-    }, activeItem.overlap);
-
+    })();
     return () => {
-      if (overlapTimerRef.current) {
-        clearTimeout(overlapTimerRef.current);
-        overlapTimerRef.current = null;
-      }
+      mounted = false;
     };
-  }, [activeItem, replayKey]);
+  }, []);
 
-  // Fade out the gift once both the lottie and sound have finished.
-  useEffect(() => {
-    if (!activeItem || !lottieDone || !soundDone) return;
+  const handlePlay = useCallback((gift: VirtualGift) => {
+    setActiveGift(gift);
+    setModalVisible(false);
+  }, []);
 
-    const timer = setTimeout(() => {
-      Animated.timing(fadeAnim, {
-        toValue: 0,
-        duration: 400,
-        useNativeDriver: true,
-      }).start(() => {
-        setActiveItem(null);
-        setLottieDone(false);
-        setSoundDone(false);
-        setActiveStep(0);
-        setOverlapStep(0);
-      });
-    }, 200);
-
-    return () => clearTimeout(timer);
-  }, [activeItem, lottieDone, soundDone]);
-
-  const currentSource = activeItem
-    ? activeItem.type === 'combo' && !activeItem.overlap
-      ? activeItem.steps[activeStep].lottieSource
-      : activeItem.type === 'single'
-        ? activeItem.lottieSource
-        : null
-    : null;
-
-  const currentLabel = activeItem
-    ? activeItem.type === 'combo' && activeItem.overlap
-      ? `${activeItem.label} sent!`
-      : activeItem.type === 'combo'
-        ? `${activeItem.label} (${activeItem.steps[activeStep].label})`
-        : `${activeItem.label} sent!`
-    : '';
-
-  const handlePlay = useCallback((item: PreviewItem) => {
-    setActiveItem(item);
-    setActiveStep(0);
-    setOverlapStep(0);
-    setReplayKey(prev => prev + 1);
-    setLottieDone(false);
-    setSoundDone(false);
-    fadeAnim.setValue(1);
-    setModalVisible(false); // close the selector so the gift is visible
-
-    if (soundTimeoutRef.current) {
-      clearTimeout(soundTimeoutRef.current);
-      soundTimeoutRef.current = null;
-    }
-
-    try {
-      const player = soundPlayers[item.soundId];
-      // Reuse the pre-loaded, already-initialized player instead of creating
-      // a new one. seekTo(0) resets playback so repeated taps replay from
-      // the start reliably, without the async init race.
-      player.seekTo(0);
-      player.play();
-
-      // Mark sound finished when its duration elapses (fallback to 2s if unknown).
-      const durationMs =
-        player.duration && player.duration > 0
-          ? player.duration * 1000
-          : 2000;
-      soundTimeoutRef.current = setTimeout(() => {
-        setSoundDone(true);
-      }, durationMs);
-    } catch (error) {
-      console.error('Error playing sound:', error);
-    }
-  }, [rosePlayer, starPlayer, heartPlayer, celebrationPlayer, rocketPlayer, diamondPlayer, winner1Player, crowdPlayer, cheerPlayer, setModalVisible]);
-
-  const handleFirstLottieLoaded = useCallback(() => {
-    if (!activeItem || activeItem.type !== 'combo' || !activeItem.overlap) return;
-    if (overlapTriggeredRef.current) return;
-
-    overlapTriggeredRef.current = true;
-    if (overlapTimerRef.current) {
-      clearTimeout(overlapTimerRef.current);
-    }
-    overlapTimerRef.current = setTimeout(() => {
-      setOverlapStep(1);
-    }, activeItem.overlap);
-  }, [activeItem]);
-
-  const handleAnimationFinish = useCallback(() => {
-    if (!activeItem) return;
-
-    if (activeItem.type === 'combo' && !activeItem.overlap && activeStep < activeItem.steps.length - 1) {
-      setActiveStep(prev => prev + 1);
-      setReplayKey(prev => prev + 1);
-    } else {
-      setLottieDone(true);
-    }
-  }, [activeItem, activeStep]);
+  const handleComplete = useCallback(() => {
+    setActiveGift(null);
+  }, []);
 
   const renderStage = () => {
-    if (!activeItem) return null;
-
-    if (activeItem.type === 'combo' && activeItem.overlap) {
-      return (
-        <View style={styles.overlapContainer}>
-          <LottieView
-            key={`${activeItem.id}-0-${replayKey}`}
-            source={activeItem.steps[0].lottieSource}
-            autoPlay
-            loop={false}
-            style={styles.lottieOverlap}
-            resizeMode="contain"
-            onAnimationLoaded={handleFirstLottieLoaded}
-          />
-          {overlapStep >= 1 && (
-            <LottieView
-              key={`${activeItem.id}-1-${replayKey}`}
-              source={activeItem.steps[1].lottieSource}
-              autoPlay
-              loop={false}
-              style={styles.lottieOverlap}
-              resizeMode="contain"
-              onAnimationFinish={handleAnimationFinish}
-            />
-          )}
-        </View>
-      );
-    }
-
-    const overlaySource =
-      activeItem.type === 'combo' && activeItem.overlay
-        ? activeItem.overlay.lottieSource
-        : null;
-    const shouldOverlay =
-      activeItem.type === 'combo' &&
-      activeStep === activeItem.overlay?.stepIndex &&
-      overlaySource !== null;
-
-    return currentSource ? (
-      <View style={shouldOverlay ? styles.overlapContainer : undefined}>
-        <LottieView
-          key={`${activeItem?.id}-${activeStep}-${replayKey}`}
-          source={currentSource}
-          autoPlay
-          loop={false}
-          style={shouldOverlay ? styles.lottieOverlap : styles.lottie}
-          resizeMode="contain"
-          onAnimationFinish={handleAnimationFinish}
+    if (!activeGift) return null;
+    return (
+      <>
+        <LottieGiftEffect
+          gift={{
+            id: activeGift.id,
+            name: activeGift.name,
+            emoji: activeGift.emoji,
+            quantity: 1,
+            display_lottie_url: activeGift.display_lottie_url,
+            lottie_config: activeGift.lottie_config,
+            sound_url: activeGift.sound_url,
+            animation_type: activeGift.animation_type,
+          }}
+          onComplete={handleComplete}
         />
-        {overlaySource !== null && shouldOverlay && (
-          <LottieView
-            key={`${activeItem?.id}-overlay-${replayKey}`}
-            source={overlaySource}
-            autoPlay
-            loop={false}
-            style={styles.lottieOverlap}
-            resizeMode="contain"
-          />
-        )}
-      </View>
-    ) : null;
+        <View style={styles.giftNotice}>
+          <Ionicons name="gift" size={14} color="#FFD700" />
+          <Text style={styles.giftNoticeText}>{activeGift.name} sent!</Text>
+        </View>
+      </>
+    );
   };
 
-  const renderButton = ({ item }: { item: PreviewItem }) => (
+  const renderButton = ({ item }: { item: VirtualGift }) => (
     <TouchableOpacity
       style={[
         styles.modalButton,
-        activeItem?.id === item.id && styles.modalButtonActive,
+        activeGift?.id === item.id && styles.modalButtonActive,
       ]}
       onPress={() => handlePlay(item)}
       activeOpacity={0.7}
     >
-      <Text style={styles.modalButtonText}>{item.label}</Text>
+      <Text style={styles.modalButtonText}>{item.emoji ? `${item.emoji} ${item.name}` : item.name}</Text>
       <Ionicons
-        name={activeItem?.id === item.id ? 'pause-circle' : 'play-circle'}
+        name={activeGift?.id === item.id ? 'pause-circle' : 'play-circle'}
         size={20}
         color="#FFFFFF"
       />
@@ -460,7 +146,7 @@ const GiftLottiePreviewScreen = () => {
           activeOpacity={0.8}
         >
           <Ionicons name="gift" size={22} color="#000000" />
-          <Text style={styles.sendGiftButtonText}>Send Gift</Text>
+          <Text style={styles.sendGiftButtonText}>Send a Gift</Text>
         </TouchableOpacity>
       </View>
 
@@ -486,31 +172,36 @@ const GiftLottiePreviewScreen = () => {
               </TouchableOpacity>
             </View>
 
-            <FlatList
-              data={PREVIEW_ITEMS}
-              renderItem={renderButton}
-              keyExtractor={(item) => item.id}
-              numColumns={2}
-              contentContainerStyle={styles.modalList}
-              columnWrapperStyle={styles.modalColumnWrapper}
-              showsVerticalScrollIndicator={false}
-            />
+            {loading ? (
+              <ActivityIndicator size="large" color="#FFD700" style={{ marginVertical: 40 }} />
+            ) : error ? (
+              <Text style={styles.emptyText}>Error: {error}</Text>
+            ) : gifts.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Ionicons name="gift-outline" size={48} color="rgba(255,255,255,0.3)" />
+                <Text style={styles.emptyText}>No gifts in the catalog</Text>
+                <Text style={styles.emptySubtext}>Create gifts in the admin panel to preview them here.</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={gifts}
+                renderItem={renderButton}
+                keyExtractor={(item) => item.id}
+                numColumns={2}
+                contentContainerStyle={styles.modalList}
+                columnWrapperStyle={styles.modalColumnWrapper}
+                showsVerticalScrollIndicator={false}
+              />
+            )}
           </View>
         </View>
       </Modal>
 
-      {/* Gift animation overlay — sits in the same bottom-screen position the real gift modal uses */}
-      {activeItem && (
-        <Animated.View style={[styles.stageArea, { opacity: fadeAnim }]} pointerEvents="none">
+      {/* Gift animation overlay */}
+      {activeGift && (
+        <View style={styles.stageArea} pointerEvents="none">
           {renderStage()}
-
-          {currentLabel !== '' && (
-            <View style={styles.giftNotice}>
-              <Ionicons name="gift" size={14} color="#FFD700" />
-              <Text style={styles.giftNoticeText}>{currentLabel}</Text>
-            </View>
-          )}
-        </Animated.View>
+        </View>
       )}
     </SafeAreaView>
   );
@@ -619,21 +310,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  overlapContainer: {
-    width: LOTTIE_WIDTH,
-    height: LOTTIE_HEIGHT,
-    position: 'relative',
-    alignSelf: 'center',
-    marginTop: 0,
-  },
   lottie: {
-    width: LOTTIE_WIDTH,
-    height: LOTTIE_HEIGHT,
+    width: screenWidth * 0.7,
+    height: screenWidth * 0.7,
     alignSelf: 'center',
-    marginTop: 0,
-  },
-  lottieOverlap: {
-    ...StyleSheet.absoluteFillObject,
   },
   giftNotice: {
     flexDirection: 'row',
@@ -694,73 +374,89 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'flex-end',
   },
   modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    flex: 1,
   },
   modalContainer: {
-    backgroundColor: '#1A1A1A',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: '#1a1a1a',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 40,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
     maxHeight: screenHeight * 0.6,
-    paddingBottom: 24,
   },
   modalHandle: {
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#444',
+    backgroundColor: 'rgba(255,255,255,0.3)',
     alignSelf: 'center',
-    marginTop: 12,
     marginBottom: 16,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2A2A2A',
+    marginBottom: 20,
   },
   modalTitle: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 20,
+    fontWeight: '800',
   },
   modalClose: {
     padding: 4,
   },
   modalList: {
-    padding: 16,
-    paddingBottom: 32,
+    paddingBottom: 20,
   },
   modalColumnWrapper: {
-    justifyContent: 'space-between',
+    gap: 12,
   },
   modalButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#2A2A2A',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    margin: 6,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: 'rgba(255,255,255,0.1)',
+    marginBottom: 12,
   },
   modalButtonActive: {
-    borderColor: '#3498DB',
-    backgroundColor: '#1A2A3A',
+    backgroundColor: 'rgba(243, 156, 18, 0.2)',
+    borderColor: '#F39C12',
   },
   modalButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  emptyText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  emptySubtext: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 14,
+    marginTop: 4,
+    textAlign: 'center',
   },
 });
 

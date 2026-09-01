@@ -41,8 +41,16 @@ const withVoipPushNotification = (config) => {
   // 2. Ensure the aps-environment entitlement is set for VoIP pushes
   config = withEntitlementsPlist(config, (config) => {
     const entitlements = config.modResults;
-    if (!entitlements['aps-environment']) {
-      entitlements['aps-environment'] = 'production';
+    const buildProfile = process.env.EAS_BUILD_PROFILE || 'development';
+    const apnEnvironment =
+      process.env.APN_ENVIRONMENT ||
+      (buildProfile === 'production' ||
+      buildProfile === 'production-apk' ||
+      buildProfile === 'preview'
+        ? 'production'
+        : 'development');
+    if (!entitlements['aps-environment'] || apnEnvironment !== entitlements['aps-environment']) {
+      entitlements['aps-environment'] = apnEnvironment;
     }
     return config;
   });

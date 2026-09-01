@@ -7,14 +7,16 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Alert } from 'react-native';
+import { Alert, AppState } from 'react-native';
 import { useCameraPermissions, CameraType } from 'expo-camera';
-import { requestRecordingPermissionsAsync } from 'expo-audio';
+import { requestRecordingPermissionsAsync, createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import type { AudioPlayer } from 'expo-audio';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from './AuthContext';
 import { realtimeAPI } from '../services/realtimeAPI';
 import { chatAPI } from '../services/chatAPI';
 import { callkeepService } from '../services/callkeepService';
+import { getPendingCallEnded, clearPendingCallEnded } from '../services/callBackgroundTask';
 import { agoraCallService, AgoraCallConfig } from '../services/agoraCallService';
 import { giftAPI } from '../services/giftAPI';
 
@@ -27,7 +29,7 @@ export interface IncomingCallInfo {
   initiatorId?: string;
 }
 
-export type CallStatus = 'idle' | 'incoming' | 'calling' | 'connecting' | 'ringing' | 'connected' | 'reconnecting';
+export type CallStatus = 'idle' | 'incoming' | 'calling' | 'connecting' | 'ringing' | 'connected' | 'reconnecting' | 'ended' | 'not_answered';
 
 export interface GiftAnimationItem {
   id: string;
@@ -180,6 +182,10 @@ export const CallProvider: React.FC<{
   const ringbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const soundIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const callEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ringingPlayerRef = useRef<AudioPlayer | null>(null);
+  const notAnsweredPlayerRef = useRef<AudioPlayer | null>(null);
+  const ringingDurationRef = useRef<number>(30000);
 
   useEffect(() => {
     userIdRef.current = user?.id;
@@ -192,6 +198,59 @@ export const CallProvider: React.FC<{
   useEffect(() => {
     otherUserIdRef.current = otherUserId;
   }, [otherUserId]);
+
+  // Pre-load call sound effects so they are ready when a call starts.
+  useEffect(() => {
+    let cancelled = false;
+    const setup = async () => {
+      try {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          shouldPlayInBackground: false,
+          shouldRouteThroughEarpiece: false,
+        });
+
+        const ringingPlayer = createAudioPlayer(
+          require('../../assets/sounds/ringing.mp3'),
+          { updateInterval: 500 }
+        );
+        const notAnsweredPlayer = createAudioPlayer(
+          require('../../assets/sounds/call-not-answered.mp3'),
+          { updateInterval: 500 }
+        );
+
+        const handleRingingStatus = (status: { duration?: number; isLoaded?: boolean }) => {
+          if (status?.isLoaded && status.duration) {
+            ringingDurationRef.current = status.duration * 1000;
+          }
+        };
+
+        ringingPlayer.addListener('playbackStatusUpdate', handleRingingStatus);
+
+        if (!cancelled) {
+          ringingPlayerRef.current = ringingPlayer;
+          notAnsweredPlayerRef.current = notAnsweredPlayer;
+          if (ringingPlayer.duration) {
+            ringingDurationRef.current = ringingPlayer.duration * 1000;
+          }
+        } else {
+          ringingPlayer.remove();
+          notAnsweredPlayer.remove();
+        }
+      } catch (error) {
+        console.warn('Failed to load call sound players:', error);
+      }
+    };
+    setup();
+    return () => {
+      cancelled = true;
+      ringingPlayerRef.current?.remove();
+      notAnsweredPlayerRef.current?.remove();
+      ringingPlayerRef.current = null;
+      notAnsweredPlayerRef.current = null;
+    };
+  }, []);
 
   const registerActiveChatId = useCallback((id: string) => {
     activeChatIdRef.current = id;
@@ -289,7 +348,7 @@ export const CallProvider: React.FC<{
     setCallerAvatar(null);
   }, []);
 
-  // === Haptic-based call sounds ===
+  // === Call audio and haptics ===
   const stopCallSounds = useCallback(() => {
     if (soundIntervalRef.current) {
       clearInterval(soundIntervalRef.current);
@@ -299,18 +358,27 @@ export const CallProvider: React.FC<{
       clearTimeout(ringbackTimeoutRef.current);
       ringbackTimeoutRef.current = null;
     }
+    try {
+      ringingPlayerRef.current?.pause();
+      notAnsweredPlayerRef.current?.pause();
+      ringingPlayerRef.current?.seekTo?.(0);
+      notAnsweredPlayerRef.current?.seekTo?.(0);
+    } catch (error) {
+      console.warn('Error stopping call sounds:', error);
+    }
   }, []);
 
-  const playCallSound = useCallback((type: 'ringing' | 'busy' | 'connected' | 'ended') => {
+  const playCallSound = useCallback((type: 'ringing' | 'not_answered' | 'busy' | 'connected' | 'ended') => {
     try {
+      // Pause any currently playing call sound first.
+      stopCallSounds();
+
       switch (type) {
         case 'ringing':
-          if (soundIntervalRef.current) {
-            clearInterval(soundIntervalRef.current);
-          }
-          soundIntervalRef.current = setInterval(() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          }, 1000);
+          ringingPlayerRef.current?.play();
+          break;
+        case 'not_answered':
+          notAnsweredPlayerRef.current?.play();
           break;
         case 'busy':
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -327,7 +395,7 @@ export const CallProvider: React.FC<{
     } catch (error) {
       console.warn('Call sound/haptic warning:', error);
     }
-  }, []);
+  }, [stopCallSounds]);
 
   // === Call duration timer ===
   useEffect(() => {
@@ -349,6 +417,8 @@ export const CallProvider: React.FC<{
     if (callStatus === 'connecting') return 'Connecting...';
     if (callStatus === 'ringing') return 'Ringing...';
     if (callStatus === 'connected') return 'Connected';
+    if (callStatus === 'ended') return 'Call ended';
+    if (callStatus === 'not_answered') return 'Call not answered';
     return callType === 'video' ? 'Video calling...' : 'Calling...';
   }, [callStatus, callType]);
 
@@ -470,7 +540,7 @@ export const CallProvider: React.FC<{
         }
       }
     }
-  }, [stopCallSounds]);
+  }, [stopCallSounds, callStatus]);
 
   // === End call ===
   const endCall = useCallback(async (
@@ -505,7 +575,18 @@ export const CallProvider: React.FC<{
       console.error('Error ending call:', error);
     } finally {
       stopCallSounds();
-      setCallStatus('idle');
+
+      // Keep the terminal state visible briefly before the screen closes.
+      const terminalStatus: CallStatus = callStatus === 'not_answered' ? 'not_answered' : 'ended';
+      setCallStatus(terminalStatus);
+
+      if (callEndTimeoutRef.current) {
+        clearTimeout(callEndTimeoutRef.current);
+      }
+      callEndTimeoutRef.current = setTimeout(() => {
+        setCallStatus('idle');
+      }, 2000);
+
       setIsInCall(false);
       setIsCallMinimized(false);
       setCurrentCallSessionId(null);
@@ -545,8 +626,14 @@ export const CallProvider: React.FC<{
   }, [endCall]);
 
   const handleCallTimeout = useCallback(() => {
-    playCallSound('busy');
-    endCallRef.current('missed');
+    playCallSound('not_answered');
+    setCallStatus('not_answered');
+
+    // Give the "not answered" audio time to finish before tearing the call down.
+    const notAnsweredDuration = notAnsweredPlayerRef.current?.duration || 2.5;
+    ringbackTimeoutRef.current = setTimeout(() => {
+      endCallRef.current('missed');
+    }, Math.max(1500, Math.round(notAnsweredDuration * 1000)));
   }, [playCallSound]);
 
   // === Start an outgoing call ===
@@ -572,13 +659,20 @@ export const CallProvider: React.FC<{
         setIsVideoEnabled(true);
       }
 
+      if (callEndTimeoutRef.current) {
+        clearTimeout(callEndTimeoutRef.current);
+        callEndTimeoutRef.current = null;
+      }
+
       playCallSound('ringing');
 
+      // Ring only for the length of the ringing audio (default 30s if not loaded yet).
+      const ringbackDurationMs = Math.max(3000, Math.round(ringingDurationRef.current));
       const timeout = setTimeout(() => {
         if (ringbackTimeoutRef.current === timeout) {
           handleCallTimeout();
         }
-      }, 60000);
+      }, ringbackDurationMs);
       ringbackTimeoutRef.current = timeout;
 
       const { granted: micGranted } = await requestRecordingPermissionsAsync();
@@ -651,6 +745,15 @@ export const CallProvider: React.FC<{
       stopCallSounds();
 
       const joinResult = await chatAPI.joinCall(info.callSessionId);
+
+      // If the incoming call payload didn't include the initiator id (e.g. from
+      // a CallKeep/FCM answer when the app was killed), the backend join result
+      // still has it. Use it as a fallback so gift sending has a recipient.
+      const resolvedOtherUserId = info.initiatorId || joinResult.initiatorId || null;
+      if (resolvedOtherUserId && resolvedOtherUserId !== otherUserIdRef.current) {
+        setOtherUserId(resolvedOtherUserId);
+        otherUserIdRef.current = resolvedOtherUserId;
+      }
       setCurrentCallSessionId(info.callSessionId);
       currentCallSessionIdRef.current = info.callSessionId;
       callkeepService.setActiveCall(info.callSessionId);
@@ -1016,6 +1119,30 @@ export const CallProvider: React.FC<{
       setCallerAvatar(null);
     });
 
+    // The other party ended the call and we found out via an FCM/VoIP push
+    // rather than the socket (e.g. socket was dropped while backgrounded).
+    // Tear down any active call state the same way the socket-based
+    // call_event handler does below.
+    callkeepService.onRemoteCallEnded((callSessionId, reason) => {
+      if (incomingCallRef.current?.callSessionId === callSessionId) {
+        incomingCallRef.current = null;
+        setIncomingCallForBanner(null);
+        setCallStatus('idle');
+        setChatId(null);
+        setOtherUserId(null);
+        setCallerName('');
+        setCallerAvatar(null);
+      }
+
+      if (currentCallSessionIdRef.current === callSessionId) {
+        const mappedReason: 'completed' | 'declined' | 'missed' | 'cancelled' =
+          reason === 'declined' || reason === 'missed' || reason === 'cancelled'
+            ? reason
+            : 'completed';
+        endCallRef.current(mappedReason, true);
+      }
+    });
+
     return () => {
       callkeepService.teardown();
     };
@@ -1075,6 +1202,52 @@ export const CallProvider: React.FC<{
 
     return () => {
       unsubscribe();
+    };
+  }, []);
+
+  // If a call_ended push was handled in a headless JS task while the app was
+  // in the background/killed, the callkeepService.notifyRemoteCallEnded call
+  // cannot reach this CallContext (different JS context). The background task
+  // writes a pending record to AsyncStorage; we check it on mount and whenever
+  // the app returns to the foreground.
+  useEffect(() => {
+    const checkPending = async () => {
+      try {
+        const pending = await getPendingCallEnded();
+        if (!pending) return;
+
+        if (incomingCallRef.current?.callSessionId === pending.callSessionId) {
+          incomingCallRef.current = null;
+          setIncomingCallForBanner(null);
+          setCallStatus('idle');
+          setChatId(null);
+          setOtherUserId(null);
+          setCallerName('');
+          setCallerAvatar(null);
+        }
+
+        if (currentCallSessionIdRef.current === pending.callSessionId) {
+          const mappedReason: 'completed' | 'declined' | 'missed' | 'cancelled' =
+            pending.reason === 'declined' || pending.reason === 'missed' || pending.reason === 'cancelled'
+              ? pending.reason
+              : 'completed';
+          endCallRef.current(mappedReason, true);
+        }
+
+        await clearPendingCallEnded();
+      } catch (error) {
+        console.error('❌ Error checking pending call ended:', error);
+      }
+    };
+
+    checkPending();
+    const appStateListener = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        checkPending();
+      }
+    });
+    return () => {
+      appStateListener.remove();
     };
   }, []);
 

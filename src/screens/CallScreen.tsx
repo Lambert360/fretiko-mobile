@@ -130,7 +130,7 @@ const CallScreen: React.FC = () => {
 
   // Ripple animation while ringing/calling/incoming
   useEffect(() => {
-    if (!isInCall && callStatus !== 'idle') {
+    if (!isInCall && callStatus !== 'idle' && callStatus !== 'ended' && callStatus !== 'not_answered') {
       const createRippleAnimation = (animValue: Animated.Value, delay: number) => {
         return Animated.loop(
           Animated.sequence([
@@ -335,11 +335,13 @@ const CallScreen: React.FC = () => {
               </>
             )}
 
-            <TouchableOpacity style={styles.modernEndCallButton} onPress={() => endCall('completed')}>
-              <LinearGradient colors={['#FF3B30', '#FF1744']} style={styles.modernEndCallGradient}>
-                <Ionicons name="call" size={26} color="#FFFFFF" style={styles.endCallIcon} />
-              </LinearGradient>
-            </TouchableOpacity>
+            {callStatus !== 'ended' && callStatus !== 'not_answered' && (
+              <TouchableOpacity style={styles.modernEndCallButton} onPress={() => endCall('completed')}>
+                <LinearGradient colors={['#FF3B30', '#FF1744']} style={styles.modernEndCallGradient}>
+                  <Ionicons name="call" size={26} color="#FFFFFF" style={styles.endCallIcon} />
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
           </View>
         </BlurView>
       </LinearGradient>

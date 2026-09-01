@@ -20,9 +20,15 @@ function isRemoteUrl(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://');
 }
 
+function isAudioUrl(url: string): boolean {
+  return /\.(mp3|m4a|aac|wav|ogg|flac)(\?.*)?$/i.test(url);
+}
+
 /**
- * Returns a local URI for a remote gift asset (Lottie or MP3).
- * If the URL is already local/bundled, it is returned as-is.
+ * Returns a local URI for a remote gift sound asset.
+ * Lottie/JSON files are returned as their original remote URIs because
+ * lottie-react-native on Android can fail to play dotLottie files from
+ * a cached file:// URI, while remote https:// .lottie files work fine.
  */
 export async function getCachedAssetUri(
   url: string | number | { uri?: string } | undefined
@@ -32,6 +38,11 @@ export async function getCachedAssetUri(
 
   const actual = typeof url === 'string' ? url : url.uri;
   if (!actual || !isRemoteUrl(actual)) {
+    return actual;
+  }
+
+  // Only cache sound files. Lottie/JSON should stay as remote URLs.
+  if (!isAudioUrl(actual)) {
     return actual;
   }
 
@@ -53,10 +64,10 @@ export async function getCachedAssetUri(
 }
 
 /**
- * Prefetch multiple remote gift assets into the cache.
+ * Prefetch remote gift sound assets into the cache.
  */
 export async function prefetchGiftAssets(urls: (string | undefined)[]): Promise<void> {
-  const remote = urls.filter((u): u is string => !!u && isRemoteUrl(u));
+  const remote = urls.filter((u): u is string => !!u && isRemoteUrl(u) && isAudioUrl(u));
   if (remote.length === 0) return;
   ensureCacheDir();
   await Promise.all(

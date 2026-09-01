@@ -338,16 +338,27 @@ const AppNavigator: React.FC = () => {
         console.log('📱 Notification permission status:', status);
         
         if (status === 'granted') {
-          // Generate Expo push token immediately
-          const tokenData = await Notifications.getExpoPushTokenAsync();
-          const token = tokenData?.data;
-          
-          if (token) {
-            console.log('🔑 Expo push token generated:', token);
-            // Store token locally for later use
-            pushNotificationService.setExpoPushToken(token);
+          if (Platform.OS === 'android') {
+            // Android FCM is owned by @react-native-firebase/messaging, not
+            // expo-notifications, so we get the token through Firebase.
+            const fcmToken = await pushNotificationService.getFcmToken();
+            if (fcmToken) {
+              console.log('🔑 FCM push token generated:', fcmToken);
+            } else {
+              console.warn('⚠️ No FCM push token generated');
+            }
           } else {
-            console.warn('⚠️ No push token generated');
+            // Generate Expo push token immediately (iOS)
+            const tokenData = await Notifications.getExpoPushTokenAsync();
+            const token = tokenData?.data;
+
+            if (token) {
+              console.log('🔑 Expo push token generated:', token);
+              // Store token locally for later use
+              pushNotificationService.setExpoPushToken(token);
+            } else {
+              console.warn('⚠️ No push token generated');
+            }
           }
         } else {
           console.warn('⚠️ Notification permission not granted');
@@ -360,11 +371,18 @@ const AppNavigator: React.FC = () => {
     initializePushNotifications();
   }, []);
 
-  // Initialize iOS PushKit / VoIP push notifications on app startup
+  // Initialize CallKeep on every platform so the `answerCall`/`endCall`/
+  // `didLoadWithEvents` native listeners are registered in the *full* app's
+  // JS context as soon as it launches. This matters most on Android: when the
+  // app is killed and the user taps "Answer" on the native call UI, Android
+  // cold-starts the full app, and only this call (not the one inside
+  // displayIncomingCall, which may have run in a separate headless JS context)
+  // guarantees CallContext's onAnswerCall/onEndCall handlers are wired up in
+  // time to receive the replayed action and navigate into the app.
   useEffect(() => {
+    callkeepService.setup().catch(() => {});
+
     if (Platform.OS === 'ios') {
-      // Set up CallKeep first so it's ready the moment a VoIP push arrives.
-      callkeepService.setup().catch(() => {});
       initializeVoipPushNotifications();
     }
   }, []);

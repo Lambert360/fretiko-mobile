@@ -11,6 +11,7 @@ export interface CallkeepCallInfo {
 
 type AnswerHandler = (callUUID: string) => void;
 type EndHandler = (callUUID: string) => void;
+type RemoteEndHandler = (callSessionId: string, reason?: string) => void;
 
 class CallkeepService {
   private isSetup = false;
@@ -19,6 +20,7 @@ class CallkeepService {
   private activeCallSessionId: string | null = null;
   private answerHandler: AnswerHandler | null = null;
   private endHandler: EndHandler | null = null;
+  private remoteEndHandler: RemoteEndHandler | null = null;
 
   setup(): Promise<void> {
     if (this.setupPromise) return this.setupPromise;
@@ -72,6 +74,22 @@ class CallkeepService {
           console.log('🔊 CallKeep audio session activated');
         });
 
+        // Replay CallKit actions that happened before the JS bundle was ready
+        // (e.g. user tapped Answer while the app was killed by the VoIP push)
+        RNCallKeep.addEventListener('didLoadWithEvents', (events: any[]) => {
+          for (const event of events || []) {
+            if (event.name === 'RNCallKeepPerformAnswerCallAction' && event.data?.callUUID) {
+              console.log('CallKeep replayed answerCall:', event.data.callUUID);
+              this.answerHandler?.(event.data.callUUID);
+              RNCallKeep.backToForeground();
+            } else if (event.name === 'RNCallKeepPerformEndCallAction' && event.data?.callUUID) {
+              console.log('CallKeep replayed endCall:', event.data.callUUID);
+              this.endHandler?.(event.data.callUUID);
+              this.pendingCalls.delete(event.data.callUUID);
+            }
+          }
+        });
+
         this.isSetup = true;
         console.log('✅ CallKeep setup complete');
       } catch (error) {
@@ -90,6 +108,25 @@ class CallkeepService {
 
   onEndCall(handler: EndHandler) {
     this.endHandler = handler;
+  }
+
+  /**
+   * Register a handler for a call being ended by the *other* party, delivered
+   * via an FCM/VoIP push rather than the CallKeep native UI. This lets
+   * CallContext tear down active Agora/UI state even when the socket
+   * connection was dropped (e.g. app was backgrounded) and only the push
+   * channel got the call_ended event through.
+   */
+  onRemoteCallEnded(handler: RemoteEndHandler) {
+    this.remoteEndHandler = handler;
+  }
+
+  /**
+   * Called by push notification handlers (foreground FCM listener and the
+   * killed-state background handler) when a call_ended push arrives.
+   */
+  notifyRemoteCallEnded(callSessionId: string, reason?: string) {
+    this.remoteEndHandler?.(callSessionId, reason);
   }
 
   async displayIncomingCall(info: CallkeepCallInfo) {

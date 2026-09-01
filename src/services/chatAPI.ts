@@ -392,6 +392,7 @@ class ChatAPI {
 
   // Join a call
   async joinCall(callSessionId: string): Promise<{
+    initiatorId?: string;
     agoraConfig?: {
       appId: string;
       channel: string;

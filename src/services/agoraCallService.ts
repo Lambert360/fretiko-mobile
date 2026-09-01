@@ -356,14 +356,16 @@ class AgoraCallService {
   }
 
   /**
-   * Route audio to speaker or earpiece
+   * Route audio to speaker or earpiece for the current channel.
+   * setEnableSpeakerphone toggles the active route, while
+   * setDefaultAudioRouteToSpeakerphone only changes the SDK default.
    */
   async setSpeakerphone(enabled: boolean): Promise<void> {
     try {
       if (!this.engine) {
         throw new Error('Engine not initialized');
       }
-      await this.engine.setDefaultAudioRouteToSpeakerphone(enabled);
+      await this.engine.setEnableSpeakerphone(enabled);
       console.log(`🔊 Speakerphone ${enabled ? 'on' : 'off'}`);
     } catch (error) {
       console.error('❌ Error setting speakerphone:', error);
