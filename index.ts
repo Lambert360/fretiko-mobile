@@ -1,5 +1,7 @@
 import { registerRootComponent } from 'expo';
 import { Platform } from 'react-native';
+import { callkeepService } from './src/services/callkeepService';
+import { initializeVoipPushNotifications } from './src/services/voipPushNotification';
 
 // Register the Firebase Cloud Messaging background handler for Android.
 // This must run before the app root is registered so the headless task is
@@ -18,6 +20,11 @@ if (Platform.OS === 'android') {
       await handleCallEndedPush(data);
     }
   });
+}
+
+if (Platform.OS === 'ios') {
+  callkeepService.setup().catch(() => {});
+  initializeVoipPushNotifications();
 }
 
 import App from './App';

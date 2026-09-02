@@ -21,6 +21,8 @@ class CallkeepService {
   private answerHandler: AnswerHandler | null = null;
   private endHandler: EndHandler | null = null;
   private remoteEndHandler: RemoteEndHandler | null = null;
+  private pendingAnswerCall: string | null = null;
+  private pendingEndCall: string | null = null;
 
   setup(): Promise<void> {
     if (this.setupPromise) return this.setupPromise;
@@ -33,7 +35,7 @@ class CallkeepService {
             supportsVideo: true,
             maximumCallGroups: '1',
             maximumCallsPerCallGroup: '1',
-            includesCallsInRecents: true,
+            includesCallsInRecents: false,
           },
           android: {
             alertTitle: 'Permissions required',
@@ -58,15 +60,25 @@ class CallkeepService {
         // User answered the call from the native UI (lock-screen / system)
         RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) => {
           console.log('📞 CallKeep answerCall:', callUUID);
-          this.answerHandler?.(callUUID);
-          RNCallKeep.backToForeground();
+          if (this.answerHandler) {
+            this.answerHandler(callUUID);
+            if (Platform.OS === 'android') {
+              RNCallKeep.backToForeground();
+            }
+          } else {
+            this.pendingAnswerCall = callUUID;
+          }
         });
 
         // User declined from native UI
         RNCallKeep.addEventListener('endCall', ({ callUUID }: { callUUID: string }) => {
           console.log('📞 CallKeep endCall:', callUUID);
-          this.endHandler?.(callUUID);
-          this.pendingCalls.delete(callUUID);
+          if (this.endHandler) {
+            this.endHandler(callUUID);
+            this.pendingCalls.delete(callUUID);
+          } else {
+            this.pendingEndCall = callUUID;
+          }
         });
 
         // Audio session activated — hand off to app
@@ -80,12 +92,22 @@ class CallkeepService {
           for (const event of events || []) {
             if (event.name === 'RNCallKeepPerformAnswerCallAction' && event.data?.callUUID) {
               console.log('CallKeep replayed answerCall:', event.data.callUUID);
-              this.answerHandler?.(event.data.callUUID);
-              RNCallKeep.backToForeground();
+              if (this.answerHandler) {
+                this.answerHandler(event.data.callUUID);
+                if (Platform.OS === 'android') {
+                  RNCallKeep.backToForeground();
+                }
+              } else {
+                this.pendingAnswerCall = event.data.callUUID;
+              }
             } else if (event.name === 'RNCallKeepPerformEndCallAction' && event.data?.callUUID) {
               console.log('CallKeep replayed endCall:', event.data.callUUID);
-              this.endHandler?.(event.data.callUUID);
-              this.pendingCalls.delete(event.data.callUUID);
+              if (this.endHandler) {
+                this.endHandler(event.data.callUUID);
+                this.pendingCalls.delete(event.data.callUUID);
+              } else {
+                this.pendingEndCall = event.data.callUUID;
+              }
             }
           }
         });
@@ -95,6 +117,7 @@ class CallkeepService {
       } catch (error) {
         console.error('❌ CallKeep setup failed:', error);
         this.isSetup = false;
+        this.setupPromise = null;
         throw error;
       }
     })();
@@ -104,10 +127,22 @@ class CallkeepService {
 
   onAnswerCall(handler: AnswerHandler) {
     this.answerHandler = handler;
+    if (this.pendingAnswerCall) {
+      console.log('📞 CallKeep draining pending answerCall:', this.pendingAnswerCall);
+      const pending = this.pendingAnswerCall;
+      this.pendingAnswerCall = null;
+      handler(pending);
+    }
   }
 
   onEndCall(handler: EndHandler) {
     this.endHandler = handler;
+    if (this.pendingEndCall) {
+      console.log('📞 CallKeep draining pending endCall:', this.pendingEndCall);
+      const pending = this.pendingEndCall;
+      this.pendingEndCall = null;
+      handler(pending);
+    }
   }
 
   /**
@@ -150,12 +185,30 @@ class CallkeepService {
       return;
     }
 
+    // On iOS, the native AppDelegate (PKPushRegistryDelegate) has already
+    // reported every call_incoming VoIP push to CallKit synchronously,
+    // before any JS code runs (see withVoipPushNotification.js). Calling
+    // RNCallKeep.displayIncomingCall/reportNewIncomingCall again here for
+    // the same UUID would report the call to CallKit a second time, which
+    // can desync CallKit's internal state from what the JS bridge expects
+    // and break answer/end handling. So on iOS this call site only needs to
+    // record bookkeeping — the actual CallKit UI is already showing.
+    if (Platform.OS === 'ios') {
+      this.pendingCalls.set(info.uuid, info);
+      return;
+    }
+
     try {
       this.pendingCalls.set(info.uuid, info);
+      const handle = info.callerName || 'FRETIKO CALL';
+      const localizedCallerName =
+        Platform.OS === 'android' && info.callerName
+          ? `FRETIKO CALL - ${info.callerName}`
+          : handle;
       await RNCallKeep.displayIncomingCall(
         info.uuid,
-        info.callerName,
-        info.callerName,
+        handle,
+        localizedCallerName,
         'generic',
         info.callType === 'video',
       );
@@ -203,6 +256,10 @@ class CallkeepService {
       RNCallKeep.removeEventListener('answerCall');
       RNCallKeep.removeEventListener('endCall');
       RNCallKeep.removeEventListener('didActivateAudioSession');
+      this.answerHandler = null;
+      this.endHandler = null;
+      this.pendingAnswerCall = null;
+      this.pendingEndCall = null;
       this.setupPromise = null;
       this.isSetup = false;
     } catch (error) {

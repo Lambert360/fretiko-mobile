@@ -56,7 +56,7 @@ const LottieGiftEffect: React.FC<LottieGiftEffectProps> = ({ gift, onComplete })
   const soundTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isCombo = gift.animation_type === 'lottie_combo';
-  const isOverlap = gift.animation_type === 'lottie_overlap' || !gift.animation_type;
+  const isOverlap = gift.animation_type === 'lottie_overlap';
 
   useEffect(() => {
     let isMounted = true;
@@ -130,6 +130,7 @@ const LottieGiftEffect: React.FC<LottieGiftEffectProps> = ({ gift, onComplete })
     if (nextIndex === -1) return;
     setActiveSteps((prev) => {
       const next = [...prev];
+      next[nextIndex] = false;
       next[nextIndex + 1] = true;
       return next;
     });
@@ -200,7 +201,7 @@ const LottieGiftEffect: React.FC<LottieGiftEffectProps> = ({ gift, onComplete })
               source={{ uri: step.lottieUrl }}
               autoPlay
               loop={false}
-              style={styles.lottie}
+              style={isOverlap ? styles.lottieOverlap : styles.lottie}
               resizeMode="contain"
               onAnimationFinish={() => handleStepFinish(index)}
             />
@@ -232,10 +233,14 @@ const styles = StyleSheet.create({
     height: '70%',
     justifyContent: 'center',
     alignItems: 'center',
+    position: 'relative',
   },
   lottie: {
     width: 280,
     height: 280,
+  },
+  lottieOverlap: {
+    ...StyleSheet.absoluteFillObject,
   },
   quantityBadge: {
     position: 'absolute',

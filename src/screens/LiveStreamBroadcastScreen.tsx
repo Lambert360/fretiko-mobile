@@ -1381,8 +1381,12 @@ const LiveStreamBroadcastScreen = () => {
       ))}
 
       {/* Stream Title Overlay */}
-      <View style={styles.streamTitleOverlay}>
-        <Text style={styles.streamTitle}>{stream.title}</Text>
+      <View style={styles.streamTitleOuter}>
+        <View style={styles.streamTitleOverlay}>
+          <Text style={styles.streamTitle} numberOfLines={1} ellipsizeMode="tail">
+            {stream.vendor?.username || 'Host'} : {stream.title}
+          </Text>
+        </View>
       </View>
 
       {/* Dynamic Highlight Card - Always visible but transparent when not highlighted */}
@@ -1711,7 +1715,7 @@ const LiveStreamBroadcastScreen = () => {
         onRequestClose={closeOrdersModal}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContainer, { paddingBottom: 20 + (insets.bottom || 0) }]}>
+          <View style={[styles.modalContainer, { marginBottom: insets.bottom || 0 }]}>
             <View style={styles.modalHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 {selectedOrderId ? (
@@ -1892,7 +1896,7 @@ const LiveStreamBroadcastScreen = () => {
         onRequestClose={() => setShowAnalytics(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContainer, { paddingBottom: 20 + (insets.bottom || 0) }]}>
+          <View style={[styles.modalContainer, { marginBottom: insets.bottom || 0 }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Live Analytics</Text>
               <TouchableOpacity
@@ -2000,7 +2004,7 @@ const LiveStreamBroadcastScreen = () => {
         <View style={styles.modalOverlay}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={[styles.modalContainer, { paddingBottom: 20 + (insets.bottom || 0) }]}
+            style={[styles.modalContainer, { marginBottom: insets.bottom || 0 }]}
           >
             <ScrollView style={styles.modalScrollContent}>
               <View style={styles.modalHeader}>
@@ -2146,7 +2150,7 @@ const LiveStreamBroadcastScreen = () => {
         }}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContainer, { paddingBottom: 20 + (insets.bottom || 0) }]}>
+          <View style={[styles.modalContainer, { marginBottom: insets.bottom || 0 }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {editingProduct ? 'Configure Product' : 'Select Product'}
@@ -2401,17 +2405,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   // Stream Title Overlay
-  streamTitleOverlay: {
+  streamTitleOuter: {
     position: 'absolute',
-    left: 20,
-    right: 20,
     top: 80,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 25,
+  },
+  streamTitleOverlay: {
     backgroundColor: 'rgba(0, 0, 0, 0.4)',
     paddingHorizontal: 15,
     paddingVertical: 8,
     borderRadius: 20,
     alignItems: 'center',
-    zIndex: 25,
+    maxWidth: screenWidth - 40,
   },
   streamTitle: {
     color: 'white',

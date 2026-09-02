@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -42,6 +43,43 @@ interface SelectedProduct {
   display_order: number;
   is_featured: boolean;
 }
+
+const formatSlotDate = (date: Date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const formatSlotTime = (date: Date) => {
+  const h = String(date.getHours()).padStart(2, '0');
+  const m = String(date.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+};
+
+const getDateValue = (dateString: string) => {
+  if (!dateString) return new Date();
+  const [y, m, d] = dateString.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+
+const getTimeValue = (timeString: string) => {
+  const date = new Date();
+  if (!timeString) return date;
+  const [h, m] = timeString.split(':').map(Number);
+  date.setHours(isNaN(h) ? 0 : h, isNaN(m) ? 0 : m, 0, 0);
+  return date;
+};
+
+const calculateDuration = (start: string, end: string) => {
+  if (!start || !end) return null;
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  const startMinutes = (sh || 0) * 60 + (sm || 0);
+  const endMinutes = (eh || 0) * 60 + (em || 0);
+  const diff = endMinutes - startMinutes;
+  return diff > 0 ? diff.toString() : null;
+};
 
 const LiveStreamSetupScreen = () => {
   const navigation = useNavigation<any>();
@@ -82,6 +120,10 @@ const LiveStreamSetupScreen = () => {
   const [slotStartTime, setSlotStartTime] = useState('');
   const [slotEndTime, setSlotEndTime] = useState('');
   const [slotDuration, setSlotDuration] = useState('60');
+
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showStartTimePicker, setShowStartTimePicker] = useState(false);
+  const [showEndTimePicker, setShowEndTimePicker] = useState(false);
 
   // Product selection modal
   const [isProductModalVisible, setProductModalVisible] = useState(false);
@@ -256,6 +298,9 @@ const LiveStreamSetupScreen = () => {
     setSlotStartTime('');
     setSlotEndTime('');
     setSlotDuration('60');
+    setShowDatePicker(false);
+    setShowStartTimePicker(false);
+    setShowEndTimePicker(false);
     setShowSlotModal(false);
   };
 
@@ -265,6 +310,9 @@ const LiveStreamSetupScreen = () => {
     setSlotStartTime(slot.start_time);
     setSlotEndTime(slot.end_time);
     setSlotDuration(slot.duration_minutes.toString());
+    setShowDatePicker(false);
+    setShowStartTimePicker(false);
+    setShowEndTimePicker(false);
     setShowSlotModal(true);
   };
 
@@ -533,6 +581,9 @@ const LiveStreamSetupScreen = () => {
                   setSlotStartTime('');
                   setSlotEndTime('');
                   setSlotDuration('60');
+                  setShowDatePicker(false);
+                  setShowStartTimePicker(false);
+                  setShowEndTimePicker(false);
                   setShowSlotModal(true);
                 }}
               >
@@ -755,33 +806,79 @@ const LiveStreamSetupScreen = () => {
           <ScrollView style={styles.modalContent} contentContainerStyle={{ padding: 20 }}>
             {/* Date Input */}
             <Text style={styles.inputLabel}>Date *</Text>
-            <TextInput
+            <TouchableOpacity
               style={styles.input}
-              placeholder="YYYY-MM-DD (e.g., 2024-12-25)"
-              placeholderTextColor="#666"
-              value={slotDate}
-              onChangeText={setSlotDate}
-            />
+              onPress={() => setShowDatePicker(!showDatePicker)}
+            >
+              <Text style={{ color: slotDate ? 'white' : '#666', fontSize: 16 }}>
+                {slotDate || 'Select date...'}
+              </Text>
+            </TouchableOpacity>
+            {showDatePicker && (
+              <DateTimePicker
+                value={getDateValue(slotDate)}
+                mode="date"
+                display="spinner"
+                onChange={(event, date) => {
+                  if (date) setSlotDate(formatSlotDate(date));
+                  setShowDatePicker(false);
+                }}
+              />
+            )}
 
             {/* Start Time */}
             <Text style={styles.inputLabel}>Start Time *</Text>
-            <TextInput
+            <TouchableOpacity
               style={styles.input}
-              placeholder="HH:MM (e.g., 14:00)"
-              placeholderTextColor="#666"
-              value={slotStartTime}
-              onChangeText={setSlotStartTime}
-            />
+              onPress={() => setShowStartTimePicker(!showStartTimePicker)}
+            >
+              <Text style={{ color: slotStartTime ? 'white' : '#666', fontSize: 16 }}>
+                {slotStartTime || 'Select start time...'}
+              </Text>
+            </TouchableOpacity>
+            {showStartTimePicker && (
+              <DateTimePicker
+                value={getTimeValue(slotStartTime)}
+                mode="time"
+                display="spinner"
+                onChange={(event, date) => {
+                  if (date) {
+                    const formatted = formatSlotTime(date);
+                    setSlotStartTime(formatted);
+                    const newDuration = calculateDuration(formatted, slotEndTime);
+                    if (newDuration) setSlotDuration(newDuration);
+                  }
+                  setShowStartTimePicker(false);
+                }}
+              />
+            )}
 
             {/* End Time */}
             <Text style={styles.inputLabel}>End Time *</Text>
-            <TextInput
+            <TouchableOpacity
               style={styles.input}
-              placeholder="HH:MM (e.g., 16:00)"
-              placeholderTextColor="#666"
-              value={slotEndTime}
-              onChangeText={setSlotEndTime}
-            />
+              onPress={() => setShowEndTimePicker(!showEndTimePicker)}
+            >
+              <Text style={{ color: slotEndTime ? 'white' : '#666', fontSize: 16 }}>
+                {slotEndTime || 'Select end time...'}
+              </Text>
+            </TouchableOpacity>
+            {showEndTimePicker && (
+              <DateTimePicker
+                value={getTimeValue(slotEndTime)}
+                mode="time"
+                display="spinner"
+                onChange={(event, date) => {
+                  if (date) {
+                    const formatted = formatSlotTime(date);
+                    setSlotEndTime(formatted);
+                    const newDuration = calculateDuration(slotStartTime, formatted);
+                    if (newDuration) setSlotDuration(newDuration);
+                  }
+                  setShowEndTimePicker(false);
+                }}
+              />
+            )}
 
             {/* Duration */}
             <Text style={styles.inputLabel}>Duration (minutes)</Text>

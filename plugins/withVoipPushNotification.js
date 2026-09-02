@@ -121,11 +121,11 @@ const withVoipPushNotification = (config) => {
       'public class AppDelegate: ExpoAppDelegate, PKPushRegistryDelegate {'
     );
 
-    // Add the voipRegistry property
+    // Add the voipRegistry property and CallKit setup guard flag
     if (!newContents.includes('var voipRegistry: PKPushRegistry?')) {
       newContents = newContents.replace(
         '  var reactNativeFactory: RCTReactNativeFactory?\n',
-        '  var reactNativeFactory: RCTReactNativeFactory?\n  var voipRegistry: PKPushRegistry?\n'
+        '  var reactNativeFactory: RCTReactNativeFactory?\n  var voipRegistry: PKPushRegistry?\n  private static var isCallKeepSetupDone = false\n'
       );
     }
 
@@ -143,6 +143,76 @@ const withVoipPushNotification = (config) => {
 
   // MARK: - PKPushRegistryDelegate
 
+  // iOS requires every VoIP push to result in a CallKit action (reporting a
+  // new incoming call, or acting on an existing one) before this delegate
+  // method returns/finishes — otherwise iOS force-kills the app ("Killing
+  // app because it never posted an incoming call to the system"). Since the
+  // JS bundle may not be booted yet (app killed/backgrounded), we report to
+  // CallKit directly in native code here, synchronously, before forwarding
+  // the payload to JS for the rest of the call setup.
+  private func reportToCallKit(payload: PKPushPayload) {
+    let dict = payload.dictionaryPayload
+    let callSessionId = (dict["callSessionId"] as? String)
+      ?? (dict["uuid"] as? String)
+      ?? UUID().uuidString
+
+    // Setup CallKit once. Re-calling setup for every push re-registers the
+    // CXProvider delegate and can steal CallKit events away from the JS
+    // RNCallKeep event emitter, breaking answer/end in JS.
+    if !AppDelegate.isCallKeepSetupDone {
+      AppDelegate.isCallKeepSetupDone = true
+      RNCallKeep.setup([
+        "appName": "Fretiko",
+        "supportsVideo": true,
+        "maximumCallGroups": "1",
+        "maximumCallsPerCallGroup": "1",
+        "includesCallsInRecents": false,
+      ])
+    }
+
+    let type = dict["type"] as? String
+    if type == "call_incoming" {
+      let callerName = (dict["callerName"] as? String) ?? "Unknown Caller"
+      let isVideo = (dict["callType"] as? String) == "video"
+      RNCallKeep.reportNewIncomingCall(
+        callSessionId,
+        handle: callerName,
+        handleType: "generic",
+        hasVideo: isVideo,
+        localizedCallerName: callerName,
+        supportsHolding: true,
+        supportsDTMF: true,
+        supportsGrouping: false,
+        supportsUngrouping: false,
+        fromPushKit: true,
+        payload: nil,
+        withCompletionHandler: nil
+      )
+    } else {
+      // call_ended (or any other type): iOS still requires every VoIP push
+      // to result in an incoming call being reported to CallKit, even if it
+      // is immediately ended. Report a transient call for this UUID, then
+      // end it. The endCall call also dismisses the real CallKit UI if it
+      // was already displayed.
+      let callerName = (dict["callerName"] as? String) ?? "Unknown Caller"
+      RNCallKeep.reportNewIncomingCall(
+        callSessionId,
+        handle: callerName,
+        handleType: "generic",
+        hasVideo: (dict["callType"] as? String) == "video",
+        localizedCallerName: callerName,
+        supportsHolding: true,
+        supportsDTMF: true,
+        supportsGrouping: false,
+        supportsUngrouping: false,
+        fromPushKit: true,
+        payload: nil,
+        withCompletionHandler: nil
+      )
+      RNCallKeep.endCall(withUUID: callSessionId, reason: 2)
+    }
+  }
+
   public func pushRegistry(
     _ registry: PKPushRegistry,
     didUpdate pushCredentials: PKPushCredentials,
@@ -156,6 +226,7 @@ const withVoipPushNotification = (config) => {
     didReceiveIncomingPushWith payload: PKPushPayload,
     for type: PKPushType
   ) {
+    reportToCallKit(payload: payload)
     RNVoipPushNotificationManager.didReceiveIncomingPush(with: payload, forType: type.rawValue)
   }
 
@@ -165,6 +236,10 @@ const withVoipPushNotification = (config) => {
     for type: PKPushType,
     completion: @escaping () -> Void
   ) {
+    // Report to CallKit FIRST, synchronously, before doing anything else —
+    // this must happen regardless of whether the JS bundle is ready.
+    reportToCallKit(payload: payload)
+
     // iOS 11+ requires calling the completion handler. Use the VoIP
     // payload's callSessionId as the completion key so JS can call
     // onVoipNotificationCompleted(data.callSessionId) after it finishes.
@@ -181,7 +256,7 @@ const withVoipPushNotification = (config) => {
       );
     }
 
-    // Make sure the bridging header imports the VoIP manager
+    // Make sure the bridging header imports the VoIP manager and CallKeep
     const targetName = getProjectName(config.modRequest.projectRoot);
     const bridgingHeaderPath = path.join(
       config.modRequest.platformProjectRoot,
@@ -193,13 +268,17 @@ const withVoipPushNotification = (config) => {
       fs.writeFileSync(bridgingHeaderPath, '// Bridging header\n');
     }
     const importLine = '#import <RNVoipPushNotification/RNVoipPushNotificationManager.h>';
+    const callKeepImportLine = '#import <RNCallKeep/RNCallKeep.h>';
     const oldImportLine = '#import "FretikoPushKitManager.h"';
     let bridgingContents = fs.readFileSync(bridgingHeaderPath, 'utf8');
     bridgingContents = bridgingContents.replace(oldImportLine, '');
     if (!bridgingContents.includes(importLine)) {
       bridgingContents = `${bridgingContents.trim()}\n${importLine}\n`;
-      fs.writeFileSync(bridgingHeaderPath, bridgingContents);
     }
+    if (!bridgingContents.includes(callKeepImportLine)) {
+      bridgingContents = `${bridgingContents.trim()}\n${callKeepImportLine}\n`;
+    }
+    fs.writeFileSync(bridgingHeaderPath, bridgingContents);
 
     config.modResults.contents = newContents;
     return config;

@@ -734,8 +734,9 @@ export const CallProvider: React.FC<{
       incomingCallRef.current = null;
       setIncomingCallForBanner(null);
 
-      setChatId(info.conversationId);
-      chatIdRef.current = info.conversationId;
+      const conversationId = info.conversationId || null;
+      setChatId(conversationId);
+      chatIdRef.current = conversationId;
       setOtherUserId(info.initiatorId || null);
       otherUserIdRef.current = info.initiatorId || null;
       setCallerName(info.callerName);
@@ -787,7 +788,7 @@ export const CallProvider: React.FC<{
         realtimeAPI.sendCallSignal(info.callSessionId, 'call_accepted', {
           acceptedBy: userIdRef.current,
           timestamp: new Date().toISOString(),
-        }, info.conversationId);
+        }, conversationId || undefined);
       }
 
       playCallSound('connected');
@@ -1081,13 +1082,19 @@ export const CallProvider: React.FC<{
   useEffect(() => {
     callkeepService.onAnswerCall((callUUID) => {
       const fallbackInfo = callkeepService.getCallInfo(callUUID);
-      const info = incomingCallRef.current || (fallbackInfo ? {
+      const info: IncomingCallInfo = incomingCallRef.current || (fallbackInfo ? {
         callSessionId: fallbackInfo.callSessionId,
         callerName: fallbackInfo.callerName,
         callType: fallbackInfo.callType,
         conversationId: fallbackInfo.conversationId,
-      } as IncomingCallInfo : null);
-      if (!info) return;
+        initiatorId: undefined,
+      } : {
+        callSessionId: callUUID,
+        callerName: 'Unknown Caller',
+        callType: 'audio',
+        conversationId: '',
+        initiatorId: undefined,
+      });
 
       incomingCallRef.current = null;
       setIncomingCallForBanner(null);
@@ -1098,25 +1105,34 @@ export const CallProvider: React.FC<{
 
     callkeepService.onEndCall((callUUID) => {
       const info = callkeepService.getCallInfo(callUUID);
-      if (!info) return;
+      const callSessionId = info?.callSessionId || callUUID;
+
+      // If this matches an active/connected call, use the main endCall flow so
+      // Agora and in-app state are cleaned up correctly.
+      if (currentCallSessionIdRef.current === callSessionId) {
+        endCallRef.current('completed', false);
+        return;
+      }
 
       if (realtimeAPI.isConnected()) {
         realtimeAPI.sendCallSignal(
-          info.callSessionId,
+          callSessionId,
           'call_declined',
           { declinedBy: userIdRef.current, timestamp: new Date().toISOString() },
-          info.conversationId,
+          info?.conversationId || undefined,
         );
       }
-      chatAPI.endCall(info.callSessionId, 'declined');
+      chatAPI.endCall(callSessionId, 'declined');
 
-      incomingCallRef.current = null;
-      setIncomingCallForBanner(null);
-      setCallStatus('idle');
-      setChatId(null);
-      setOtherUserId(null);
-      setCallerName('');
-      setCallerAvatar(null);
+      if (incomingCallRef.current?.callSessionId === callSessionId) {
+        incomingCallRef.current = null;
+        setIncomingCallForBanner(null);
+        setCallStatus('idle');
+        setChatId(null);
+        setOtherUserId(null);
+        setCallerName('');
+        setCallerAvatar(null);
+      }
     });
 
     // The other party ended the call and we found out via an FCM/VoIP push

@@ -36,6 +36,9 @@ const handleNotification = async (notification: any) => {
 
   try {
     if (data.type === 'call_incoming') {
+      // On iOS, displayIncomingCall() skips re-reporting to CallKit (the
+      // native AppDelegate already reported this call synchronously before
+      // this JS handler ran) and just records bookkeeping.
       await callkeepService.displayIncomingCall({
         uuid: callSessionId,
         callSessionId,
