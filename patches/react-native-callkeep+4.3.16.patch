@@ -1,0 +1,102 @@
+diff --git a/node_modules/react-native-callkeep/AUTHORS b/node_modules/react-native-callkeep/AUTHORS
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/LICENSE b/node_modules/react-native-callkeep/LICENSE
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/MIGRATION_v2_v3.md b/node_modules/react-native-callkeep/MIGRATION_v2_v3.md
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/MIGRATION_v3_v4.md b/node_modules/react-native-callkeep/MIGRATION_v3_v4.md
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/README.md b/node_modules/react-native-callkeep/README.md
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/RNCallKeep.podspec b/node_modules/react-native-callkeep/RNCallKeep.podspec
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/actions.js b/node_modules/react-native-callkeep/actions.js
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/android/build.gradle b/node_modules/react-native-callkeep/android/build.gradle
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/android/react-native-callkeep.iml b/node_modules/react-native-callkeep/android/react-native-callkeep.iml
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/android/src/main/AndroidManifest.xml b/node_modules/react-native-callkeep/android/src/main/AndroidManifest.xml
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/Constants.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/Constants.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/MapUtils.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/MapUtils.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepBackgroundMessagingService.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepBackgroundMessagingService.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
+old mode 100644
+new mode 100755
+index 025480a..8cf7e50
+--- a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
++++ b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
+@@ -434,7 +434,7 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
+         this.hasListeners = false;
+     }
+ 
+-    @ReactMethod
++    // @ReactMethod removed for New Architecture compatibility (duplicate method name)
+     public void displayIncomingCall(String uuid, String number, String callerName) {
+         this.displayIncomingCall(uuid, number, callerName, false, null);
+     }
+@@ -483,7 +483,7 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
+         conn.onAnswer();
+     }
+ 
+-    @ReactMethod
++    // @ReactMethod removed for New Architecture compatibility (duplicate method name)
+     public void startCall(String uuid, String number, String callerName) {
+         this.startCall(uuid, number, callerName, false, null);
+     }
+diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepPackage.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepPackage.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/VoiceConference.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/VoiceConference.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/VoiceConnection.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/VoiceConnection.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/VoiceConnectionService.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/VoiceConnectionService.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/index.d.ts b/node_modules/react-native-callkeep/index.d.ts
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/index.js b/node_modules/react-native-callkeep/index.js
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/ios/RNCallKeep.xcodeproj/project.pbxproj b/node_modules/react-native-callkeep/ios/RNCallKeep.xcodeproj/project.pbxproj
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/ios/RNCallKeep.xcodeproj/project.xcworkspace/contents.xcworkspacedata b/node_modules/react-native-callkeep/ios/RNCallKeep.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/ios/RNCallKeep.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist b/node_modules/react-native-callkeep/ios/RNCallKeep.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/ios/RNCallKeep.xcodeproj/project.xcworkspace/xcuserdata/manu.xcuserdatad/UserInterfaceState.xcuserstate b/node_modules/react-native-callkeep/ios/RNCallKeep.xcodeproj/project.xcworkspace/xcuserdata/manu.xcuserdatad/UserInterfaceState.xcuserstate
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/ios/RNCallKeep.xcodeproj/xcuserdata/manu.xcuserdatad/xcschemes/xcschememanagement.plist b/node_modules/react-native-callkeep/ios/RNCallKeep.xcodeproj/xcuserdata/manu.xcuserdatad/xcschemes/xcschememanagement.plist
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.h b/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.h
+old mode 100644
+new mode 100755
+diff --git a/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m b/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m
+old mode 100644
+new mode 100755

@@ -159,6 +159,10 @@ import MyPostsScreen from './src/screens/MyPostsScreen';
 import ReferralScreen from './src/screens/ReferralScreen';
 import ReferralHandlerScreen from './src/screens/ReferralHandlerScreen';
 
+// Filter screens
+import FilterCameraScreen from './src/screens/FilterCameraScreen';
+import FilterEditorScreen from './src/screens/FilterEditorScreen';
+
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -667,6 +671,9 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="AuctionLiveBroadcast" component={AuctionLiveBroadcastScreen} />
               <Stack.Screen name="LiveAuctionDetails" component={LiveAuctionDetailsScreen} />
               <Stack.Screen name="CreateAuction" component={CreateAuctionScreen} />
+              {/* Filter screens */}
+              <Stack.Screen name="FilterCamera" component={FilterCameraScreen} options={{ headerShown: false }} />
+              <Stack.Screen name="FilterEditor" component={FilterEditorScreen} options={{ headerShown: false }} />
             </>
           )
         ) : (

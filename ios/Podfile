@@ -12,15 +12,15 @@ def ccache_enabled?(podfile_properties)
   podfile_properties['apple.ccacheEnabled'] == 'true'
 end
 
-ENV['RCT_NEW_ARCH_ENABLED'] = '0'
+ENV['RCT_NEW_ARCH_ENABLED'] ||= '0' if podfile_properties['newArchEnabled'] == 'false'
 ENV['EX_DEV_CLIENT_NETWORK_INSPECTOR'] ||= podfile_properties['EX_DEV_CLIENT_NETWORK_INSPECTOR']
-ENV['RCT_USE_RN_DEP'] = '0'
-ENV['RCT_USE_PREBUILT_RNCORE'] = '0'
+ENV['RCT_USE_RN_DEP'] ||= '1' if podfile_properties['ios.buildReactNativeFromSource'] != 'true' && podfile_properties['newArchEnabled'] != 'false'
+ENV['RCT_USE_PREBUILT_RNCORE'] ||= '1' if podfile_properties['ios.buildReactNativeFromSource'] != 'true' && podfile_properties['newArchEnabled'] != 'false'
 platform :ios, podfile_properties['ios.deploymentTarget'] || '15.1'
 
 prepare_react_native_project!
 
-target 'fretikomobile' do
+target 'Fretiko' do
   use_expo_modules!
 
   if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
@@ -59,35 +59,5 @@ target 'fretikomobile' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
-
-    # Strip bitcode from Agora frameworks only (required for App Store submission)
-    bitcode_strip_path = `xcrun --find bitcode_strip`.strip
-    puts "[Bitcode Strip] Starting bitcode removal for Agora frameworks..."
-
-    def strip_bitcode(bitcode_strip_path, file)
-      return unless File.file?(file)
-      return if File.directory?(file)
-
-      # Skip obvious non-binary files
-      return if file.end_with?('.plist', '.json', '.txt', '.modulemap', '.h')
-
-      puts "[Bitcode Strip] Processing #{file}"
-      system("#{bitcode_strip_path} -r #{file} -o #{file}")
-    end
-
-    # Only strip Agora frameworks
-    installer.pods_project.targets.each do |target|
-      if target.name.downcase.include?('agora')
-        framework_path = "#{Dir.pwd}/Pods/#{target.name}"
-        Dir.glob("#{framework_path}/**/*.framework/**").each do |file|
-          strip_bitcode(bitcode_strip_path, file)
-        end
-        Dir.glob("#{framework_path}/**/*.xcframework/**").each do |file|
-          strip_bitcode(bitcode_strip_path, file)
-        end
-      end
-    end
-
-    puts "[Bitcode Strip] Done"
   end
 end

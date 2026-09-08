@@ -20,6 +20,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { postsAPI, PostMedia, MediaType, PrivacyLevel } from '../services/postsAPI';
 import { fileUploadService } from '../services/fileUploadService';
 import { useAuth } from '../contexts/AuthContext';
@@ -49,6 +50,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const navigation = useNavigation<any>();
   
   const [content, setContent] = useState('');
   const [media, setMedia] = useState<PostMedia[]>([]);
@@ -149,37 +151,61 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({
         return;
       }
 
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert('Permission Required', 'Camera permission is required to take photos.');
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        
-        const asset = result.assets[0];
-        const newMedia: PostMedia = {
-          mediaUrl: asset.uri,
-          mediaType: 'image',
-          width: asset.width,
-          height: asset.height,
-          mimeType: asset.mimeType,
-          fileSize: asset.fileSize,
-        };
-
-        setMedia(prev => [...prev, newMedia]);
-      }
+      // Offer filter camera as an option
+      Alert.alert(
+        'Take Photo',
+        'Choose your camera mode',
+        [
+          {
+            text: 'Camera with Filters',
+            onPress: () => {
+              navigation.navigate('FilterCamera', {
+                mode: 'photo',
+                onCapture: (dataUri: string) => {
+                  const newMedia: PostMedia = {
+                    mediaUrl: dataUri,
+                    mediaType: 'image',
+                    mimeType: 'image/jpeg',
+                  };
+                  setMedia((prev) => [...prev, newMedia]);
+                },
+              });
+            },
+          },
+          {
+            text: 'Regular Camera',
+            onPress: async () => {
+              const permission = await ImagePicker.requestCameraPermissionsAsync();
+              if (!permission.granted) {
+                Alert.alert('Permission Required', 'Camera permission is required.');
+                return;
+              }
+              const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                quality: 0.8,
+              });
+              if (!result.canceled && result.assets[0]) {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                const asset = result.assets[0];
+                const newMedia: PostMedia = {
+                  mediaUrl: asset.uri,
+                  mediaType: 'image',
+                  width: asset.width,
+                  height: asset.height,
+                  mimeType: asset.mimeType,
+                  fileSize: asset.fileSize,
+                };
+                setMedia((prev) => [...prev, newMedia]);
+              }
+            },
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
     } catch (error) {
-      console.error('Error taking photo:', error);
-      Alert.alert('Error', 'Failed to take photo');
+      console.error('Camera error:', error);
     }
-  }, [media.length]);
+  }, [media.length, navigation]);
 
   // Remove media item
   const removeMedia = useCallback((index: number) => {

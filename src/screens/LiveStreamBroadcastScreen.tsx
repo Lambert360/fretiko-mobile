@@ -30,6 +30,12 @@ import { workspaceAPI, WorkspaceOrder } from '../services/workspaceAPI';
 import { useAuctionSounds } from '../services/auctionSoundService';
 import * as ImagePicker from 'expo-image-picker';
 import GiftAnimation from '../components/GiftAnimation';
+import FilterCameraView, { FilterCameraViewRef } from '../components/FilterCameraView';
+import FilterCarousel from '../components/FilterCarousel';
+import BeautyFilterPanel from '../components/BeautyFilterPanel';
+import { useFilterContext } from '../contexts/FilterContext';
+import { FilterDefinition } from '../filters/types';
+import { BeautyPreset, BeautyParams } from '../filters/faceAR/BeautyFilter';
 
 // Import basic Agora SDK
 import { createAgoraRtcEngine, ChannelProfileType, ClientRoleType, IRtcEngine, ChannelMediaOptions, RtcSurfaceView, RenderModeType, VideoCanvas } from 'react-native-agora';
@@ -71,6 +77,27 @@ const LiveStreamBroadcastScreen = () => {
   const [isAgoraInitialized, setIsAgoraInitialized] = useState(false);
   const [isVideoViewReady, setIsVideoViewReady] = useState(false);
   const agoraEngineRef = useRef<IRtcEngine | null>(null);
+
+  // Filter state
+  const filterCameraRef = useRef<FilterCameraViewRef>(null);
+  const [activeFilterId, setActiveFilterId] = useState('none');
+  const [showFilterCarousel, setShowFilterCarousel] = useState(false);
+  const [useFilterCamera, setUseFilterCamera] = useState(false);
+  const [showBeautyPanel, setShowBeautyPanel] = useState(false);
+
+  // Global filter context for persistent beauty + color filter state
+  const {
+    filterId: globalFilterId,
+    filterIntensity,
+    setFilter: setGlobalFilter,
+    beautyParams,
+    beautyPresetId,
+    setBeautyParams,
+    setBeautyPreset,
+    resetBeauty: resetGlobalBeauty,
+    arAssetId,
+    setARAsset,
+  } = useFilterContext();
 
   // Stream state
   const [viewerCount, setViewerCount] = useState(0);
@@ -1002,7 +1029,17 @@ const LiveStreamBroadcastScreen = () => {
 
       // 🚀 INDUSTRY STANDARD: Join channel with uid: 0 (auto-assignment)
       const mediaOptions = new ChannelMediaOptions();
-      mediaOptions.publishCameraTrack = true;
+      // If filter camera is active, use external video source instead of camera track
+      if (useFilterCamera) {
+        console.log('🎨 Filter camera active — setting up external video source');
+        const { agoraFramePusher } = await import('../filters/AgoraFramePusher');
+        await agoraFramePusher.start(engine);
+        mediaOptions.publishCameraTrack = false;
+        mediaOptions.publishCustomVideoTrack = true;
+        mediaOptions.customVideoTrackId = agoraFramePusher.getCustomVideoTrackId() ?? undefined;
+      } else {
+        mediaOptions.publishCameraTrack = true;
+      }
       mediaOptions.publishMicrophoneTrack = true;
       mediaOptions.autoSubscribeVideo = true;
       mediaOptions.autoSubscribeAudio = true;
@@ -1054,6 +1091,18 @@ const LiveStreamBroadcastScreen = () => {
       Alert.alert('Agora Error', `Failed to start camera: ${error.message}`);
     }
   };
+
+  // Filter selection handler
+  const handleFilterSelect = useCallback((filter: FilterDefinition) => {
+    setActiveFilterId(filter.id);
+    filterCameraRef.current?.setFilter(filter.id, filter.intensityDefault ?? 100);
+  }, []);
+
+  // Toggle filter camera mode
+  const toggleFilterCamera = useCallback(() => {
+    setShowFilterCarousel((prev) => !prev);
+    setUseFilterCamera((prev) => !prev);
+  }, []);
 
   const handleEndStream = () => {
     Alert.alert(
@@ -1261,22 +1310,77 @@ const LiveStreamBroadcastScreen = () => {
     <View style={styles.container}>
       {/* Full-screen Camera View */}
       {isPreviewStarted && agoraConfig ? (
-        <RtcSurfaceView
-          ref={rtcSurfaceViewRef}
-          style={styles.fullScreenVideo}
-          canvas={{
-            uid: 0, // ✅ Local video ALWAYS uses UID 0 in Agora
-            renderMode: RenderModeType.RenderModeFit,
-            mirrorMode: 1,
-          }}
-          zOrderMediaOverlay={true}
-          onLayout={() => {
-            if (!isVideoViewReady) {
-              console.log('📹 Video view is now ready');
-              setIsVideoViewReady(true);
-            }
-          }}
-        />
+        useFilterCamera ? (
+          <>
+            {/* Filter camera mode: SkiaCamera with live filters + beauty */}
+            <FilterCameraView
+              ref={filterCameraRef}
+              device="front"
+              isActive={true}
+              initialFilterId={globalFilterId}
+              initialIntensity={filterIntensity}
+              initialBeautyParams={beautyParams}
+              initialARAssetId={arAssetId}
+              agoraEngine={agoraEngineRef.current}
+              enableAgoraPushing={useFilterCamera && isJoined}
+              style={styles.fullScreenVideo}
+            />
+            {/* Filter carousel overlay with beauty mode */}
+            {showFilterCarousel && (
+              <FilterCarousel
+                activeFilterId={globalFilterId}
+                activeBeautyPresetId={beautyPresetId}
+                activeARAssetId={arAssetId ?? undefined}
+                onFilterSelect={handleFilterSelect}
+                onBeautyPresetSelect={(preset: BeautyPreset) => {
+                  setBeautyPreset(preset);
+                  filterCameraRef.current?.setBeautyParams(preset.params);
+                }}
+                onARAssetSelect={(assetId: string | null) => {
+                  setARAsset(assetId);
+                  filterCameraRef.current?.setARAsset(assetId);
+                }}
+                onOpenBeautyPanel={() => setShowBeautyPanel(true)}
+              />
+            )}
+            {/* Beauty filter panel */}
+            <BeautyFilterPanel
+              visible={showBeautyPanel}
+              params={beautyParams}
+              activePresetId={beautyPresetId}
+              onParamsChange={(params: BeautyParams) => {
+                setBeautyParams(params);
+                filterCameraRef.current?.setBeautyParams(params);
+              }}
+              onPresetSelect={(preset: BeautyPreset) => {
+                setBeautyPreset(preset);
+                filterCameraRef.current?.setBeautyParams(preset.params);
+              }}
+              onClose={() => setShowBeautyPanel(false)}
+              onReset={() => {
+                resetGlobalBeauty();
+                filterCameraRef.current?.resetBeauty();
+              }}
+            />
+          </>
+        ) : (
+          <RtcSurfaceView
+            ref={rtcSurfaceViewRef}
+            style={styles.fullScreenVideo}
+            canvas={{
+              uid: 0, // ✅ Local video ALWAYS uses UID 0 in Agora
+              renderMode: RenderModeType.RenderModeFit,
+              mirrorMode: 1,
+            }}
+            zOrderMediaOverlay={true}
+            onLayout={() => {
+              if (!isVideoViewReady) {
+                console.log('📹 Video view is now ready');
+                setIsVideoViewReady(true);
+              }
+            }}
+          />
+        )
       ) : (
         <View style={styles.cameraPlaceholder}>
           <ActivityIndicator size="large" color="#FF0050" />
@@ -1297,6 +1401,18 @@ const LiveStreamBroadcastScreen = () => {
           onPress={handleEndStream}
         >
           <Ionicons name="close" size={28} color="white" />
+        </TouchableOpacity>
+
+        {/* Filter Toggle Button - Left side */}
+        <TouchableOpacity
+          style={[styles.closeButton, { marginLeft: 8 }]}
+          onPress={toggleFilterCamera}
+        >
+          <Ionicons
+            name={useFilterCamera ? "color-wand" : "color-wand-outline"}
+            size={24}
+            color={useFilterCamera ? "#FF0050" : "white"}
+          />
         </TouchableOpacity>
 
         {/* Live Indicator & Viewer Count - Top Right */}

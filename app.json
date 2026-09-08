@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/horse.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "scheme": "fretiko",
     "splash": {
       "image": "./assets/horse.png",
@@ -15,6 +15,7 @@
     },
     "ios": {
       "supportsTablet": false,
+      "deploymentTarget": "15.5",
       "bundleIdentifier": "com.kinging.fretikomobile",
       "buildNumber": "7",
       "infoPlist": {

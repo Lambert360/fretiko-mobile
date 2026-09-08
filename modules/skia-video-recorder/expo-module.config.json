@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["SkiaVideoRecorderModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.skiavideorecorder.SkiaVideoRecorderModule"]
+  }
+}

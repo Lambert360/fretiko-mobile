@@ -4,6 +4,8 @@
   <dict>
     <key>CADisableMinimumFrameDurationOnPhone</key>
     <true/>
+    <key>CFBundleAllowMixedLocalizations</key>
+    <true/>
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
@@ -29,13 +31,18 @@
         <array>
           <string>fretiko</string>
           <string>com.kinging.fretikomobile</string>
-          <string>com.googleusercontent.apps.931500623521-4a7l5sp39ukk1h4jfnvbb424eo97kcou</string>
         </array>
       </dict>
       <dict>
         <key>CFBundleURLSchemes</key>
         <array>
           <string>exp+fretiko-mobile</string>
+        </array>
+      </dict>
+      <dict>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>com.googleusercontent.apps.931500623521-4a7l5sp39ukk1h4jfnvbb424eo97kcou</string>
         </array>
       </dict>
     </array>
@@ -65,19 +72,20 @@
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>Allow $(PRODUCT_NAME) to access your location</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your microphone for video calls and real-time voice conversations with Iko AI.</string>
+    <string>Allow $(PRODUCT_NAME) to record audio for voice messages and calls.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>Allow $(PRODUCT_NAME) to save photos</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>This app needs access to the photo library to select profile pictures.</string>
+    <string>Fretiko uses your photo library to upload product images, share posts, send photos in chat, and set profile pictures.</string>
     <key>NSUserNotificationsUsageDescription</key>
     <string>This app needs access to send you notifications about orders, messages, deliveries, and other important updates.</string>
     <key>RCTNewArchEnabled</key>
-    <false/>
+    <true/>
     <key>UIBackgroundModes</key>
     <array>
       <string>audio</string>
       <string>remote-notification</string>
+      <string>voip</string>
     </array>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>

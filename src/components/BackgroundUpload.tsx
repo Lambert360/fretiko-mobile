@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { userAPI } from '../services/userAPI';
+import { useNavigation } from '@react-navigation/native';
 
 interface BackgroundUploadProps {
   currentBackgroundUrl?: string;
@@ -24,6 +25,7 @@ export const BackgroundUpload: React.FC<BackgroundUploadProps> = ({
   width,
   height,
 }) => {
+  const navigation = useNavigation<any>();
   const [uploading, setUploading] = useState(false);
   const [localImageUri, setLocalImageUri] = useState<string | null>(null);
 
@@ -56,11 +58,21 @@ export const BackgroundUpload: React.FC<BackgroundUploadProps> = ({
       'Select Background Image',
       'Choose how you want to add your background image',
       [
+        { text: 'Camera with Filters', onPress: takePictureWithFilters },
         { text: 'Camera', onPress: takePicture },
         { text: 'Photo Library', onPress: pickImage },
         { text: 'Cancel', style: 'cancel' },
       ]
     );
+  };
+
+  const takePictureWithFilters = () => {
+    navigation.navigate('FilterCamera', {
+      mode: 'photo',
+      onCapture: (dataUri: string) => {
+        uploadImage(dataUri);
+      },
+    });
   };
 
   const takePicture = async () => {

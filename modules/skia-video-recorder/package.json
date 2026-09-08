@@ -1,0 +1,8 @@
+{
+  "name": "skia-video-recorder",
+  "version": "1.0.0",
+  "description": "Native Expo module for encoding Skia-rendered frames into MP4 video",
+  "main": "index.ts",
+  "author": "Fretiko",
+  "license": "MIT"
+}

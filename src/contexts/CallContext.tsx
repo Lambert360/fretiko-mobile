@@ -71,6 +71,12 @@ interface CallContextValue {
   loadingGifts: boolean;
   activeGiftAnimations: GiftAnimationItem[];
 
+  // Filter state for video calls
+  activeFilterId: string;
+  useFilterCamera: boolean;
+  setActiveFilterId: (filterId: string) => void;
+  toggleFilterCamera: () => void;
+
   showIncomingCall: (info: IncomingCallInfo) => void;
   declineIncomingCall: () => void;
   startCall: (params: {
@@ -138,6 +144,14 @@ export const CallProvider: React.FC<{
   const [availableGifts, setAvailableGifts] = useState<Array<{ id: string; emoji: string; name: string; quantity: number }>>([]);
   const [loadingGifts, setLoadingGifts] = useState(false);
   const [activeGiftAnimations, setActiveGiftAnimations] = useState<GiftAnimationItem[]>([]);
+
+  // Filter state for video calls
+  const [activeFilterId, setActiveFilterId] = useState('none');
+  const [useFilterCamera, setUseFilterCamera] = useState(false);
+
+  const toggleFilterCamera = useCallback(() => {
+    setUseFilterCamera((prev) => !prev);
+  }, []);
 
   // Use refs so the subscribe callback / Agora callbacks never go stale
   const activeChatIdRef = useRef<string | null>(null);
@@ -1022,6 +1036,12 @@ export const CallProvider: React.FC<{
     availableGifts,
     loadingGifts,
     activeGiftAnimations,
+
+    // Filter state
+    activeFilterId,
+    useFilterCamera,
+    setActiveFilterId,
+    toggleFilterCamera,
 
     startCall,
     acceptIncomingCall,

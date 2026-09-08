@@ -93,30 +93,82 @@ const StoryUploadScreen = () => {
         return;
       }
 
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.All,
+      // Navigate to FilterCameraScreen for filtered photo capture
+      navigation.navigate('FilterCamera', {
+        mode: 'photo',
+        onCapture: (dataUri: string) => {
+          setSelectedMedia({
+            uri: dataUri,
+            type: 'image',
+            name: `story_${Date.now()}.jpg`,
+            mimeType: 'image/jpeg',
+          });
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        },
+      });
+    } catch (error) {
+      console.error('Error taking photo:', error);
+      Alert.alert('Error', 'Failed to capture media. Please try again.');
+    }
+  };
+
+  // Record video with filters
+  const recordVideo = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+
+      if (permissionResult.granted === false) {
+        Alert.alert('Permission required', 'Please allow camera access to take photos and videos.');
+        return;
+      }
+
+      // Navigate to FilterCameraScreen for filtered video capture
+      navigation.navigate('FilterCamera', {
+        mode: 'video',
+        onCapture: (videoPath: string) => {
+          setSelectedMedia({
+            uri: videoPath,
+            type: 'video',
+            name: `story_${Date.now()}.mp4`,
+            mimeType: 'video/mp4',
+          });
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        },
+      });
+    } catch (error) {
+      console.error('Error recording video:', error);
+      Alert.alert('Error', 'Failed to record video. Please try again.');
+    }
+  };
+
+  // Pick image from gallery and apply filter
+  const pickImageWithFilter = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [9, 16], // Story aspect ratio
-        quality: 0.8,
-        videoMaxDuration: 30, // 30 seconds max for stories
+        aspect: [9, 16],
+        quality: 1,
       });
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
-
-        setSelectedMedia({
-          uri: asset.uri,
-          type: asset.type === 'video' ? 'video' : 'image',
-          name: asset.fileName || `story_${Date.now()}.${asset.type === 'video' ? 'mp4' : 'jpg'}`,
-          mimeType: asset.type === 'video' ? 'video/mp4' : 'image/jpeg',
-          duration: asset.duration,
+        navigation.navigate('FilterEditor', {
+          imageUri: asset.uri,
+          onExport: (filteredUri: string) => {
+            setSelectedMedia({
+              uri: filteredUri,
+              type: 'image',
+              name: `story_${Date.now()}.jpg`,
+              mimeType: 'image/jpeg',
+            });
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          },
         });
-
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     } catch (error) {
-      console.error('Error taking photo:', error);
-      Alert.alert('Error', 'Failed to capture media. Please try again.');
+      console.error('Error picking image for filter:', error);
+      Alert.alert('Error', 'Failed to select image');
     }
   };
 
@@ -125,7 +177,9 @@ const StoryUploadScreen = () => {
       'Select Media',
       'Choose how you want to add media to your story',
       [
-        { text: 'Camera', onPress: takePhotoWithCamera },
+        { text: 'Camera (Filters)', onPress: takePhotoWithCamera },
+        { text: 'Record Video (Filters)', onPress: recordVideo },
+        { text: 'Gallery + Filter', onPress: pickImageWithFilter },
         { text: 'Gallery', onPress: pickImageFromGallery },
         { text: 'Cancel', style: 'cancel' },
       ]

@@ -109,6 +109,42 @@ const CreatePostScreen: React.FC = () => {
     }
   }, [media.length]);
 
+  // Pick image from gallery and apply filter
+  const pickImageWithFilter = useCallback(async () => {
+    try {
+      if (media.length >= MAX_MEDIA_ITEMS) {
+        Alert.alert('Limit Reached', `You can only add up to ${MAX_MEDIA_ITEMS} media items.`);
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: 'images',
+        allowsMultipleSelection: false,
+        quality: 1, // high quality — filter editor will compress
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        // Navigate to FilterEditorScreen with the picked image
+        navigation.navigate('FilterEditor', {
+          imageUri: asset.uri,
+          onExport: (filteredUri: string) => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            const newMedia: PostMedia = {
+              mediaUrl: filteredUri,
+              mediaType: 'image',
+              mimeType: 'image/jpeg',
+            };
+            setMedia(prev => [...prev, newMedia]);
+          },
+        });
+      }
+    } catch (error) {
+      console.error('Error picking image for filter:', error);
+      Alert.alert('Error', 'Failed to select image');
+    }
+  }, [media.length, navigation]);
+
   // Pick video from gallery
   const pickVideo = useCallback(async () => {
     try {
@@ -145,7 +181,7 @@ const CreatePostScreen: React.FC = () => {
     }
   }, [media.length]);
 
-  // Take photo with camera
+  // Take photo with camera (with filter support)
   const takePhoto = useCallback(async () => {
     try {
       if (media.length >= MAX_MEDIA_ITEMS) {
@@ -153,37 +189,55 @@ const CreatePostScreen: React.FC = () => {
         return;
       }
 
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert('Permission Required', 'Camera permission is required to take photos.');
-        return;
-      }
+      // Navigate to FilterCameraScreen for filtered photo capture
+      navigation.navigate('FilterCamera', {
+        mode: 'photo',
+        onCapture: (dataUri: string) => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: 'images',
-        quality: 0.8,
+          // Convert data URI to file for upload
+          const newMedia: PostMedia = {
+            mediaUrl: dataUri,
+            mediaType: 'image',
+            mimeType: 'image/jpeg',
+          };
+
+          setMedia(prev => [...prev, newMedia]);
+        },
       });
-
-      if (!result.canceled && result.assets[0]) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        
-        const asset = result.assets[0];
-        const newMedia: PostMedia = {
-          mediaUrl: asset.uri,
-          mediaType: 'image',
-          width: asset.width,
-          height: asset.height,
-          mimeType: asset.mimeType,
-          fileSize: asset.fileSize,
-        };
-
-        setMedia(prev => [...prev, newMedia]);
-      }
     } catch (error) {
       console.error('Error taking photo:', error);
       Alert.alert('Error', 'Failed to take photo');
     }
-  }, [media.length]);
+  }, [media.length, navigation]);
+
+  const recordVideo = useCallback(async () => {
+    try {
+      if (media.length >= MAX_MEDIA_ITEMS) {
+        Alert.alert('Limit Reached', `You can only add up to ${MAX_MEDIA_ITEMS} media items.`);
+        return;
+      }
+
+      // Navigate to FilterCameraScreen for filtered video capture
+      navigation.navigate('FilterCamera', {
+        mode: 'video',
+        onCapture: (videoPath: string) => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+          const newMedia: PostMedia = {
+            mediaUrl: videoPath,
+            mediaType: 'video',
+            mimeType: 'video/mp4',
+          };
+
+          setMedia(prev => [...prev, newMedia]);
+        },
+      });
+    } catch (error) {
+      console.error('Error recording video:', error);
+      Alert.alert('Error', 'Failed to record video');
+    }
+  }, [media.length, navigation]);
 
   // Remove media item
   const removeMedia = useCallback((index: number) => {
@@ -556,6 +610,16 @@ const VideoPreview = ({ uri }: { uri: string }) => {
               <TouchableOpacity style={styles.actionButton} onPress={takePhoto}>
                 <Ionicons name="camera" size={24} color="#2196F3" />
                 <Text style={styles.actionButtonText}>Camera</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.actionButton} onPress={recordVideo}>
+                <Ionicons name="videocam" size={24} color="#2196F3" />
+                <Text style={styles.actionButtonText}>Record</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.actionButton} onPress={pickImageWithFilter}>
+                <Ionicons name="color-wand" size={24} color="#9C27B0" />
+                <Text style={styles.actionButtonText}>Filter</Text>
               </TouchableOpacity>
             </View>
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Image,
@@ -15,6 +15,12 @@ import { RtcSurfaceView, RenderModeType } from 'react-native-agora';
 import { useCallContext } from '../contexts/CallContext';
 import GiftAnimation from '../components/GiftAnimation';
 import AdaptiveText from '../components/AdaptiveText';
+import FilterCameraView, { FilterCameraViewRef } from '../components/FilterCameraView';
+import FilterCarousel from '../components/FilterCarousel';
+import BeautyFilterPanel from '../components/BeautyFilterPanel';
+import { useFilterContext } from '../contexts/FilterContext';
+import { BeautyPreset, BeautyParams } from '../filters/faceAR/BeautyFilter';
+import { FilterDefinition } from '../filters/types';
 
 interface CallScreenParams {
   chatId: string;
@@ -74,7 +80,29 @@ const CallScreen: React.FC = () => {
     sendGift,
     removeGiftAnimation,
     getCallStatusText,
+    activeFilterId,
+    useFilterCamera,
+    setActiveFilterId,
+    toggleFilterCamera,
   } = useCallContext();
+
+  // Global filter context for beauty + color filter persistence
+  const {
+    filterId: globalFilterId,
+    filterIntensity,
+    setFilter: setGlobalFilter,
+    beautyParams,
+    beautyPresetId,
+    setBeautyParams,
+    setBeautyPreset,
+    resetBeauty,
+    arAssetId,
+    setARAsset,
+  } = useFilterContext();
+
+  const filterCameraRef = useRef<FilterCameraViewRef>(null);
+  const [showFilterCarousel, setShowFilterCarousel] = useState(false);
+  const [showBeautyPanel, setShowBeautyPanel] = useState(false);
 
   const rippleAnim1 = useRef(new Animated.Value(0)).current;
   const rippleAnim2 = useRef(new Animated.Value(0)).current;
@@ -256,11 +284,65 @@ const CallScreen: React.FC = () => {
     return (
       <LinearGradient colors={['#0A0E27', '#1A1F3A', '#2D1B4E']} style={StyleSheet.absoluteFillObject}>
         {callType === 'video' && showCameraPreview && isVideoEnabled && agoraConfig && (
-          <RtcSurfaceView
-            style={StyleSheet.absoluteFillObject}
-            zOrderMediaOverlay={true}
-            canvas={{ uid: 0, renderMode: RenderModeType.RenderModeFit }}
-          />
+          useFilterCamera ? (
+            <>
+              <FilterCameraView
+                ref={filterCameraRef}
+                device="front"
+                isActive={true}
+                initialFilterId={globalFilterId}
+                initialIntensity={filterIntensity}
+                initialBeautyParams={beautyParams}
+                initialARAssetId={arAssetId}
+                style={StyleSheet.absoluteFillObject}
+              />
+              {showFilterCarousel && (
+                <FilterCarousel
+                  activeFilterId={globalFilterId}
+                  activeBeautyPresetId={beautyPresetId}
+                  activeARAssetId={arAssetId ?? undefined}
+                  onFilterSelect={(filter: FilterDefinition) => {
+                    setGlobalFilter(filter.id, filter.intensityDefault ?? 100);
+                    setActiveFilterId(filter.id);
+                    filterCameraRef.current?.setFilter(filter.id, filter.intensityDefault ?? 100);
+                  }}
+                  onBeautyPresetSelect={(preset: BeautyPreset) => {
+                    setBeautyPreset(preset);
+                    filterCameraRef.current?.setBeautyParams(preset.params);
+                  }}
+                  onARAssetSelect={(assetId: string | null) => {
+                    setARAsset(assetId);
+                    filterCameraRef.current?.setARAsset(assetId);
+                  }}
+                  onOpenBeautyPanel={() => setShowBeautyPanel(true)}
+                />
+              )}
+              <BeautyFilterPanel
+                visible={showBeautyPanel}
+                params={beautyParams}
+                activePresetId={beautyPresetId}
+                onParamsChange={(params: BeautyParams) => {
+                  setBeautyParams(params);
+                  filterCameraRef.current?.setBeautyParams(params);
+                }}
+                onPresetSelect={(preset: BeautyPreset) => {
+                  setBeautyPreset(preset);
+                  filterCameraRef.current?.setBeautyParams(preset.params);
+                }}
+                onClose={() => setShowBeautyPanel(false)}
+                onReset={() => {
+                  resetBeauty();
+                  filterCameraRef.current?.resetBeauty();
+                }}
+              />
+            </>
+          ) : (
+            <RtcSurfaceView
+              style={StyleSheet.absoluteFillObject}
+              zOrderMediaOverlay={true}
+              canvas={{ uid: 0, renderMode: RenderModeType.RenderModeFit }}
+            />
+          )
         )}
 
         <BlurView intensity={20} style={styles.modernCallContainer}>
@@ -546,6 +628,19 @@ const CallScreen: React.FC = () => {
               }}
             >
               <Ionicons name={isVideoEnabled ? 'videocam' : 'videocam-off'} size={24} color={!isVideoEnabled ? '#E74C3C' : '#FFFFFF'} />
+            </TouchableOpacity>
+          )}
+
+          {callType === 'video' && isVideoEnabled && (
+            <TouchableOpacity
+              style={[styles.callControlButton, useFilterCamera && styles.callControlButtonActive]}
+              onPress={(e) => {
+                e.stopPropagation();
+                toggleFilterCamera();
+                setShowFilterCarousel((prev) => !prev);
+              }}
+            >
+              <Ionicons name="color-wand" size={24} color={useFilterCamera ? '#FF0050' : '#FFFFFF'} />
             </TouchableOpacity>
           )}
 

@@ -11,6 +11,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { userAPI } from '../services/userAPI';
 import { useAuth } from '../contexts/AuthContext';
+import { useNavigation } from '@react-navigation/native';
 
 interface AvatarUploadProps {
   currentAvatarUrl?: string;
@@ -24,6 +25,7 @@ export const AvatarUpload: React.FC<AvatarUploadProps> = ({
   size = 120,
 }) => {
   const { user } = useAuth();
+  const navigation = useNavigation<any>();
   const [uploading, setUploading] = useState(false);
   const [localImageUri, setLocalImageUri] = useState<string | null>(null);
 
@@ -56,11 +58,22 @@ export const AvatarUpload: React.FC<AvatarUploadProps> = ({
       'Select Profile Picture',
       'Choose how you want to add your profile picture',
       [
+        { text: 'Camera with Filters', onPress: takePictureWithFilters },
         { text: 'Camera', onPress: takePicture },
         { text: 'Photo Library', onPress: pickImage },
         { text: 'Cancel', style: 'cancel' },
       ]
     );
+  };
+
+  const takePictureWithFilters = () => {
+    // Navigate to the filter camera screen for a filtered selfie
+    navigation.navigate('FilterCamera', {
+      mode: 'photo',
+      onCapture: (dataUri: string) => {
+        uploadImage(dataUri);
+      },
+    });
   };
 
   const takePicture = async () => {

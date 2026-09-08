@@ -201,7 +201,7 @@ const ReferralCard = forwardRef<View, ReferralCardProps>(
 
         {/* Horse watermark */}
         <Image
-          source={require('../assets/horse.png')}
+          source={require('../../assets/horse.png')}
           style={styles.horse}
           resizeMode="contain"
         />

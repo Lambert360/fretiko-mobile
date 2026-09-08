@@ -1,104 +1,158 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
-import { FilterOptions } from '../components/FilterDropdown';
-import { loadFilters, saveFilters, debouncedSaveFilters, getDefaultFilters } from '../utils/filterStorage';
+/**
+ * FilterContext
+ *
+ * Global filter state management across all surfaces:
+ * - Posts/Stories camera
+ * - Live streams & auctions
+ * - Video calls
+ *
+ * Persists user's filter + beauty preferences so they don't have to
+ * re-select every time they open the camera. Uses AsyncStorage.
+ */
 
-interface FilterContextType {
-  productFilters: FilterOptions;
-  serviceFilters: FilterOptions;
-  setProductFilters: (filters: FilterOptions) => void;
-  setServiceFilters: (filters: FilterOptions) => void;
-  resetProductFilters: () => void;
-  resetServiceFilters: () => void;
-  isLoading: boolean;
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+} from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ActiveFilterState } from '../filters/types';
+import {
+  BeautyParams,
+  DEFAULT_BEAUTY_PARAMS,
+  BeautyPreset,
+} from '../filters/faceAR/BeautyFilter';
+
+const STORAGE_KEY = '@fretiko/filter_state';
+
+interface FilterContextValue {
+  // Color filter
+  filterId: string;
+  filterIntensity: number;
+  setFilter: (filterId: string, intensity?: number) => void;
+
+  // Beauty
+  beautyParams: BeautyParams;
+  beautyPresetId: string;
+  setBeautyParams: (params: BeautyParams) => void;
+  setBeautyPreset: (preset: BeautyPreset) => void;
+  updateBeautyParam: (key: keyof BeautyParams, value: number) => void;
+  resetBeauty: () => void;
+
+  // Face AR
+  arAssetId: string | null;
+  setARAsset: (assetId: string | null) => void;
+
+  // Full state (for passing to FilterCameraView)
+  getActiveFilterState: () => ActiveFilterState;
 }
 
-const FilterContext = createContext<FilterContextType | undefined>(undefined);
+const FilterContext = createContext<FilterContextValue>({} as FilterContextValue);
 
-interface FilterProviderProps {
-  children: ReactNode;
-}
+export const useFilterContext = () => useContext(FilterContext);
 
-export const FilterProvider: React.FC<FilterProviderProps> = ({ children }) => {
-  const [productFilters, setProductFiltersState] = useState<FilterOptions>(getDefaultFilters());
-  const [serviceFilters, setServiceFiltersState] = useState<FilterOptions>(getDefaultFilters());
-  const [isLoading, setIsLoading] = useState(true);
+export const FilterProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [filterId, setFilterId] = useState('none');
+  const [filterIntensity, setFilterIntensity] = useState(100);
+  const [beautyParams, setBeautyParamsState] = useState<BeautyParams>({
+    ...DEFAULT_BEAUTY_PARAMS,
+  });
+  const [beautyPresetId, setBeautyPresetId] = useState('none');
+  const [arAssetId, setARAssetId] = useState<string | null>(null);
+  const isLoadedRef = useRef(false);
 
-  // Load filters on mount
+  // Load persisted state on mount
   useEffect(() => {
-    const loadStoredFilters = async () => {
+    (async () => {
       try {
-        setIsLoading(true);
-        const [loadedProductFilters, loadedServiceFilters] = await Promise.all([
-          loadFilters('products'),
-          loadFilters('services'),
-        ]);
-
-        if (loadedProductFilters) {
-          setProductFiltersState(loadedProductFilters);
+        const saved = await AsyncStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          const state = JSON.parse(saved);
+          if (state.filterId) setFilterId(state.filterId);
+          if (state.filterIntensity) setFilterIntensity(state.filterIntensity);
+          if (state.beautyParams) setBeautyParamsState(state.beautyParams);
+          if (state.beautyPresetId) setBeautyPresetId(state.beautyPresetId);
+          if (state.arAssetId !== undefined) setARAssetId(state.arAssetId);
         }
-
-        if (loadedServiceFilters) {
-          setServiceFiltersState(loadedServiceFilters);
-        }
-      } catch (error) {
-        console.error('Error loading filters:', error);
+      } catch (e) {
+        console.warn('⚠️ Failed to load filter state:', e);
       } finally {
-        setIsLoading(false);
+        isLoadedRef.current = true;
       }
-    };
-
-    loadStoredFilters();
+    })();
   }, []);
 
-  // Set product filters with persistence
-  const setProductFilters = useCallback((filters: FilterOptions) => {
-    setProductFiltersState(filters);
-    debouncedSaveFilters(filters, 'products');
+  // Persist state on change (after initial load)
+  useEffect(() => {
+    if (!isLoadedRef.current) return;
+    const state = { filterId, filterIntensity, beautyParams, beautyPresetId, arAssetId };
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state)).catch(() => {});
+  }, [filterId, filterIntensity, beautyParams, beautyPresetId, arAssetId]);
+
+  const setFilter = useCallback((id: string, intensity?: number) => {
+    setFilterId(id);
+    if (intensity !== undefined) setFilterIntensity(intensity);
   }, []);
 
-  // Set service filters with persistence
-  const setServiceFilters = useCallback((filters: FilterOptions) => {
-    setServiceFiltersState(filters);
-    debouncedSaveFilters(filters, 'services');
+  const setBeautyParams = useCallback((params: BeautyParams) => {
+    setBeautyParamsState(params);
+    // When manually adjusting params, deselect preset
+    setBeautyPresetId('custom');
   }, []);
 
-  // Reset product filters
-  const resetProductFilters = useCallback(() => {
-    const defaultFilters = getDefaultFilters();
-    setProductFiltersState(defaultFilters);
-    saveFilters(defaultFilters, 'products').catch(error => {
-      console.error('Error resetting product filters:', error);
-    });
+  const setBeautyPreset = useCallback((preset: BeautyPreset) => {
+    setBeautyParamsState(preset.params);
+    setBeautyPresetId(preset.id);
   }, []);
 
-  // Reset service filters
-  const resetServiceFilters = useCallback(() => {
-    const defaultFilters = getDefaultFilters();
-    setServiceFiltersState(defaultFilters);
-    saveFilters(defaultFilters, 'services').catch(error => {
-      console.error('Error resetting service filters:', error);
-    });
+  const updateBeautyParam = useCallback((key: keyof BeautyParams, value: number) => {
+    setBeautyParamsState((prev) => ({
+      ...prev,
+      [key]: Math.max(0, Math.min(1, value)),
+    }));
+    setBeautyPresetId('custom');
   }, []);
 
-  // Memoize context value to prevent unnecessary re-renders
-  const value = useMemo<FilterContextType>(() => ({
-    productFilters,
-    serviceFilters,
-    setProductFilters,
-    setServiceFilters,
-    resetProductFilters,
-    resetServiceFilters,
-    isLoading,
-  }), [productFilters, serviceFilters, setProductFilters, setServiceFilters, resetProductFilters, resetServiceFilters, isLoading]);
+  const resetBeauty = useCallback(() => {
+    setBeautyParamsState({ ...DEFAULT_BEAUTY_PARAMS });
+    setBeautyPresetId('none');
+  }, []);
 
-  return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>;
+  const setARAsset = useCallback((assetId: string | null) => {
+    setARAssetId(assetId);
+  }, []);
+
+  const getActiveFilterState = useCallback(
+    (): ActiveFilterState => ({
+      filterId,
+      intensity: filterIntensity,
+      beautyParams,
+      beautyPresetId,
+    }),
+    [filterId, filterIntensity, beautyParams, beautyPresetId]
+  );
+
+  return (
+    <FilterContext.Provider
+      value={{
+        filterId,
+        filterIntensity,
+        setFilter,
+        beautyParams,
+        beautyPresetId,
+        setBeautyParams,
+        setBeautyPreset,
+        updateBeautyParam,
+        resetBeauty,
+        arAssetId,
+        setARAsset,
+        getActiveFilterState,
+      }}
+    >
+      {children}
+    </FilterContext.Provider>
+  );
 };
-
-export const useFilters = (): FilterContextType => {
-  const context = useContext(FilterContext);
-  if (context === undefined) {
-    throw new Error('useFilters must be used within a FilterProvider');
-  }
-  return context;
-};
-
