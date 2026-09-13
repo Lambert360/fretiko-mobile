@@ -18,7 +18,7 @@ import AdaptiveText from '../components/AdaptiveText';
 import FilterCameraView, { FilterCameraViewRef } from '../components/FilterCameraView';
 import FilterCarousel from '../components/FilterCarousel';
 import BeautyFilterPanel from '../components/BeautyFilterPanel';
-import { useFilterContext } from '../contexts/FilterContext';
+import { useCameraFilterContext as useFilterContext } from '../contexts/CameraFilterContext';
 import { BeautyPreset, BeautyParams } from '../filters/faceAR/BeautyFilter';
 import { FilterDefinition } from '../filters/types';
 

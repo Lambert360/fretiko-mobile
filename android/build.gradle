@@ -19,6 +19,19 @@ allprojects {
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
   }
+  configurations.all {
+    resolutionStrategy {
+      force 'androidx.media3:media3-exoplayer:1.8.0'
+      force 'androidx.media3:media3-exoplayer-dash:1.8.0'
+      force 'androidx.media3:media3-exoplayer-hls:1.8.0'
+      force 'androidx.media3:media3-exoplayer-smoothstreaming:1.8.0'
+      force 'androidx.media3:media3-session:1.8.0'
+      force 'androidx.media3:media3-ui:1.8.0'
+      force 'androidx.media3:media3-datasource-okhttp:1.8.0'
+      force 'androidx.media3:media3-common:1.8.0'
+    }
+  }
+
 }
 
 apply plugin: "expo-root-project"

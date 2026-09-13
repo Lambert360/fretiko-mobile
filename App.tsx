@@ -22,6 +22,7 @@ import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { RegistrationProvider } from './src/contexts/RegistrationContext';
 import { CartProvider } from './src/contexts/CartContext';
 import { FilterProvider } from './src/contexts/FilterContext';
+import { CameraFilterProvider } from './src/contexts/CameraFilterContext';
 import { CallProvider } from './src/contexts/CallContext';
 
 // Import global call UI
@@ -520,8 +521,10 @@ const AppNavigator: React.FC = () => {
     }
   };
 
-  // Show loading screen while checking auth state or suspension status
-  if (isLoading || isCheckingSuspension) {
+  // Show loading screen only on initial auth state check, not on
+  // foreground re-checks (isCheckingSuspension) which would unmount the
+  // entire navigation tree (e.g. popping the FilterCamera screen).
+  if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#3498DB" />
@@ -705,10 +708,12 @@ export default function App() {
           <AuthProvider>
             <CartProvider>
               <FilterProvider>
-                <GestureHandlerRootView style={{ flex: 1 }}>
-                  <AppNavigator />
-                  <StatusBar style="light" backgroundColor="#000000" />
-                </GestureHandlerRootView>
+                <CameraFilterProvider>
+                  <GestureHandlerRootView style={{ flex: 1 }}>
+                    <AppNavigator />
+                    <StatusBar style="light" backgroundColor="#000000" />
+                  </GestureHandlerRootView>
+                </CameraFilterProvider>
               </FilterProvider>
             </CartProvider>
           </AuthProvider>

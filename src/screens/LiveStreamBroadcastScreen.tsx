@@ -33,7 +33,7 @@ import GiftAnimation from '../components/GiftAnimation';
 import FilterCameraView, { FilterCameraViewRef } from '../components/FilterCameraView';
 import FilterCarousel from '../components/FilterCarousel';
 import BeautyFilterPanel from '../components/BeautyFilterPanel';
-import { useFilterContext } from '../contexts/FilterContext';
+import { useCameraFilterContext as useFilterContext } from '../contexts/CameraFilterContext';
 import { FilterDefinition } from '../filters/types';
 import { BeautyPreset, BeautyParams } from '../filters/faceAR/BeautyFilter';
 

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { authAPI } from '../services/api';
 import { warningsAPI } from '../services/warningsAPI';
 import { pushNotificationService } from '../services/pushNotificationService';
@@ -1164,6 +1165,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
 
       await clearAuthData();
+
+      // Sign out from Google so the next sign-in shows the account picker
+      // instead of silently returning the cached account.
+      try {
+        await GoogleSignin.signOut();
+      } catch (googleSignOutError) {
+        console.log('⚠️ Google sign-out error:', googleSignOutError);
+      }
+
       setAuthState({
         user: null,
         accessToken: null,

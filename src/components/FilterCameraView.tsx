@@ -425,11 +425,8 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
       stopAgoraPushing,
     }));
 
-    if (!hasPermission || !cameraDevice) {
-      return <View style={[styles.container, style]} />;
-    }
-
     // Face detection via ML Kit — always enable (needed for beauty warp + AR)
+    // MUST be called before any conditional early return to avoid hooks violation
     const faceScannerOutput = useFaceScannerOutput({
       performanceMode: 'fast',
       runLandmarks: true,
@@ -487,6 +484,10 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
       },
     });
 
+    if (!hasPermission || !cameraDevice) {
+      return <View style={[styles.container, style]} />;
+    }
+
     return (
       <View style={[styles.container, style]}>
         <SkiaCamera
@@ -494,14 +495,18 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
           style={styles.camera}
           device={cameraDevice}
           isActive={isActive}
-          pixelFormat="yuv"
+          pixelFormat="rgb"
           outputs={[faceScannerOutput]}
+          onError={(error: Error) => {
+            console.error('📷 SkiaCamera onError:', error);
+          }}
           onFrame={(frame, render) => {
             'worklet';
 
             const w = frame.width;
             const h = frame.height;
 
+            try {
             render(({ canvas, frameTexture }) => {
               // Create the base image shader from camera frame texture
               const imageShader = frameTexture.makeShaderOptions(
@@ -611,8 +616,9 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
               }
 
               // === STEP 4: COLOR FILTER ===
+              let filterShaderResult: any = null;
               if (colorActive && colorFilterEffect) {
-                const filterShader = colorFilterEffect.makeShaderWithChildren(
+                filterShaderResult = colorFilterEffect.makeShaderWithChildren(
                   [
                     intensity.value,
                     sBrightness.value,
@@ -627,8 +633,8 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                   ],
                   [currentShader]
                 );
-                if (filterShader) {
-                  currentShader = filterShader;
+                if (filterShaderResult) {
+                  currentShader = filterShaderResult;
                 }
               }
 
@@ -757,6 +763,10 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
             });
 
             frame.dispose();
+            } catch (e) {
+              // Skia render can fail on devices with broken EGL contexts
+              // (e.g. Mediatek Android 9). Swallow to prevent component crash.
+            }
           }}
         />
       </View>

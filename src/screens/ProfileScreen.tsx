@@ -134,12 +134,11 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
   const loadProfile = async () => {
     try {
       // Load profile, stats, wallet, orders, gifts, gift cards, and trending products in parallel
+      // The Supabase token is only needed for giftCardAPI; most calls use the
+      // backend JWT via the axios interceptor. Don't throw if there's no
+      // Supabase session — the user may have authenticated via Google/backend.
       const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
+      const token = session?.access_token ?? null;
 
       const [profileData, statsData, walletData, walletStatsData, ordersData, giftsData, giftCardsData, featuredData] = await Promise.all([
         userAPI.getProfile(),
@@ -148,7 +147,9 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         walletAPI.getWalletStats(),
         ordersAPI.getMyOrders({ status: ['delivered', 'shipped', 'processing', 'cancelled'] }),
         giftAPI.getUserGifts().catch(() => ({ gifts: [], total_gifts: 0, total_value: 0 })), // Gracefully handle errors
-        giftCardAPI.getMyGiftCards(token).catch(() => []), // Gracefully handle errors
+        token
+          ? giftCardAPI.getMyGiftCards(token).catch(() => [])
+          : Promise.resolve([]), // No Supabase token — skip gift cards gracefully
         searchAPI.getFeaturedContent(SearchType.PRODUCTS, undefined, 10).catch(() => ({ products: [] })) // Get featured/trending products
       ]);
       

@@ -1,0 +1,211 @@
+diff --git a/node_modules/react-native-vision-camera-skia/lib/SurfacesCache.js b/node_modules/react-native-vision-camera-skia/lib/SurfacesCache.js
+index b9a0b51..4b3afca 100644
+--- a/node_modules/react-native-vision-camera-skia/lib/SurfacesCache.js
++++ b/node_modules/react-native-vision-camera-skia/lib/SurfacesCache.js
+@@ -1,9 +1,16 @@
+ import { Skia } from '@shopify/react-native-skia';
++import { Platform } from 'react-native';
+ import { getCurrentThreadMarker } from 'react-native-vision-camera-worklets';
+ import { createSynchronizable } from 'react-native-worklets';
+ // If a Surface hasn't been used in 15_000ms, it will be deleted from cache.
+ const MAXIMUM_SURFACE_CACHE_AGE_MS = 15_000;
+ const surfacesCache = createSynchronizable([]);
++
++// On Android, use CPU surface (Skia.Surface.Make) for compatibility with
++// devices that have broken GPU/EGL contexts (e.g. Mediatek Android 9).
++// On iOS, use GPU offscreen surface (MakeOffscreen) for performance.
++const _useCpuSurface = Platform.OS === 'android';
++
+ /**
+  * Clears the internal {@linkcode SkSurface} cache, disposing every cached
+  * Surface.
+@@ -43,44 +50,62 @@ export function getSurface(width, height) {
+     const cachedSurfaces = surfacesCache.getBlocking();
+     const now = performance.now();
+     try {
+-        const cachedSurface = cachedSurfaces.find((c) => c.cacheKey === threadId &&
+-            c.surface.width() === width &&
+-            c.surface.height() === height);
++        const cachedSurface = cachedSurfaces.find(
++            (c) =>
++                c.cacheKey === threadId &&
++                c.surface.width() === width &&
++                c.surface.height() === height,
++        );
+         if (cachedSurface != null) {
+             // We found a Surface in our cache! Before we return it, set its last used timestamp to now.
+             cachedSurface.lastUsedTimestamp = now;
+             return cachedSurface.surface;
+         }
++
+         // We don't have a cached Surface - create one...
+-        const newSurface = Skia.Surface.MakeOffscreen(width, height);
++        let newSurface;
++        if (_useCpuSurface) {
++            // Android: CPU surface for compatibility
++            newSurface = Skia.Surface.Make(width, height);
++            if (newSurface == null) {
++                // CPU surface failed — try GPU
++                newSurface = Skia.Surface.MakeOffscreen(width, height);
++            }
++        } else {
++            // iOS: GPU offscreen surface for performance
++            newSurface = Skia.Surface.MakeOffscreen(width, height);
++            if (newSurface == null) {
++                // GPU surface failed — try CPU
++                newSurface = Skia.Surface.Make(width, height);
++            }
++        }
+         if (newSurface == null) {
+-            throw new Error(`Failed to create Skia Surface!`);
++            throw new Error(`Failed to create Skia Surface!`)
+         }
+         cachedSurfaces.push({
+             cacheKey: threadId,
+             surface: newSurface,
+             lastUsedTimestamp: now,
+-        });
++        })
++
+         // Return the new one
+-        return newSurface;
+-    }
+-    finally {
++        return newSurface
++    } finally {
+         // Remove all cached Surfaces that haven't been used in >10 seconds
+-        let counter = 0;
++        let counter = 0
+         while (counter <= cachedSurfaces.length) {
+-            const c = cachedSurfaces[counter];
+-            if (c == null)
+-                break;
+-            const keep = now - c.lastUsedTimestamp <= MAXIMUM_SURFACE_CACHE_AGE_MS;
++            const c = cachedSurfaces[counter]
++            if (c == null) break
++            const keep = now - c.lastUsedTimestamp <= MAXIMUM_SURFACE_CACHE_AGE_MS
+             if (!keep) {
+                 // Remove this surface!
+-                c.surface.dispose();
+-                cachedSurfaces.splice(counter, 1);
+-                continue;
++                c.surface.dispose()
++                cachedSurfaces.splice(counter, 1)
++                continue
+             }
+-            counter++;
++            counter++
+         }
+         // Write back any modifications in `cachedSurfaces` to our cache.
+-        surfacesCache.setBlocking(cachedSurfaces);
++        surfacesCache.setBlocking(cachedSurfaces)
+     }
+ }
+diff --git a/node_modules/react-native-vision-camera-skia/lib/render.js b/node_modules/react-native-vision-camera-skia/lib/render.js
+index 21ffb25..566ce03 100644
+--- a/node_modules/react-native-vision-camera-skia/lib/render.js
++++ b/node_modules/react-native-vision-camera-skia/lib/render.js
+@@ -1,6 +1,14 @@
+ import { Skia } from '@shopify/react-native-skia';
++import { Platform } from 'react-native';
+ import { normalizeRotationDegrees, orientationToDegrees, } from './OrientationUtils';
+ import { getSurface } from './SurfacesCache';
++
++// On some Android devices (e.g. Mediatek Android 9), the GPU/EGL context is broken
++// and produces black frames. Use CPU fallback on Android, GPU on iOS.
++// iOS GPU path is fast and reliable. Android CPU path is slower but works on all devices.
++const _forceCpuFallback = Platform.OS === 'android';
++let _gpuFailed = false;
++
+ /**
+  * Renders the given {@linkcode Frame} to a {@linkcode SkImage}
+  * and returns it.
+@@ -18,30 +26,27 @@ export function renderToTexture(frame, onDraw) {
+         const isLandscape = frame.orientation === 'left' || frame.orientation === 'right';
+         const outWidth = isLandscape ? frame.height : frame.width;
+         const outHeight = isLandscape ? frame.width : frame.height;
++
+         // 2. Get drawable offscreen surface (cached per Thread & Size)
+         const surface = getSurface(outWidth, outHeight);
+-        // 3. Make a Texture from the Frame (via NativeBuffer)
+-        nativeBuffer = frame.getNativeBuffer();
+-        frameTexture = Skia.Image.MakeImageFromNativeBuffer(nativeBuffer.pointer);
+-        // 4. Prepare a Canvas for drawing
++
++        // 3. Prepare a Canvas for drawing
+         const canvas = surface.getCanvas();
+-        // 5. Apply any transforms to cancel Frame orientation/mirrored
++
++        // 4. Apply any transforms to cancel Frame orientation/mirrored
+         canvas.save();
+         {
+             const rotation = orientationToDegrees(frame.orientation);
+             const counterRotation = normalizeRotationDegrees(rotation * -1);
+-            // 5.1. Move it to the center so we rotate around center origin
++            // 4.1. Move it to the center so we rotate around center origin
+             canvas.translate(outWidth / 2, outHeight / 2);
+-            // 5.2. Mirror if needed.
+-            // Note: Skia concatenates transforms, so call order is reversed at draw-time.
+-            // Placing scale() before rotate() makes the rendered result rotate first, then mirror.
++            // 4.2. Mirror if needed.
+             if (frame.isMirrored) {
+-                // Mirror alongside the vertical axis (horizontal flip)
+                 canvas.scale(-1, 1);
+             }
+-            // 5.3. Rotate the Frame
++            // 4.3. Rotate the Frame
+             canvas.rotate(counterRotation, 0, 0);
+-            // 5.4. Counter back the center origin transforms
++            // 4.4. Counter back the center origin transforms
+             if (isLandscape) {
+                 canvas.translate(-(outHeight / 2), -(outWidth / 2));
+             }
+@@ -49,10 +54,48 @@ export function renderToTexture(frame, onDraw) {
+                 canvas.translate(-(outWidth / 2), -(outHeight / 2));
+             }
+         }
++
++        // 5. Create frame texture
++        // On iOS: use GPU (MakeImageFromNativeBuffer) — fast and reliable
++        // On Android: use CPU (getPixelBuffer + MakeImage) — works on all devices
++        //             including Mediatek with broken EGL contexts
++        if (!_forceCpuFallback && !_gpuFailed && frame.hasNativeBuffer) {
++            try {
++                nativeBuffer = frame.getNativeBuffer();
++                frameTexture = Skia.Image.MakeImageFromNativeBuffer(nativeBuffer.pointer);
++            } catch (e) {
++                _gpuFailed = true;
++                nativeBuffer = null;
++                frameTexture = null;
++            }
++        }
++
++        if (frameTexture == null && frame.hasPixelBuffer) {
++            // CPU fallback: create image from pixel buffer
++            const pixelBuffer = frame.getPixelBuffer();
++            // Android 'rgb' format is typically BGRA_8888 (colorType 6)
++            // iOS 'rgb' format is typically RGBA_8888 (colorType 4)
++            const isBgra = frame.pixelFormat === 'rgb-bgra-8-bit';
++            const info = {
++                width: frame.width,
++                height: frame.height,
++                alphaType: 1, // Opaque
++                colorType: isBgra ? 6 : 4, // BGRA_8888 or RGBA_8888
++            };
++            const data = Skia.Data.fromBytes(new Uint8Array(pixelBuffer));
++            frameTexture = Skia.Image.MakeImage(info, data, frame.bytesPerRow || (frame.width * 4));
++        }
++
++        if (frameTexture == null) {
++            throw new Error('Cannot create frame texture — no native buffer or pixel buffer available');
++        }
++
+         // 6. Draw!
+         onDraw({ frameTexture, canvas });
++
+         // 7. Restore canvas transforms
+         canvas.restore();
++
+         // 8. Snapshot the Surface contents to get it into an SkImage
+         const snapshot = surface.makeImageSnapshot();
+         return snapshot;

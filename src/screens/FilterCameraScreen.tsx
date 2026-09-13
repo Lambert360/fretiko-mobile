@@ -25,7 +25,7 @@ import FilterCarousel from '../components/FilterCarousel';
 import FilterIntensitySlider from '../components/FilterIntensitySlider';
 import BeautyFilterPanel from '../components/BeautyFilterPanel';
 import { FilterDefinition } from '../filters/types';
-import { useFilterContext } from '../contexts/FilterContext';
+import { useCameraFilterContext as useFilterContext } from '../contexts/CameraFilterContext';
 import { BeautyPreset, BeautyParams } from '../filters/faceAR/BeautyFilter';
 
 const { width: screenWidth } = Dimensions.get('window');

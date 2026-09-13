@@ -35,6 +35,7 @@
       ]
     },
     "android": {
+      "minSdkVersion": 26,
       "adaptiveIcon": {
         "foregroundImage": "./assets/horse.png",
         "backgroundColor": "#000000"
@@ -112,6 +113,8 @@
       "expo-font",
       "expo-maps",
       "./plugins/withCallkeep",
+      "./plugins/force-media3-version",
+      "./plugins/force-min-sdk-version",
       "expo-web-browser",
       "expo-apple-authentication",
       "expo-asset",
