@@ -599,7 +599,7 @@ const VideoPreview = ({ uri }: { uri: string }) => {
             <View style={styles.actionButtons}>
               <TouchableOpacity style={styles.actionButton} onPress={pickImages}>
                 <Ionicons name="images" size={24} color="#4CAF50" />
-                <Text style={styles.actionButtonText}>Photos</Text>
+                <Text style={styles.actionButtonText}>Gallery</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.actionButton} onPress={pickVideo}>
@@ -615,11 +615,6 @@ const VideoPreview = ({ uri }: { uri: string }) => {
               <TouchableOpacity style={styles.actionButton} onPress={recordVideo}>
                 <Ionicons name="videocam" size={24} color="#2196F3" />
                 <Text style={styles.actionButtonText}>Record</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.actionButton} onPress={pickImageWithFilter}>
-                <Ionicons name="color-wand" size={24} color="#9C27B0" />
-                <Text style={styles.actionButtonText}>Filter</Text>
               </TouchableOpacity>
             </View>
 

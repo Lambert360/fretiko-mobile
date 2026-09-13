@@ -58,8 +58,7 @@ export const BackgroundUpload: React.FC<BackgroundUploadProps> = ({
       'Select Background Image',
       'Choose how you want to add your background image',
       [
-        { text: 'Camera with Filters', onPress: takePictureWithFilters },
-        { text: 'Camera', onPress: takePicture },
+        { text: 'Camera', onPress: takePictureWithFilters },
         { text: 'Photo Library', onPress: pickImage },
         { text: 'Cancel', style: 'cancel' },
       ]

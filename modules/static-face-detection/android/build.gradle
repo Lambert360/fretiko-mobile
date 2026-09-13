@@ -1,0 +1,38 @@
+apply plugin: "com.android.library"
+apply plugin: "kotlin-android"
+
+def rootProjectDir = rootProject.projectDir
+def expoModulesCoreDir = new File(rootProjectDir, "node_modules/expo-modules-core/android").getCanonicalPath()
+def kotlinVersion = "2.0.21"
+
+android {
+  namespace "expo.modules.staticfacedetection"
+  compileSdkVersion 36
+
+  defaultConfig {
+    minSdkVersion 26
+    targetSdkVersion 36
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+
+  sourceSets {
+    main {
+      java.srcDir "src/main/java"
+    }
+  }
+}
+
+dependencies {
+  implementation "com.facebook.react:react-android"
+  implementation "com.google.mlkit:face-detection:16.1.7"
+  implementation project(":expo-modules-core")
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0"
+}

@@ -1,0 +1,8 @@
+{
+  "name": "static-face-detection",
+  "version": "1.0.0",
+  "description": "Static image face detection using ML Kit",
+  "main": "index.ts",
+  "author": "Fretiko",
+  "license": "MIT"
+}

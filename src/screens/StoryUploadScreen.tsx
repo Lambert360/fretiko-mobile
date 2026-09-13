@@ -177,10 +177,9 @@ const StoryUploadScreen = () => {
       'Select Media',
       'Choose how you want to add media to your story',
       [
-        { text: 'Camera (Filters)', onPress: takePhotoWithCamera },
-        { text: 'Record Video (Filters)', onPress: recordVideo },
-        { text: 'Gallery + Filter', onPress: pickImageWithFilter },
-        { text: 'Gallery', onPress: pickImageFromGallery },
+        { text: 'Camera', onPress: takePhotoWithCamera },
+        { text: 'Record Video', onPress: recordVideo },
+        { text: 'Gallery', onPress: pickImageWithFilter },
         { text: 'Cancel', style: 'cancel' },
       ]
     );

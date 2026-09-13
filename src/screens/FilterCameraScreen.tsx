@@ -15,9 +15,11 @@ import {
   Text,
   TouchableOpacity,
   Dimensions,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FilterCameraView, { FilterCameraViewRef } from '../components/FilterCameraView';
@@ -36,6 +38,10 @@ type FilterCameraRouteProp = RouteProp<
       mode?: 'photo' | 'video';
       onCapture?: (dataUri: string) => void;
       initialFilterId?: string;
+    };
+    FilterEditor: {
+      imageUri: string;
+      onExport?: (filteredUri: string) => void;
     };
   },
   'FilterCamera'
@@ -188,6 +194,28 @@ export default function FilterCameraScreen() {
     navigation.goBack();
   }, []);
 
+  const handleGallery = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.9,
+    });
+
+    if (!result.canceled && result.assets && result.assets[0]) {
+      const uri = result.assets[0].uri;
+      // Navigate to FilterEditorScreen to apply filters/beauty/AR before posting
+      (navigation as any).navigate('FilterEditor', {
+        imageUri: uri,
+        onExport: (filteredUri: string) => {
+          if (route.params?.onCapture) {
+            route.params.onCapture(filteredUri);
+          }
+          navigation.goBack();
+        },
+      });
+    }
+  }, [navigation, route.params]);
+
   const handleFlashToggle = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setFlashMode((prev) => !prev);
@@ -275,7 +303,7 @@ export default function FilterCameraScreen() {
       {/* Bottom capture bar */}
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 20 }]}>
         {/* Gallery shortcut */}
-        <TouchableOpacity style={styles.galleryButton} onPress={() => {}}>
+        <TouchableOpacity style={styles.galleryButton} onPress={handleGallery}>
           <Ionicons name="images-outline" size={26} color="#FFFFFF" />
         </TouchableOpacity>
 

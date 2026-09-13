@@ -22,7 +22,7 @@
  */
 
 import React, { useRef, useCallback, useImperativeHandle, forwardRef, useEffect } from 'react';
-import { StyleSheet, View, Dimensions } from 'react-native';
+import { StyleSheet, View, Dimensions, Platform } from 'react-native';
 import { SkiaCamera, SkiaCameraRef } from 'react-native-vision-camera-skia';
 import {
   Skia,
@@ -33,6 +33,10 @@ import {
   ColorType,
   AlphaType,
 } from '@shopify/react-native-skia';
+
+// On Android with broken GPU/EGL (Mediatek), RuntimeEffect shaders crash
+// (SIGTRAP in makeNonTextureImage). Use ColorFilter API instead.
+const _useColorFilter = Platform.OS === 'android';
 import type { SkImage } from '@shopify/react-native-skia';
 import { useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
 import { useFaceScannerOutput } from 'vision-camera-face-detection';
@@ -67,6 +71,17 @@ if (!colorFilterEffect) console.error('❌ Color filter shader failed to compile
 if (!skinSegmentEffect) console.error('❌ Skin segment shader failed to compile');
 if (!beautyBilateralEffect) console.error('❌ Beauty bilateral shader failed to compile');
 if (!faceWarpEffect) console.error('❌ Face warp shader failed to compile');
+
+// JS-thread error logger for worklet render errors
+let _lastRenderError = 0;
+function logRenderError(msg: string) {
+  const now = Date.now();
+  // Throttle: only log once per 5 seconds to avoid spam
+  if (now - _lastRenderError > 5000) {
+    _lastRenderError = now;
+    console.error('❌ Render error:', msg);
+  }
+}
 
 // Preload all SVG-based face AR assets at module level (JS thread).
 // Skia SVG objects are native HybridObjects that are safe to reference
@@ -184,6 +199,13 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
     // === Face AR shared values ===
     const arAssetId = useSharedValue(initialARAssetId);
     const faceRollAngle = useSharedValue(0);
+
+    // === Coordinate scale (ML Kit preview → canvas frame) ===
+    // ML Kit returns coordinates in preview resolution (screen size).
+    // Canvas operates at frame resolution (camera sensor size).
+    // We compute scale factors to map between them.
+    const faceScaleX = useSharedValue(1);
+    const faceScaleY = useSharedValue(1);
 
     // === Video recording shared values ===
     const isRecording = useSharedValue(false);
@@ -436,18 +458,27 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
       trackingEnabled: true,
       cameraFacing: deviceProp,
       outputResolution: 'preview',
+      // autoMode: ML Kit transforms coordinates to screen space (handles rotation + mirror)
+      autoMode: true,
+      windowWidth: screenWidth,
+      windowHeight: screenHeight,
       onFaceScanned: (faces: any[]) => {
         'worklet';
         if (faces && faces.length > 0) {
           const f = faces[0];
           hasFace.value = true;
 
+          // With autoMode=true, ML Kit returns coordinates in screen space.
+          // Scale from screen space to canvas frame space.
+          const sx = faceScaleX.value;
+          const sy = faceScaleY.value;
+
           // Bounds — flat structure: { x, y, width, height }
           const bounds = f.bounds;
-          faceW.value = bounds.width;
-          faceH.value = bounds.height;
-          faceCenterX.value = bounds.x + bounds.width / 2;
-          faceCenterY.value = bounds.y + bounds.height / 2;
+          faceW.value = bounds.width * sx;
+          faceH.value = bounds.height * sy;
+          faceCenterX.value = (bounds.x + bounds.width / 2) * sx;
+          faceCenterY.value = (bounds.y + bounds.height / 2) * sy;
 
           // Roll angle for AR asset rotation
           faceRollAngle.value = f.rollAngle || 0;
@@ -456,23 +487,23 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
           const lm = f.landmarks;
           if (lm) {
             if (lm.LEFT_EYE) {
-              faceLeftEyeX.value = lm.LEFT_EYE.x;
-              faceLeftEyeY.value = lm.LEFT_EYE.y;
+              faceLeftEyeX.value = lm.LEFT_EYE.x * sx;
+              faceLeftEyeY.value = lm.LEFT_EYE.y * sy;
             }
             if (lm.RIGHT_EYE) {
-              faceRightEyeX.value = lm.RIGHT_EYE.x;
-              faceRightEyeY.value = lm.RIGHT_EYE.y;
+              faceRightEyeX.value = lm.RIGHT_EYE.x * sx;
+              faceRightEyeY.value = lm.RIGHT_EYE.y * sy;
             }
             if (lm.NOSE_BASE) {
-              faceNoseX.value = lm.NOSE_BASE.x;
-              faceNoseY.value = lm.NOSE_BASE.y;
+              faceNoseX.value = lm.NOSE_BASE.x * sx;
+              faceNoseY.value = lm.NOSE_BASE.y * sy;
             }
             if (lm.MOUTH_BOTTOM) {
-              faceMouthX.value = lm.MOUTH_BOTTOM.x;
-              faceMouthY.value = lm.MOUTH_BOTTOM.y;
+              faceMouthX.value = lm.MOUTH_BOTTOM.x * sx;
+              faceMouthY.value = lm.MOUTH_BOTTOM.y * sy;
             } else if (lm.MOUTH_LEFT) {
-              faceMouthX.value = lm.MOUTH_LEFT.x;
-              faceMouthY.value = lm.MOUTH_LEFT.y;
+              faceMouthX.value = lm.MOUTH_LEFT.x * sx;
+              faceMouthY.value = lm.MOUTH_LEFT.y * sy;
             }
           }
         } else {
@@ -506,18 +537,18 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
             const w = frame.width;
             const h = frame.height;
 
+            // Update coordinate scale: ML Kit returns preview-resolution coords,
+            // canvas operates at frame resolution.
+            const isLandscape = frame.orientation === 'left' || frame.orientation === 'right';
+            const canvasW = isLandscape ? h : w;
+            const canvasH = isLandscape ? w : h;
+            faceScaleX.value = canvasW / screenWidth;
+            faceScaleY.value = canvasH / screenHeight;
+
             try {
             render(({ canvas, frameTexture }) => {
-              // Create the base image shader from camera frame texture
-              const imageShader = frameTexture.makeShaderOptions(
-                TileMode.Clamp,
-                TileMode.Clamp,
-                FilterMode.Linear,
-                MipmapMode.None
-              );
-
               // Check what's active
-              const colorActive = filterId.value !== 'none' && intensity.value > 0 && colorFilterEffect;
+              const colorActive = filterId.value !== 'none' && intensity.value > 0;
               const beautyActiveNow =
                 bSkinSmoothing.value > 0 || bSkinTone.value > 0 || bGlow.value > 0 ||
                 bUnderEye.value > 0 || bTeethWhiten.value > 0 || bLipColor.value > 0 ||
@@ -559,93 +590,164 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                 return;
               }
 
-              // Pipeline: start with the original frame shader
-              let currentShader = imageShader;
+              if (_useColorFilter) {
+                // === ANDROID CPU PATH: Use ColorFilter (no RuntimeEffect shaders) ===
+                // Beauty/warp shaders require GPU and crash on broken EGL devices.
+                // Apply color filters + beauty via Skia ColorFilter API (CPU-safe).
+                if (colorActive || beautyActiveNow) {
+                  // Color filter params
+                  const i = colorActive ? intensity.value : 0;
+                  const b = sBrightness.value * i;
+                  const c = sContrast.value * i;
+                  const s = sSaturation.value * i;
+                  const wWarm = sWarmth.value * i * 0.15;
+                  const t = sTint.value * i * 0.1;
+                  const f = sFade.value * i;
 
-              // === STEP 1: FACE WARP (geometric reshape) ===
-              if (warpActiveNow && faceWarpEffect && hasFace.value && faceW.value > 0) {
-                const warpShader = faceWarpEffect.makeShaderWithChildren(
-                  [
-                    faceLeftEyeX.value, faceLeftEyeY.value,
-                    faceRightEyeX.value, faceRightEyeY.value,
-                    faceNoseX.value, faceNoseY.value,
-                    faceMouthX.value, faceMouthY.value,
-                    faceCenterX.value, faceCenterY.value,
-                    faceW.value, faceH.value,
-                    bFaceSlim.value,
-                    bEyeEnlarge.value,
-                    bNoseSlim.value,
-                    bJawSharpen.value,
-                    w, h,
-                  ],
-                  [currentShader]
-                );
-                if (warpShader) {
-                  currentShader = warpShader;
+                  // Beauty params (ColorMatrix approximation)
+                  // Skin smoothing can't be done with ColorMatrix, but we can do:
+                  // - Skin tone evening (reduce redness, even out)
+                  // - Glow (brightness lift)
+                  // - Sharpening (contrast boost)
+                  const bSkin = bSkinSmoothing.value / 100;
+                  const bTone = bSkinTone.value / 100;
+                  const bGlowVal = bGlow.value / 100;
+                  const bSharpen = bSharpening.value / 100;
+
+                  // Combined adjustments
+                  const totalBright = b + bGlowVal * 0.1 + bSkin * 0.05;
+                  const totalContrast = c + bSharpen * 0.3;
+                  const totalSat = s - bTone * 0.15; // tone evening reduces saturation slightly
+                  const skinWarm = wWarm + bTone * 0.05;
+
+                  // Saturation: mix with luminance
+                  const sr = 0.299 + 0.701 * totalSat;
+                  const sg = 0.587 * (1 - totalSat);
+                  const sb = 0.114 * (1 - totalSat);
+                  // Contrast: scale around 0.5
+                  const cf = 1 + totalContrast;
+                  // Fade: reduce contrast, lift blacks
+                  const ff = 1 - 0.15 * f;
+                  const ft = 0.15 * f;
+
+                  const matrix = [
+                    sr * cf * ff,    sg * cf * ff,    sb * cf * ff,    0, (totalBright + skinWarm + t * 0.5 - 0.5 * totalContrast) * ff + ft,
+                    sr * cf * ff,    (0.587 + 0.413 * totalSat) * cf * ff, sb * cf * ff, 0, (totalBright - t - 0.5 * totalContrast) * ff + ft,
+                    sr * cf * ff,    sg * cf * ff,    (0.114 + 0.886 * totalSat) * cf * ff, 0, (totalBright - skinWarm + t * 0.5 - 0.5 * totalContrast) * ff + ft,
+                    0,              0,               0,               1, 0,
+                  ];
+
+                  const paint = Skia.Paint();
+                  try {
+                    const cfVal = Skia.ColorFilter.MakeMatrix(matrix);
+                    if (cfVal) {
+                      paint.setColorFilter(cfVal);
+                      canvas.drawImage(frameTexture, 0, 0, paint);
+                    } else {
+                      canvas.drawImage(frameTexture, 0, 0);
+                    }
+                  } catch {
+                    canvas.drawImage(frameTexture, 0, 0);
+                  }
+                } else {
+                  canvas.drawImage(frameTexture, 0, 0);
                 }
-              }
-
-              // === STEP 2: SKIN SEGMENTATION ===
-              let skinMaskShader: any = null;
-              if (beautyActiveNow && skinSegmentEffect) {
-                skinMaskShader = skinSegmentEffect.makeShaderWithChildren(
-                  [0.5],
-                  [currentShader]
-                );
-              }
-
-              // === STEP 3: BEAUTY BILATERAL (smoothing, tone, glow, etc.) ===
-              if (beautyActiveNow && beautyBilateralEffect && skinMaskShader) {
-                const beautyShader = beautyBilateralEffect.makeShaderWithChildren(
-                  [
-                    bSkinSmoothing.value,
-                    bSharpening.value,
-                    bSkinTone.value,
-                    bGlow.value,
-                    bTeethWhiten.value,
-                    bLipColor.value,
-                    bCheekBlush.value,
-                    bUnderEye.value,
-                    w, h,
-                  ],
-                  [currentShader, skinMaskShader]
-                );
-                if (beautyShader) {
-                  currentShader = beautyShader;
-                }
-              }
-
-              // === STEP 4: COLOR FILTER ===
-              let filterShaderResult: any = null;
-              if (colorActive && colorFilterEffect) {
-                filterShaderResult = colorFilterEffect.makeShaderWithChildren(
-                  [
-                    intensity.value,
-                    sBrightness.value,
-                    sContrast.value,
-                    sSaturation.value,
-                    sWarmth.value,
-                    sTint.value,
-                    sVignette.value,
-                    sGrain.value,
-                    sFade.value,
-                    w, h,
-                  ],
-                  [currentShader]
-                );
-                if (filterShaderResult) {
-                  currentShader = filterShaderResult;
-                }
-              }
-
-              // === RENDER (shaders) ===
-              if (colorActive || beautyActiveNow || warpActiveNow) {
-                const paint = Skia.Paint();
-                paint.setShader(currentShader);
-                canvas.drawImage(frameTexture, 0, 0, paint);
               } else {
-                // Only AR is active — draw the frame as-is first
-                canvas.drawImage(frameTexture, 0, 0);
+                // === iOS GPU PATH: Use RuntimeEffect shaders ===
+                // Create the base image shader from camera frame texture
+                const imageShader = frameTexture.makeShaderOptions(
+                  TileMode.Clamp,
+                  TileMode.Clamp,
+                  FilterMode.Linear,
+                  MipmapMode.None
+                );
+
+                // Pipeline: start with the original frame shader
+                let currentShader = imageShader;
+
+                // === STEP 1: FACE WARP (geometric reshape) ===
+                if (warpActiveNow && faceWarpEffect && hasFace.value && faceW.value > 0) {
+                  const warpShader = faceWarpEffect.makeShaderWithChildren(
+                    [
+                      faceLeftEyeX.value, faceLeftEyeY.value,
+                      faceRightEyeX.value, faceRightEyeY.value,
+                      faceNoseX.value, faceNoseY.value,
+                      faceMouthX.value, faceMouthY.value,
+                      faceCenterX.value, faceCenterY.value,
+                      faceW.value, faceH.value,
+                      bFaceSlim.value,
+                      bEyeEnlarge.value,
+                      bNoseSlim.value,
+                      bJawSharpen.value,
+                      w, h,
+                    ],
+                    [currentShader]
+                  );
+                  if (warpShader) {
+                    currentShader = warpShader;
+                  }
+                }
+
+                // === STEP 2: SKIN SEGMENTATION ===
+                let skinMaskShader: any = null;
+                if (beautyActiveNow && skinSegmentEffect) {
+                  skinMaskShader = skinSegmentEffect.makeShaderWithChildren(
+                    [0.5],
+                    [currentShader]
+                  );
+                }
+
+                // === STEP 3: BEAUTY BILATERAL (smoothing, tone, glow, etc.) ===
+                if (beautyActiveNow && beautyBilateralEffect && skinMaskShader) {
+                  const beautyShader = beautyBilateralEffect.makeShaderWithChildren(
+                    [
+                      bSkinSmoothing.value,
+                      bSharpening.value,
+                      bSkinTone.value,
+                      bGlow.value,
+                      bTeethWhiten.value,
+                      bLipColor.value,
+                      bCheekBlush.value,
+                      bUnderEye.value,
+                      w, h,
+                    ],
+                    [currentShader, skinMaskShader]
+                  );
+                  if (beautyShader) {
+                    currentShader = beautyShader;
+                  }
+                }
+
+                // === STEP 4: COLOR FILTER ===
+                if (colorActive && colorFilterEffect) {
+                  const filterShaderResult = colorFilterEffect.makeShaderWithChildren(
+                    [
+                      intensity.value,
+                      sBrightness.value,
+                      sContrast.value,
+                      sSaturation.value,
+                      sWarmth.value,
+                      sTint.value,
+                      sVignette.value,
+                      sGrain.value,
+                      sFade.value,
+                      w, h,
+                    ],
+                    [currentShader]
+                  );
+                  if (filterShaderResult) {
+                    currentShader = filterShaderResult;
+                  }
+                }
+
+                // === RENDER (shaders) ===
+                if (colorActive || beautyActiveNow || warpActiveNow) {
+                  const paint = Skia.Paint();
+                  paint.setShader(currentShader);
+                  canvas.drawImage(frameTexture, 0, 0, paint);
+                } else {
+                  canvas.drawImage(frameTexture, 0, 0);
+                }
               }
 
               // === STEP 5: FACE AR OVERLAY (SVG assets on top) ===
@@ -763,9 +865,10 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
             });
 
             frame.dispose();
-            } catch (e) {
-              // Skia render can fail on devices with broken EGL contexts
-              // (e.g. Mediatek Android 9). Swallow to prevent component crash.
+            } catch (e: any) {
+              // Log the error so we can diagnose shader/render failures
+              // instead of silently swallowing them
+              runOnJS(logRenderError)((e && e.message) ? e.message : String(e));
             }
           }}
         />
