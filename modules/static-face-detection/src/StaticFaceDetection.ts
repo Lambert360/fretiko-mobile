@@ -30,8 +30,8 @@ export type DetectFacesResult = {
 
 const StaticFaceDetectionModule = requireNativeModule('StaticFaceDetectionModule');
 
-export async function detectFaces(imageUri: string): Promise<DetectFacesResult> {
-  return await StaticFaceDetectionModule.detectFaces(imageUri);
+export function detectFaces(imageUri: string): Promise<DetectFacesResult> {
+  return StaticFaceDetectionModule.detectFaces(imageUri);
 }
 
 export default { detectFaces };

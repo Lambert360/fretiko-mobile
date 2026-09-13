@@ -14,6 +14,6 @@ Pod::Spec.new do |s|
   s.source         = { :git => "https://github.com/Lambert360/fretiko-mobile.git" }
   s.source_files   = "**/*.{h,m,swift}"
   s.dependency     "ExpoModulesCore"
-  s.dependency     "MLKitFaceDetection"
+  s.dependency     "GoogleMLKit/FaceDetection"
   s.swift_version  = "5.4"
 end
