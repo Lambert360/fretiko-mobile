@@ -57,7 +57,7 @@ import {
 import { agoraFramePusher } from '../filters/AgoraFramePusher';
 import type { IRtcEngine } from 'react-native-agora';
 import { SVG_FACE_AR_ASSETS, SVGAsset, AR_FIT } from '../filters/faceAR/faceARAssets';
-import { computeARPlacement, sortEyes } from '../filters/faceAR/arPlacement';
+import { computeARPlacement, sanitizeFaceGeom, sortEyes } from '../filters/faceAR/arPlacement';
 import { SkiaVideoRecorder } from '../../modules/skia-video-recorder';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -801,8 +801,7 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                     { x: faceLeftEyeX.value, y: faceLeftEyeY.value },
                     { x: faceRightEyeX.value, y: faceRightEyeY.value }
                   );
-                  const placement = computeARPlacement(
-                    fit,
+                  const geom = sanitizeFaceGeom(
                     {
                       leftEye,
                       rightEye,
@@ -816,8 +815,14 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                           : undefined,
                       faceCenter: { x: faceCenterX.value, y: faceCenterY.value },
                     },
-                    svg.width()
+                    {
+                      x: faceCenterX.value - faceW.value / 2,
+                      y: faceCenterY.value - faceH.value / 2,
+                      width: faceW.value,
+                      height: faceH.value,
+                    }
                   );
+                  const placement = computeARPlacement(fit, geom, svg.width());
                   if (placement) {
                     // The canvas already carries the frame-orientation transform
                     // (rotate + mirror) applied by renderToTexture. Our coords are

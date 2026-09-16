@@ -45,7 +45,7 @@ import { getFilterById } from '../filters/filterCatalog';
 import { DEFAULT_COLOR_PARAMS, FilterDefinition, ColorFilterParams } from '../filters/types';
 import { BEAUTY_PRESETS, BeautyPreset, DEFAULT_BEAUTY_PARAMS } from '../filters/faceAR/BeautyFilter';
 import { SVG_FACE_AR_ASSETS, SVGAsset, AR_FIT } from '../filters/faceAR/faceARAssets';
-import { computeARPlacement, sortEyes, ARPlacement } from '../filters/faceAR/arPlacement';
+import { computeARPlacement, sanitizeFaceGeom, sortEyes, ARPlacement } from '../filters/faceAR/arPlacement';
 import { detectFaces, DetectedFace } from '../../modules/static-face-detection/src/StaticFaceDetection';
 import * as FileSystem from 'expo-file-system/legacy';
 
@@ -282,26 +282,32 @@ export default function FilterEditorScreen() {
         y: p.y * arFitScale + arOffsetY,
       });
       const { leftEye, rightEye } = sortEyes(toDisplay(eyeA), toDisplay(eyeB));
+      const b = detectedFace.bounds;
+      const geom = sanitizeFaceGeom(
+        {
+          leftEye,
+          rightEye,
+          nose: nose ? toDisplay(nose) : undefined,
+          mouth: mouth ? toDisplay(mouth) : undefined,
+          faceCenter: {
+            x: (b.x + b.width / 2) * arFitScale + arOffsetX,
+            y: (b.y + b.height / 2) * arFitScale + arOffsetY,
+          },
+        },
+        {
+          x: b.x * arFitScale + arOffsetX,
+          y: b.y * arFitScale + arOffsetY,
+          width: b.width * arFitScale,
+          height: b.height * arFitScale,
+        }
+      );
 
       const asset = SVG_FACE_AR_ASSETS.find((a) => a.id === activeARAsset);
       const fit = asset ? AR_FIT[asset.id] : undefined;
       if (asset && fit) {
         const svg = Skia.SVG.MakeFromString(asset.svg);
         const svgW = svg?.width() || 200;
-        const placement = computeARPlacement(
-          fit,
-          {
-            leftEye,
-            rightEye,
-            nose: nose ? toDisplay(nose) : undefined,
-            mouth: mouth ? toDisplay(mouth) : undefined,
-            faceCenter: {
-              x: (detectedFace.bounds.x + detectedFace.bounds.width / 2) * arFitScale + arOffsetX,
-              y: (detectedFace.bounds.y + detectedFace.bounds.height / 2) * arFitScale + arOffsetY,
-            },
-          },
-          svgW
-        );
+        const placement = computeARPlacement(fit, geom, svgW);
         if (placement) {
           arElements.push(
             <ARAssetView

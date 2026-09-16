@@ -62,6 +62,61 @@ export interface ARFaceGeom {
   faceCenter?: ARPoint;
 }
 
+export interface ARFaceBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Sanity-check detected landmarks against the face bounds. On real faces the
+ * interocular distance is roughly 0.28–0.5× face width and both eyes sit well
+ * inside the bounds. On stylized/occluded faces ML Kit can return eyes outside
+ * the box or implausibly far apart — then we synthesize plausible eye
+ * positions from the bounds instead of trusting garbage landmarks.
+ * Returns the (possibly corrected) geometry; null if no usable geometry.
+ */
+export function sanitizeFaceGeom(
+  face: ARFaceGeom,
+  bounds: ARFaceBounds,
+): ARFaceGeom {
+  'worklet';
+  const { leftEye, rightEye } = face;
+  const faceCx = bounds.x + bounds.width / 2;
+  const eyeLineY = bounds.y + bounds.height * 0.42; // eyes ~42% down the face box
+
+  const eyeDist = Math.abs(rightEye.x - leftEye.x);
+  const plausible =
+    leftEye.x > bounds.x - bounds.width * 0.1 &&
+    rightEye.x < bounds.x + bounds.width * 1.1 &&
+    leftEye.y > bounds.y - bounds.height * 0.15 &&
+    leftEye.y < bounds.y + bounds.height * 0.75 &&
+    rightEye.y > bounds.y - bounds.height * 0.15 &&
+    rightEye.y < bounds.y + bounds.height * 0.75 &&
+    eyeDist > bounds.width * 0.15 &&
+    eyeDist < bounds.width * 0.6;
+
+  if (!plausible) {
+    // Synthesize eyes from the bounds: standard proportions
+    const halfSep = bounds.width * 0.19;
+    return {
+      ...face,
+      leftEye: { x: faceCx - halfSep, y: eyeLineY },
+      rightEye: { x: faceCx + halfSep, y: eyeLineY },
+      nose:
+        face.nose && face.nose.x > bounds.x && face.nose.x < bounds.x + bounds.width
+          ? face.nose
+          : { x: faceCx, y: bounds.y + bounds.height * 0.62 },
+      mouth:
+        face.mouth && face.mouth.x > bounds.x && face.mouth.x < bounds.x + bounds.width
+          ? face.mouth
+          : { x: faceCx, y: bounds.y + bounds.height * 0.78 },
+    };
+  }
+  return face;
+}
+
 export interface ARPlacement {
   /** draw-space point where the SVG reference midpoint should land */
   cx: number;
