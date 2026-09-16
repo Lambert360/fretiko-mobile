@@ -200,6 +200,9 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
     // === Face AR shared values ===
     const arAssetId = useSharedValue(initialARAssetId);
     const faceRollAngle = useSharedValue(0);
+    // All detected faces (canvas-space), flat arrays:
+    // [leftEyeX, leftEyeY, rightEyeX, rightEyeY, noseX, noseY, mouthX, mouthY, centerX, centerY, w, h]
+    const allFacesData = useSharedValue<number[][]>([]);
 
     // === Coordinate scale (ML Kit window space → upright canvas space) ===
     // autoMode=true returns face coords in window units (screenWidth x screenHeight).
@@ -532,17 +535,49 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
             }
           }
 
+          // All faces for multi-face AR (up to 4, largest first)
+          const sorted = faces
+            .filter((x: any) => x.bounds)
+            .sort((a: any, b: any) =>
+              b.bounds.width * b.bounds.height - a.bounds.width * a.bounds.height
+            )
+            .slice(0, 4);
+          const out: number[][] = [];
+          for (const ff of sorted) {
+            const fb = ff.bounds;
+            const flm = ff.landmarks || {};
+            const le = flm.LEFT_EYE, re = flm.RIGHT_EYE;
+            const no = flm.NOSE_BASE;
+            const mo = flm.MOUTH_BOTTOM || flm.MOUTH_LEFT;
+            out.push([
+              le ? (le.x + cropX) * invScale : 0,
+              le ? (le.y + cropY) * invScale : 0,
+              re ? (re.x + cropX) * invScale : 0,
+              re ? (re.y + cropY) * invScale : 0,
+              no ? (no.x + cropX) * invScale : 0,
+              no ? (no.y + cropY) * invScale : 0,
+              mo ? (mo.x + cropX) * invScale : 0,
+              mo ? (mo.y + cropY) * invScale : 0,
+              (fb.x + fb.width / 2 + cropX) * invScale,
+              (fb.y + fb.height / 2 + cropY) * invScale,
+              fb.width * invScale,
+              fb.height * invScale,
+            ]);
+          }
+          allFacesData.value = out;
+
           // Debug: log first detected face coords every ~90 scans (~3s)
           faceLogCounter.value += 1;
           if (faceLogCounter.value % 90 === 1) {
             console.log(
-              `FACE@${faceLogCounter.value}: bounds=(${bounds.x.toFixed(0)},${bounds.y.toFixed(0)},${bounds.width.toFixed(0)}x${bounds.height.toFixed(0)}) ` +
+              `FACE@${faceLogCounter.value}: ${sorted.length} face(s), bounds=(${bounds.x.toFixed(0)},${bounds.y.toFixed(0)},${bounds.width.toFixed(0)}x${bounds.height.toFixed(0)}) ` +
               `canvas=(${faceCenterX.value.toFixed(0)},${faceCenterY.value.toFixed(0)}) ` +
               `roll=${faceRollAngle.value.toFixed(1)} lm=${lm ? 'Y' : 'N'}`
             );
           }
         } else {
           hasFace.value = false;
+          allFacesData.value = [];
         }
       },
       onError: (error: Error) => {
@@ -598,7 +633,7 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                 bFaceSlim.value > 0 || bEyeEnlarge.value > 0 || bNoseSlim.value > 0 || bJawSharpen.value > 0;
               const arActiveNow =
                 arAssetId.value !== null && arAssetId.value !== 'none' &&
-                hasFace.value && faceW.value > 0;
+                allFacesData.value.length > 0;
 
               // If nothing is active, render as-is
               if (!colorActive && !beautyActiveNow && !warpActiveNow && !arActiveNow) {
@@ -803,35 +838,34 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                 const asset = SVG_ASSET_MAP[arId];
                 const fit = AR_FIT[arId];
                 if (svg && asset && fit) {
-                  // Similarity registration: map the SVG's reference points
-                  // onto the detected face geometry (eyes / head-top / landmark).
-                  const { leftEye, rightEye } = sortEyes(
-                    { x: faceLeftEyeX.value, y: faceLeftEyeY.value },
-                    { x: faceRightEyeX.value, y: faceRightEyeY.value }
-                  );
-                  const geom = sanitizeFaceGeom(
-                    {
-                      leftEye,
-                      rightEye,
-                      nose:
-                        faceNoseX.value > 0
-                          ? { x: faceNoseX.value, y: faceNoseY.value }
-                          : undefined,
-                      mouth:
-                        faceMouthX.value > 0
-                          ? { x: faceMouthX.value, y: faceMouthY.value }
-                          : undefined,
-                      faceCenter: { x: faceCenterX.value, y: faceCenterY.value },
-                    },
-                    {
-                      x: faceCenterX.value - faceW.value / 2,
-                      y: faceCenterY.value - faceH.value / 2,
-                      width: faceW.value,
-                      height: faceH.value,
-                    }
-                  );
-                  const placement = computeARPlacement(fit, geom, svg.width());
-                  if (placement) {
+                  // Draw on EVERY detected face — multi-face tracking like
+                  // Snapchat/TikTok. allFacesData is canvas-space flat arrays:
+                  // [lx,ly, rx,ry, nx,ny, mx,my, cx,cy, w,h]
+                  const faces = allFacesData.value;
+                  for (let fi = 0; fi < faces.length; fi++) {
+                    const fd = faces[fi];
+                    if (fd[0] === 0 && fd[2] === 0) continue; // no eye landmarks
+                    const { leftEye, rightEye } = sortEyes(
+                      { x: fd[0], y: fd[1] },
+                      { x: fd[2], y: fd[3] }
+                    );
+                    const geom = sanitizeFaceGeom(
+                      {
+                        leftEye,
+                        rightEye,
+                        nose: fd[4] > 0 ? { x: fd[4], y: fd[5] } : undefined,
+                        mouth: fd[6] > 0 ? { x: fd[6], y: fd[7] } : undefined,
+                        faceCenter: { x: fd[8], y: fd[9] },
+                      },
+                      {
+                        x: fd[8] - fd[10] / 2,
+                        y: fd[9] - fd[11] / 2,
+                        width: fd[10],
+                        height: fd[11],
+                      }
+                    );
+                    const placement = computeARPlacement(fit, geom, svg.width());
+                    if (!placement) continue;
                     // The canvas already carries the frame-orientation transform
                     // (rotate + mirror) applied by renderToTexture. Our coords are
                     // in upright display space, so invert that transform first —
