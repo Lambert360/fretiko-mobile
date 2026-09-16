@@ -200,9 +200,11 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
     // === Face AR shared values ===
     const arAssetId = useSharedValue(initialARAssetId);
     const faceRollAngle = useSharedValue(0);
-    // All detected faces (canvas-space), flat arrays:
+    // All detected faces (canvas-space), flat array, 12 values per face:
     // [leftEyeX, leftEyeY, rightEyeX, rightEyeY, noseX, noseY, mouthX, mouthY, centerX, centerY, w, h]
-    const allFacesData = useSharedValue<number[][]>([]);
+    const allFacesData = useSharedValue<number[]>([]);
+    // Debug: draw landmark markers on tracked faces
+    const showFaceDebug = useSharedValue(true);
 
     // === Coordinate scale (ML Kit window space → upright canvas space) ===
     // autoMode=true returns face coords in window units (screenWidth x screenHeight).
@@ -535,21 +537,23 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
             }
           }
 
-          // All faces for multi-face AR (up to 4, largest first)
-          const sorted = faces
-            .filter((x: any) => x.bounds)
-            .sort((a: any, b: any) =>
-              b.bounds.width * b.bounds.height - a.bounds.width * a.bounds.height
-            )
-            .slice(0, 4);
-          const out: number[][] = [];
-          for (const ff of sorted) {
+          // All faces for multi-face AR (up to 4, largest first) — flat number[].
+          // `faces` may be a Nitro proxy, not a plain array — copy defensively.
+          const plain: any[] = [];
+          for (let i = 0; i < faces.length && plain.length < 8; i++) {
+            if (faces[i] && faces[i].bounds) plain.push(faces[i]);
+          }
+          plain.sort((a: any, b: any) =>
+            b.bounds.width * b.bounds.height - a.bounds.width * a.bounds.height
+          );
+          const out: number[] = [];
+          for (const ff of plain.slice(0, 4)) {
             const fb = ff.bounds;
             const flm = ff.landmarks || {};
             const le = flm.LEFT_EYE, re = flm.RIGHT_EYE;
             const no = flm.NOSE_BASE;
             const mo = flm.MOUTH_BOTTOM || flm.MOUTH_LEFT;
-            out.push([
+            out.push(
               le ? (le.x + cropX) * invScale : 0,
               le ? (le.y + cropY) * invScale : 0,
               re ? (re.x + cropX) * invScale : 0,
@@ -561,8 +565,8 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
               (fb.x + fb.width / 2 + cropX) * invScale,
               (fb.y + fb.height / 2 + cropY) * invScale,
               fb.width * invScale,
-              fb.height * invScale,
-            ]);
+              fb.height * invScale
+            );
           }
           allFacesData.value = out;
 
@@ -570,7 +574,7 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
           faceLogCounter.value += 1;
           if (faceLogCounter.value % 90 === 1) {
             console.log(
-              `FACE@${faceLogCounter.value}: ${sorted.length} face(s), bounds=(${bounds.x.toFixed(0)},${bounds.y.toFixed(0)},${bounds.width.toFixed(0)}x${bounds.height.toFixed(0)}) ` +
+              `FACE@${faceLogCounter.value}: ${plain.length} face(s), bounds=(${bounds.x.toFixed(0)},${bounds.y.toFixed(0)},${bounds.width.toFixed(0)}x${bounds.height.toFixed(0)}) ` +
               `canvas=(${faceCenterX.value.toFixed(0)},${faceCenterY.value.toFixed(0)}) ` +
               `roll=${faceRollAngle.value.toFixed(1)} lm=${lm ? 'Y' : 'N'}`
             );
@@ -634,9 +638,11 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
               const arActiveNow =
                 arAssetId.value !== null && arAssetId.value !== 'none' &&
                 allFacesData.value.length > 0;
+              const debugActive =
+                showFaceDebug.value && allFacesData.value.length >= 12;
 
               // If nothing is active, render as-is
-              if (!colorActive && !beautyActiveNow && !warpActiveNow && !arActiveNow) {
+              if (!colorActive && !beautyActiveNow && !warpActiveNow && !arActiveNow && !debugActive) {
                 canvas.drawImage(frameTexture, 0, 0);
 
                 // Push composited frame to Agora and/or recorder if enabled
@@ -839,29 +845,29 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                 const fit = AR_FIT[arId];
                 if (svg && asset && fit) {
                   // Draw on EVERY detected face — multi-face tracking like
-                  // Snapchat/TikTok. allFacesData is canvas-space flat arrays:
-                  // [lx,ly, rx,ry, nx,ny, mx,my, cx,cy, w,h]
+                  // Snapchat/TikTok. allFacesData is a flat canvas-space array,
+                  // 12 values per face: [lx,ly, rx,ry, nx,ny, mx,my, cx,cy, w,h]
                   const faces = allFacesData.value;
-                  for (let fi = 0; fi < faces.length; fi++) {
-                    const fd = faces[fi];
-                    if (fd[0] === 0 && fd[2] === 0) continue; // no eye landmarks
+                  for (let fi = 0; fi + 11 < faces.length; fi += 12) {
+                    const fd = faces;
+                    if (fd[fi] === 0 && fd[fi + 2] === 0) continue; // no eye landmarks
                     const { leftEye, rightEye } = sortEyes(
-                      { x: fd[0], y: fd[1] },
-                      { x: fd[2], y: fd[3] }
+                      { x: fd[fi], y: fd[fi + 1] },
+                      { x: fd[fi + 2], y: fd[fi + 3] }
                     );
                     const geom = sanitizeFaceGeom(
                       {
                         leftEye,
                         rightEye,
-                        nose: fd[4] > 0 ? { x: fd[4], y: fd[5] } : undefined,
-                        mouth: fd[6] > 0 ? { x: fd[6], y: fd[7] } : undefined,
-                        faceCenter: { x: fd[8], y: fd[9] },
+                        nose: fd[fi + 4] > 0 ? { x: fd[fi + 4], y: fd[fi + 5] } : undefined,
+                        mouth: fd[fi + 6] > 0 ? { x: fd[fi + 6], y: fd[fi + 7] } : undefined,
+                        faceCenter: { x: fd[fi + 8], y: fd[fi + 9] },
                       },
                       {
-                        x: fd[8] - fd[10] / 2,
-                        y: fd[9] - fd[11] / 2,
-                        width: fd[10],
-                        height: fd[11],
+                        x: fd[fi + 8] - fd[fi + 10] / 2,
+                        y: fd[fi + 9] - fd[fi + 11] / 2,
+                        width: fd[fi + 10],
+                        height: fd[fi + 11],
                       }
                     );
                     const placement = computeARPlacement(fit, geom, svg.width());
@@ -895,6 +901,48 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                     canvas.restore();
                   }
                 }
+              }
+
+              // === DEBUG: landmark markers (dots + bounds box per face) ===
+              if (showFaceDebug.value && allFacesData.value.length >= 12) {
+                const faces = allFacesData.value;
+                const rotDeg =
+                  frame.orientation === 'right' ? 90 :
+                  frame.orientation === 'down' ? 180 :
+                  frame.orientation === 'left' ? 270 : 0;
+                const c2x = isLandscape ? canvasH / 2 : canvasW / 2;
+                const c2y = isLandscape ? canvasW / 2 : canvasH / 2;
+                canvas.save();
+                canvas.translate(c2x, c2y);
+                canvas.rotate(rotDeg);
+                if (frame.isMirrored) canvas.scale(-1, 1);
+                canvas.translate(-canvasW / 2, -canvasH / 2);
+                for (let fi = 0; fi + 11 < faces.length; fi += 12) {
+                  const boxPaint = Skia.Paint();
+                  boxPaint.setStyle(1); // stroke
+                  boxPaint.setStrokeWidth(4);
+                  boxPaint.setColor(Skia.Color('#00FF00'));
+                  canvas.drawRect(
+                    Skia.XYWHRect(
+                      faces[fi + 8] - faces[fi + 10] / 2,
+                      faces[fi + 9] - faces[fi + 11] / 2,
+                      faces[fi + 10],
+                      faces[fi + 11]
+                    ),
+                    boxPaint
+                  );
+                  // landmark dots — green eyes, red nose, cyan mouth
+                  const colors = ['#00FF00', '#00FF00', '#00FF00', '#00FF00', '#FF0000', '#FF0000', '#00FFFF', '#00FFFF'];
+                  for (let li = 0; li < 4; li++) {
+                    const lx = faces[fi + li * 2];
+                    const ly = faces[fi + li * 2 + 1];
+                    if (lx === 0 && ly === 0) continue;
+                    const dotPaint = Skia.Paint();
+                    dotPaint.setColor(Skia.Color(colors[li * 2]));
+                    canvas.drawCircle(lx, ly, 10, dotPaint);
+                  }
+                }
+                canvas.restore();
               }
 
               // === PUSH COMPOSITED FRAME TO AGORA AND/OR RECORDER ===

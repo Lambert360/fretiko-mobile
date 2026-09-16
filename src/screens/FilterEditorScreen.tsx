@@ -37,6 +37,7 @@ import {
   ImageFormat,
   Group,
   Rect as SkiaRect,
+  Circle,
 } from '@shopify/react-native-skia';
 import FilterCarousel from '../components/FilterCarousel';
 import FilterIntensitySlider from '../components/FilterIntensitySlider';
@@ -86,9 +87,10 @@ export default function FilterEditorScreen() {
 
   const imageUri = route.params?.imageUri;
 
-  // Downscale large images before decoding — full-res photos can exceed the
-  // GPU texture limit on lower-end devices (partial render = grey block).
-  // ImageManipulator also bakes EXIF orientation into the pixels.
+  // Always re-encode through ImageManipulator: downscales large photos (GPU
+  // texture limit = partial render/grey block), bakes EXIF orientation into
+  // the pixels, and normalizes format (HEIC/progressive JPEG → baseline JPEG)
+  // so Skia's decoder always gets a clean stream.
   useEffect(() => {
     if (!imageUri) return;
     let cancelled = false;
@@ -99,22 +101,21 @@ export default function FilterEditorScreen() {
         );
         const MAX_DIM = 1600;
         const scale = Math.min(1, MAX_DIM / Math.max(size.w, size.h));
-        if (scale < 1) {
-          const res = await ImageManipulator.manipulateAsync(
-            imageUri,
-            [{ resize: { width: Math.round(size.w * scale), height: Math.round(size.h * scale) } }],
-            { format: ImageManipulator.SaveFormat.JPEG, compress: 0.9 }
-          );
-          if (!cancelled) {
-            setResizedUri(res.uri);
-            setImageDimensions({ width: res.width, height: res.height });
-          }
-        } else if (!cancelled) {
-          setResizedUri(imageUri);
-          setImageDimensions({ width: size.w, height: size.h });
+        const actions = scale < 1
+          ? [{ resize: { width: Math.round(size.w * scale), height: Math.round(size.h * scale) } }]
+          : [];
+        const res = await ImageManipulator.manipulateAsync(
+          imageUri,
+          actions,
+          { format: ImageManipulator.SaveFormat.JPEG, compress: 0.92 }
+        );
+        if (!cancelled) {
+          console.log(`🖼 Editor image: ${size.w}x${size.h} → ${res.width}x${res.height} @ ${res.uri}`);
+          setResizedUri(res.uri);
+          setImageDimensions({ width: res.width, height: res.height });
         }
       } catch (e) {
-        console.error('Image resize failed, using original:', e);
+        console.error('Image prepare failed, using original:', e);
         if (!cancelled) setResizedUri(imageUri);
       }
     })();
@@ -289,6 +290,46 @@ export default function FilterEditorScreen() {
   const arOffsetX = (displayWidth - faceImageDims.width * arFitScale) / 2;
   const arOffsetY = (displayHeight - faceImageDims.height * arFitScale) / 2;
 
+  // === Debug landmark markers — visualize what ML Kit tracked ===
+  // Draws every landmark as a colored dot + face bounds as a rect, per face.
+  const debugElements: React.ReactNode[] = [];
+  const LANDMARK_COLORS: Record<string, string> = {
+    LEFT_EYE: '#00FF00', RIGHT_EYE: '#00FF00',
+    NOSE_BASE: '#FF0000',
+    MOUTH_BOTTOM: '#00FFFF', MOUTH_LEFT: '#00FFFF', MOUTH_RIGHT: '#00FFFF',
+    LEFT_CHEEK: '#FF00FF', RIGHT_CHEEK: '#FF00FF',
+    LEFT_EAR: '#FFFF00', RIGHT_EAR: '#FFFF00',
+  };
+  detectedFaces.forEach((face, idx) => {
+    const b = face.bounds;
+    debugElements.push(
+      <SkiaRect
+        key={`bounds-${idx}`}
+        x={b.x * arFitScale + arOffsetX}
+        y={b.y * arFitScale + arOffsetY}
+        width={b.width * arFitScale}
+        height={b.height * arFitScale}
+        style="stroke"
+        strokeWidth={2}
+        color="#00FF00"
+      />
+    );
+    if (face.landmarks) {
+      Object.entries(face.landmarks).forEach(([name, pt]) => {
+        if (!pt) return;
+        debugElements.push(
+          <Circle
+            key={`lm-${idx}-${name}`}
+            cx={pt.x * arFitScale + arOffsetX}
+            cy={pt.y * arFitScale + arOffsetY}
+            r={4}
+            color={LANDMARK_COLORS[name] || '#FFFFFF'}
+          />
+        );
+      });
+    }
+  });
+
   let arElements: React.ReactNode[] = [];
   if (hasAR) {
     const asset = SVG_FACE_AR_ASSETS.find((a) => a.id === activeARAsset);
@@ -379,6 +420,7 @@ export default function FilterEditorScreen() {
             />
           )}
           {arElements}
+          {debugElements}
         </Canvas>
       </View>
 
