@@ -474,7 +474,15 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
       onFaceScanned: (faces: any[]) => {
         'worklet';
         if (faces && faces.length > 0) {
-          const f = faces[0];
+          // Track the largest (most prominent) face
+          let f = faces[0];
+          for (let i = 1; i < faces.length; i++) {
+            const fb = faces[i].bounds;
+            const cb = f.bounds;
+            if (fb && cb && fb.width * fb.height > cb.width * cb.height) {
+              f = faces[i];
+            }
+          }
           hasFace.value = true;
 
           // autoMode returns coords in window space. Convert to canvas space

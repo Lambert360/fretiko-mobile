@@ -48,6 +48,7 @@ import { SVG_FACE_AR_ASSETS, SVGAsset, AR_FIT } from '../filters/faceAR/faceARAs
 import { computeARPlacement, sanitizeFaceGeom, sortEyes, ARPlacement } from '../filters/faceAR/arPlacement';
 import { detectFaces, DetectedFace } from '../../modules/static-face-detection/src/StaticFaceDetection';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as ImageManipulator from 'expo-image-manipulator';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -79,40 +80,60 @@ export default function FilterEditorScreen() {
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const [activeBeautyPreset, setActiveBeautyPreset] = useState('none');
   const [activeARAsset, setActiveARAsset] = useState<string | null>(null);
-  const [detectedFace, setDetectedFace] = useState<DetectedFace | null>(null);
+  const [detectedFaces, setDetectedFaces] = useState<DetectedFace[]>([]);
   const [faceImageDims, setFaceImageDims] = useState({ width: 0, height: 0 });
+  const [resizedUri, setResizedUri] = useState<string | null>(null);
 
   const imageUri = route.params?.imageUri;
-  const image = useImage(imageUri);
 
-  // Get image dimensions
-  useEffect(() => {
-    if (imageUri) {
-      RNImage.getSize(
-        imageUri,
-        (w, h) => setImageDimensions({ width: w, height: h }),
-        (error) => console.error('Failed to get image size:', error)
-      );
-    }
-  }, [imageUri]);
-
-  // Run face detection on the static image
+  // Downscale large images before decoding — full-res photos can exceed the
+  // GPU texture limit on lower-end devices (partial render = grey block).
+  // ImageManipulator also bakes EXIF orientation into the pixels.
   useEffect(() => {
     if (!imageUri) return;
-    detectFaces(imageUri).then((result) => {
-      console.log(`🔍 Static face detection: ${result.faces.length} face(s), img ${result.imageWidth}x${result.imageHeight}`);
-      if (result.faces.length > 0) {
-        // Pick the LARGEST face — closest/most prominent subject in the frame
-        const largest = result.faces.reduce((a, b) =>
-          b.bounds.width * b.bounds.height > a.bounds.width * a.bounds.height ? b : a
+    let cancelled = false;
+    (async () => {
+      try {
+        const size = await new Promise<{ w: number; h: number }>((resolve, reject) =>
+          RNImage.getSize(imageUri, (w, h) => resolve({ w, h }), reject)
         );
-        setDetectedFace(largest);
-        setFaceImageDims({ width: result.imageWidth, height: result.imageHeight });
+        const MAX_DIM = 1600;
+        const scale = Math.min(1, MAX_DIM / Math.max(size.w, size.h));
+        if (scale < 1) {
+          const res = await ImageManipulator.manipulateAsync(
+            imageUri,
+            [{ resize: { width: Math.round(size.w * scale), height: Math.round(size.h * scale) } }],
+            { format: ImageManipulator.SaveFormat.JPEG, compress: 0.9 }
+          );
+          if (!cancelled) {
+            setResizedUri(res.uri);
+            setImageDimensions({ width: res.width, height: res.height });
+          }
+        } else if (!cancelled) {
+          setResizedUri(imageUri);
+          setImageDimensions({ width: size.w, height: size.h });
+        }
+      } catch (e) {
+        console.error('Image resize failed, using original:', e);
+        if (!cancelled) setResizedUri(imageUri);
       }
+    })();
+    return () => { cancelled = true; };
+  }, [imageUri]);
+
+  const image = useImage(resizedUri);
+
+  // Run face detection on the (resized) image — same pixel space as displayed
+  useEffect(() => {
+    if (!resizedUri) return;
+    detectFaces(resizedUri).then((result) => {
+      console.log(`🔍 Static face detection: ${result.faces.length} face(s), img ${result.imageWidth}x${result.imageHeight}`);
+      setDetectedFaces(result.faces);
+      setFaceImageDims({ width: result.imageWidth, height: result.imageHeight });
     }).catch((e) => {
       console.error('❌ Static face detection failed:', e);
     });
-  }, [imageUri]);
+  }, [resizedUri]);
 
   const currentFilter = getFilterById(activeFilterId);
   const params: ColorFilterParams = {
@@ -195,7 +216,7 @@ export default function FilterEditorScreen() {
   // === Build combined color matrix for color filter + beauty (Android CPU-safe) ===
   const hasColorFilter = activeFilterId !== 'none' && intensityNorm > 0;
   const hasBeauty = activeBeautyPreset !== 'none';
-  const hasAR = activeARAsset !== null && activeARAsset !== 'none' && detectedFace !== null;
+  const hasAR = activeARAsset !== null && activeARAsset !== 'none' && detectedFaces.length > 0;
 
   // Color filter params
   const i = intensityNorm;
@@ -269,55 +290,57 @@ export default function FilterEditorScreen() {
   const arOffsetY = (displayHeight - faceImageDims.height * arFitScale) / 2;
 
   let arElements: React.ReactNode[] = [];
-  if (hasAR && detectedFace && detectedFace.landmarks) {
-    const lm = detectedFace.landmarks;
-    const eyeA = lm.LEFT_EYE;
-    const eyeB = lm.RIGHT_EYE;
-    const nose = lm.NOSE_BASE;
-    const mouth = lm.MOUTH_BOTTOM || lm.MOUTH_LEFT;
+  if (hasAR) {
+    const asset = SVG_FACE_AR_ASSETS.find((a) => a.id === activeARAsset);
+    const fit = asset ? AR_FIT[asset.id] : undefined;
+    const svg = asset ? Skia.SVG.MakeFromString(asset.svg) : null;
+    const svgW = svg?.width() || 200;
 
-    if (eyeA && eyeB) {
-      const toDisplay = (p: { x: number; y: number }) => ({
-        x: p.x * arFitScale + arOffsetX,
-        y: p.y * arFitScale + arOffsetY,
-      });
-      const { leftEye, rightEye } = sortEyes(toDisplay(eyeA), toDisplay(eyeB));
-      const b = detectedFace.bounds;
-      const geom = sanitizeFaceGeom(
-        {
-          leftEye,
-          rightEye,
-          nose: nose ? toDisplay(nose) : undefined,
-          mouth: mouth ? toDisplay(mouth) : undefined,
-          faceCenter: {
-            x: (b.x + b.width / 2) * arFitScale + arOffsetX,
-            y: (b.y + b.height / 2) * arFitScale + arOffsetY,
+    const toDisplay = (p: { x: number; y: number }) => ({
+      x: p.x * arFitScale + arOffsetX,
+      y: p.y * arFitScale + arOffsetY,
+    });
+
+    if (asset && fit && svg) {
+      // Draw the asset on EVERY detected face (like Snapchat/TikTok)
+      detectedFaces.forEach((face, idx) => {
+        const lm = face.landmarks;
+        if (!lm?.LEFT_EYE || !lm?.RIGHT_EYE) return;
+        const { leftEye, rightEye } = sortEyes(toDisplay(lm.LEFT_EYE), toDisplay(lm.RIGHT_EYE));
+        const b = face.bounds;
+        const geom = sanitizeFaceGeom(
+          {
+            leftEye,
+            rightEye,
+            nose: lm.NOSE_BASE ? toDisplay(lm.NOSE_BASE) : undefined,
+            mouth: lm.MOUTH_BOTTOM
+              ? toDisplay(lm.MOUTH_BOTTOM)
+              : lm.MOUTH_LEFT
+              ? toDisplay(lm.MOUTH_LEFT)
+              : undefined,
+            faceCenter: {
+              x: (b.x + b.width / 2) * arFitScale + arOffsetX,
+              y: (b.y + b.height / 2) * arFitScale + arOffsetY,
+            },
           },
-        },
-        {
-          x: b.x * arFitScale + arOffsetX,
-          y: b.y * arFitScale + arOffsetY,
-          width: b.width * arFitScale,
-          height: b.height * arFitScale,
-        }
-      );
-
-      const asset = SVG_FACE_AR_ASSETS.find((a) => a.id === activeARAsset);
-      const fit = asset ? AR_FIT[asset.id] : undefined;
-      if (asset && fit) {
-        const svg = Skia.SVG.MakeFromString(asset.svg);
-        const svgW = svg?.width() || 200;
+          {
+            x: b.x * arFitScale + arOffsetX,
+            y: b.y * arFitScale + arOffsetY,
+            width: b.width * arFitScale,
+            height: b.height * arFitScale,
+          }
+        );
         const placement = computeARPlacement(fit, geom, svgW);
         if (placement) {
           arElements.push(
             <ARAssetView
-              key={asset.id}
+              key={`${asset.id}-${idx}`}
               asset={asset}
               placement={placement}
             />
           );
         }
-      }
+      });
     }
   }
 
