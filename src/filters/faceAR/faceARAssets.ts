@@ -9,6 +9,8 @@
  * face detection results.
  */
 
+import { ARFit } from './arPlacement';
+
 export interface SVGAsset {
   id: string;
   name: string;
@@ -18,6 +20,27 @@ export interface SVGAsset {
   scale: number;
   positionOffset: { x: number; y: number };
 }
+
+/**
+ * Per-asset registration data: which points inside the SVG map onto which
+ * face features. refL/refR are in the SVG's own viewBox units.
+ *   - glasses: ref = the two lens centers → land on the detected eyes
+ *   - ears/hats: ref = the two side/base points → land at ±spread*eyeDist,
+ *     lift*eyeDist above the eye line
+ *   - point assets: refMid lands on a landmark; scale from widthFactor*eyeDist
+ */
+export const AR_FIT: Record<string, ARFit> = {
+  dog_ears:      { refL: { x: 50, y: 105 }, refR: { x: 150, y: 105 }, mode: 'topHead', spread: 0.78, lift: 0.85 },
+  cat_ears:      { refL: { x: 42, y: 88 },  refR: { x: 158, y: 88 },  mode: 'topHead', spread: 0.78, lift: 0.85 },
+  bunny_ears:    { refL: { x: 55, y: 155 }, refR: { x: 105, y: 155 }, mode: 'topHead', spread: 0.34, lift: 0.95 },
+  sunglasses:    { refL: { x: 55, y: 40 },  refR: { x: 165, y: 40 },  mode: 'eyes', dy: 0.06 },
+  heart_glasses: { refL: { x: 55, y: 45 },  refR: { x: 165, y: 45 },  mode: 'eyes', dy: 0.04 },
+  crown:         { refL: { x: 30, y: 62 },  refR: { x: 170, y: 62 },  mode: 'topHead', spread: 0.8,  lift: 0.95 },
+  flower_crown:  { refL: { x: 30, y: 70 },  refR: { x: 190, y: 70 },  mode: 'topHead', spread: 0.85, lift: 1.0 },
+  clown_nose:    { refL: { x: 40, y: 40 },  refR: { x: 40, y: 40 },   mode: 'point', landmark: 'nose', widthFactor: 0.55, dy: 0.12 },
+  mustache:      { refL: { x: 80, y: 32 },  refR: { x: 80, y: 32 },   mode: 'point', landmark: 'betweenNoseMouth', widthFactor: 1.15, dy: 0.08 },
+  sparkles:      { refL: { x: 150, y: 150 },refR: { x: 150, y: 150 }, mode: 'point', landmark: 'faceCenter', widthFactor: 4.0 },
+};
 
 /**
  * Dog ears — drawn at top of head

@@ -44,8 +44,8 @@ import { COLOR_FILTER_SHADER } from '../filters/shaders/colorFilterShader';
 import { getFilterById } from '../filters/filterCatalog';
 import { DEFAULT_COLOR_PARAMS, FilterDefinition, ColorFilterParams } from '../filters/types';
 import { BEAUTY_PRESETS, BeautyPreset, DEFAULT_BEAUTY_PARAMS } from '../filters/faceAR/BeautyFilter';
-import { SVG_FACE_AR_ASSETS, SVGAsset } from '../filters/faceAR/faceARAssets';
-import { useCameraFilterContext as useFilterContext } from '../contexts/CameraFilterContext';
+import { SVG_FACE_AR_ASSETS, SVGAsset, AR_FIT } from '../filters/faceAR/faceARAssets';
+import { computeARPlacement, sortEyes, ARPlacement } from '../filters/faceAR/arPlacement';
 import { detectFaces, DetectedFace } from '../../modules/static-face-detection/src/StaticFaceDetection';
 import * as FileSystem from 'expo-file-system/legacy';
 
@@ -70,23 +70,15 @@ export default function FilterEditorScreen() {
   const insets = useSafeAreaInsets();
   const canvasRef = useCanvasRef();
 
-  const {
-    filterId: savedFilterId,
-    filterIntensity: savedIntensity,
-    setFilter,
-    beautyPresetId: savedBeautyPreset,
-    setBeautyPreset,
-    arAssetId: savedARAsset,
-    setARAsset,
-  } = useFilterContext();
-
-  const [activeFilterId, setActiveFilterId] = useState(savedFilterId);
-  const [intensity, setIntensity] = useState(savedIntensity);
-  const [showSlider, setShowSlider] = useState(savedFilterId !== 'none');
+  // Editor always starts fresh and stays local — a new image is a new edit
+  // session. Global camera preferences are not touched here.
+  const [activeFilterId, setActiveFilterId] = useState('none');
+  const [intensity, setIntensity] = useState(100);
+  const [showSlider, setShowSlider] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
-  const [activeBeautyPreset, setActiveBeautyPreset] = useState(savedBeautyPreset);
-  const [activeARAsset, setActiveARAsset] = useState<string | null>(savedARAsset);
+  const [activeBeautyPreset, setActiveBeautyPreset] = useState('none');
+  const [activeARAsset, setActiveARAsset] = useState<string | null>(null);
   const [detectedFace, setDetectedFace] = useState<DetectedFace | null>(null);
   const [faceImageDims, setFaceImageDims] = useState({ width: 0, height: 0 });
 
@@ -110,7 +102,11 @@ export default function FilterEditorScreen() {
     detectFaces(imageUri).then((result) => {
       console.log(`🔍 Static face detection: ${result.faces.length} face(s), img ${result.imageWidth}x${result.imageHeight}`);
       if (result.faces.length > 0) {
-        setDetectedFace(result.faces[0]);
+        // Pick the LARGEST face — closest/most prominent subject in the frame
+        const largest = result.faces.reduce((a, b) =>
+          b.bounds.width * b.bounds.height > a.bounds.width * a.bounds.height ? b : a
+        );
+        setDetectedFace(largest);
         setFaceImageDims({ width: result.imageWidth, height: result.imageHeight });
       }
     }).catch((e) => {
@@ -132,23 +128,19 @@ export default function FilterEditorScreen() {
     setActiveFilterId(filter.id);
     setShowSlider(filter.id !== 'none');
     setIntensity(filter.intensityDefault ?? 100);
-    setFilter(filter.id, filter.intensityDefault ?? 100);
-  }, [setFilter]);
+  }, []);
 
   const handleIntensityChange = useCallback((value: number) => {
     setIntensity(value);
-    setFilter(activeFilterId, value);
-  }, [activeFilterId, setFilter]);
+  }, []);
 
   const handleBeautyPresetSelect = useCallback((preset: BeautyPreset) => {
     setActiveBeautyPreset(preset.id);
-    setBeautyPreset(preset);
-  }, [setBeautyPreset]);
+  }, []);
 
   const handleARAssetSelect = useCallback((assetId: string | null) => {
     setActiveARAsset(assetId);
-    setARAsset(assetId);
-  }, [setARAsset]);
+  }, []);
 
   const handleExport = useCallback(async () => {
     if (isExporting || !canvasRef.current) return;
@@ -279,76 +271,46 @@ export default function FilterEditorScreen() {
   let arElements: React.ReactNode[] = [];
   if (hasAR && detectedFace && detectedFace.landmarks) {
     const lm = detectedFace.landmarks;
-    const leftEye = lm.LEFT_EYE;
-    const rightEye = lm.RIGHT_EYE;
+    const eyeA = lm.LEFT_EYE;
+    const eyeB = lm.RIGHT_EYE;
     const nose = lm.NOSE_BASE;
-    const mouth = lm.MOUTH_BOTTOM;
+    const mouth = lm.MOUTH_BOTTOM || lm.MOUTH_LEFT;
 
-    if (leftEye && rightEye && nose) {
-      const leftEyeX = leftEye.x * arFitScale + arOffsetX;
-      const leftEyeY = leftEye.y * arFitScale + arOffsetY;
-      const rightEyeX = rightEye.x * arFitScale + arOffsetX;
-      const rightEyeY = rightEye.y * arFitScale + arOffsetY;
-      const noseX = nose.x * arFitScale + arOffsetX;
-      const noseY = nose.y * arFitScale + arOffsetY;
-      const mouthX = (mouth?.x || nose.x) * arFitScale + arOffsetX;
-      const mouthY = (mouth?.y || nose.y) * arFitScale + arOffsetY;
-
-      const betweenEyesX = (leftEyeX + rightEyeX) / 2;
-      const betweenEyesY = (leftEyeY + rightEyeY) / 2;
-      const eyeToNoseDist = Math.abs(noseY - betweenEyesY);
-      const faceW = detectedFace.bounds.width * arFitScale;
-      const faceH = detectedFace.bounds.height * arFitScale;
-      const faceSize = Math.max(faceW, faceH);
+    if (eyeA && eyeB) {
+      const toDisplay = (p: { x: number; y: number }) => ({
+        x: p.x * arFitScale + arOffsetX,
+        y: p.y * arFitScale + arOffsetY,
+      });
+      const { leftEye, rightEye } = sortEyes(toDisplay(eyeA), toDisplay(eyeB));
 
       const asset = SVG_FACE_AR_ASSETS.find((a) => a.id === activeARAsset);
-      if (asset) {
-        const scale = asset.scale * (faceSize / 200);
-        let anchorX: number;
-        let anchorY: number;
-        switch (asset.anchorPoint) {
-          case 'topHead':
-            anchorX = betweenEyesX;
-            anchorY = betweenEyesY - eyeToNoseDist * 2.5;
-            break;
-          case 'betweenEyes':
-            anchorX = betweenEyesX;
-            anchorY = betweenEyesY;
-            break;
-          case 'nose':
-            anchorX = noseX;
-            anchorY = noseY;
-            break;
-          case 'mouth':
-            anchorX = mouthX;
-            anchorY = mouthY;
-            break;
-          case 'leftEye':
-            anchorX = leftEyeX;
-            anchorY = leftEyeY;
-            break;
-          case 'rightEye':
-            anchorX = rightEyeX;
-            anchorY = rightEyeY;
-            break;
-          default:
-            anchorX = (detectedFace.bounds.x + detectedFace.bounds.width / 2) * arFitScale + arOffsetX;
-            anchorY = (detectedFace.bounds.y + detectedFace.bounds.height / 2) * arFitScale + arOffsetY;
-        }
-        anchorX += asset.positionOffset.x * scale;
-        anchorY += asset.positionOffset.y * scale;
-
-        // Load SVG for this asset
-        arElements.push(
-          <ARAssetView
-            key={asset.id}
-            asset={asset}
-            anchorX={anchorX}
-            anchorY={anchorY}
-            scale={scale}
-            rotation={detectedFace.rollAngle}
-          />
+      const fit = asset ? AR_FIT[asset.id] : undefined;
+      if (asset && fit) {
+        const svg = Skia.SVG.MakeFromString(asset.svg);
+        const svgW = svg?.width() || 200;
+        const placement = computeARPlacement(
+          fit,
+          {
+            leftEye,
+            rightEye,
+            nose: nose ? toDisplay(nose) : undefined,
+            mouth: mouth ? toDisplay(mouth) : undefined,
+            faceCenter: {
+              x: (detectedFace.bounds.x + detectedFace.bounds.width / 2) * arFitScale + arOffsetX,
+              y: (detectedFace.bounds.y + detectedFace.bounds.height / 2) * arFitScale + arOffsetY,
+            },
+          },
+          svgW
         );
+        if (placement) {
+          arElements.push(
+            <ARAssetView
+              key={asset.id}
+              asset={asset}
+              placement={placement}
+            />
+          );
+        }
       }
     }
   }
@@ -437,19 +399,14 @@ export default function FilterEditorScreen() {
 }
 
 // === AR Asset View Component ===
-// Renders an SVG asset at a specific position with rotation and scale
+// Renders an SVG asset using a similarity placement: the SVG's reference
+// midpoint lands on (cx, cy), scaled + rotated to match the face's geometry.
 function ARAssetView({
   asset,
-  anchorX,
-  anchorY,
-  scale,
-  rotation,
+  placement,
 }: {
   asset: SVGAsset;
-  anchorX: number;
-  anchorY: number;
-  scale: number;
-  rotation: number;
+  placement: ARPlacement;
 }) {
   // asset.svg is an inline SVG string — useSVG() would treat it as a URI and
   // fail to load. Parse it directly with MakeFromString instead.
@@ -465,15 +422,18 @@ function ARAssetView({
 
   const svgWidth = svg.width();
   const svgHeight = svg.height();
-  const renderWidth = svgWidth * scale;
-  const renderHeight = svgHeight * scale;
-  const offsetX = anchorX - renderWidth / 2;
-  const offsetY = anchorY - renderHeight / 2;
+  const renderWidth = svgWidth * placement.scale;
+  const renderHeight = svgHeight * placement.scale;
+  // position so the ref midpoint lands exactly on (cx, cy)
+  const offsetX =
+    placement.cx - placement.refMidX * placement.scale;
+  const offsetY =
+    placement.cy - placement.refMidY * placement.scale;
 
   return (
     <Group
-      transform={[{ rotate: (rotation * Math.PI) / 180 }]}
-      origin={{ x: anchorX, y: anchorY }}
+      transform={[{ rotate: (placement.rotationDeg * Math.PI) / 180 }]}
+      origin={{ x: placement.cx, y: placement.cy }}
     >
       <ImageSVG
         svg={svg}

@@ -56,7 +56,8 @@ import {
 } from '../filters/faceAR/BeautyFilter';
 import { agoraFramePusher } from '../filters/AgoraFramePusher';
 import type { IRtcEngine } from 'react-native-agora';
-import { SVG_FACE_AR_ASSETS, SVGAsset } from '../filters/faceAR/faceARAssets';
+import { SVG_FACE_AR_ASSETS, SVGAsset, AR_FIT } from '../filters/faceAR/faceARAssets';
+import { computeARPlacement, sortEyes } from '../filters/faceAR/arPlacement';
 import { SkiaVideoRecorder } from '../../modules/skia-video-recorder';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -482,37 +483,44 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
           const cropX = faceCropX.value;
           const cropY = faceCropY.value;
 
+          // Temporal smoothing — exponential lerp keeps AR glued to the face
+          // instead of jittering per-detection (standard AR practice).
+          const ALPHA = 0.45;
+          const lerp = (sv: { value: number }, target: number) => {
+            sv.value = sv.value + (target - sv.value) * ALPHA;
+          };
+
           // Bounds — flat structure: { x, y, width, height }
           const bounds = f.bounds;
-          faceW.value = bounds.width * invScale;
-          faceH.value = bounds.height * invScale;
-          faceCenterX.value = (bounds.x + bounds.width / 2 + cropX) * invScale;
-          faceCenterY.value = (bounds.y + bounds.height / 2 + cropY) * invScale;
+          lerp(faceW, bounds.width * invScale);
+          lerp(faceH, bounds.height * invScale);
+          lerp(faceCenterX, (bounds.x + bounds.width / 2 + cropX) * invScale);
+          lerp(faceCenterY, (bounds.y + bounds.height / 2 + cropY) * invScale);
 
           // Roll angle for AR asset rotation
-          faceRollAngle.value = f.rollAngle || 0;
+          lerp(faceRollAngle, f.rollAngle || 0);
 
           // Landmarks — UPPER_CASE field names, each is { x, y }
           const lm = f.landmarks;
           if (lm) {
             if (lm.LEFT_EYE) {
-              faceLeftEyeX.value = (lm.LEFT_EYE.x + cropX) * invScale;
-              faceLeftEyeY.value = (lm.LEFT_EYE.y + cropY) * invScale;
+              lerp(faceLeftEyeX, (lm.LEFT_EYE.x + cropX) * invScale);
+              lerp(faceLeftEyeY, (lm.LEFT_EYE.y + cropY) * invScale);
             }
             if (lm.RIGHT_EYE) {
-              faceRightEyeX.value = (lm.RIGHT_EYE.x + cropX) * invScale;
-              faceRightEyeY.value = (lm.RIGHT_EYE.y + cropY) * invScale;
+              lerp(faceRightEyeX, (lm.RIGHT_EYE.x + cropX) * invScale);
+              lerp(faceRightEyeY, (lm.RIGHT_EYE.y + cropY) * invScale);
             }
             if (lm.NOSE_BASE) {
-              faceNoseX.value = (lm.NOSE_BASE.x + cropX) * invScale;
-              faceNoseY.value = (lm.NOSE_BASE.y + cropY) * invScale;
+              lerp(faceNoseX, (lm.NOSE_BASE.x + cropX) * invScale);
+              lerp(faceNoseY, (lm.NOSE_BASE.y + cropY) * invScale);
             }
             if (lm.MOUTH_BOTTOM) {
-              faceMouthX.value = (lm.MOUTH_BOTTOM.x + cropX) * invScale;
-              faceMouthY.value = (lm.MOUTH_BOTTOM.y + cropY) * invScale;
+              lerp(faceMouthX, (lm.MOUTH_BOTTOM.x + cropX) * invScale);
+              lerp(faceMouthY, (lm.MOUTH_BOTTOM.y + cropY) * invScale);
             } else if (lm.MOUTH_LEFT) {
-              faceMouthX.value = (lm.MOUTH_LEFT.x + cropX) * invScale;
-              faceMouthY.value = (lm.MOUTH_LEFT.y + cropY) * invScale;
+              lerp(faceMouthX, (lm.MOUTH_LEFT.x + cropX) * invScale);
+              lerp(faceMouthY, (lm.MOUTH_LEFT.y + cropY) * invScale);
             }
           }
 
@@ -785,13 +793,36 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                 const arId = arAssetId.value as string;
                 const svg = PRELOADED_SVGS[arId];
                 const asset = SVG_ASSET_MAP[arId];
-                if (svg && asset) {
-                  // The canvas already carries the frame-orientation transform
-                  // (rotate + mirror) applied by renderToTexture. Our face coords
-                  // are in upright display space, so we invert that transform
-                  // before drawing — otherwise AR is double-rotated/mirrored.
-                  canvas.save();
-                  {
+                const fit = AR_FIT[arId];
+                if (svg && asset && fit) {
+                  // Similarity registration: map the SVG's reference points
+                  // onto the detected face geometry (eyes / head-top / landmark).
+                  const { leftEye, rightEye } = sortEyes(
+                    { x: faceLeftEyeX.value, y: faceLeftEyeY.value },
+                    { x: faceRightEyeX.value, y: faceRightEyeY.value }
+                  );
+                  const placement = computeARPlacement(
+                    fit,
+                    {
+                      leftEye,
+                      rightEye,
+                      nose:
+                        faceNoseX.value > 0
+                          ? { x: faceNoseX.value, y: faceNoseY.value }
+                          : undefined,
+                      mouth:
+                        faceMouthX.value > 0
+                          ? { x: faceMouthX.value, y: faceMouthY.value }
+                          : undefined,
+                      faceCenter: { x: faceCenterX.value, y: faceCenterY.value },
+                    },
+                    svg.width()
+                  );
+                  if (placement) {
+                    // The canvas already carries the frame-orientation transform
+                    // (rotate + mirror) applied by renderToTexture. Our coords are
+                    // in upright display space, so invert that transform first —
+                    // otherwise AR is double-rotated/mirrored off-canvas.
                     const rotDeg =
                       frame.orientation === 'right' ? 90 :
                       frame.orientation === 'down' ? 180 :
@@ -799,86 +830,23 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                     const c2x = isLandscape ? canvasH / 2 : canvasW / 2;
                     const c2y = isLandscape ? canvasW / 2 : canvasH / 2;
                     // CTM = T1·M·R·T2 → undo with T2⁻¹·R⁻¹·M⁻¹·T1⁻¹
+                    canvas.save();
                     canvas.translate(c2x, c2y);
                     canvas.rotate(rotDeg);
                     if (frame.isMirrored) canvas.scale(-1, 1);
                     canvas.translate(-canvasW / 2, -canvasH / 2);
 
-                    // Compute face landmark positions from shared values
-                    const leftEyeX = faceLeftEyeX.value;
-                    const leftEyeY = faceLeftEyeY.value;
-                    const rightEyeX = faceRightEyeX.value;
-                    const rightEyeY = faceRightEyeY.value;
-                    const noseX = faceNoseX.value;
-                    const noseY = faceNoseY.value;
-                    const mouthX = faceMouthX.value;
-                    const mouthY = faceMouthY.value;
-
-                    // betweenEyes = midpoint of left and right eye
-                    const betweenEyesX = (leftEyeX + rightEyeX) / 2;
-                    const betweenEyesY = (leftEyeY + rightEyeY) / 2;
-
-                    // eyeToNoseDist for deriving forehead/topHead
-                    const eyeToNoseDist = Math.abs(noseY - betweenEyesY);
-
-                    // faceSize for scaling
-                    const faceSize = Math.max(faceW.value, faceH.value);
-                    const scale = asset.scale * (faceSize / 200);
-
-                    // Determine anchor point position based on asset's anchorPoint
-                    let anchorX: number;
-                    let anchorY: number;
-                    switch (asset.anchorPoint) {
-                      case 'topHead':
-                        anchorX = betweenEyesX;
-                        anchorY = betweenEyesY - eyeToNoseDist * 2.5;
-                        break;
-                      case 'betweenEyes':
-                        anchorX = betweenEyesX;
-                        anchorY = betweenEyesY;
-                        break;
-                      case 'nose':
-                        anchorX = noseX;
-                        anchorY = noseY;
-                        break;
-                      case 'mouth':
-                        anchorX = mouthX;
-                        anchorY = mouthY;
-                        break;
-                      case 'leftEye':
-                        anchorX = leftEyeX;
-                        anchorY = leftEyeY;
-                        break;
-                      case 'rightEye':
-                        anchorX = rightEyeX;
-                        anchorY = rightEyeY;
-                        break;
-                      default:
-                        anchorX = faceCenterX.value;
-                        anchorY = faceCenterY.value;
-                    }
-
-                    // Apply position offset (scaled)
-                    anchorX += asset.positionOffset.x * scale;
-                    anchorY += asset.positionOffset.y * scale;
-
-                    // Roll is measured in image space; mirrored preview needs
-                    // the visual roll negated.
-                    const rotation = frame.isMirrored
-                      ? -faceRollAngle.value
-                      : faceRollAngle.value;
-
-                    // Draw the SVG centered on the anchor point
+                    // Now draw in upright canvas space: place refMid on (cx,cy),
+                    // rotate by the eye-line angle, scale by the registered ratio.
                     const svgWidth = svg.width();
                     const svgHeight = svg.height();
-
-                    canvas.translate(anchorX, anchorY);
-                    canvas.rotate(rotation, 0, 0);
-                    canvas.scale(scale, scale);
-                    canvas.translate(-svgWidth / 2, -svgHeight / 2);
+                    canvas.translate(placement.cx, placement.cy);
+                    canvas.rotate(placement.rotationDeg, 0, 0);
+                    canvas.scale(placement.scale, placement.scale);
+                    canvas.translate(-placement.refMidX, -placement.refMidY);
                     canvas.drawSvg(svg, svgWidth, svgHeight);
+                    canvas.restore();
                   }
-                  canvas.restore();
                 }
               }
 
