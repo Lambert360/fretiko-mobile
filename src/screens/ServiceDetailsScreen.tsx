@@ -19,8 +19,9 @@ import ServiceVideoPlayer from '../components/ServiceVideoPlayer';
 import { MediaViewerModal } from '../components/MediaViewerModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
-import { chatAPI } from '../services/chatAPI';
+import { chatAPI, ChatConversation } from '../services/chatAPI';
 import AdaptiveText from '../components/AdaptiveText';
+import ShareModal from '../components/ShareModal';
 import RichText from '../components/RichText';
 import ServiceBookingModal from '../components/ServiceBookingModal';
 
@@ -47,6 +48,11 @@ const ServiceDetailsScreen = () => {
   const [mediaViewerUris, setMediaViewerUris] = useState<string[] | undefined>(undefined);
   const [mediaViewerInitialIndex, setMediaViewerInitialIndex] = useState(0);
   const [bookingModalVisible, setBookingModalVisible] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
+  const [isSharing, setIsSharing] = useState(false);
   const wasPlayingRef = useRef(true);
 
   const serviceId = route.params?.serviceId;
@@ -144,6 +150,60 @@ const ServiceDetailsScreen = () => {
   };
 
   const handleShare = async () => {
+    if (!service) return;
+
+    setShowShareModal(true);
+    setSelectedConversations([]);
+    setChatConversationsLoading(true);
+
+    try {
+      const { conversations } = await chatAPI.getConversations(1, 50);
+      setChatConversations(conversations);
+    } catch (error) {
+      console.error('Error loading chat conversations:', error);
+      Alert.alert('Error', 'Failed to load conversations for sharing');
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  };
+
+  const handleShareToChats = async () => {
+    if (!service || selectedConversations.length === 0) return;
+
+    setIsSharing(true);
+
+    try {
+      const serviceData = {
+        id: service.id,
+        title: service.title,
+        price: service.price || 0,
+        image: service.thumbnail || service.mediaUrls?.[0] || service.images?.[0] || '',
+        username: service.username,
+      };
+
+      await Promise.all(
+        selectedConversations.map((conversation) =>
+          chatAPI.sendMessage({
+            conversationId: conversation.id,
+            messageType: 'text',
+            content: service.title,
+            metadata: { serviceData },
+          })
+        )
+      );
+
+      Alert.alert('Shared', `Service shared to ${selectedConversations.length} chat${selectedConversations.length === 1 ? '' : 's'}.`);
+      setShowShareModal(false);
+      setSelectedConversations([]);
+    } catch (error) {
+      console.error('Error sharing service to chats:', error);
+      Alert.alert('Error', 'Failed to share service to chats');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleShareExternal = async () => {
     if (!service) return;
 
     try {
@@ -495,6 +555,20 @@ const ServiceDetailsScreen = () => {
         service={service}
         onClose={() => setBookingModalVisible(false)}
         onBook={handleServiceBooking}
+      />
+
+      <ShareModal
+        visible={showShareModal}
+        title="Share Service"
+        onClose={() => setShowShareModal(false)}
+        conversations={chatConversations}
+        conversationsLoading={chatConversationsLoading}
+        selectedConversations={selectedConversations}
+        onSelect={setSelectedConversations}
+        onShare={handleShareToChats}
+        onShareExternal={handleShareExternal}
+        isSharing={isSharing}
+        insetsBottom={insets.bottom}
       />
     </View>
   );

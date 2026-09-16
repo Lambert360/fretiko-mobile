@@ -41,6 +41,23 @@ const AuctionListScreen = () => {
     return 'Auctions';
   };
 
+  // My Bids and My Auctions are allowed to show ended lots; every other list hides them
+  const shouldShowEnded = Boolean(participated) || Boolean(seller_id);
+
+  const isAuctionDisplayable = (auction: AuctionWithDetails) => {
+    if (shouldShowEnded) return true;
+    const auctionStatus = auction.status?.toLowerCase();
+    const timeStatus = auction.time_status?.toLowerCase();
+    if (['ended', 'sold', 'cancelled'].includes(auctionStatus)) return false;
+    if (timeStatus === 'ended') return false;
+    if (auction.end_time) {
+      const endTime = new Date(auction.end_time);
+      const now = new Date();
+      if (!isNaN(endTime.getTime()) && endTime <= now) return false;
+    }
+    return true;
+  };
+
   useEffect(() => {
     loadAuctions();
   }, []);
@@ -66,7 +83,7 @@ const AuctionListScreen = () => {
         ? await auctionsAPI.getMyParticipatedAuctions(filters)
         : await auctionsAPI.getAuctions(filters);
       
-      setAuctions(response.auctions);
+      setAuctions((response.auctions || []).filter(isAuctionDisplayable));
     } catch (error) {
       console.error('Error loading auctions:', error);
     } finally {

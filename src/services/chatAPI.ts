@@ -23,7 +23,7 @@ export interface ChatMessage {
   senderId: string;
   senderName: string;
   content: string;
-  messageType: 'text' | 'image' | 'audio' | 'video' | 'file' | 'livestream' | 'auction' | 'system' | 'invoice' | 'wishlist' | 'gift_card';
+  messageType: 'text' | 'image' | 'audio' | 'video' | 'file' | 'livestream' | 'auction' | 'product' | 'service' | 'post' | 'profile' | 'system' | 'invoice' | 'wishlist' | 'gift_card';
   status: 'sending' | 'sent' | 'delivered' | 'read';
   mediaUrl?: string;
   fileData?: {
@@ -49,6 +49,11 @@ export interface ChatMessage {
     wishlistData?: any;
     productData?: any;
     giftCardData?: any;
+    livestreamData?: any;
+    auctionData?: any;
+    serviceData?: any;
+    postData?: any;
+    profileData?: any;
   };
   timestamp: string;
   createdAt: string;
@@ -57,7 +62,7 @@ export interface ChatMessage {
 
 export interface SendMessageRequest {
   conversationId: string;
-  messageType: 'text' | 'image' | 'audio' | 'video' | 'file' | 'gift_card';
+  messageType: 'text' | 'image' | 'audio' | 'video' | 'file' | 'gift_card' | 'livestream' | 'auction' | 'product' | 'service' | 'post' | 'profile';
   content?: string;
   mediaUrl?: string;
   fileData?: {
@@ -69,6 +74,18 @@ export interface SendMessageRequest {
   metadata?: {
     [key: string]: any;
     audioDuration?: number; // Duration in seconds for audio messages
+    livestreamData?: {
+      id: string;
+      title: string;
+      isLive: boolean;
+      viewers: number;
+      thumbnailUrl: string;
+    };
+    productData?: any;
+    serviceData?: any;
+    auctionData?: any;
+    postData?: any;
+    profileData?: any;
   };
 }
 
@@ -383,7 +400,11 @@ class ChatAPI {
         timeout: API_CONFIG.CALL_TIMEOUT, // Use longer timeout for calls
       });
 
-      return response.data.data;
+      const data = response.data.data;
+      return {
+        ...data,
+        callSessionId: data.callSessionId || data.id,
+      };
     } catch (error) {
       console.error('Error starting call:', error);
       throw error;

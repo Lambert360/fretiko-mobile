@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, Animated } from 'react-native';
+import { View, StyleSheet, Animated, Platform } from 'react-native';
 import LottieView from 'lottie-react-native';
 import { useAudioPlayer } from 'expo-audio';
 import GiftAnimation from './GiftAnimation';
@@ -33,6 +33,7 @@ interface LottieConfig {
 
 const LottieGiftEffect: React.FC<LottieGiftEffectProps> = ({ gift, onComplete }) => {
   const [visible, setVisible] = useState(true);
+  const [lottieFailed, setLottieFailed] = useState(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   const rawLottieConfig: LottieConfig | null = gift.lottie_config
@@ -41,7 +42,7 @@ const LottieGiftEffect: React.FC<LottieGiftEffectProps> = ({ gift, onComplete })
     ? { lottieUrl: gift.display_lottie_url }
     : null;
 
-  const hasLottie = !!rawLottieConfig && (!!rawLottieConfig.lottieUrl || !!rawLottieConfig.steps);
+  const hasLottie = !!rawLottieConfig && !lottieFailed && (!!rawLottieConfig.lottieUrl || !!rawLottieConfig.steps);
 
   const [cachedLottieConfig, setCachedLottieConfig] = useState<LottieConfig | null>(null);
   const [cachedSoundUrl, setCachedSoundUrl] = useState<string | number | undefined>(gift.sound_url);
@@ -203,6 +204,15 @@ const LottieGiftEffect: React.FC<LottieGiftEffectProps> = ({ gift, onComplete })
               loop={false}
               style={isOverlap ? styles.lottieOverlap : styles.lottie}
               resizeMode="contain"
+              renderMode={Platform.OS === 'android' ? 'SOFTWARE' : 'AUTOMATIC'}
+              enableSafeModeAndroid={true}
+              onAnimationLoaded={() => {
+                console.log('✅ Lottie loaded:', step.lottieUrl);
+              }}
+              onAnimationFailure={(error: string) => {
+                console.warn('❌ Lottie failed to load/play:', step.lottieUrl, error);
+                setLottieFailed(true);
+              }}
               onAnimationFinish={() => handleStepFinish(index)}
             />
           ) : null

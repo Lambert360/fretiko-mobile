@@ -21,7 +21,7 @@ import PINInputModal from '../components/PINInputModal';
 import { walletAPI } from '../services/walletAPI';
 
 const WorkspaceScreen: React.FC = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active');
@@ -441,6 +441,18 @@ const WorkspaceScreen: React.FC = () => {
     </View>
   );
 
+  const currentData = activeTab === 'active' ? activeOrders : completedOrders;
+
+  const pendingScheduledCount = React.useMemo(() => {
+    return activeOrders.filter(
+      order =>
+        order.source === 'service_booking' &&
+        order.status !== 'delivered' &&
+        order.status !== 'completed' &&
+        order.status !== 'cancelled'
+    ).length;
+  }, [activeOrders]);
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -452,8 +464,6 @@ const WorkspaceScreen: React.FC = () => {
       </SafeAreaView>
     );
   }
-
-  const currentData = activeTab === 'active' ? activeOrders : completedOrders;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -705,6 +715,11 @@ const WorkspaceScreen: React.FC = () => {
         onPress={() => navigation.navigate('ScheduleCalendar')}
       >
         <Ionicons name="calendar-outline" size={24} color="white" />
+        {pendingScheduledCount > 0 && (
+          <View style={styles.fabBadge}>
+            <Text style={styles.fabBadgeText}>{pendingScheduledCount}</Text>
+          </View>
+        )}
       </TouchableOpacity>
 
       {/* PIN Verification Modal */}
@@ -1098,6 +1113,23 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
+  },
+  fabBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  fabBadgeText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
 });
 

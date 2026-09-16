@@ -1142,8 +1142,8 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
                   </TouchableOpacity>
                 )}
 
-                {/* Go Live — sellers and riders */}
-                {(profile?.isSeller || profile?.isRider) && (
+                {/* Go Live — sellers only */}
+                {profile?.isSeller && (
                   <TouchableOpacity
                     style={styles.uploadOption}
                     onPress={() => {

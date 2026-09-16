@@ -15,6 +15,7 @@ import { RtcSurfaceView, RenderModeType } from 'react-native-agora';
 import { useCallContext } from '../contexts/CallContext';
 import { UserGift } from '../services/giftAPI';
 import LottieGiftEffect from '../components/LottieGiftEffect';
+import GiftEffectStage from '../components/GiftEffectStage';
 import GiftSelectorModal from '../components/GiftSelectorModal';
 import AdaptiveText from '../components/AdaptiveText';
 
@@ -261,7 +262,7 @@ const CallScreen: React.FC = () => {
         {callType === 'video' && showCameraPreview && isVideoEnabled && agoraConfig && (
           <RtcSurfaceView
             style={StyleSheet.absoluteFillObject}
-            zOrderMediaOverlay={true}
+            zOrderMediaOverlay={false}
             canvas={{ uid: 0, renderMode: RenderModeType.RenderModeFit }}
           />
         )}
@@ -366,7 +367,7 @@ const CallScreen: React.FC = () => {
   // === Connected / in-call UI ===
   const renderInCallUI = () => (
     <View style={styles.inCallOverlay}>
-      <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+      <GiftEffectStage>
         {activeGiftAnimations.map((animation) => (
           <LottieGiftEffect
             key={animation.id}
@@ -374,7 +375,7 @@ const CallScreen: React.FC = () => {
             onComplete={() => removeGiftAnimation(animation.id)}
           />
         ))}
-      </View>
+      </GiftEffectStage>
 
       {callType === 'video' && showVideoUI && (
         <TouchableOpacity
@@ -390,7 +391,7 @@ const CallScreen: React.FC = () => {
               {remoteUid !== null && remoteVideoEnabled ? (
                 <RtcSurfaceView
                   style={StyleSheet.absoluteFillObject}
-                  zOrderMediaOverlay={true}
+                  zOrderMediaOverlay={false}
                   canvas={{ uid: remoteUid, renderMode: RenderModeType.RenderModeFit }}
                 />
               ) : (
@@ -398,7 +399,7 @@ const CallScreen: React.FC = () => {
                   {isVideoEnabled && agoraConfig ? (
                     <RtcSurfaceView
                       style={StyleSheet.absoluteFillObject}
-                      zOrderMediaOverlay={true}
+                      zOrderMediaOverlay={false}
                       canvas={{ uid: 0, renderMode: RenderModeType.RenderModeFit }}
                     />
                   ) : null}
@@ -430,7 +431,7 @@ const CallScreen: React.FC = () => {
               {isVideoEnabled && agoraConfig ? (
                 <RtcSurfaceView
                   style={StyleSheet.absoluteFillObject}
-                  zOrderMediaOverlay={true}
+                  zOrderMediaOverlay={false}
                   canvas={{ uid: 0, renderMode: RenderModeType.RenderModeFit }}
                 />
               ) : (
@@ -455,7 +456,7 @@ const CallScreen: React.FC = () => {
         >
           {!isLocalVideoPrimary ? (
             <>
-              {remoteUid !== null && remoteVideoEnabled && isVideoEnabled && agoraConfig ? (
+              {isVideoEnabled && agoraConfig ? (
                 <RtcSurfaceView
                   style={StyleSheet.absoluteFillObject}
                   zOrderMediaOverlay={true}

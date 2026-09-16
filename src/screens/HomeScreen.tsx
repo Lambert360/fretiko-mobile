@@ -48,8 +48,9 @@ import { productsAPI, Product, ProductCategory } from '../services/productsAPI';
 
 import { servicesAPI, VideoFeedItem } from '../services/servicesAPI';
 import { userAPI } from '../services/userAPI';
-import { chatAPI } from '../services/chatAPI';
+import { chatAPI, ChatConversation } from '../services/chatAPI';
 import { useAuth } from '../contexts/AuthContext';
+import ShareModal from '../components/ShareModal';
 import { useCart } from '../contexts/CartContext';
 import { mapProductToCard } from '../utils/dataMappers';
 import { ProductCard as ModernProductCard } from '../components/cards/ProductCard';
@@ -229,6 +230,19 @@ const HomeScreen = () => {
   // PostCard/VideoCard can receive the swipe instead of it being stolen by
   // this outer horizontal tab pager (Services <-> Products).
   const [mainPagerSwipeEnabled, setMainPagerSwipeEnabled] = useState(true);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
+  const [isSharing, setIsSharing] = useState(false);
+  const [sharePayload, setSharePayload] = useState<{
+    messageType: any;
+    content: string;
+    metadata: any;
+    externalMessage: string;
+    externalUrl: string;
+    onSuccess?: () => void;
+  } | null>(null);
 
   // User profile state for role checking
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -247,6 +261,7 @@ const HomeScreen = () => {
   const subHeaderOpacity = useRef(new Animated.Value(1)).current; // Added for sub-header fade
   const sidebarTranslateX = useRef(new Animated.Value(-screenWidth * 0.75)).current;
   const lastScrollY = useRef(0);
+  const lastFeedLength = useRef(unifiedFeedData.length);
 
   // Error state for displaying error messages
   const [errorState, setErrorState] = useState<ErrorInfo | null>(null);
@@ -427,6 +442,22 @@ const HomeScreen = () => {
   const refreshServicesTabRef = useRef(refreshServicesTab);
   useEffect(() => { refreshServicesTabRef.current = refreshServicesTab; }, [refreshServicesTab]);
 
+  // Re-sync the vertical PagerView after lazy-loaded feed items are appended.
+  // This fixes the PagerView adapter desync that can make the next swipe unresponsive.
+  useEffect(() => {
+    if (
+      activeTab === 'services' &&
+      videoPagerRef.current &&
+      unifiedFeedData.length > lastFeedLength.current &&
+      lastFeedLength.current > 0
+    ) {
+      setTimeout(() => {
+        videoPagerRef.current?.setPageWithoutAnimation(currentVideoIndex);
+      }, 0);
+    }
+    lastFeedLength.current = unifiedFeedData.length;
+  }, [activeTab, unifiedFeedData.length, currentVideoIndex]);
+
 
   // Function to shuffle array for random display
   const getRandomProducts = (products: Product[], count = 4) => {
@@ -467,6 +498,31 @@ const HomeScreen = () => {
     const unsubscribe = navigation.addListener('tabPress', onTabPress);
     return unsubscribe;
   }, [navigation]);
+
+  // Show a small loading indicator on the Home tab icon while the services feed refreshes
+  useEffect(() => {
+    navigation.setOptions({
+      tabBarIcon: ({ focused, color, size }: any) => (
+        <View style={{
+          width: 32,
+          height: 32,
+          alignItems: 'center',
+          justifyContent: 'center',
+          transform: [{ scale: focused ? 1.1 : 1 }],
+        }}>
+          {servicesRefreshing ? (
+            <ActivityIndicator size="small" color={color} />
+          ) : (
+            <Ionicons
+              name={focused ? 'home' : 'home-outline'}
+              size={size}
+              color={color}
+            />
+          )}
+        </View>
+      ),
+    });
+  }, [servicesRefreshing, navigation]);
 
   // Handle app state changes (foreground/background) to reload data when app returns
   useEffect(() => {
@@ -830,50 +886,114 @@ const HomeScreen = () => {
     }
   };
 
+  const openChatShare = async (payload: any) => {
+    setSharePayload(payload);
+    setShowShareModal(true);
+    setSelectedConversations([]);
+    setChatConversationsLoading(true);
+
+    try {
+      const { conversations } = await chatAPI.getConversations(1, 50);
+      setChatConversations(conversations);
+    } catch (error) {
+      console.error('Error loading chat conversations:', error);
+      Alert.alert('Error', 'Failed to load conversations for sharing');
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  };
+
+  const handleShareToChats = async () => {
+    if (!sharePayload || selectedConversations.length === 0) return;
+
+    setIsSharing(true);
+
+    try {
+      await Promise.all(
+        selectedConversations.map((conversation) =>
+          chatAPI.sendMessage({
+            conversationId: conversation.id,
+            messageType: sharePayload.messageType,
+            content: sharePayload.content,
+            metadata: sharePayload.metadata,
+          })
+        )
+      );
+
+      await sharePayload.onSuccess?.();
+      Alert.alert('Shared', `Shared to ${selectedConversations.length} chat${selectedConversations.length === 1 ? '' : 's'}.`);
+      setShowShareModal(false);
+      setSelectedConversations([]);
+    } catch (error) {
+      console.error('Error sharing to chats:', error);
+      Alert.alert('Error', 'Failed to share to chats');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleShareExternal = async () => {
+    if (!sharePayload) return;
+
+    try {
+      const result = await Share.share({
+        message: sharePayload.externalMessage,
+        url: sharePayload.externalUrl,
+      });
+
+      if (result.action === Share.sharedAction) {
+        await sharePayload.onSuccess?.();
+      }
+    } catch (error: any) {
+      console.error('Error sharing externally:', error);
+      if (error.message !== 'User dismissed share sheet') {
+        Alert.alert('Error', 'Failed to share. Please try again.');
+      }
+    }
+  };
+
   const handleShare = async (itemId: string) => {
     try {
-      // Get service details for sharing
       const service = videoFeedData.find(s => s.id === itemId);
       if (!service) {
         console.error('Service not found for sharing');
         return;
       }
 
-      // Prepare share content
-      const shareMessage = `Check out this service: ${service.title}\n\nPrice: ₣${service.price}\nProvider: @${service.username}\n\nView on Fretiko: https://fretiko.com/service/${itemId}`;
-
-      // Open native share sheet
-      const shareResult = await Share.share({
-        message: shareMessage,
+      const serviceData = {
+        id: service.id,
         title: service.title,
-        url: `https://fretiko.com/service/${itemId}`, // Deep link URL
+        price: service.price || 0,
+        image: service.thumbnail || service.mediaUrls?.[0] || service.images?.[0] || '',
+        username: service.username,
+      };
+
+      const onSuccess = async () => {
+        setVideoFeedData(prev => prev.map(video =>
+          video.id === itemId
+            ? { ...video, shares: (parseInt(video.shares) + 1).toString() }
+            : video
+        ));
+        try {
+          const result = await servicesAPI.shareService(itemId);
+          setVideoFeedData(prev => prev.map(video =>
+            video.id === itemId
+              ? { ...video, shares: result.shareCount.toString() }
+              : video
+          ));
+        } catch (e) {
+          console.error('Error updating service share count:', e);
+        }
+      };
+
+      await openChatShare({
+        messageType: 'text',
+        content: service.title,
+        metadata: { serviceData },
+        externalMessage: `Check out this service: ${service.title}\n\nPrice: ₣${service.price}\nProvider: @${service.username}\n\nView on Fretiko: https://fretiko.com/service/${itemId}`,
+        externalUrl: `https://fretiko.com/service/${itemId}`,
+        onSuccess,
       });
-
-      // If user completed share (not dismissed)
-      if (shareResult.action === Share.sharedAction) {
-        // Optimistic update - increment share count
-        setVideoFeedData(prev => prev.map(video =>
-          video.id === itemId
-            ? {
-                ...video,
-                shares: (parseInt(video.shares) + 1).toString()
-              }
-            : video
-        ));
-
-        // Call share API to update backend count
-        const result = await servicesAPI.shareService(itemId);
-
-        // Update with actual count from backend
-        setVideoFeedData(prev => prev.map(video =>
-          video.id === itemId
-            ? {
-                ...video,
-                shares: result.shareCount.toString()
-              }
-            : video
-        ));
-      }
     } catch (error: any) {
       console.error('Error sharing service:', error);
       if (error.message !== 'User dismissed share sheet') {
@@ -3148,7 +3268,7 @@ const HomeScreen = () => {
                 const PageOuter: any = isFirstPage ? ScrollView : View;
                 const pageOuterProps: any = isFirstPage ? {
                   style: { flex: 1, backgroundColor: '#000' },
-                  contentContainerStyle: { flexGrow: 1 },
+                  contentContainerStyle: { flexGrow: 1, position: 'relative' },
                   showsVerticalScrollIndicator: false,
                   scrollEnabled: false,
                   refreshControl: (
@@ -3222,32 +3342,41 @@ const HomeScreen = () => {
                       }}
                       onShare={async (postId) => {
                         try {
-                          // Get post content for sharing
                           const shareContent = postItem.content || 'Check out this post on Fretiko!';
                           const shareUrl = `https://fretiko.com/post/${postId}`;
-                          
-                          // Open native share sheet
-                          const result = await Share.share({
-                            message: `${shareContent}\n\nView on Fretiko: ${shareUrl}`,
-                            title: 'Share Post',
-                            url: shareUrl,
+
+                          const postData = {
+                            id: postId,
+                            content: shareContent,
+                            image: postItem.mediaUrls?.[0] || postItem.thumbnailUrls?.[0] || '',
+                            username: postItem.user?.username,
+                          };
+
+                          const onSuccess = async () => {
+                            try {
+                              await postsAPI.sharePost(postId);
+                              setUnifiedFeedData(prev => prev.map(feedItem =>
+                                feedItem.id === item.id ? {
+                                  ...feedItem,
+                                  postData: feedItem.postData ? {
+                                    ...feedItem.postData,
+                                    sharesCount: (feedItem.postData.sharesCount || 0) + 1
+                                  } : undefined
+                                } : feedItem
+                              ));
+                            } catch (e) {
+                              console.error('Error updating post share count:', e);
+                            }
+                          };
+
+                          await openChatShare({
+                            messageType: 'text',
+                            content: shareContent,
+                            metadata: { postData },
+                            externalMessage: `${shareContent}\n\nView on Fretiko: ${shareUrl}`,
+                            externalUrl: shareUrl,
+                            onSuccess,
                           });
-                          
-                          // If user completed share, call API
-                          if (result.action === Share.sharedAction) {
-                            await postsAPI.sharePost(postId);
-                            
-                            // Update local state
-                            setUnifiedFeedData(prev => prev.map(feedItem => 
-                              feedItem.id === item.id ? {
-                                ...feedItem,
-                                postData: feedItem.postData ? {
-                                  ...feedItem.postData,
-                                  sharesCount: (feedItem.postData.sharesCount || 0) + 1
-                                } : undefined
-                              } : feedItem
-                            ));
-                          }
                         } catch (error: any) {
                           if (error.message !== 'User dismissed share sheet') {
                             console.error('Error sharing post:', error);
@@ -3275,6 +3404,27 @@ const HomeScreen = () => {
                         setShowGiftersModal(true);
                       }}
                     />
+                  {isFirstPage && servicesRefreshing && (
+                    <View
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute',
+                        top: insets.top + 70,
+                        left: 0,
+                        right: 0,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        paddingVertical: 20,
+                        backgroundColor: 'rgba(0,0,0,0.4)',
+                        zIndex: 100,
+                      }}
+                    >
+                      <ActivityIndicator size="large" color="#3498DB" />
+                      <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '600', marginTop: 12 }}>
+                        Refreshing...
+                      </Text>
+                    </View>
+                  )}
                   </PageOuter>
                 );
               }
@@ -3770,6 +3920,27 @@ const HomeScreen = () => {
                     </Text>
                   </TouchableOpacity>
               </View>
+            {isFirstVideoPage && servicesRefreshing && (
+              <View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  top: insets.top + 70,
+                  left: 0,
+                  right: 0,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  paddingVertical: 20,
+                  backgroundColor: 'rgba(0,0,0,0.4)',
+                  zIndex: 100,
+                }}
+              >
+                <ActivityIndicator size="large" color="#3498DB" />
+                <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '600', marginTop: 12 }}>
+                  Refreshing...
+                </Text>
+              </View>
+            )}
             </VideoPageOuter>
             );
             } catch (renderError) {
@@ -4218,6 +4389,20 @@ const HomeScreen = () => {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <ShareModal
+        visible={showShareModal}
+        title="Share"
+        onClose={() => setShowShareModal(false)}
+        conversations={chatConversations}
+        conversationsLoading={chatConversationsLoading}
+        selectedConversations={selectedConversations}
+        onSelect={setSelectedConversations}
+        onShare={handleShareToChats}
+        onShareExternal={handleShareExternal}
+        isSharing={isSharing}
+        insetsBottom={insets.bottom}
+      />
     </View>
   );
 };

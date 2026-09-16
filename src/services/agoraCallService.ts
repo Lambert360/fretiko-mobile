@@ -235,7 +235,9 @@ class AgoraCallService {
       mediaOptions.publishCameraTrack = isVideoCall;
       mediaOptions.autoSubscribeAudio = true;
       mediaOptions.autoSubscribeVideo = isVideoCall;
-      // For Communication profile, clientRoleType is not needed (all users are broadcasters)
+      // Explicitly set broadcaster role so both sides can publish and subscribe.
+      // On Android this is required for remote video/audio to be received.
+      mediaOptions.clientRoleType = ClientRoleType.ClientRoleBroadcaster;
 
       // Join channel (channelName already extracted above)
       const result = await this.engine.joinChannel(

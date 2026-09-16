@@ -6,7 +6,6 @@ import React, { useEffect, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
 import * as WebBrowser from 'expo-web-browser';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
@@ -169,109 +168,11 @@ import ReferralScreen from './src/screens/ReferralScreen';
 import ReferralHandlerScreen from './src/screens/ReferralHandlerScreen';
 
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
+import { linking } from './src/navigation/linkingConfig';
 
 WebBrowser.maybeCompleteAuthSession();
 
 const Stack = createStackNavigator();
-
-// Deep linking configuration
-const linking: any = {
-  prefixes: [
-    Linking.createURL('/'),
-    'fretiko://',
-    'https://fretiko.com',
-    'http://fretiko.com',
-  ],
-  config: {
-    screens: {
-      EmailVerification: {
-        path: 'auth/callback',
-        parse: {
-          token: (token: string) => token,
-          email: (email: string) => email,
-        },
-      },
-      Main: {
-        screens: {
-          Stories: 'stories',
-        },
-      },
-      StoryDeepLink: {
-        path: 'story/:storyId',
-        parse: {
-          storyId: (storyId: string) => storyId,
-        },
-      },
-      GiftCardDetails: {
-        path: 'gift-cards/claim/:claimCode',
-        parse: {
-          claimCode: (claimCode: string) => claimCode,
-        },
-      },
-      WalletDeposit: {
-        path: 'wallet/deposit/callback',
-        parse: {
-          deposit_id: (deposit_id: string) => deposit_id,
-        },
-        screens: {
-          Main: 'Wallet', // Navigate to Wallet screen instead of WalletDeposit
-        },
-      },
-      SharedWishlist: {
-        path: 'wishlist/:ownerId/:ownerUsername',
-        parse: {
-          ownerId: (ownerId: string) => ownerId,
-          ownerUsername: (ownerUsername: string) => decodeURIComponent(ownerUsername),
-        },
-      },
-      ShareStory: 'share-story',
-      Workspace: 'workspace',
-      Analytics: 'analytics',
-      VendorOrderDetails: {
-        path: 'order/:orderId',
-        parse: {
-          orderId: (orderId: string) => orderId,
-        },
-      },
-      PostDetails: {
-        path: 'post/:postId',
-        parse: {
-          postId: (postId: string) => postId,
-        },
-      },
-      PublicProfile: {
-        path: 'profile/:userId',
-        parse: {
-          userId: (userId: string) => userId,
-        },
-      },
-      ProductDetails: {
-        path: 'product/:productId',
-        parse: {
-          productId: (productId: string) => productId,
-        },
-      },
-      ServiceDetails: {
-        path: 'service/:serviceId',
-        parse: {
-          serviceId: (serviceId: string) => serviceId,
-        },
-      },
-      AuctionDetails: {
-        path: 'auction/:auctionId',
-        parse: {
-          auctionId: (auctionId: string) => auctionId,
-        },
-      },
-      ReferralHandler: {
-        path: 'r/:referralCode',
-        parse: {
-          referralCode: (referralCode: string) => referralCode,
-        },
-      },
-    },
-  },
-};
 
 // Simple error boundary component
 class ErrorBoundary extends React.Component<
@@ -307,7 +208,7 @@ class ErrorBoundary extends React.Component<
 
 // Navigation component that handles auth state
 const AppNavigator: React.FC = () => {
-  const { isAuthenticated, isLoading, isNewUser, isSuspended, isDeleted } = useAuth();
+  const { isAuthenticated, accessToken, isLoading, isNewUser, isSuspended, isDeleted } = useAuth();
   const navigationRef = useRef<any>(null);
   const rootViewRef = useRef<any>(null);
   const hasHandledInitialNotificationRef = useRef(false);
@@ -328,48 +229,71 @@ const AppNavigator: React.FC = () => {
   }, []);
 
   // Initialize push notifications - request permissions and generate token on app startup
+  const hasRequestedPushPermissions = useRef(false);
   useEffect(() => {
     const initializePushNotifications = async () => {
       try {
-        console.log('📱 Initializing push notifications on app startup...');
-        
-        // Request permissions immediately
-        const { status } = await Notifications.requestPermissionsAsync();
-        console.log('📱 Notification permission status:', status);
-        
-        if (status === 'granted') {
-          if (Platform.OS === 'android') {
-            // Android FCM is owned by @react-native-firebase/messaging, not
-            // expo-notifications, so we get the token through Firebase.
-            const fcmToken = await pushNotificationService.getFcmToken();
-            if (fcmToken) {
-              console.log('🔑 FCM push token generated:', fcmToken);
-            } else {
-              console.warn('⚠️ No FCM push token generated');
-            }
-          } else {
-            // Generate Expo push token immediately (iOS)
-            const tokenData = await Notifications.getExpoPushTokenAsync();
-            const token = tokenData?.data;
+        console.log('📱 Initializing push notifications...');
 
-            if (token) {
-              console.log('🔑 Expo push token generated:', token);
-              // Store token locally for later use
-              pushNotificationService.setExpoPushToken(token);
-            } else {
-              console.warn('⚠️ No push token generated');
-            }
+        // Request notification permission for normal (non-call) notifications.
+        // Call pushes are data-only and can trigger CallKeep even without this
+        // permission, so on Android we still retrieve and cache the FCM token.
+        let status: string | undefined;
+        if (!hasRequestedPushPermissions.current) {
+          hasRequestedPushPermissions.current = true;
+          try {
+            const permissionResult = await Notifications.requestPermissionsAsync();
+            status = permissionResult.status;
+          } catch (permissionError) {
+            console.warn('⚠️ Could not request notification permission:', permissionError);
+          }
+          console.log('📱 Notification permission status:', status);
+        }
+
+        let pushToken = pushNotificationService.getStoredExpoPushToken();
+
+        if (Platform.OS === 'android') {
+          if (!pushToken) {
+            pushToken = await pushNotificationService.getFcmToken();
+          }
+          if (pushToken) {
+            console.log('🔑 FCM push token ready:', pushToken);
+          } else {
+            console.warn('⚠️ No FCM push token available');
+          }
+        } else if (status === 'granted') {
+          // Generate Expo push token immediately (iOS)
+          const tokenData = await Notifications.getExpoPushTokenAsync();
+          pushToken = tokenData?.data || null;
+
+          if (pushToken) {
+            console.log('🔑 Expo push token generated:', pushToken);
+            // Store token locally for later use
+            pushNotificationService.setExpoPushToken(pushToken);
+          } else {
+            console.warn('⚠️ No push token generated');
           }
         } else {
           console.warn('⚠️ Notification permission not granted');
+        }
+
+        // Register the token with the backend immediately if we have a user token.
+        // This is re-attempted when the access token becomes available, so an
+        // early startup race does not leave the server without an FCM token.
+        if (pushToken && accessToken) {
+          try {
+            await pushNotificationService.registerPushTokenWithToken(accessToken, pushToken);
+          } catch (registrationError) {
+            console.warn('⚠️ Could not register push token at startup:', registrationError);
+          }
         }
       } catch (error) {
         console.error('❌ Error initializing push notifications:', error);
       }
     };
-    
+
     initializePushNotifications();
-  }, []);
+  }, [accessToken]);
 
   // Initialize CallKeep on every platform so the `answerCall`/`endCall`/
   // `didLoadWithEvents` native listeners are registered in the *full* app's

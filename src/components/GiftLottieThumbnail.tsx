@@ -35,6 +35,13 @@ const GiftLottieThumbnail: React.FC<GiftLottieThumbnailProps> = ({ source, size 
         loop
         style={{ width: size, height: size }}
         renderMode="AUTOMATIC"
+        enableSafeModeAndroid={true}
+        onAnimationLoaded={() => {
+          console.log('✅ Thumbnail Lottie loaded:', lottieSource);
+        }}
+        onAnimationFailure={(error: string) => {
+          console.warn('❌ Thumbnail Lottie failed:', lottieSource, error);
+        }}
       />
     </View>
   );

@@ -1,14 +1,21 @@
 import React, { useCallback } from 'react';
 import { Text, TextProps } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import * as WebBrowser from 'expo-web-browser';
 import { userAPI } from '../services/userAPI';
+import { resolveInternalRoute } from '../utils/internalLinkResolver';
 
 interface RichTextProps extends TextProps {
   children: string;
 }
 
-// Simple regex to split text into mentions, tags, and other chunks
-const TOKEN_REGEX = /(@[A-Za-z0-9_.]{1,100}|#[A-Za-z0-9_]{1,100})/g;
+// Simple regex to split text into mentions, tags, links, and other chunks
+// Also matches bare domains (e.g. google.com, www.google.com) so they become tappable.
+const TOKEN_REGEX = /(@[A-Za-z0-9_.]{1,100}|#[A-Za-z0-9_]{1,100}|(?:https?:\/\/|fretiko:\/\/)[^\s]+|www\.[^\s]+|[a-zA-Z0-9][a-zA-Z0-9\-]*\.[a-zA-Z]{2,}(?::\d+)?(?:\/[^\s]*)?)/g;
+
+// Trim common trailing punctuation that isn't actually part of the URL
+// (e.g. "Check this out: https://fretiko.com." -> "https://fretiko.com")
+const stripTrailingPunctuation = (url: string) => url.replace(/[.,!?;:)\]"']+$/, '');
 
 export const RichText: React.FC<RichTextProps> = ({ children, style, ...rest }) => {
   const navigation = useNavigation<any>();
@@ -64,6 +71,29 @@ export const RichText: React.FC<RichTextProps> = ({ children, style, ...rest }) 
     }
   }, [navigation]);
 
+  const handlePressLink = useCallback((rawUrl: string) => {
+    let url = stripTrailingPunctuation(rawUrl);
+
+    // Add a scheme silently if the user typed a bare domain (e.g. google.com or www.google.com).
+    // This keeps the displayed text unchanged while making the link tappable.
+    if (!/^https?:\/\//i.test(url) && !/^fretiko:\/\//i.test(url)) {
+      url = 'https://' + url;
+    }
+
+    // Links to routes the app already renders natively (e.g. fretiko.com/product/:id)
+    // should navigate straight there instead of loading the web page.
+    const internalRoute = resolveInternalRoute(url);
+    if (internalRoute) {
+      (navigation as any).navigate(internalRoute.screen, internalRoute.params);
+      return;
+    }
+
+    // Everything else opens in the in-app browser, same as the wallet deposit flow.
+    WebBrowser.openBrowserAsync(url).catch((error) => {
+      console.error('Failed to open link', url, error);
+    });
+  }, [navigation]);
+
   const renderContent = () => {
     if (!children) return null;
 
@@ -100,6 +130,16 @@ export const RichText: React.FC<RichTextProps> = ({ children, style, ...rest }) 
             key={key}
             style={[style, { color: '#FFB347', fontWeight: '600' }]}
             onPress={() => handlePressTag(match)}
+          >
+            {match}
+          </Text>
+        );
+      } else if (/^(?:https?:\/\/|fretiko:\/\/|www\.)/i.test(match) || /\.[a-zA-Z]{2,}/.test(match)) {
+        parts.push(
+          <Text
+            key={key}
+            style={[style, { color: '#4DA3FF', textDecorationLine: 'underline' }]}
+            onPress={() => handlePressLink(match)}
           >
             {match}
           </Text>

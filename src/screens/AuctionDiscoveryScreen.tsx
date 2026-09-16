@@ -642,16 +642,35 @@ const AuctionDiscoveryScreen = () => {
   // Build alternating rows between active and live auctions
   const buildAlternatingAuctionRows = () => {
     const ITEMS_PER_SECTION = 10; // 10 cards = 5 rows (2 columns each)
+    const HERO_CARD_THRESHOLD = 10; // only insert hero before a new section if the previous section has this many cards
     
     type AuctionRow = 
       | { type: 'grid'; items: AuctionWithDetails[] }
       | { type: 'video'; item: AuctionWithDetails }
-      | { type: 'section-header'; title: string; subtitle: string };
+      | { type: 'section-header'; title: string; subtitle: string }
+      | { type: 'hero'; hero: any };
     
     const rows: AuctionRow[] = [];
     let activeIdx = 0;
     let liveIdx = 0;
     let currentSection: 'active' | 'live' = 'active'; // Start with active
+    let itemsSinceHeader = 0;
+    let heroBannerIndex = 0;
+    
+    const pushHeroBeforeHeader = () => {
+      if (heroImages.length === 0 || itemsSinceHeader < HERO_CARD_THRESHOLD) {
+        return;
+      }
+      rows.push({
+        type: 'hero',
+        hero: heroImages[heroBannerIndex % heroImages.length],
+      });
+      heroBannerIndex++;
+    };
+    
+    const resetHeader = () => {
+      itemsSinceHeader = 0;
+    };
     
     // Add initial section header for active lots
     if (activeAuctions.length > 0) {
@@ -660,6 +679,7 @@ const AuctionDiscoveryScreen = () => {
         title: 'Active Lots', 
         subtitle: '⏱️ Bid now!' 
       });
+      resetHeader();
     }
     
     while (activeIdx < activeAuctions.length || liveIdx < liveAuctions.length) {
@@ -677,23 +697,28 @@ const AuctionDiscoveryScreen = () => {
           }
           
           activeIdx += itemsToAdd;
+          itemsSinceHeader += itemsToAdd;
         }
         
         // Switch to live auctions if available
         if (liveIdx < liveAuctions.length) {
           currentSection = 'live';
+          pushHeroBeforeHeader();
           rows.push({ 
             type: 'section-header', 
             title: 'Live Lots', 
             subtitle: '🔴 Watch & bid in real-time!' 
           });
+          resetHeader();
         } else if (activeIdx < activeAuctions.length) {
           // More active auctions available, continue with active
+          pushHeroBeforeHeader();
           rows.push({ 
             type: 'section-header', 
             title: 'Active Lots', 
             subtitle: '⏱️ Bid now!' 
           });
+          resetHeader();
         } else {
           break;
         }
@@ -710,23 +735,28 @@ const AuctionDiscoveryScreen = () => {
           });
           
           liveIdx += itemsToAdd;
+          itemsSinceHeader += itemsToAdd;
         }
         
         // Switch back to active auctions if available
         if (activeIdx < activeAuctions.length) {
           currentSection = 'active';
+          pushHeroBeforeHeader();
           rows.push({ 
             type: 'section-header', 
             title: 'Active Lots', 
             subtitle: '⏱️ Bid now!' 
           });
+          resetHeader();
         } else if (liveIdx < liveAuctions.length) {
           // More live auctions available, continue with live
+          pushHeroBeforeHeader();
           rows.push({ 
             type: 'section-header', 
             title: 'Live Lots', 
             subtitle: '🔴 Watch & bid in real-time!' 
           });
+          resetHeader();
         } else {
           break;
         }
@@ -999,6 +1029,10 @@ const AuctionDiscoveryScreen = () => {
                     {/* Fill empty space if only 1 item in row */}
                     {row.items.length === 1 && <View style={styles.auctionGridItem} />}
                   </View>
+                );
+              } else if (row.type === 'hero') {
+                return (
+                  <HeroMedia key={`hero-${rowIndex}`} hero={row.hero} height={180} />
                 );
               }
               return null;

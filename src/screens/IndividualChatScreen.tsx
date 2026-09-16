@@ -43,6 +43,7 @@ import GiftSelectorModal from '../components/GiftSelectorModal';
 import { walletAPI } from '../services/walletAPI';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat, FlipType } from 'expo-image-manipulator';
+import GiftEffectStage from '../components/GiftEffectStage';
 import InvoiceMessageCard from '../components/InvoiceMessageCard';
 import ProductMessageCard from '../components/ProductMessageCard';
 import ServiceMessageCard from '../components/ServiceMessageCard';
@@ -118,13 +119,9 @@ interface Message extends Omit<ChatMessage, 'timestamp'> {
   reactions?: {
     [emoji: string]: string[]; // emoji -> array of user IDs who reacted
   };
-  auctionData?: {
-    itemName: string;
-    startingPrice: number;
-    endTime: Date;
-    imageUrl: string;
-  };
+  auctionData?: any;
   livestreamData?: {
+    id: string;
     title: string;
     isLive: boolean;
     viewers: number;
@@ -136,6 +133,25 @@ interface Message extends Omit<ChatMessage, 'timestamp'> {
     price: number;
     image: string;
     vendor_username?: string;
+  };
+  serviceData?: {
+    id: string;
+    title: string;
+    price: number;
+    image: string;
+    username?: string;
+  };
+  postData?: {
+    id: string;
+    content: string;
+    image: string;
+    username?: string;
+  };
+  profileData?: {
+    id: string;
+    username: string;
+    avatar: string;
+    isSeller?: boolean;
   };
   wishlistData?: {
     shareId: string;
@@ -411,23 +427,12 @@ const IndividualChatScreen = () => {
     };
   }, [chatId]);
 
-  // If the user tapped Accept on the global incoming-call banner while on a different screen,
-  // the banner navigates here with a pendingIncomingCall param. Detect it once and show the
-  // full-screen incoming-call modal so the user can confirm before the call starts.
-  useEffect(() => {
-    const pending = chatParams.pendingIncomingCall;
-    if (pending && !pendingCallHandledRef.current) {
-      pendingCallHandledRef.current = true;
-      const callInfo = {
-        callSessionId: pending.callSessionId,
-        callerName: pending.callerName,
-        callType: pending.callType,
-      };
-      incomingCallRef.current = callInfo;
-      setIncomingCall(callInfo);
-      playCallSound('ringing');
-    }
-  }, []); // Run once on mount
+  // NOTE: pendingIncomingCall is no longer routed to this screen — tapping
+  // Accept on the global incoming-call banner now navigates directly to
+  // CallScreen (see CallScreen.tsx), which calls CallContext's
+  // acceptIncomingCall(). This legacy handler is disabled since nothing
+  // passes chatParams.pendingIncomingCall to this route anymore, and it
+  // used to duplicate CallContext's incoming-call handling.
 
   // Configure audio mode on mount for recording
   useEffect(() => {
@@ -838,6 +843,11 @@ const IndividualChatScreen = () => {
           // 🔥 FIX: Explicitly preserve wishlistData from metadata
           wishlistData: (msg as any).metadata?.wishlistData || (msg as any).wishlistData,
           productData: (msg as any).metadata?.productData || (msg as any).productData,
+          serviceData: (msg as any).metadata?.serviceData || (msg as any).serviceData,
+          auctionData: (msg as any).metadata?.auctionData || (msg as any).auctionData,
+          postData: (msg as any).metadata?.postData || (msg as any).postData,
+          profileData: (msg as any).metadata?.profileData || (msg as any).profileData,
+          livestreamData: (msg as any).metadata?.livestreamData || (msg as any).livestreamData,
           metadata: (msg as any).metadata,
         };
         
@@ -1013,6 +1023,11 @@ const IndividualChatScreen = () => {
             : undefined,
           wishlistData: data.message.metadata?.wishlistData || data.message.wishlistData, // ✅ Extract wishlist data
           productData: data.message.metadata?.productData || data.message.productData, // ✅ Extract product data
+          serviceData: data.message.metadata?.serviceData || data.message.serviceData,
+          auctionData: data.message.metadata?.auctionData || data.message.auctionData,
+          postData: data.message.metadata?.postData || data.message.postData,
+          profileData: data.message.metadata?.profileData || data.message.profileData,
+          livestreamData: data.message.metadata?.livestreamData || data.message.livestreamData,
           metadata: data.message.metadata,
         };
         
@@ -1215,127 +1230,40 @@ const IndividualChatScreen = () => {
       // Handle user status updates if needed
     });
 
+    // Call handling (incoming call UI, ringing, accept/decline, call state
+    // transitions on participant_joined/call_ended) now lives entirely in
+    // CallContext (Agora calls), which is mounted once at the app root and
+    // is not affected by this screen mounting/unmounting/remounting. This
+    // legacy per-screen handler used to duplicate that logic — including
+    // playing its own ringtone and calling its own (now-removed) endCall —
+    // which raced with CallContext and could re-trigger repeated
+    // call_declined/call_ended signal loops. Only 'gift_sent' (a
+    // notification-only event, not call-state) is still handled here.
     const unsubscribeCallEvent = realtimeAPI.subscribe('call_event', (data) => {
-      console.log('📞 Call event received:', data);
-
-      // Only handle events for this conversation
       if (data.conversationId !== chatId) {
-        console.log('🚫 Call event for different conversation, ignoring');
         return;
       }
 
-      // Only handle events for this conversation
-      if (data.conversationId !== chatId) {
-        console.log('🚫 Call event for different conversation, ignoring');
-        return;
-      }
+      const { eventType } = data;
 
-      const { eventType, callData } = data;
-
-      switch (eventType) {
-        case 'incoming_call':
-          console.log('📞 Incoming call from:', callData.initiator?.username || 'Unknown');
-
-          // Don't show incoming call UI if the current user is the initiator
-          if (callData.initiator?.id === user?.id) {
-            console.log('🚫 Ignoring incoming_call event - current user is the caller');
-            return;
-          }
-
-          // Don't show incoming call if already in a call or already have incoming call
-          if (isInCall || incomingCall || incomingCallRef.current) {
-            console.log('🚫 Ignoring incoming_call - already in call or have pending call');
-            return;
-          }
-
-          // Show incoming call UI
-          // Use chatName as fallback since we're in a chat screen and know the other user
-          const callerName = callData.initiator?.full_name || 
-                            callData.initiator?.username || 
-                            chatName || 
-                            'Unknown Caller';
-          const callInfo = {
-            callSessionId: callData.callSessionId,
-            callerName: callerName,
-            callType: callData.callType,
-          };
-          setIncomingCall(callInfo);
-          incomingCallRef.current = callInfo; // 🔥 Persist in ref
-          // Play ringtone
-          playCallSound('ringing');
-          break;
-
-        case 'call_ended':
-          console.log('📞 Call ended by remote participant (from call_event)');
-          // Hide incoming call UI if showing
-          setIncomingCall(null);
-          incomingCallRef.current = null;
-          stopCallSounds();
-
-          // Map server-provided reason (if any) to local endCall reason types
-          {
-            const serverReason = (callData && (callData as any).reason) as string | undefined;
-            let mappedReason: 'completed' | 'declined' | 'missed' | 'cancelled' = 'completed';
-            if (serverReason === 'declined') {
-              mappedReason = 'declined';
-            } else if (serverReason === 'missed') {
-              mappedReason = 'missed';
-            } else if (serverReason === 'cancelled') {
-              mappedReason = 'cancelled';
-            }
-            // End active call - pass fromRemote=true to prevent sending duplicate signal
-            endCall(mappedReason, true);
-          }
-          break;
-
-        case 'participant_joined':
-          console.log('📞 Participant joined the call');
-          // Update call status if we're the one calling
-          if (isInCall && callStatus === 'calling') {
-            setCallStatus('connected');
-            setCallStartTime(Date.now());
-            stopCallSounds();
-            
-            // Clear call timeout - participant has joined
-            {
-              const timeoutId = ringbackTimeoutRef.current;
-              if (timeoutId) {
-                console.log('🛑 Clearing call timeout - participant joined');
-                clearTimeout(timeoutId ?? undefined);
-                ringbackTimeoutRef.current = null;
-                setRingbackTimeout(null);
-              }
-            }
-            
-            playCallSound('connected');
-          }
-          break;
-
-        case 'participant_left':
-          console.log('📞 Participant left the call');
-          break;
-
-        case 'gift_sent':
-          console.log('🎁 Gift received during call:', data);
-          // Show gift notification
-          if (data.giftId && data.quantity) {
-            Alert.alert(
-              '🎁 Gift Received!',
-              `You received ${data.quantity}x gift during the call!`,
-              [{ text: 'OK' }]
-            );
-          }
-          break;
-
-        default:
-          console.log('📞 Unknown call event type:', eventType);
+      if (eventType === 'gift_sent') {
+        console.log('🎁 Gift received during call:', data);
+        if (data.giftId && data.quantity) {
+          Alert.alert(
+            '🎁 Gift Received!',
+            `You received ${data.quantity}x gift during the call!`,
+            [{ text: 'OK' }]
+          );
+        }
       }
     });
 
-    // Call signaling now lives entirely in CallContext (Agora calls). This
-    // subscription is disabled here to avoid duplicate/competing handling.
+    // Call control signals live in CallContext, but we still need to handle
+    // gift_animation events so the in-call gift effect plays for the recipient.
     const unsubscribeCallSignal = realtimeAPI.subscribe('call_signal', (data) => {
-      return;
+      if (data.signalType === 'gift_animation') {
+        handleIncomingCallSignal(data);
+      }
     });
 
     // Subscribe to invoice events
@@ -1653,15 +1581,19 @@ const IndividualChatScreen = () => {
     }
   };
 
-  const formatTime = (timestamp: Date) => {
+  const formatTime = (timestamp: Date | string | number | undefined) => {
+    if (!timestamp) return '';
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+    if (isNaN(date.getTime())) return '';
+
     const now = new Date();
-    const diff = now.getTime() - timestamp.getTime();
+    const diff = now.getTime() - date.getTime();
 
     if (diff < 60000) return 'now';
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
 
-    return timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
 
@@ -2155,58 +2087,6 @@ const IndividualChatScreen = () => {
     }
   };
 
-  const startLiveStream = () => {
-    const livestreamMessage: Message = {
-      id: Date.now().toString(),
-      conversationId: chatId,
-      text: '',
-      content: '',
-      timestamp: new Date(),
-      senderId: user?.id || 'current-user',
-      senderName: 'You',
-      messageType: 'livestream',
-      status: 'sent',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      livestreamData: {
-        title: 'Live from my location 🔴',
-        isLive: true,
-        viewers: Math.floor(Math.random() * 50) + 1,
-        thumbnailUrl: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=400&h=300&fit=crop'
-      }
-    };
-    
-    setMessages(prev => [...prev, livestreamMessage]);
-    setShowAttachmentModal(false);
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
-  };
-
-  const startAuction = () => {
-    const auctionMessage: Message = {
-      id: Date.now().toString(),
-      conversationId: chatId,
-      text: '',
-      content: '',
-      timestamp: new Date(),
-      senderId: user?.id || 'current-user',
-      senderName: 'You',
-      messageType: 'auction',
-      status: 'sent',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      auctionData: {
-        itemName: 'Vintage Designer Watch',
-        startingPrice: 250,
-        endTime: new Date(Date.now() + 86400000), // 24 hours from now
-        imageUrl: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400&h=400&fit=crop'
-      }
-    };
-    
-    setMessages(prev => [...prev, auctionMessage]);
-    setShowAttachmentModal(false);
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
-  };
-
   // Expo-Compatible Call Functions
   const initializeAgoraCall = async (agoraCallConfig: AgoraCallConfig, isVideoCall: boolean) => {
     try {
@@ -2499,6 +2379,10 @@ const IndividualChatScreen = () => {
 
         case 'gift_animation':
           // Handle gift animation event - display Lottie/sound effect
+          // Ignore our own broadcast; we already showed it locally.
+          if (data.from === user?.id) {
+            break;
+          }
           console.log('🎁 Gift animation signal received:', data.data);
           console.log('🎁 Current activeGiftEffects count:', activeGiftEffects.length);
           if (data.data && data.data.quantity) {
@@ -2786,20 +2670,17 @@ const IndividualChatScreen = () => {
   };
 
   // Communication Functions
+  // startCall() has been removed: regular calls now route directly to CallScreen
+  // so the shared CallContext owns the full Agora call lifecycle. The dead code
+  // below is intentionally left commented out for reference/rollback.
+  /*
   const startCall = async (type: 'audio' | 'video') => {
     try {
       console.log(`📞 Starting ${type} call...`);
-
-      // Check if this is an AI call (calling Iko)
       const isCallingAI = chatType === 'ai' || chatId === AI_ASSISTANT_UUID;
-
       if (isCallingAI && type === 'audio') {
-        console.log('🤖 Starting AI voice call with Iko');
         return startAIVoiceCall();
       }
-
-      // Regular (non-AI) calls now live entirely in CallScreen — just navigate there
-      // and let CallContext own the whole Agora call lifecycle.
       (navigation as any).navigate('CallScreen', {
         chatId,
         otherUserId,
@@ -2808,122 +2689,21 @@ const IndividualChatScreen = () => {
         callType: type,
       });
       return;
-
-      // ─── Everything below is dead code, kept only for reference/rollback ───
-      // Reset call states
-      setCallType(type);
-      setCallStatus('calling');
-      setShowCallModal(true);
-      // Ensure video is enabled for video calls
-      if (type === 'video') {
-        setIsVideoEnabled(true);
-      }
-
-      // Start ringback sound for caller
-      playCallSound('ringing');
-
-      // Set call timeout (60 seconds to match backend timeout)
-      // This timeout will be cleared when recipient joins or call is answered
-      // Use ref to avoid closure issues
-      const timeout = setTimeout(() => {
-        // Check if timeout was cleared (ref will be null if cleared)
-        if (ringbackTimeoutRef.current === timeout) {
-          // Timeout wasn't cleared, so call wasn't answered
-          console.log('📞 Call timeout - no answer after 60 seconds');
-          handleCallTimeout();
-        } else {
-          console.log('📞 Call timeout fired but was already cleared, ignoring');
-        }
-      }, 60000);
-      ringbackTimeoutRef.current = timeout;
-      setRingbackTimeout(timeout);
-      console.log('⏱️ Call timeout set for 60 seconds');
-      
-      // Explicitly request microphone permission before starting the call.
-      // Production builds do NOT get this automatically — Agora silently fails without it.
-      const { granted: micGranted } = await requestRecordingPermissionsAsync();
-      if (!micGranted) {
-        Alert.alert('Permission Required', 'Microphone permission is required to make calls.');
-        setShowCallModal(false);
-        stopCallSounds();
-        return;
-      }
-      console.log('✅ Microphone permission granted');
-
-      // For video calls, request camera permission and start preview
-      if (type === 'video') {
-        if (!cameraPermission?.granted) {
-          const permission = await requestCameraPermission();
-          if (!permission.granted) {
-            Alert.alert('Permission Required', 'Camera permission is required for video calls.');
-            setShowCallModal(false);
-            return;
-          }
-        }
-
-        // Start camera preview for video calls
-        console.log('📹 Starting camera preview for video call');
-        setShowCameraPreview(true);
-        setShowVideoUI(true);
-      }
-
-      
-      // Start call via API with participants
-      const participantIds = (otherUserId ? [user?.id, otherUserId] : [user?.id]).filter((id): id is string => Boolean(id));
-      const callData = await chatAPI.startCall(chatId, type, participantIds);
-      setCurrentCallSessionId(callData.callSessionId);
-      currentCallSessionIdRef.current = callData.callSessionId; // 🔥 Also store in ref
-      
-      console.log('📞 Call data received from backend:', {
-        callSessionId: callData.callSessionId,
-        hasAgoraConfig: !!callData.agoraConfig,
-        hasRtcConfiguration: !!callData.rtcConfiguration,
-        agoraConfig: callData.agoraConfig,
-        rtcConfiguration: callData.rtcConfiguration,
-      });
-      
-      // Initialize Agora call with Communication profile
-      if (callData.agoraConfig || callData.rtcConfiguration) {
-        const agoraCallConfig = callData.agoraConfig || callData.rtcConfiguration;
-        
-        // Normalize config (backend returns 'channel', frontend expects 'channelName')
-        const normalizedConfig: AgoraCallConfig = {
-          ...agoraCallConfig,
-          channelName: agoraCallConfig.channelName || agoraCallConfig.channel,
-        };
-        
-        console.log('📞 Normalized Agora config:', {
-          appId: normalizedConfig.appId ? 'present' : 'missing',
-          channelName: normalizedConfig.channelName,
-          channel: agoraCallConfig.channel,
-          token: normalizedConfig.token ? 'present' : 'missing',
-          uid: normalizedConfig.uid,
-        });
-        
-        await initializeAgoraCall(normalizedConfig, type === 'video');
-      } else {
-        throw new Error('Agora configuration not provided by backend');
-      }
-      
-      // Send call initiation via WebSocket (simplified - no SDP/ICE needed)
-      if (realtimeAPI.isConnected()) {
-        realtimeAPI.sendCallSignal(callData.callSessionId, 'call_initiated', {
-          callType: type,
-          callerId: user?.id,
-          callerName: user?.username || 'Unknown',
-          timestamp: new Date().toISOString(),
-        }, chatId);
-      }
-      
-      console.log('📞 Agora call initiated, waiting for response...');
-
     } catch (error) {
       console.error('Error starting call:', error);
-      stopCallSounds();
       Alert.alert('Error', 'Failed to start call. Please try again.');
-      setShowCallModal(false);
-      setCallStatus('calling');
     }
+  };
+  */
+
+  const navigateToCallScreen = (type: 'audio' | 'video') => {
+    (navigation as any).navigate('CallScreen', {
+      chatId,
+      otherUserId,
+      callerName: chatName,
+      callerAvatar: chatAvatar,
+      callType: type,
+    });
   };
 
   // Handle incoming call
@@ -5028,15 +4808,15 @@ const IndividualChatScreen = () => {
         <View style={styles.headerActions}>
           {!isAI && chatType !== 'ai' && (
             <>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.headerAction, isInCall && callType === 'audio' && styles.activeCall]}
-                onPress={() => startCall('audio')}
+                onPress={() => navigateToCallScreen('audio')}
               >
                 <Ionicons name="call" size={20} color="#FFFFFF" />
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.headerAction, isInCall && callType === 'video' && styles.activeCall]}
-                onPress={() => startCall('video')}
+                onPress={() => navigateToCallScreen('video')}
               >
                 <Ionicons name="videocam" size={20} color="#FFFFFF" />
               </TouchableOpacity>
@@ -5346,6 +5126,19 @@ const IndividualChatScreen = () => {
       );
     }
 
+    // Render service messages - check metadata for serviceData
+    if (item.serviceData || item.metadata?.serviceData) {
+      const serviceInfo = item.serviceData || item.metadata?.serviceData;
+      return wrapWithReplyGesture(
+        item,
+        <ServiceMessageCard
+          service={serviceInfo}
+          isCurrentUser={isCurrentUser}
+          messageText={item.text}
+        />
+      );
+    }
+
     // 🎁 Render wishlist messages
     if (item.messageType === 'wishlist' && (item.wishlistData || item.metadata?.wishlistData)) {
       const wishlistInfo = item.wishlistData || item.metadata?.wishlistData;
@@ -5597,10 +5390,16 @@ const IndividualChatScreen = () => {
             />
           )}
           
-          {item.messageType === 'livestream' && item.livestreamData && (
+          {item.livestreamData && (
             <TouchableOpacity 
               style={styles.livestreamContainer}
-              onPress={() => Alert.alert('Live Stream', 'Join live stream')}
+              onPress={() => {
+                if (item.livestreamData?.id) {
+                  (navigation as any).navigate('LiveStreamViewer', { streamId: item.livestreamData.id });
+                } else {
+                  Alert.alert('Live Stream', 'Join live stream');
+                }
+              }}
             >
               <Image 
                 source={{ uri: item.livestreamData.thumbnailUrl }} 
@@ -5616,25 +5415,85 @@ const IndividualChatScreen = () => {
             </TouchableOpacity>
           )}
           
-          {item.messageType === 'auction' && item.auctionData && (
+          {item.auctionData && (
             <TouchableOpacity 
               style={styles.auctionContainer}
-              onPress={() => Alert.alert('Auction', 'View auction details')}
+              onPress={() => {
+                if (item.auctionData?.id) {
+                  (navigation as any).navigate('AuctionDetails', { auctionId: item.auctionData.id });
+                } else {
+                  Alert.alert('Auction', 'View auction details');
+                }
+              }}
             >
               <Image 
-                source={{ uri: item.auctionData.imageUrl }} 
+                source={{ uri: item.auctionData.imageUrl || item.auctionData.image }} 
                 style={styles.auctionImage}
               />
               <View style={styles.auctionInfo}>
                 <Text style={[styles.auctionTitle, isCurrentUser ? styles.currentUserText : styles.otherUserText]}>
-                  🔨 {item.auctionData.itemName}
+                  🔨 {item.auctionData.itemName || item.auctionData.title}
                 </Text>
                 <Text style={[styles.auctionPrice, { color: '#27AE60' }]}>
-                  Starting: ${item.auctionData.startingPrice}
+                  Starting: ₣{item.auctionData.startingPrice || item.auctionData.currentBid || 0}
                 </Text>
                 <Text style={[styles.auctionTime, isCurrentUser ? styles.currentUserTime : styles.otherUserTime]}>
                   Ends: {formatTime(item.auctionData.endTime)}
                 </Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {item.postData && (
+            <TouchableOpacity
+              style={styles.postContainer}
+              onPress={() => {
+                if (item.postData?.id) {
+                  (navigation as any).navigate('PostDetails', { postId: item.postData.id });
+                }
+              }}
+            >
+              {item.postData.image ? (
+                <Image source={{ uri: item.postData.image }} style={styles.postImage} />
+              ) : null}
+              <View style={styles.postInfo}>
+                <Text style={[styles.postText, isCurrentUser ? styles.currentUserText : styles.otherUserText]} numberOfLines={3}>
+                  {item.postData.content}
+                </Text>
+                {item.postData.username && (
+                  <Text style={[styles.postAuthor, isCurrentUser ? styles.currentUserTime : styles.otherUserTime]}>
+                    @{item.postData.username}
+                  </Text>
+                )}
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {item.profileData && (
+            <TouchableOpacity
+              style={styles.profileContainer}
+              onPress={() => {
+                if (item.profileData?.id) {
+                  (navigation as any).navigate('PublicProfile', { userId: item.profileData.id });
+                }
+              }}
+            >
+              {item.profileData.avatar ? (
+                <Image source={{ uri: item.profileData.avatar }} style={styles.profileAvatar} />
+              ) : (
+                <View style={styles.profileAvatarPlaceholder}>
+                  <Ionicons name="person" size={24} color="#888" />
+                </View>
+              )}
+              <View style={styles.profileInfo}>
+                <Text style={[styles.profileUsername, isCurrentUser ? styles.currentUserText : styles.otherUserText]}>
+                  @{item.profileData.username}
+                </Text>
+                {item.profileData.isSeller && (
+                  <Text style={[styles.profileBadge, isCurrentUser ? styles.currentUserTime : styles.otherUserTime]}>
+                    Vendor
+                  </Text>
+                )}
               </View>
             </TouchableOpacity>
           )}
@@ -5977,26 +5836,7 @@ const IndividualChatScreen = () => {
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity style={styles.attachmentOption} onPress={startLiveStream}>
-              <View style={styles.attachmentIconContainer}>
-                <Ionicons name="radio" size={24} color="#E74C3C" />
-              </View>
-              <View style={styles.attachmentTextContainer}>
-                <Text style={styles.attachmentTitle}>Live Stream</Text>
-                <Text style={styles.attachmentSubtitle}>Start broadcasting live</Text>
-              </View>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.attachmentOption} onPress={startAuction}>
-              <View style={styles.attachmentIconContainer}>
-                <Ionicons name="hammer" size={24} color="#9C27B0" />
-              </View>
-              <View style={styles.attachmentTextContainer}>
-                <Text style={styles.attachmentTitle}>Auction</Text>
-                <Text style={styles.attachmentSubtitle}>Create an auction for item</Text>
-              </View>
-            </TouchableOpacity>
-            
+
             {isAI && (
               <>
                 <TouchableOpacity
@@ -6404,7 +6244,7 @@ const IndividualChatScreen = () => {
         style={styles.inCallOverlay}
       >
         {/* Gift Animations - Render above video */}
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, pointerEvents: 'none' }}>
+        <GiftEffectStage>
           {activeGiftEffects.map((animation) => {
             console.log('🎁 Rendering LottieGiftEffect:', animation.id, animation.gift.emoji);
             return (
@@ -6419,7 +6259,7 @@ const IndividualChatScreen = () => {
               />
             );
           })}
-        </View>
+        </GiftEffectStage>
 
         {/* Full Screen Primary Video - Remote (Default) or Local (When Swapped) */}
         {/* Always show video UI when in video call - keep containers visible */}
@@ -7901,6 +7741,61 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   auctionTime: {
+    fontSize: 12,
+  },
+  postContainer: {
+    width: screenWidth * 0.65,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  postImage: {
+    width: '100%',
+    height: screenWidth * 0.4,
+  },
+  postInfo: {
+    padding: 12,
+  },
+  postText: {
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  postAuthor: {
+    fontSize: 12,
+  },
+  profileContainer: {
+    width: screenWidth * 0.65,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+  },
+  profileAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    marginRight: 12,
+  },
+  profileAvatarPlaceholder: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    marginRight: 12,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileInfo: {
+    flex: 1,
+  },
+  profileUsername: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 2,
+  },
+  profileBadge: {
     fontSize: 12,
   },
   // Modal styles

@@ -810,7 +810,9 @@ class RealtimeAPI {
       this.chatSocket = null;
     }
 
-    this.eventListeners.clear();
+    // ✅ FIX: Do NOT clear event listeners — the app depends on them surviving
+    // across reconnects. Only the socket state is torn down here.
+    // this.eventListeners.clear();
     // ✅ FIX: Reset both reconnect counters on disconnect
     this.reconnectAttempts = 0;
     this.chatReconnectAttempts = 0;

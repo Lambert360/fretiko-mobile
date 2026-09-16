@@ -162,8 +162,16 @@ api.interceptors.response.use(
               }
 
               if (isSecureStoreAvailable) {
-                await SecureStore.setItemAsync('accessToken', refreshData.accessToken);
-                await SecureStore.setItemAsync('refreshToken', refreshData.refreshToken);
+                // AFTER_FIRST_UNLOCK (rather than the default WHEN_UNLOCKED)
+                // keeps the token readable while the device is locked, e.g.
+                // when the app cold-starts from a CallKit "Answer" tap on
+                // the lock screen and immediately needs it for API calls.
+                await SecureStore.setItemAsync('accessToken', refreshData.accessToken, {
+                  keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+                });
+                await SecureStore.setItemAsync('refreshToken', refreshData.refreshToken, {
+                  keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+                });
               } else {
                 await AsyncStorage.setItem('accessToken_fallback', refreshData.accessToken);
                 await AsyncStorage.setItem('refreshToken_fallback', refreshData.refreshToken);

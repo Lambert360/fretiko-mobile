@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -454,16 +454,25 @@ const LiveSalesScreen = () => {
     }
   };
 
-  // Handle main feed item focus for visual feedback
+  // Handle main feed stream focus for visual feedback
   const handleViewableItemsChanged = useCallback(({ viewableItems }: any) => {
-    if (viewableItems.length > 0) {
-      const mostVisibleItem = viewableItems.reduce((prev: any, current: any) => {
-        return (prev.itemVisiblePercent || 0) > (current.itemVisiblePercent || 0) ? prev : current;
-      });
-
-      if (mostVisibleItem?.item?.id && mostVisibleItem.item.id !== focusedStreamId) {
-        setFocusedStreamId(mostVisibleItem.item.id);
+    const visibleStreams: { stream: LiveStream; percent: number }[] = [];
+    viewableItems.forEach((v: any) => {
+      if (v.item?.type === 'grid') {
+        const percent = v.itemVisiblePercent || 0;
+        v.item.streams.forEach((stream: LiveStream) => {
+          visibleStreams.push({ stream, percent });
+        });
       }
+    });
+    if (visibleStreams.length === 0) return;
+
+    const mostVisible = visibleStreams.reduce((prev: any, current: any) =>
+      prev.percent > current.percent ? prev : current
+    );
+
+    if (mostVisible.stream?.id && mostVisible.stream.id !== focusedStreamId) {
+      setFocusedStreamId(mostVisible.stream.id);
     }
   }, [focusedStreamId]);
 
@@ -540,14 +549,63 @@ const LiveSalesScreen = () => {
     />
   );
 
-  // Render main stream item
-  const renderMainStreamItem = ({ item }: { item: LiveStream }) => (
-    <LiveStreamCard
-      stream={item}
-      onPress={() => handleStreamPress(item)}
-      isFocused={focusedStreamId === item.id}
-    />
-  );
+  // Build main feed rows with hero banners inserted after every 10 streams
+  type MainRow =
+    | { type: 'grid'; streams: LiveStream[] }
+    | { type: 'hero'; hero: any };
+
+  const mainRows = useMemo<MainRow[]>(() => {
+    const ITEMS_PER_SECTION = 10;
+    const HERO_CARD_THRESHOLD = 10;
+    const rows: MainRow[] = [];
+    let streamIdx = 0;
+    let heroBannerIndex = 0;
+
+    while (streamIdx < mainStreams.length) {
+      const itemsToAdd = Math.min(ITEMS_PER_SECTION, mainStreams.length - streamIdx);
+      const sectionItems = mainStreams.slice(streamIdx, streamIdx + itemsToAdd);
+
+      for (let i = 0; i < sectionItems.length; i += 2) {
+        rows.push({ type: 'grid', streams: sectionItems.slice(i, i + 2) });
+      }
+
+      streamIdx += itemsToAdd;
+
+      if (
+        streamIdx < mainStreams.length &&
+        itemsToAdd >= HERO_CARD_THRESHOLD &&
+        heroImages.length > 0
+      ) {
+        rows.push({
+          type: 'hero',
+          hero: heroImages[heroBannerIndex % heroImages.length],
+        });
+        heroBannerIndex++;
+      }
+    }
+
+    return rows;
+  }, [mainStreams, heroImages]);
+
+  // Render main feed row (grid or hero banner)
+  const renderMainRow = ({ item, index }: { item: MainRow; index: number }) => {
+    if (item.type === 'hero') {
+      return <HeroMedia key={`hero-${index}`} hero={item.hero} height={180} />;
+    }
+
+    return (
+      <View key={`grid-${index}`} style={styles.row}>
+        {item.streams.map((stream) => (
+          <LiveStreamCard
+            key={stream.id}
+            stream={stream}
+            onPress={() => handleStreamPress(stream)}
+            isFocused={focusedStreamId === stream.id}
+          />
+        ))}
+      </View>
+    );
+  };
 
   // Render loading footer
   const renderFooter = () => {
@@ -611,11 +669,9 @@ const LiveSalesScreen = () => {
 
       {/* Main content */}
       <FlatList
-        data={mainStreams}
-        renderItem={renderMainStreamItem}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
-        columnWrapperStyle={styles.row}
+        data={mainRows}
+        renderItem={renderMainRow}
+        keyExtractor={(item, index) => (item.type === 'grid' ? `grid-${index}` : `hero-${index}`)}
         contentContainerStyle={[
           styles.listContent,
           { paddingBottom: insets.bottom + (isVendor ? 100 : 20) }

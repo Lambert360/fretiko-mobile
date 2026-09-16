@@ -16,6 +16,7 @@ import {
   KeyboardAvoidingView,
   Animated,
   PanResponder,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
@@ -28,8 +29,11 @@ import { liveStreamSocket, LiveComment, LiveReaction, LiveGift } from '../servic
 import { productsAPI, Product } from '../services/productsAPI';
 import { workspaceAPI, WorkspaceOrder } from '../services/workspaceAPI';
 import { useAuctionSounds } from '../services/auctionSoundService';
+import { chatAPI, ChatConversation } from '../services/chatAPI';
 import * as ImagePicker from 'expo-image-picker';
 import LottieGiftEffect from '../components/LottieGiftEffect';
+import GiftEffectStage from '../components/GiftEffectStage';
+import ShareModal from '../components/ShareModal';
 
 // Import basic Agora SDK
 import { createAgoraRtcEngine, ChannelProfileType, ClientRoleType, IRtcEngine, ChannelMediaOptions, RtcSurfaceView, RenderModeType, VideoCanvas } from 'react-native-agora';
@@ -139,11 +143,20 @@ const LiveStreamBroadcastScreen = () => {
   const [editLivePrice, setEditLivePrice] = useState('');
   const [editLiveStock, setEditLiveStock] = useState('');
 
+  // Out-of-stock toast for product picker
+  const [outOfStockProduct, setOutOfStockProduct] = useState<Product | null>(null);
+  const outOfStockOpacity = useRef(new Animated.Value(0)).current;
+  const outOfStockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Analytics modal
   const [showAnalytics, setShowAnalytics] = useState(false);
 
   const [showOrders, setShowOrders] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
+  const [isSharing, setIsSharing] = useState(false);
   const [workspaceOrders, setWorkspaceOrders] = useState<WorkspaceOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState<string | null>(null);
@@ -388,6 +401,26 @@ const LiveStreamBroadcastScreen = () => {
 
     const parts = [address.address, address.city, address.state, address.postalCode].filter(Boolean);
     return parts.length > 0 ? parts.join(', ') : 'No address provided';
+  };
+
+  const getRelativeTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  };
+
+  const isNewOrder = (dateString: string): boolean => {
+    const date = new Date(dateString);
+    const now = new Date();
+    return now.getTime() - date.getTime() < 60 * 60 * 1000; // within 1 hour
   };
 
   const loadActiveOrders = async () => {
@@ -660,11 +693,13 @@ const LiveStreamBroadcastScreen = () => {
     });
 
     if (!result.canceled && result.assets[0]) {
-      setPortfolioImages(prev => [...prev, {
+      // New images are inserted at the front so the newest image sits next to
+      // the fixed "Add Image" button and older images shift to the right.
+      setPortfolioImages(prev => [{
         uri: result.assets[0].uri,
         caption: '',
         is_primary: prev.length === 0, // First image is primary
-      }]);
+      }, ...prev]);
     }
   };
 
@@ -758,6 +793,41 @@ const LiveStreamBroadcastScreen = () => {
     } finally {
       setLoadingProducts(false);
     }
+  };
+
+  // Show an out-of-stock toast in the product picker
+  const showOutOfStockToast = (product: Product) => {
+    if (outOfStockTimeoutRef.current) {
+      clearTimeout(outOfStockTimeoutRef.current);
+    }
+
+    setOutOfStockProduct(product);
+    outOfStockOpacity.setValue(0);
+
+    Animated.timing(outOfStockOpacity, {
+      toValue: 1,
+      duration: 250,
+      useNativeDriver: true,
+    }).start();
+
+    outOfStockTimeoutRef.current = setTimeout(() => {
+      Animated.timing(outOfStockOpacity, {
+        toValue: 0,
+        duration: 500,
+        useNativeDriver: true,
+      }).start(() => {
+        setOutOfStockProduct(null);
+        outOfStockTimeoutRef.current = null;
+      });
+    }, 2500);
+  };
+
+  const handleProductPickerPress = (product: Product) => {
+    if (product.quantity <= 0) {
+      showOutOfStockToast(product);
+      return;
+    }
+    handleSelectProduct(product);
   };
 
   // Handle product selection from catalogue
@@ -1196,6 +1266,70 @@ const LiveStreamBroadcastScreen = () => {
     }
   };
 
+  const handleOpenShare = async () => {
+    setShowShareModal(true);
+    setSelectedConversations([]);
+    setChatConversationsLoading(true);
+
+    try {
+      const { conversations } = await chatAPI.getConversations(1, 50);
+      setChatConversations(conversations);
+    } catch (error) {
+      console.error('Error loading chat conversations:', error);
+      Alert.alert('Error', 'Failed to load conversations for sharing');
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  };
+
+  const handleShareToChats = async () => {
+    if (selectedConversations.length === 0) return;
+
+    setIsSharing(true);
+
+    try {
+      const livestreamData = {
+        id: stream.id,
+        title: stream.title || 'Live Stream',
+        isLive: stream.status === 'live',
+        viewers: viewerCount,
+        thumbnailUrl: stream.thumbnail_url || '',
+      };
+
+      await Promise.all(
+        selectedConversations.map((conversation) =>
+          chatAPI.sendMessage({
+            conversationId: conversation.id,
+            messageType: 'text',
+            content: stream.title || 'Join my live stream',
+            metadata: { livestreamData },
+          })
+        )
+      );
+
+      Alert.alert('Shared', `Live stream shared to ${selectedConversations.length} chat${selectedConversations.length === 1 ? '' : 's'}.`);
+      setShowShareModal(false);
+      setSelectedConversations([]);
+    } catch (error) {
+      console.error('Error sharing live stream to chats:', error);
+      Alert.alert('Error', 'Failed to share live stream to chats');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleShareExternal = async () => {
+    try {
+      const shareUrl = `https://fretiko.com/live/${stream.id}`;
+      await Share.share({
+        message: `Join my live stream on Fretiko: ${stream.title}\n\n${shareUrl}`,
+        url: shareUrl,
+      });
+    } catch (error) {
+      console.error('Error sharing live stream:', error);
+    }
+  };
+
   const handleEndStreamConfirmed = async () => {
     try {
       console.log('🏁 Starting stream end process...');
@@ -1308,6 +1442,37 @@ const LiveStreamBroadcastScreen = () => {
         </View>
       )}
 
+      {/* Host pause overlay */}
+      {isPaused && isLive && (
+        <View style={styles.hostPauseOverlay} pointerEvents="none">
+          <View style={styles.hostPauseContent}>
+            <Ionicons name="pause-circle" size={80} color="rgba(255, 255, 255, 0.95)" />
+            <Text style={styles.hostPauseTitle}>Paused</Text>
+            <Text style={styles.hostPauseSubtitle}>Your live stream is paused</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Host mute overlay */}
+      {(isVideoMuted || isAudioMuted) && isLive && !isPaused && (
+        <View style={styles.hostMuteOverlay} pointerEvents="none">
+          <View style={styles.hostMuteContent}>
+            {isVideoMuted && (
+              <View style={styles.hostMuteRow}>
+                <Ionicons name="videocam-off" size={22} color="rgba(255, 255, 255, 0.95)" />
+                <Text style={styles.hostMuteText}>Video off</Text>
+              </View>
+            )}
+            {isAudioMuted && (
+              <View style={styles.hostMuteRow}>
+                <Ionicons name="mic-off" size={22} color="rgba(255, 255, 255, 0.95)" />
+                <Text style={styles.hostMuteText}>Audio muted</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+
       {/* Top Controls - TikTok Style */}
       <View style={[styles.topControls, { paddingTop: insets.top + 10 }]}>
         {/* Close Button - Top Left */}
@@ -1344,6 +1509,13 @@ const LiveStreamBroadcastScreen = () => {
             <Ionicons name="eye" size={16} color="white" />
             <Text style={styles.viewerText}>{viewerCount}</Text>
           </View>
+
+          <TouchableOpacity
+            style={styles.controlIconButton}
+            onPress={handleOpenShare}
+          >
+            <Ionicons name="share-outline" size={20} color="white" />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -1370,15 +1542,17 @@ const LiveStreamBroadcastScreen = () => {
       )}
 
       {/* Gift Animations - Render above video */}
-      {activeGiftEffects.map((animation) => (
-        <LottieGiftEffect
-          key={animation.id}
-          gift={animation.gift}
-          onComplete={() => {
-            setActiveGiftEffects((prev) => prev.filter((anim) => anim.id !== animation.id));
-          }}
-        />
-      ))}
+      <GiftEffectStage>
+        {activeGiftEffects.map((animation) => (
+          <LottieGiftEffect
+            key={animation.id}
+            gift={animation.gift}
+            onComplete={() => {
+              setActiveGiftEffects((prev) => prev.filter((anim) => anim.id !== animation.id));
+            }}
+          />
+        ))}
+      </GiftEffectStage>
 
       {/* Stream Title Overlay */}
       <View style={styles.streamTitleOuter}>
@@ -1855,26 +2029,47 @@ const LiveStreamBroadcastScreen = () => {
                 <FlatList
                   data={workspaceOrders}
                   keyExtractor={(item) => item.id}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={{ paddingVertical: 12, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}
-                      onPress={() => openOrderDetails(item.id)}
-                    >
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Text style={{ color: 'white', fontWeight: '700' }}>#{item.orderNumber}</Text>
-                        <Text style={{ color: 'rgba(255,255,255,0.8)' }}>{item.status.replace('_', ' ')}</Text>
-                      </View>
-                      <Text style={{ color: 'rgba(255,255,255,0.85)', marginTop: 6 }} numberOfLines={1}>
-                        {item.customerName}
-                      </Text>
-                      <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4 }} numberOfLines={1}>
-                        {formatDeliveryAddress(item.deliveryAddress)}
-                      </Text>
-                      <Text style={{ color: 'rgba(255,255,255,0.9)', marginTop: 6, fontWeight: '600' }}>
-                        ₣{item.total}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
+                  renderItem={({ item }) => {
+                    const isLiveStream = item.source === 'live_stream';
+                    return (
+                      <TouchableOpacity
+                        style={{
+                          paddingVertical: 12,
+                          paddingHorizontal: 12,
+                          borderBottomWidth: 1,
+                          borderBottomColor: 'rgba(255,255,255,0.08)',
+                          borderLeftWidth: 4,
+                          borderLeftColor: isLiveStream ? '#FF2D95' : '#3498DB',
+                          backgroundColor: isLiveStream ? 'rgba(255,45,149,0.12)' : 'rgba(52,152,219,0.1)',
+                        }}
+                        onPress={() => openOrderDetails(item.id)}
+                      >
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text style={{ color: 'white', fontWeight: '700' }}>#{item.orderNumber}</Text>
+                          <Text style={{ color: 'rgba(255,255,255,0.8)' }}>{item.status.replace('_', ' ')}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 8 }}>
+                          {isNewOrder(item.createdAt) && (
+                            <View style={{ backgroundColor: '#FF3B30', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
+                              <Text style={{ color: 'white', fontSize: 10, fontWeight: '800' }}>NEW</Text>
+                            </View>
+                          )}
+                          <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12 }}>
+                            {getRelativeTime(item.createdAt)}
+                          </Text>
+                        </View>
+                        <Text style={{ color: 'rgba(255,255,255,0.85)', marginTop: 6 }} numberOfLines={1}>
+                          {item.customerName}
+                        </Text>
+                        <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4 }} numberOfLines={1}>
+                          {formatDeliveryAddress(item.deliveryAddress)}
+                        </Text>
+                        <Text style={{ color: 'rgba(255,255,255,0.9)', marginTop: 6, fontWeight: '600' }}>
+                          ₣{item.total}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  }}
                   ListEmptyComponent={
                     <View style={styles.noComments}>
                       <Ionicons name="receipt" size={60} color="#666" />
@@ -2020,6 +2215,17 @@ const LiveStreamBroadcastScreen = () => {
             {/* Multi-Image Gallery */}
             <Text style={styles.inputLabel}>Images * (Up to 5)</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagesGallery}>
+              {/* Add Image card is always the leftmost item */}
+              {portfolioImages.length < 5 && (
+                <TouchableOpacity
+                  style={styles.addImageButton}
+                  onPress={handleAddPortfolioImage}
+                >
+                  <Ionicons name="add-circle" size={40} color="#3498DB" />
+                  <Text style={styles.addImageText}>Add Image</Text>
+                </TouchableOpacity>
+              )}
+
               {portfolioImages.map((img, index) => (
                 <View key={index} style={styles.imageGalleryItem}>
                   <Image source={{ uri: img.uri }} style={styles.galleryImage} />
@@ -2051,15 +2257,6 @@ const LiveStreamBroadcastScreen = () => {
                   />
                 </View>
               ))}
-              {portfolioImages.length < 5 && (
-                <TouchableOpacity
-                  style={styles.addImageButton}
-                  onPress={handleAddPortfolioImage}
-                >
-                  <Ionicons name="add-circle" size={40} color="#3498DB" />
-                  <Text style={styles.addImageText}>Add Image</Text>
-                </TouchableOpacity>
-              )}
             </ScrollView>
 
             {/* Title Input */}
@@ -2168,6 +2365,19 @@ const LiveStreamBroadcastScreen = () => {
               </TouchableOpacity>
             </View>
 
+            {/* Out-of-stock toast */}
+            {outOfStockProduct && (
+              <Animated.View
+                style={[styles.outOfStockToast, { opacity: outOfStockOpacity }]}
+                pointerEvents="none"
+              >
+                <Ionicons name="close-circle" size={20} color="white" />
+                <Text style={styles.outOfStockText} numberOfLines={2}>
+                  {outOfStockProduct.name} is out of stock
+                </Text>
+              </Animated.View>
+            )}
+
           {editingProduct ? (
             // Product Configuration View
             <ScrollView style={styles.analyticsContent}>
@@ -2242,7 +2452,7 @@ const LiveStreamBroadcastScreen = () => {
                     return (
                       <TouchableOpacity
                         style={[styles.productPickerItem, isAlreadyAdded && styles.productPickerItemDisabled]}
-                        onPress={() => !isAlreadyAdded && handleSelectProduct(item)}
+                        onPress={() => handleProductPickerPress(item)}
                         disabled={isAlreadyAdded}
                       >
                         <Image
@@ -2271,6 +2481,20 @@ const LiveStreamBroadcastScreen = () => {
           </View>
         </View>
       </Modal>
+
+      <ShareModal
+        visible={showShareModal}
+        title="Share Live Stream"
+        onClose={() => setShowShareModal(false)}
+        conversations={chatConversations}
+        conversationsLoading={chatConversationsLoading}
+        selectedConversations={selectedConversations}
+        onSelect={setSelectedConversations}
+        onShare={handleShareToChats}
+        onShareExternal={handleShareExternal}
+        isSharing={isSharing}
+        insetsBottom={insets.bottom}
+      />
     </View>
   );
 };
@@ -3036,6 +3260,27 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontStyle: 'italic',
   },
+  outOfStockToast: {
+    position: 'absolute',
+    top: 70,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(231, 76, 60, 0.95)',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    zIndex: 100,
+  },
+  outOfStockText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '600',
+    flex: 1,
+  },
   productConfigContainer: {
     padding: 20,
   },
@@ -3151,6 +3396,65 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#FFD700',
     zIndex: 10,
+  },
+  // Host pause / mute overlays
+  hostPauseOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  hostPauseContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hostPauseTitle: {
+    color: 'white',
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginTop: 16,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  hostPauseSubtitle: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  hostMuteOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  hostMuteContent: {
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    minWidth: 200,
+  },
+  hostMuteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  hostMuteText: {
+    color: 'rgba(255, 255, 255, 0.95)',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

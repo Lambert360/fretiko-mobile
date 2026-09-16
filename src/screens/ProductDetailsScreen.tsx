@@ -22,8 +22,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { productsAPI, Product as APIProduct } from '../services/productsAPI';
 import { wishlistAPI } from '../services/wishlistAPI';
-import { chatAPI } from '../services/chatAPI';
+import { chatAPI, ChatConversation } from '../services/chatAPI';
 import ProductVideoPlayer from '../components/ProductVideoPlayer';
+import ShareModal from '../components/ShareModal';
 import { MediaViewerModal } from '../components/MediaViewerModal';
 import RichText from '../components/RichText';
 import AdaptiveText from '../components/AdaptiveText';
@@ -73,6 +74,11 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
   const [mediaViewerType, setMediaViewerType] = useState<'image' | 'video'>('image');
   const [mediaViewerUri, setMediaViewerUri] = useState<string>('');
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
+  const [isSharing, setIsSharing] = useState(false);
   
   // Animation values
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -118,6 +124,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
   };
 
   const checkWishlistStatus = async () => {
+    if (!user) return;
     try {
       const result = await wishlistAPI.checkIsInWishlist(productId);
       setIsInWishlist(result.isInWishlist);
@@ -203,6 +210,60 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
   };
 
   const handleShareProduct = async () => {
+    if (!product) return;
+
+    setShowShareModal(true);
+    setSelectedConversations([]);
+    setChatConversationsLoading(true);
+
+    try {
+      const { conversations } = await chatAPI.getConversations(1, 50);
+      setChatConversations(conversations);
+    } catch (error) {
+      console.error('Error loading chat conversations:', error);
+      Alert.alert('Error', 'Failed to load conversations for sharing');
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  };
+
+  const handleShareProductToChats = async () => {
+    if (!product || selectedConversations.length === 0) return;
+
+    setIsSharing(true);
+
+    try {
+      const productData = {
+        id: product.id,
+        name: product.name,
+        price: product.price || 0,
+        image: product.images?.[0] || product.primary_image_url || '',
+        vendor_username: product.vendor_username,
+      };
+
+      await Promise.all(
+        selectedConversations.map((conversation) =>
+          chatAPI.sendMessage({
+            conversationId: conversation.id,
+            messageType: 'text',
+            content: product.name,
+            metadata: { productData },
+          })
+        )
+      );
+
+      Alert.alert('Shared', `Product shared to ${selectedConversations.length} chat${selectedConversations.length === 1 ? '' : 's'}.`);
+      setShowShareModal(false);
+      setSelectedConversations([]);
+    } catch (error) {
+      console.error('Error sharing product to chats:', error);
+      Alert.alert('Error', 'Failed to share product to chats');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleShareProductExternal = async () => {
     if (!product) return;
 
     try {
@@ -846,6 +907,20 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
         uri={mediaViewerUri}
         uris={mediaViewerType === 'image' ? product.images : undefined}
         initialIndex={mediaViewerType === 'image' ? currentImageIndex : 0}
+      />
+
+      <ShareModal
+        visible={showShareModal}
+        title="Share Product"
+        onClose={() => setShowShareModal(false)}
+        conversations={chatConversations}
+        conversationsLoading={chatConversationsLoading}
+        selectedConversations={selectedConversations}
+        onSelect={setSelectedConversations}
+        onShare={handleShareProductToChats}
+        onShareExternal={handleShareProductExternal}
+        isSharing={isSharing}
+        insetsBottom={insets.bottom}
       />
     </View>
   );

@@ -27,9 +27,11 @@ import { postsAPI, Post, PostInteraction } from '../services/postsAPI';
 import { contentReportsAPI, ReportCategory } from '../services/contentReportsAPI';
 import { giftAPI, UserGift } from '../services/giftAPI';
 import { userAPI } from '../services/userAPI';
+import { chatAPI, ChatConversation } from '../services/chatAPI';
 import GiftSelectorModal from '../components/GiftSelectorModal';
 import RichText from '../components/RichText';
 import LikesListModal from '../components/LikesListModal';
+import ShareModal from '../components/ShareModal';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const COMMENTS_PAGE_SIZE = 20;
@@ -73,6 +75,11 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
   const [giftsLoading, setGiftsLoading] = useState(false);
   const [showMediaViewer, setShowMediaViewer] = useState(false);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
+  const [isSharing, setIsSharing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'none' | 'pending' | 'accepted' | 'blocked'>('none');
   const [connectionId, setConnectionId] = useState<string | undefined>();
   const [refreshing, setRefreshing] = useState(false);
@@ -329,6 +336,59 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
   };
 
   const handleShare = async () => {
+    if (!post) return;
+
+    setShowShareModal(true);
+    setSelectedConversations([]);
+    setChatConversationsLoading(true);
+
+    try {
+      const { conversations } = await chatAPI.getConversations(1, 50);
+      setChatConversations(conversations);
+    } catch (error) {
+      console.error('Error loading chat conversations:', error);
+      Alert.alert('Error', 'Failed to load conversations for sharing');
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  };
+
+  const handleShareToChats = async () => {
+    if (!post || selectedConversations.length === 0) return;
+
+    setIsSharing(true);
+
+    try {
+      const postData = {
+        id: post.id,
+        content: post.content || 'Check out this post on Fretiko!',
+        image: post.mediaUrls?.[0] || post.thumbnailUrls?.[0] || '',
+        username: post.user?.username,
+      };
+
+      await Promise.all(
+        selectedConversations.map((conversation) =>
+          chatAPI.sendMessage({
+            conversationId: conversation.id,
+            messageType: 'text',
+            content: post.content || 'Check out this post',
+            metadata: { postData },
+          })
+        )
+      );
+
+      Alert.alert('Shared', `Post shared to ${selectedConversations.length} chat${selectedConversations.length === 1 ? '' : 's'}.`);
+      setShowShareModal(false);
+      setSelectedConversations([]);
+    } catch (error) {
+      console.error('Error sharing post to chats:', error);
+      Alert.alert('Error', 'Failed to share post to chats');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleShareExternal = async () => {
     if (!post) return;
 
     try {
@@ -1091,6 +1151,20 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
           </View>
         </View>
       </Modal>
+
+      <ShareModal
+        visible={showShareModal}
+        title="Share Post"
+        onClose={() => setShowShareModal(false)}
+        conversations={chatConversations}
+        conversationsLoading={chatConversationsLoading}
+        selectedConversations={selectedConversations}
+        onSelect={setSelectedConversations}
+        onShare={handleShareToChats}
+        onShareExternal={handleShareExternal}
+        isSharing={isSharing}
+        insetsBottom={insets.bottom}
+      />
     </View>
   );
 };

@@ -12,6 +12,7 @@ import {
 import { Calendar, DateData } from 'react-native-calendars';
 import { Ionicons } from '@expo/vector-icons';
 import { scheduleAPI, ScheduledOrder, MonthSummary } from '../services/scheduleAPI';
+import { walletAPI } from '../services/walletAPI';
 
 interface ScheduleCalendarScreenProps {
   navigation: any;
@@ -156,7 +157,7 @@ const ScheduleCalendarScreen: React.FC<ScheduleCalendarScreenProps> = ({ navigat
           <View style={styles.detailRow}>
             <Ionicons name="location-outline" size={16} color="#888" />
             <Text style={styles.detailText} numberOfLines={1}>
-              {typeof order.location === 'string' ? order.location : order.location.address || 'Location'}
+              {typeof order.location === 'string' ? order.location : order.location?.address || 'Location'}
             </Text>
           </View>
         )}
@@ -165,7 +166,7 @@ const ScheduleCalendarScreen: React.FC<ScheduleCalendarScreenProps> = ({ navigat
       <View style={styles.orderItemFooter}>
         <Text style={styles.orderNumber}>#{order.orderNumber}</Text>
         <Text style={styles.orderTotal}>
-          ₦{order.total.toLocaleString()}
+          {walletAPI.formatFreti(order.total)}
         </Text>
       </View>
     </TouchableOpacity>

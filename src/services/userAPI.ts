@@ -144,6 +144,18 @@ export const userAPI = {
     }
   },
 
+  // Sync device timezone (used for accurately-timed schedule reminders/digests).
+  // Merges into preferences server-side, so it's safe to call silently on every app open.
+  updateTimezone: async (timezone: string): Promise<{ timezone: string }> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.put('/users/timezone', { timezone }, { headers });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to update timezone');
+    }
+  },
+
   // Upload avatar image
   uploadAvatar: async (imageUri: string): Promise<string> => {
     try {

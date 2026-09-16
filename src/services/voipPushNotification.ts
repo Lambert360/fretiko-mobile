@@ -3,6 +3,7 @@ import RNVoipPushNotification from 'react-native-voip-push-notification';
 import { notificationsAPI } from './notificationsAPI';
 import { callkeepService } from './callkeepService';
 import { pushNotificationService } from './pushNotificationService';
+import { getPendingCallEnded } from './callBackgroundTask';
 
 let isInitialized = false;
 let pendingVoipToken: string | null = null;
@@ -36,6 +37,13 @@ const handleNotification = async (notification: any) => {
 
   try {
     if (data.type === 'call_incoming') {
+      // If the call has already ended, don't display it as an incoming call.
+      const pending = await getPendingCallEnded();
+      if (pending?.callSessionId === callSessionId) {
+        console.log('Ignoring stale call_incoming; call already ended:', callSessionId);
+        return;
+      }
+
       // On iOS, displayIncomingCall() skips re-reporting to CallKit (the
       // native AppDelegate already reported this call synchronously before
       // this JS handler ran) and just records bookkeeping.

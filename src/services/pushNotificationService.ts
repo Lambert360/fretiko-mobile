@@ -9,6 +9,7 @@ import Constants from 'expo-constants';
 import { notificationsAPI } from './notificationsAPI';
 import { realtimeAPI } from './realtimeAPI';
 import { callkeepService } from './callkeepService';
+import { getPendingCallEnded, setPendingCallEnded } from './callBackgroundTask';
 
 // Configure how notifications should be handled when app is in foreground
 Notifications.setNotificationHandler({
@@ -19,6 +20,16 @@ Notifications.setNotificationHandler({
       const isCallIncoming = type === 'call_incoming';
 
       if (isCallIncoming) {
+        // If a call_ended push for this session has already arrived, do not show it.
+        const pending = await getPendingCallEnded();
+        if (data?.callSessionId && pending?.callSessionId === data.callSessionId) {
+          return {
+            shouldShowAlert: false,
+            shouldPlaySound: false,
+            shouldSetBadge: false,
+          };
+        }
+
         const isRealtimeConnected =
           typeof realtimeAPI.isConnected === 'function' ? realtimeAPI.isConnected() : false;
 
@@ -31,6 +42,7 @@ Notifications.setNotificationHandler({
 
       if (type === 'call_ended') {
         if (data?.callSessionId) {
+          await setPendingCallEnded(data.callSessionId, (data as any)?.reason);
           callkeepService.endCallkeepCall(data.callSessionId);
           callkeepService.setActiveCall(null);
           callkeepService.notifyRemoteCallEnded(data.callSessionId, (data as any)?.reason);
@@ -182,9 +194,8 @@ class PushNotificationService {
 
       const messaging = require('@react-native-firebase/messaging').default;
 
-      const hasPermission = await this.requestPermissions();
-      if (!hasPermission) return null;
-
+      // FCM data-only call pushes can trigger CallKeep even if the user has not
+      // granted normal notification permission, so just retrieve the token.
       const token = await messaging().getToken();
       this.fcmToken = token;
 
@@ -370,6 +381,13 @@ class PushNotificationService {
         if (data.type === 'call_incoming') {
           const { callSessionId, callerName, conversationId, callType } = data;
           if (callSessionId) {
+            // If a call_ended push for this session has already arrived, do not ring.
+            const pending = await getPendingCallEnded();
+            if (pending?.callSessionId === callSessionId) {
+              console.log('Ignoring stale call_incoming; call already ended:', callSessionId);
+              return;
+            }
+
             await callkeepService.displayIncomingCall({
               uuid: callSessionId,
               callSessionId,
@@ -382,6 +400,7 @@ class PushNotificationService {
         }
 
         if (data.type === 'call_ended' && data.callSessionId) {
+          await setPendingCallEnded(data.callSessionId, data.reason);
           callkeepService.endCallkeepCall(data.callSessionId);
           callkeepService.setActiveCall(null);
           callkeepService.notifyRemoteCallEnded(data.callSessionId, data.reason);

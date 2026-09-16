@@ -125,7 +125,7 @@ const withVoipPushNotification = (config) => {
     if (!newContents.includes('var voipRegistry: PKPushRegistry?')) {
       newContents = newContents.replace(
         '  var reactNativeFactory: RCTReactNativeFactory?\n',
-        '  var reactNativeFactory: RCTReactNativeFactory?\n  var voipRegistry: PKPushRegistry?\n  private static var isCallKeepSetupDone = false\n'
+        '  var reactNativeFactory: RCTReactNativeFactory?\n  var voipRegistry: PKPushRegistry?\n  private static var isCallKeepSetupDone = false\n  private static var reportedIncomingCallIds = Set<String>()\n  private static var endedCallIds = Set<String>()\n'
       );
     }
 
@@ -171,9 +171,18 @@ const withVoipPushNotification = (config) => {
     }
 
     let type = dict["type"] as? String
+    let reason = dict["reason"] as? String
+    let isVideo = (dict["callType"] as? String) == "video"
+    let callerName = (dict["callerName"] as? String) ?? "Unknown Caller"
+
     if type == "call_incoming" {
-      let callerName = (dict["callerName"] as? String) ?? "Unknown Caller"
-      let isVideo = (dict["callType"] as? String) == "video"
+      // If we have already seen a call_ended push for this session (out of
+      // order delivery or collapsed pushes), do not ring — report it as missed.
+      if AppDelegate.endedCallIds.contains(callSessionId) {
+        RNCallKeep.endCall(withUUID: callSessionId, reason: 3)
+        return
+      }
+
       RNCallKeep.reportNewIncomingCall(
         callSessionId,
         handle: callerName,
@@ -188,28 +197,23 @@ const withVoipPushNotification = (config) => {
         payload: nil,
         withCompletionHandler: nil
       )
+      AppDelegate.reportedIncomingCallIds.insert(callSessionId)
     } else {
-      // call_ended (or any other type): iOS still requires every VoIP push
-      // to result in an incoming call being reported to CallKit, even if it
-      // is immediately ended. Report a transient call for this UUID, then
-      // end it. The endCall call also dismisses the real CallKit UI if it
-      // was already displayed.
-      let callerName = (dict["callerName"] as? String) ?? "Unknown Caller"
-      RNCallKeep.reportNewIncomingCall(
-        callSessionId,
-        handle: callerName,
-        handleType: "generic",
-        hasVideo: (dict["callType"] as? String) == "video",
-        localizedCallerName: callerName,
-        supportsHolding: true,
-        supportsDTMF: true,
-        supportsGrouping: false,
-        supportsUngrouping: false,
-        fromPushKit: true,
-        payload: nil,
-        withCompletionHandler: nil
-      )
-      RNCallKeep.endCall(withUUID: callSessionId, reason: 2)
+      // call_ended (or any other type): report the call as ended/missed
+      // directly. This satisfies the CallKit action requirement without
+      // briefly ringing the device. If the incoming-call UI is currently
+      // displayed, endCall dismisses it.
+      let endReason: Int32
+      if reason == "declined" {
+        endReason = 5 // CXCallEndedReasonDeclinedElsewhere
+      } else if reason == "missed" || reason == "timeout" || reason == "not_answered" || reason == "cancelled" {
+        endReason = 3 // CXCallEndedReasonUnanswered
+      } else {
+        endReason = 2 // CXCallEndedReasonRemoteEnded
+      }
+      RNCallKeep.endCall(withUUID: callSessionId, reason: endReason)
+      AppDelegate.reportedIncomingCallIds.remove(callSessionId)
+      AppDelegate.endedCallIds.insert(callSessionId)
     }
   }
 

@@ -292,6 +292,8 @@ const LiveMiniCheckoutScreen = () => {
         ? { cardNumber: giftCardNumber.trim(), pin: giftCardPin.trim(), amount: getGiftCardDiscount() }
         : undefined;
 
+      const baseDeliveryPrice = riderId ? (riderPrice || 0) : undefined;
+
       if (item.type === 'product') {
         const purchaseData = {
           stream_id: streamId,
@@ -299,6 +301,7 @@ const LiveMiniCheckoutScreen = () => {
           quantity: item.quantity || 1,
           continue_watching: false,
           rider_id: riderId,
+          deliveryPrice: baseDeliveryPrice,
           delivery_address: deliveryAddress,
           payment_method: selectedPayment.id,
           use_escrow: useEscrow,
@@ -327,6 +330,7 @@ const LiveMiniCheckoutScreen = () => {
           quantity: 1,
           continue_watching: false,
           rider_id: riderId,
+          deliveryPrice: baseDeliveryPrice,
           delivery_address: deliveryAddress,
           payment_method: selectedPayment.id,
           use_escrow: useEscrow,

@@ -109,6 +109,7 @@ const VideoProductCard: React.FC<{
               videoUri={displayMediaUrl}
               shouldAutoPlay={isVisible}
               containerWidth={screenWidth - 24}
+              minHeight={minMediaHeight}
             />
           ) : (
             <Image

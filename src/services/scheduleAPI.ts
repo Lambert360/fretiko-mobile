@@ -13,7 +13,7 @@ export interface ScheduledOrder {
   customerName: string;
   customerPhone: string | null;
   total: number;
-  location: string | null;
+  location: string | { address?: string } | null;
   createdAt: string;
   metadata?: {
     [key: string]: any;

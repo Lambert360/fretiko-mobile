@@ -13,6 +13,11 @@ export interface LiveStream {
     username: string;
     avatar_url?: string;
     is_verified?: boolean;
+    location?: {
+      state?: string;
+      country?: string;
+      city?: string;
+    };
   };
   title: string;
   description?: string;
@@ -167,13 +172,23 @@ export interface LiveGiftCardData {
   amount?: number; // Optional: manually specify how much of the card balance to use
 }
 
+export interface LiveInterstateCompanyData {
+  companyId: string;
+  companyName: string;
+  deliveryPrice: number;
+  estimatedDeliveryDays: number;
+  isInternational: boolean;
+}
+
 export interface LivePurchaseData {
   stream_id: string;
   product_id: string;
   quantity: number;
   continue_watching?: boolean;
   rider_id?: string;
+  deliveryPrice?: number;
   delivery_address?: any;
+  interstateCompany?: LiveInterstateCompanyData;
   giftCard?: LiveGiftCardData;
 }
 
@@ -184,6 +199,23 @@ export interface LiveBookingData {
   service_time: string;
   service_notes?: string;
   continue_watching?: boolean;
+  rider_id?: string;
+  deliveryPrice?: number;
+  delivery_address?: any;
+  interstateCompany?: LiveInterstateCompanyData;
+  giftCard?: LiveGiftCardData;
+}
+
+export interface LivePortfolioBookingData {
+  stream_id: string;
+  portfolio_id: string;
+  service_date: string;
+  service_time: string;
+  service_notes?: string;
+  rider_id?: string;
+  deliveryPrice?: number;
+  delivery_address?: any;
+  interstateCompany?: LiveInterstateCompanyData;
   giftCard?: LiveGiftCardData;
 }
 
@@ -742,14 +774,7 @@ class LiveSalesAPI {
   /**
    * Book a portfolio service
    */
-  async bookPortfolioService(bookingData: {
-    stream_id: string;
-    portfolio_id: string;
-    service_date: string;
-    service_time: string;
-    service_notes?: string;
-    giftCard?: LiveGiftCardData;
-  }): Promise<void> {
+  async bookPortfolioService(bookingData: LivePortfolioBookingData): Promise<void> {
     try {
       await this.request('/live-sales/portfolio/book', {
         method: 'POST',

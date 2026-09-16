@@ -29,7 +29,7 @@ export async function clearPendingCallEnded(): Promise<void> {
   }
 }
 
-async function setPendingCallEnded(callSessionId: string, reason?: string): Promise<void> {
+export async function setPendingCallEnded(callSessionId: string, reason?: string): Promise<void> {
   try {
     await AsyncStorage.setItem(
       PENDING_CALL_ENDED_KEY,
@@ -61,6 +61,13 @@ export async function handleIncomingCallPush(rawData: any): Promise<void> {
 
     if (!callSessionId) {
       console.warn('Received call_incoming without callSessionId');
+      return;
+    }
+
+    // If a call_ended push for this session has already arrived, do not ring.
+    const pending = await getPendingCallEnded();
+    if (pending?.callSessionId === callSessionId) {
+      console.log('Ignoring stale call_incoming; call already ended:', callSessionId);
       return;
     }
 

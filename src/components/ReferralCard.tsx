@@ -84,13 +84,6 @@ const ReferralCard = forwardRef<View, ReferralCardProps>(
       email,
       referralCode,
       referralUrl,
-      stats = {
-        total_referrals: 0,
-        completed_referrals: 0,
-        pending_referrals: 0,
-        total_clicks: 0,
-        total_rewards: 0,
-      },
       theme = 'original',
     },
     ref
@@ -179,116 +172,113 @@ const ReferralCard = forwardRef<View, ReferralCardProps>(
 
           {/* Glowing divider (chevron) */}
           <Path
-            d={`M ${CARD_WIDTH * 0.6} 0 L ${CARD_WIDTH * 0.72} ${CARD_HEIGHT * 0.5} L ${CARD_WIDTH * 0.6} ${CARD_HEIGHT}`}
+            d={`M ${CARD_WIDTH * 0.6} 0 L ${CARD_WIDTH * 0.68} ${CARD_HEIGHT * 0.5} L ${CARD_WIDTH * 0.6} ${CARD_HEIGHT}`}
             fill="none"
             stroke="url(#dividerGradient)"
-            strokeWidth="4"
+            strokeWidth="3"
           />
         </Svg>
 
-        {/* Logo */}
-        <View style={styles.logoContainer}>
-          <Text style={styles.logo}>
-            freti<Text style={[styles.logoDot, { color: colors.primary }]}>k</Text>o
-          </Text>
+        {/* Content */}
+        <View style={styles.content}>
 
-          <Text style={styles.tagline}>
-            <Text style={{ color: colors.primary }}>Smart.</Text>{' '}
-            <Text style={{ color: colors.quaternary }}>Fast.</Text>{' '}
-            <Text style={{ color: colors.accent }}>Reliable.</Text>
-          </Text>
-        </View>
+          {/* Left column */}
+          <View style={styles.leftColumn}>
 
-        {/* User information */}
-        <View style={styles.userSection}>
-
-          <Text style={styles.name} numberOfLines={1} ellipsizeMode="tail">
-            {name.toUpperCase()}
-          </Text>
-
-          <View style={[styles.gradientLine, { backgroundColor: colors.primary }]} />
-
-          <View style={styles.infoBox}>
-            <View style={[styles.infoIconWrap, { borderColor: colors.primary }]}>
-              <Ionicons name="person-outline" size={CARD_WIDTH * 0.028} color={colors.primary} />
-            </View>
-            <View style={styles.infoTextWrap}>
-              <Text style={styles.label}>
-                USERNAME
+            {/* Logo */}
+            <View>
+              <Text style={styles.logo}>
+                freti<Text style={[styles.logoDot, { color: colors.primary }]}>k</Text>o
               </Text>
-              <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
-                @{username.replace('@', '')}
+
+              <Text style={styles.tagline}>
+                <Text style={{ color: colors.primary }}>Smart.</Text>{' '}
+                <Text style={{ color: colors.quaternary }}>Fast.</Text>{' '}
+                <Text style={{ color: colors.accent }}>Reliable.</Text>
               </Text>
             </View>
-          </View>
 
-          <View style={styles.infoBox}>
-            <View style={[styles.infoIconWrap, { borderColor: colors.quaternary }]}>
-              <Ionicons name="mail-outline" size={CARD_WIDTH * 0.028} color={colors.quaternary} />
-            </View>
-            <View style={styles.infoTextWrap}>
-              <Text style={styles.label}>
-                EMAIL
+            {/* User information */}
+            <View>
+              <Text style={styles.name} numberOfLines={1}>
+                {name.toUpperCase()}
               </Text>
-              <Text
-                style={styles.value}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {email}
-              </Text>
-            </View>
-          </View>
 
-          {/* Referral Stats */}
-          <View style={styles.statsContainer}>
-            <Text style={[styles.statsLabel, { color: colors.primary }]}>
-              REFERRALS
+              <View style={[styles.gradientLine, { backgroundColor: colors.primary }]} />
+
+              <View style={styles.infoBox}>
+                <View style={[styles.infoIconWrap, { borderColor: colors.primary }]}>
+                  <Ionicons name="person-outline" size={11} color={colors.primary} />
+                </View>
+                <View style={styles.infoTextWrap}>
+                  <Text style={styles.label}>
+                    USERNAME
+                  </Text>
+                  <Text style={styles.value} numberOfLines={1}>
+                    @{username.replace('@', '')}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={[styles.infoBox, { marginBottom: 0 }]}>
+                <View style={[styles.infoIconWrap, { borderColor: colors.quaternary }]}>
+                  <Ionicons name="mail-outline" size={11} color={colors.quaternary} />
+                </View>
+                <View style={styles.infoTextWrap}>
+                  <Text style={styles.label}>
+                    EMAIL
+                  </Text>
+                  <Text
+                    style={styles.value}
+                    numberOfLines={1}
+                  >
+                    {email}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <Text style={[styles.cardType, { color: colors.primary }]}>
+              REFERRAL CARD
             </Text>
-            <Text style={styles.statsValue}>
-              {stats.completed_referrals}
-            </Text>
+
           </View>
 
-          <Text style={[styles.cardType, { color: colors.primary }]}>
-            REFERRAL CARD
-          </Text>
+          {/* Right column (QR) */}
+          <View style={styles.rightColumn}>
 
-        </View>
-
-        {/* QR section */}
-        <View style={styles.qrSection}>
-
-          <Text style={styles.scanTitle}>
-            SCAN TO JOIN
-          </Text>
-
-          <Text style={[styles.future, { color: colors.tertiary }]}>
-            THE FUTURE
-          </Text>
-
-          <View style={[styles.qrContainer, { borderColor: colors.primary }]}>
-            <QRCode
-              value={referralUrl}
-              size={CARD_WIDTH * 0.17}
-              backgroundColor="#FFFFFF"
-              color="#000000"
-            />
-          </View>
-
-          <Text style={styles.invite}>
-            <Text style={{ color: colors.primary }}>
-              Invite.
-            </Text>{' '}
-
-            <Text style={{ color: colors.quaternary }}>
-              Connect.
-            </Text>{' '}
-
-            <Text style={{ color: colors.accent }}>
-              Grow.
+            <Text style={styles.scanTitle}>
+              SCAN TO JOIN
             </Text>
-          </Text>
+
+            <Text style={[styles.future, { color: colors.tertiary }]}>
+              THE FUTURE
+            </Text>
+
+            <View style={[styles.qrContainer, { borderColor: colors.primary }]}>
+              <QRCode
+                value={referralUrl}
+                size={CARD_WIDTH * 0.18}
+                backgroundColor="#FFFFFF"
+                color="#000000"
+              />
+            </View>
+
+            <Text style={styles.invite}>
+              <Text style={{ color: colors.primary }}>
+                Invite.
+              </Text>{' '}
+
+              <Text style={{ color: colors.quaternary }}>
+                Connect.
+              </Text>{' '}
+
+              <Text style={{ color: colors.accent }}>
+                Grow.
+              </Text>
+            </Text>
+
+          </View>
 
         </View>
 
@@ -318,17 +308,30 @@ const styles = StyleSheet.create({
     elevation: 15,
   },
 
-  logoContainer: {
-    position: 'absolute',
-    left: '7%',
-    top: '8%',
+  content: {
+    flex: 1,
+    flexDirection: 'row',
+    paddingHorizontal: CARD_WIDTH * 0.06,
+    paddingVertical: CARD_HEIGHT * 0.09,
+  },
+
+  leftColumn: {
+    flex: 1,
+    justifyContent: 'space-between',
+    paddingRight: CARD_WIDTH * 0.05,
+  },
+
+  rightColumn: {
+    width: CARD_WIDTH * 0.28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   logo: {
     color: '#FFFFFF',
-    fontSize: CARD_WIDTH * 0.045,
+    fontSize: 22,
     fontWeight: '700',
-    letterSpacing: -1.5,
+    letterSpacing: -1,
   },
 
   logoDot: {
@@ -337,38 +340,29 @@ const styles = StyleSheet.create({
 
   tagline: {
     marginTop: 2,
-    fontSize: CARD_WIDTH * 0.012,
+    fontSize: 8,
     fontWeight: '500',
     letterSpacing: 1,
   },
 
-  userSection: {
-    position: 'absolute',
-    left: '7%',
-    top: '26%',
-    width: '52%',
-  },
-
   name: {
     color: '#FFFFFF',
-    fontSize: CARD_WIDTH * 0.027,
+    fontSize: 15,
     fontWeight: '700',
-    letterSpacing: 4,
+    letterSpacing: 3,
   },
 
   gradientLine: {
-    width: '50%',
+    width: '55%',
     height: 2,
     marginTop: 6,
-    marginBottom: 10,
+    marginBottom: 8,
     backgroundColor: '#FF7A00',
   },
 
   infoBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'stretch',
-    width: '100%',
     backgroundColor: '#0D0D0D',
     borderWidth: 1,
     borderColor: '#242424',
@@ -379,9 +373,9 @@ const styles = StyleSheet.create({
   },
 
   infoIconWrap: {
-    width: CARD_WIDTH * 0.06,
-    height: CARD_WIDTH * 0.06,
-    borderRadius: CARD_WIDTH * 0.03,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
@@ -396,77 +390,49 @@ const styles = StyleSheet.create({
 
   label: {
     color: '#888888',
-    fontSize: CARD_WIDTH * 0.009,
-    letterSpacing: 2,
-    marginBottom: 3,
+    fontSize: 7,
+    letterSpacing: 1.5,
+    marginBottom: 2,
   },
 
   value: {
     color: '#FFFFFF',
-    fontSize: CARD_WIDTH * 0.015,
+    fontSize: 10,
     fontWeight: '500',
   },
 
-  statsContainer: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    marginTop: 4,
-    marginBottom: 4,
-  },
-
-  statsLabel: {
-    color: '#FF8A00',
-    fontSize: CARD_WIDTH * 0.009,
-    letterSpacing: 2,
-    marginRight: 8,
-  },
-
-  statsValue: {
-    color: '#FFFFFF',
-    fontSize: CARD_WIDTH * 0.02,
-    fontWeight: '700',
-  },
-
   cardType: {
-    marginTop: 6,
     color: '#FF8A00',
-    fontSize: CARD_WIDTH * 0.011,
-    letterSpacing: 4,
-  },
-
-  qrSection: {
-    position: 'absolute',
-    right: '5%',
-    bottom: '6%',
-    width: '30%',
-    alignItems: 'center',
+    fontSize: 8,
+    letterSpacing: 3,
   },
 
   scanTitle: {
     color: '#FFFFFF',
-    fontSize: CARD_WIDTH * 0.012,
-    letterSpacing: 4,
+    fontSize: 8,
+    letterSpacing: 2.5,
   },
 
   future: {
     color: '#FF4D8D',
-    fontSize: CARD_WIDTH * 0.015,
+    fontSize: 9,
     fontWeight: '600',
-    letterSpacing: 3,
-    marginBottom: 15,
+    letterSpacing: 2,
+    marginTop: 2,
+    marginBottom: 8,
   },
 
   qrContainer: {
-    padding: 10,
+    padding: 8,
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
+    borderRadius: 14,
     borderWidth: 2,
   },
 
   invite: {
-    marginTop: 16,
-    fontSize: CARD_WIDTH * 0.012,
-    letterSpacing: 2,
+    marginTop: 8,
+    fontSize: 8,
+    letterSpacing: 1,
     fontWeight: '600',
   },
 

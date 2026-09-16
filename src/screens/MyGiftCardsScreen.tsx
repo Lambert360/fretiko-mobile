@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, Alert, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
+import { SafeImage } from '../components/SafeImage';
 import { NavigationProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -135,12 +136,34 @@ const MyGiftCardsScreen: React.FC = () => {
                   onPress={() => navigation.navigate('GiftCardDetails', { giftCardId: card.id })}
                   activeOpacity={0.85}
                 >
-                  <LinearGradient
-                    colors={CARD_GRADIENTS[card.status] || CARD_GRADIENTS.claimed}
-                    style={styles.card}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                  >
+                  <View style={styles.card}>
+                    {card.design?.design_url ? (
+                      <SafeImage
+                        source={{ uri: card.design.design_url }}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                        }}
+                        resizeMode="cover"
+                        fallbackText="Gift Card"
+                      />
+                    ) : (
+                      <LinearGradient
+                        colors={CARD_GRADIENTS[card.status] || CARD_GRADIENTS.claimed}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                        }}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                      />
+                    )}
                     <View style={styles.cardTopRow}>
                       <View style={styles.cardBrandRow}>
                         <Ionicons name="gift" size={18} color="rgba(255,255,255,0.85)" />
@@ -164,7 +187,7 @@ const MyGiftCardsScreen: React.FC = () => {
                     </View>
 
                     <View style={styles.cardChip} />
-                  </LinearGradient>
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>

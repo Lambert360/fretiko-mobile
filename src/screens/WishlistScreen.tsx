@@ -23,6 +23,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { productsAPI } from '../services/productsAPI';
 import { wishlistAPI, WishlistItem, ShareableFriend } from '../services/wishlistAPI';
 import { cartAPI } from '../services/cartAPI';
+import { walletAPI } from '../services/walletAPI';
+import { WishlistShareModal } from '../components/WishlistShareModal';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -41,6 +43,8 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [shareableFriends, setShareableFriends] = useState<ShareableFriend[]>([]);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showWishlistShareModal, setShowWishlistShareModal] = useState(false);
+  const [selectedFriend, setSelectedFriend] = useState<ShareableFriend | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   
@@ -134,6 +138,11 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
   };
 
   const handleAddToCart = async (item: WishlistItem) => {
+    if (!item.isAvailable) {
+      Alert.alert('Out of Stock', 'This item is currently unavailable.');
+      return;
+    }
+
     try {
       // Animate button press
       Animated.sequence([
@@ -158,6 +167,11 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
   };
 
   const handleBuyNow = (item: WishlistItem) => {
+    if (!item.isAvailable) {
+      Alert.alert('Out of Stock', 'This item is currently unavailable.');
+      return;
+    }
+
     // Navigate to checkout with wishlist source
     navigation.navigate('Checkout', {
       source: 'wishlist',
@@ -169,13 +183,13 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
   const handleCheckoutSelected = () => {
     if (selectedItems.length === 0) return;
 
-    // Get selected wishlist items (need to match by productId to get wishlist item IDs)
-    const selectedWishlistItems = wishlistItems.filter(item => 
-      selectedItems.includes(item.productId)
+    // Get selected wishlist items that are still available
+    const selectedWishlistItems = wishlistItems.filter(item =>
+      selectedItems.includes(item.productId) && item.isAvailable
     );
 
     if (selectedWishlistItems.length === 0) {
-      Alert.alert('Error', 'No valid items selected');
+      Alert.alert('Out of Stock', 'Selected items are currently unavailable.');
       return;
     }
 
@@ -291,33 +305,38 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
     setShowShareModal(true);
   };
 
-  const handleShareWithFriend = async (friendId: string, shareType: 'view_only' | 'view_and_add' = 'view_and_add') => {
-    try {
-      const result = await wishlistAPI.shareWishlist({
-        friendId,
-        shareType,
-        shareMessage: `Check out my wishlist! I have ${wishlistItems.length} items you might like.`
-      });
-      
-      Alert.alert(
-        'Shared Successfully!', 
-        `Your wishlist has been shared with your friend. They ${result.canAddItems ? 'can view and add items to' : 'can only view'} your wishlist.`,
-        [{ text: 'OK' }]
-      );
-      
-      setShowShareModal(false);
-    } catch (error: any) {
-      console.error('Error sharing wishlist with friend:', error);
-      Alert.alert('Error', error.message || 'Failed to share wishlist');
-    }
+  const handleSelectFriendForShare = (friend: ShareableFriend) => {
+    setSelectedFriend(friend);
+    setShowShareModal(false);
+    setShowWishlistShareModal(true);
+  };
+
+  const handleWishlistShareSuccess = (
+    shareType: 'view_only' | 'view_and_add',
+    itemCount: number
+  ) => {
+    setShowWishlistShareModal(false);
+    setSelectedFriend(null);
+    const permission = shareType === 'view_and_add' ? 'view and add items to' : 'view';
+    Alert.alert(
+      'Wishlist Shared!',
+      `${itemCount} item${itemCount > 1 ? 's' : ''} shared. They can ${permission} your wishlist.`,
+      [{ text: 'OK' }]
+    );
+  };
+
+  const handleWishlistShareClose = () => {
+    setShowWishlistShareModal(false);
+    setSelectedFriend(null);
   };
 
   const handleShareExternal = async () => {
     try {
-      // Get user's username from user object or API
+      // Use HTTPS so the link is tappable in external apps (SMS, email, social).
+      // NOTE: the website needs a /wishlist/:userId route that handles app-redirect / install.
       const username = (user as any)?.username || user?.email?.split('@')[0] || 'user';
       const encodedUsername = encodeURIComponent(username);
-      const wishlistUrl = `fretiko://wishlist/${user?.id}/${encodedUsername}`;
+      const wishlistUrl = `https://fretiko.com/wishlist/${user?.id}/${encodedUsername}`;
 
       await Share.share({
         message: `Check out my wishlist on Fretiko! I have ${wishlistItems.length} amazing items saved.\n\n${wishlistUrl}`,
@@ -358,7 +377,10 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
       
       <View style={styles.itemInfo}>
         <Text style={styles.productName} numberOfLines={2}>{item.productName}</Text>
-        <Text style={styles.productPrice}>₦{item.price.toFixed(2)}</Text>
+        <Text style={styles.productPrice}>{walletAPI.formatFreti(item.price)}</Text>
+        {!item.isAvailable && (
+          <Text style={styles.outOfStock}>Out of stock</Text>
+        )}
         <Text style={styles.addedDate}>
           {item.addedByFriend 
             ? `Added by ${item.addedByFriend} on ${new Date(item.createdAt).toLocaleDateString()}`
@@ -372,7 +394,7 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
         
         <View style={styles.itemActions}>
           <TouchableOpacity
-            style={styles.buyNowButton}
+            style={[styles.buyNowButton, !item.isAvailable && styles.disabledButton]}
             onPress={() => handleBuyNow(item)}
           >
             <Ionicons name="flash" size={16} color="#FFF" />
@@ -380,7 +402,7 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
           </TouchableOpacity>
           
           <TouchableOpacity
-            style={styles.addToCartButton}
+            style={[styles.addToCartButton, !item.isAvailable && styles.disabledButton]}
             onPress={() => handleAddToCart(item)}
           >
             <Ionicons name="cart" size={16} color="#FFF" />
@@ -517,7 +539,7 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
                 <TouchableOpacity
                   key={friend.id}
                   style={styles.friendItem}
-                  onPress={() => handleShareWithFriend(friend.id, 'view_and_add')}
+                  onPress={() => handleSelectFriendForShare(friend)}
                 >
                   <View style={styles.friendInfo}>
                     <View style={styles.friendAvatar}>
@@ -652,6 +674,17 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
 
       {/* Share Modal */}
       {renderShareModal()}
+
+      {/* Item/Permission Share Modal */}
+      {selectedFriend && (
+        <WishlistShareModal
+          visible={showWishlistShareModal}
+          recipientId={selectedFriend.id}
+          recipientName={selectedFriend.fullName || selectedFriend.username || 'User'}
+          onClose={handleWishlistShareClose}
+          onShareSuccess={handleWishlistShareSuccess}
+        />
+      )}
     </View>
   );
 };
@@ -760,6 +793,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 4,
   },
+  outOfStock: {
+    color: '#E74C3C',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
   addedDate: {
     color: '#666',
     fontSize: 12,
@@ -792,6 +831,10 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  disabledButton: {
+    backgroundColor: '#666',
+    opacity: 0.6,
   },
   addToCartButton: {
     flexDirection: 'row',

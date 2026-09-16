@@ -5,7 +5,7 @@ import { API_BASE_URL } from '../config/api';
 export interface WorkspaceOrder {
   id: string;
   orderNumber: string;
-  status: 'pending' | 'processing' | 'ready_for_pickup' | 'out_for_delivery' | 'delivered' | 'cancelled';
+  status: 'pending' | 'processing' | 'ready_for_pickup' | 'out_for_delivery' | 'delivered' | 'cancelled' | 'completed' | 'paid';
   customerName: string;
   customerId: string;
   customerPhone?: string;

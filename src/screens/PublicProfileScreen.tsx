@@ -15,15 +15,17 @@ import {
   Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI, UserStats } from '../services/userAPI';
 import { productsAPI, Product } from '../services/productsAPI';
 import { servicesAPI, VideoFeedItem, Service } from '../services/servicesAPI';
 import { postsAPI, Post } from '../services/postsAPI';
-import { chatAPI } from '../services/chatAPI';
+import { chatAPI, ChatConversation } from '../services/chatAPI';
 import ProductCard from '../components/ProductCard';
 import VideoCard from '../components/VideoCard';
 import { GridMediaCard } from '../components/GridMediaCard';
+import ShareModal from '../components/ShareModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -52,6 +54,7 @@ interface PublicProfileScreenProps {
 const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) => {
   const { user } = useAuth();
   const { userId } = route.params;
+  const insets = useSafeAreaInsets();
 
   // Debug logging to track the userId parameter
   console.log('🔍 PublicProfileScreen received userId:', userId);
@@ -71,6 +74,11 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
   const [servicesLoading, setServicesLoading] = useState(false);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
+  const [isSharing, setIsSharing] = useState(false);
 
   const openImageViewer = (url?: string | null) => {
     if (!url) return;
@@ -306,6 +314,59 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
   };
 
   const handleShare = async () => {
+    if (!profile) return;
+
+    setShowShareModal(true);
+    setSelectedConversations([]);
+    setChatConversationsLoading(true);
+
+    try {
+      const { conversations } = await chatAPI.getConversations(1, 50);
+      setChatConversations(conversations);
+    } catch (error) {
+      console.error('Error loading chat conversations:', error);
+      Alert.alert('Error', 'Failed to load conversations for sharing');
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  };
+
+  const handleShareToChats = async () => {
+    if (!profile || selectedConversations.length === 0) return;
+
+    setIsSharing(true);
+
+    try {
+      const profileData = {
+        id: profile.id,
+        username: profile.username,
+        avatar: profile.avatarUrl || '',
+        isSeller: profile.isSeller,
+      };
+
+      await Promise.all(
+        selectedConversations.map((conversation) =>
+          chatAPI.sendMessage({
+            conversationId: conversation.id,
+            messageType: 'text',
+            content: `Check out @${profile.username} on Fretiko!`,
+            metadata: { profileData },
+          })
+        )
+      );
+
+      Alert.alert('Shared', `Profile shared to ${selectedConversations.length} chat${selectedConversations.length === 1 ? '' : 's'}.`);
+      setShowShareModal(false);
+      setSelectedConversations([]);
+    } catch (error) {
+      console.error('Error sharing profile to chats:', error);
+      Alert.alert('Error', 'Failed to share profile to chats');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleShareExternal = async () => {
     if (!profile) return;
 
     try {
@@ -621,6 +682,20 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
         <Ionicons name="chatbubble" size={28} color="#FFFFFF" />
       </TouchableOpacity>
       {renderImageViewer()}
+
+      <ShareModal
+        visible={showShareModal}
+        title="Share Profile"
+        onClose={() => setShowShareModal(false)}
+        conversations={chatConversations}
+        conversationsLoading={chatConversationsLoading}
+        selectedConversations={selectedConversations}
+        onSelect={setSelectedConversations}
+        onShare={handleShareToChats}
+        onShareExternal={handleShareExternal}
+        isSharing={isSharing}
+        insetsBottom={insets.bottom}
+      />
     </SafeAreaView>
   );
 };

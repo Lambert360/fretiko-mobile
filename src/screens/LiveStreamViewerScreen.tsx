@@ -16,6 +16,7 @@ import {
   Modal,
   Image,
   ActivityIndicator,
+  Share,
 } from 'react-native';
 import { PanGestureHandler, PanGestureHandlerStateChangeEvent, State, PanGestureHandlerGestureEvent } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,9 +25,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { liveSalesAPI, LiveStream, LiveStreamProduct, LiveStreamService, LivePortfolioService, GiftType } from '../services/liveSalesAPI';
 import { liveStreamSocket, LiveComment, LiveReaction, LiveGift, ViewerCountUpdate } from '../services/liveStreamSocket';
+import { chatAPI, ChatConversation } from '../services/chatAPI';
 import { giftAPI, VirtualGift, UserGift } from '../services/giftAPI';
 import { useAuth } from '../contexts/AuthContext';
+import { useCart } from '../contexts/CartContext';
+import { cartAPI } from '../services/cartAPI';
 import LottieGiftEffect from '../components/LottieGiftEffect';
+import GiftEffectStage from '../components/GiftEffectStage';
 import GiftSelectorModal from '../components/GiftSelectorModal';
 import WatchRewardPill from '../components/WatchRewardPill';
 
@@ -63,6 +68,7 @@ const LiveStreamViewerScreen = () => {
   const route = useRoute<any>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const cart = useCart();
   
   const { streamId, stream: initialStream } = route.params;
 
@@ -116,6 +122,9 @@ const LiveStreamViewerScreen = () => {
   const [showShopModal, setShowShopModal] = useState(false);
   const [showGiftModal, setShowGiftModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
   const [shopModalHeight, setShopModalHeight] = useState(Dimensions.get('window').height * 0.5);
   const [giftModalHeight, setGiftModalHeight] = useState(Dimensions.get('window').height * 0.5);
   const [miniCartModalHeight, setMiniCartModalHeight] = useState(Dimensions.get('window').height * 0.5);
@@ -132,6 +141,35 @@ const LiveStreamViewerScreen = () => {
   const [liveCartItems, setLiveCartItems] = useState<any[]>([]);
   const [showMiniCart, setShowMiniCart] = useState(false);
 
+  // Sync live product items with the global cart:
+  // - remove any live product that was deleted from the main Cart screen
+  // - attach the backend cart_item id (cartItemId) for products once they appear in the global cart
+  useEffect(() => {
+    const activeCartItemIds = new Set(cart.items.map(i => i.id));
+    const cartItemsByProductId = new Map<string, string>();
+    for (const ci of cart.items) {
+      if (ci.productId && !cartItemsByProductId.has(ci.productId)) {
+        cartItemsByProductId.set(ci.productId, ci.id);
+      }
+    }
+
+    setLiveCartItems(prev => {
+      const updated = prev.map(item => {
+        if (item.type !== 'product' || !item.product_id) return item;
+
+        if (item.cartItemId) {
+          // If the synced backend item was deleted elsewhere, remove the live item too
+          return activeCartItemIds.has(item.cartItemId) ? item : null;
+        }
+
+        // Link the live item to its new backend cart item
+        const cartItemId = cartItemsByProductId.get(item.product_id);
+        return cartItemId ? { ...item, cartItemId } : item;
+      });
+      return updated.filter(Boolean) as any[];
+    });
+  }, [cart.items]);
+
   // Showcase state (for viewers)
   const [showcasedItem, setShowcasedItem] = useState<any>(null);
 
@@ -140,7 +178,13 @@ const LiveStreamViewerScreen = () => {
 
   // Image viewer modal state
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
-  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+  const [imageViewerImages, setImageViewerImages] = useState<string[]>([]);
+  const [imageViewerIndex, setImageViewerIndex] = useState(0);
+
+  // Service/portfolio booking modal state
+  const [showBookingModal, setShowBookingModal] = useState(false);
+  const [bookingItem, setBookingItem] = useState<any>(null);
+  const [bookingSource, setBookingSource] = useState<'highlight' | 'showcase' | null>(null);
 
   // Swipe gesture state
   const swipeTranslateX = useRef(new Animated.Value(0)).current;
@@ -431,7 +475,7 @@ const LiveStreamViewerScreen = () => {
 
   // Connect to WebSocket and join stream
   useEffect(() => {
-    if (!stream) return;
+    if (!stream || stream?.status === 'ended') return;
 
     // Create stable handler references for cleanup
     const highlightItemHandler = (data: any) => {
@@ -597,11 +641,9 @@ const LiveStreamViewerScreen = () => {
       setIsStreamPaused(false);
       console.log('▶️ Stream resumed by host');
     } else if (data.status === 'ended') {
-      Alert.alert(
-        'Stream Ended',
-        'This live stream has ended. Thank you for watching!',
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
-      );
+      console.log('🔴 Stream ended by host');
+      setStream(prev => (prev ? { ...prev, status: 'ended' } : null));
+      cleanupAgora();
     }
   };
 
@@ -681,6 +723,10 @@ const LiveStreamViewerScreen = () => {
   // Helper function to check if item is a service (not portfolio)
   const isServiceItem = (item: any): boolean => {
     return 'service' in item && !('product' in item) && !('title' in item);
+  };
+
+  const isProductItem = (item: any): boolean => {
+    return 'product' in item;
   };
 
   // Send comment
@@ -863,9 +909,72 @@ const LiveStreamViewerScreen = () => {
     }
   };
 
-  const openShareModal = () => {
+  const openShareModal = async () => {
     setShowShareModal(true);
-    // TODO: Load users list
+    setSelectedUsers([]);
+    setChatConversationsLoading(true);
+
+    try {
+      const { conversations } = await chatAPI.getConversations(1, 50);
+      setChatConversations(conversations);
+    } catch (error) {
+      console.error('Error loading chat conversations:', error);
+      Alert.alert('Error', 'Failed to load conversations for sharing');
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  };
+
+  const handleShareExternally = async () => {
+    try {
+      const shareUrl = `https://fretiko.com/live/${streamId}`;
+      const message = stream?.title
+        ? `Join my live stream "${stream.title}" on Fretiko!\n\n${shareUrl}`
+        : `Join my live stream on Fretiko!\n\n${shareUrl}`;
+
+      await Share.share({
+        message,
+        url: shareUrl,
+      });
+    } catch (error) {
+      console.error('Error sharing live stream:', error);
+    }
+  };
+
+  const handleShareToChats = async () => {
+    if (selectedUsers.length === 0) return;
+
+    setIsSharing(true);
+
+    try {
+      const livestreamData = {
+        id: streamId,
+        title: stream?.title || 'Live Stream',
+        isLive: stream?.status === 'live',
+        viewers: viewerCount,
+        thumbnailUrl: stream?.thumbnail_url || '',
+      };
+
+      await Promise.all(
+        selectedUsers.map((conversation: ChatConversation) =>
+          chatAPI.sendMessage({
+            conversationId: conversation.id,
+            messageType: 'text',
+            content: stream?.title || 'Join my live stream',
+            metadata: { livestreamData },
+          })
+        )
+      );
+
+      Alert.alert('Shared', `Live stream shared to ${selectedUsers.length} chat${selectedUsers.length === 1 ? '' : 's'}.`);
+      setShowShareModal(false);
+      setSelectedUsers([]);
+    } catch (error) {
+      console.error('Error sharing live stream to chats:', error);
+      Alert.alert('Error', 'Failed to share live stream to chats');
+    } finally {
+      setIsSharing(false);
+    }
   };
 
   // Comment input handlers
@@ -908,7 +1017,14 @@ const LiveStreamViewerScreen = () => {
   }, [bottomPosition]);
 
   // Live Cart Functions
-  const addToLiveCart = (item: LiveStreamProduct | LiveStreamService | LivePortfolioService, quantity: number = 1, bookingDate?: string, bookingTime?: string) => {
+  const addToLiveCart = async (item: LiveStreamProduct | LiveStreamService | LivePortfolioService, quantity: number = 1, bookingDate?: string, bookingTime?: string) => {
+    const isProduct = 'product' in item;
+    const isService = 'service' in item;
+    const isPortfolio = 'title' in item;
+    const itemType = isProduct ? 'product' : isService ? 'service' : 'portfolio';
+    const productId = isProduct ? (item as any).product_id : undefined;
+
+    // Local update first for instant UI feedback
     setLiveCartItems(prev => {
       const existing = prev.find(cartItem => cartItem.id === item.id);
       if (existing) {
@@ -918,34 +1034,10 @@ const LiveStreamViewerScreen = () => {
             : cartItem
         );
       } else {
-        // Determine item type
-        let itemType = 'service';  // Default to service for portfolio items
-        if ('product' in item) {
-          itemType = 'product';
-        } else if ('service' in item) {
-          itemType = 'service';
-        } else if ('title' in item) {
-          itemType = 'portfolio';  // Portfolio services
-          // Track analytics for portfolio items
+        if (isPortfolio) {
           liveSalesAPI.trackPortfolioAddToCart(item.id).catch(console.error);
         }
 
-        const productId = 'product_id' in (item as any) ? (item as any).product_id : undefined;
-        const serviceId = 'service_id' in (item as any) ? (item as any).service_id : undefined;
-        
-        // Debug: Log what's being added to cart
-        console.log('🛒 Adding item to cart:', {
-          itemId: item.id,
-          productId,
-          serviceId,
-          itemType,
-          bookingDate,
-          bookingTime,
-          hasProductId: !!productId,
-          hasServiceId: !!serviceId,
-          fullItem: item,
-        });
-        
         return [...prev, {
           ...item,
           quantity,
@@ -959,16 +1051,64 @@ const LiveStreamViewerScreen = () => {
         }];
       }
     });
+
+    // Products also go to the global cart so they appear there until checkout or deletion
+    if (isProduct && productId) {
+      try {
+        await cartAPI.addToCart({
+          productId,
+          quantity,
+          price: (item as any).live_price || 0,
+        });
+        await cart.refreshCart();
+
+        // The cartItemId is attached automatically by the cart-items sync useEffect
+        // once the backend cart state refreshes.
+      } catch (error) {
+        console.error('Failed to sync live product to global cart:', error);
+        Alert.alert('Cart Sync Error', 'This item was added to the live cart but could not be saved to your main cart.');
+      }
+    }
   };
 
-  const removeFromLiveCart = (cartId: string) => {
+  const removeFromLiveCart = async (cartId: string) => {
+    const localItem = liveCartItems.find(i => i.cartId === cartId);
+
+    // Remove product from global cart if it has been synced
+    if (localItem?.type === 'product' && localItem.product_id) {
+      const cartItemId = localItem.cartItemId || cart.items.find(i => i.productId === localItem.product_id)?.id;
+      if (cartItemId) {
+        try {
+          await cartAPI.removeFromCart(cartItemId);
+          await cart.refreshCart();
+        } catch (error) {
+          console.error('Failed to remove live product from global cart:', error);
+        }
+      }
+    }
+
     setLiveCartItems(prev => prev.filter(item => item.cartId !== cartId));
   };
 
-  const updateLiveCartQuantity = (cartId: string, quantity: number) => {
+  const updateLiveCartQuantity = async (cartId: string, quantity: number) => {
     if (quantity <= 0) {
-      removeFromLiveCart(cartId);
+      await removeFromLiveCart(cartId);
       return;
+    }
+
+    const localItem = liveCartItems.find(i => i.cartId === cartId);
+
+    // Sync quantity to global cart for products
+    if (localItem?.type === 'product' && localItem.product_id) {
+      const cartItemId = localItem.cartItemId || cart.items.find(i => i.productId === localItem.product_id)?.id;
+      if (cartItemId) {
+        try {
+          await cartAPI.updateCartItem(cartItemId, { quantity });
+          await cart.refreshCart();
+        } catch (error) {
+          console.error('Failed to update live product quantity in global cart:', error);
+        }
+      }
     }
 
     setLiveCartItems(prev =>
@@ -978,8 +1118,56 @@ const LiveStreamViewerScreen = () => {
     );
   };
 
-  const clearLiveCart = () => {
+  const clearLiveCart = async () => {
+    // Remove any synced product items from the global cart on checkout
+    for (const item of liveCartItems) {
+      if (item.type !== 'product' || !item.product_id) continue;
+
+      const cartItemId = item.cartItemId || cart.items.find(i => i.productId === item.product_id)?.id;
+      if (cartItemId) {
+        try {
+          await cartAPI.removeFromCart(cartItemId);
+        } catch (error) {
+          console.error('Failed to remove live product from global cart on checkout:', error);
+        }
+      }
+    }
+
     setLiveCartItems([]);
+    await cart.refreshCart();
+  };
+
+  // Add product to live cart with alert and optional showcase close
+  const handleAddProduct = (item: any, source: 'highlight' | 'showcase') => {
+    addToLiveCart(item, 1);
+    Alert.alert('Added to Cart', 'Item added to your cart!');
+    if (source === 'showcase') {
+      setShowcasedItem(null);
+    }
+  };
+
+  // Open the booking date/time picker for services and portfolio
+  const handleBookPress = (item: any, source: 'highlight' | 'showcase') => {
+    setBookingItem(item);
+    setBookingSource(source);
+    setShowBookingModal(true);
+  };
+
+  // Confirm a booking and add it to the live cart
+  const handleBookingConfirm = (bookingDate: string, bookingTime: string) => {
+    if (!bookingItem) return;
+
+    addToLiveCart(bookingItem, 1, bookingDate, bookingTime);
+    setShowBookingModal(false);
+    setBookingItem(null);
+
+    if (bookingSource === 'showcase') {
+      setShowcasedItem(null);
+    }
+    setBookingSource(null);
+
+    const itemType = 'title' in bookingItem ? 'portfolio' : 'service';
+    Alert.alert('Booked', `Your ${itemType} has been booked for ${bookingDate} at ${bookingTime}.`);
   };
 
   const getLiveCartTotal = () => {
@@ -1165,6 +1353,23 @@ const LiveStreamViewerScreen = () => {
     );
   }
 
+  if (stream?.status === 'ended') {
+    return (
+      <View style={styles.loadingContainer}>
+        <Ionicons name="videocam-off" size={64} color="#E74C3C" />
+        <Text style={[styles.loadingText, { marginTop: 16, marginBottom: 8 }]}>
+          This live stream has ended
+        </Text>
+        <TouchableOpacity
+          style={styles.endedGoBackButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Text style={styles.endedGoBackButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <PanGestureHandler
       onGestureEvent={handleSwipeGesture}
@@ -1205,15 +1410,6 @@ const LiveStreamViewerScreen = () => {
               </Text>
             </View>
           )
-        ) : stream.status === 'ended' && stream.stream_url ? (
-          // ✅ VOD: HLS playback from Cloud Recording
-          <View style={styles.videoPlaceholder}>
-            <Ionicons name="play-circle" size={60} color="#3498DB" />
-            <Text style={styles.videoPlaceholderText}>Stream Replay Available</Text>
-            <Text style={[styles.videoPlaceholderText, { fontSize: 12, marginTop: 8, opacity: 0.7 }]}>
-              (HLS playback not implemented yet - coming soon!)
-            </Text>
-          </View>
         ) : (
           <View style={styles.videoPlaceholder}>
             <Ionicons name="videocam-off" size={60} color="#666" />
@@ -1313,13 +1509,22 @@ const LiveStreamViewerScreen = () => {
         <View style={styles.highlightCard}>
           <TouchableOpacity
             onPress={() => {
-              const imageUrl = 'product' in highlightedItem
-                ? (highlightedItem as LiveStreamProduct).product.primary_image_url
-                : 'images' in highlightedItem
-                ? (highlightedItem as LivePortfolioService).images.find(img => img.is_primary)?.image_url || (highlightedItem as LivePortfolioService).images[0]?.image_url
-                : null;
-              if (imageUrl) {
-                setSelectedImageUrl(imageUrl);
+              let imageUrls: string[] = [];
+              let initialIndex = 0;
+
+              if ('product' in highlightedItem) {
+                const primary = (highlightedItem as LiveStreamProduct).product.primary_image_url;
+                if (primary) imageUrls = [primary];
+              } else if ('images' in highlightedItem) {
+                const portfolio = highlightedItem as LivePortfolioService;
+                imageUrls = portfolio.images?.map((img) => img.image_url) || [];
+                initialIndex = portfolio.images?.findIndex((img) => img.is_primary) ?? 0;
+                if (initialIndex < 0) initialIndex = 0;
+              }
+
+              if (imageUrls.length > 0) {
+                setImageViewerImages(imageUrls);
+                setImageViewerIndex(initialIndex);
                 setImageViewerVisible(true);
               }
             }}
@@ -1352,13 +1557,23 @@ const LiveStreamViewerScreen = () => {
           </View>
           <TouchableOpacity
             style={styles.highlightCardAddButton}
-            onPress={() => {
-              addToLiveCart(highlightedItem, 1);
-              Alert.alert('Added to Cart', 'Item added to your cart!');
-            }}
+            onPress={() =>
+              isProductItem(highlightedItem)
+                ? handleAddProduct(highlightedItem, 'highlight')
+                : handleBookPress(highlightedItem, 'highlight')
+            }
           >
-            <Ionicons name="cart" size={18} color="white" />
-            <Text style={styles.highlightCardAddButtonText}>Add to Cart</Text>
+            {isProductItem(highlightedItem) ? (
+              <>
+                <Ionicons name="cart" size={18} color="white" />
+                <Text style={styles.highlightCardAddButtonText}>Add to Cart</Text>
+              </>
+            ) : (
+              <>
+                <Ionicons name="calendar" size={18} color="white" />
+                <Text style={styles.highlightCardAddButtonText}>Book</Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       )}
@@ -1391,13 +1606,23 @@ const LiveStreamViewerScreen = () => {
               <Text style={styles.showcasePrice}>₣{showcasedItem.live_price || showcasedItem.price || '0.00'}</Text>
               <TouchableOpacity
                 style={styles.showcaseAddToCartButton}
-                onPress={() => {
-                  addToLiveCart(showcasedItem, 1);
-                  setShowcasedItem(null);
-                }}
+                onPress={() =>
+                  isProductItem(showcasedItem)
+                    ? handleAddProduct(showcasedItem, 'showcase')
+                    : handleBookPress(showcasedItem, 'showcase')
+                }
               >
-                <Ionicons name="bag-add" size={20} color="white" />
-                <Text style={styles.showcaseAddToCartText}>Add to Cart</Text>
+                {isProductItem(showcasedItem) ? (
+                  <>
+                    <Ionicons name="bag-add" size={20} color="white" />
+                    <Text style={styles.showcaseAddToCartText}>Add to Cart</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="calendar" size={20} color="white" />
+                    <Text style={styles.showcaseAddToCartText}>Book</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
             
@@ -1453,15 +1678,17 @@ const LiveStreamViewerScreen = () => {
       )}
 
       {/* Gift Animations - Render above video */}
-      {activeGiftEffects.map((animation) => (
-        <LottieGiftEffect
-          key={animation.id}
-          gift={animation.gift}
-          onComplete={() => {
-            setActiveGiftEffects((prev) => prev.filter((anim) => anim.id !== animation.id));
-          }}
-        />
-      ))}
+      <GiftEffectStage>
+        {activeGiftEffects.map((animation) => (
+          <LottieGiftEffect
+            key={animation.id}
+            gift={animation.gift}
+            onComplete={() => {
+              setActiveGiftEffects((prev) => prev.filter((anim) => anim.id !== animation.id));
+            }}
+          />
+        ))}
+      </GiftEffectStage>
 
       {/* Middle Comments */}
       {showComments && comments.length > 0 && (
@@ -1576,7 +1803,10 @@ const LiveStreamViewerScreen = () => {
             onHeightChange={setShopModalHeight}
             cartItems={liveCartItems}
             onAddToCart={addToLiveCart}
-            onOpenCart={() => setShowMiniCart(true)}
+            onOpenCart={() => {
+              setShowShopModal(false);
+              setShowMiniCart(true);
+            }}
             insetsBottom={insets.bottom || 0}
             streamId={stream?.id}
           />
@@ -1610,6 +1840,7 @@ const LiveStreamViewerScreen = () => {
                 cartItems: liveCartItems,
                 streamTitle: stream.title,
                 vendorId: stream.vendor.id,
+                vendorLocation: stream.vendor?.location,
                 onCheckoutSuccess: clearLiveCart,
               });
             }}
@@ -1682,13 +1913,14 @@ const LiveStreamViewerScreen = () => {
             onClose={() => setShowShareModal(false)}
             modalHeight={shareModalHeight}
             onHeightChange={setShareModalHeight}
+            conversations={chatConversations}
+            conversationsLoading={chatConversationsLoading}
             selectedUsers={selectedUsers}
             onUserSelect={setSelectedUsers}
             insetsBottom={insets.bottom || 0}
-            onShare={async (userIds: string[]) => {
-              // TODO: Implement share functionality
-              console.log('Sharing to users:', userIds);
-            }}
+            onShare={handleShareToChats}
+            onShareExternal={handleShareExternally}
+            isSharing={isSharing}
           />
       </Modal>
 
@@ -1706,17 +1938,233 @@ const LiveStreamViewerScreen = () => {
           >
             <Ionicons name="close" size={28} color="#FFFFFF" />
           </TouchableOpacity>
-          {selectedImageUrl && (
-            <Image
-              source={{ uri: selectedImageUrl }}
-              style={styles.imageViewerImage}
-              resizeMode="contain"
-            />
+
+          {imageViewerImages.length > 0 && (
+            <View style={styles.imageViewerContainer}>
+              <FlatList
+                data={imageViewerImages}
+                keyExtractor={(url, index) => `${url}-${index}`}
+                renderItem={({ item }) => (
+                  <View style={styles.imageViewerSlide}>
+                    <Image
+                      source={{ uri: item }}
+                      style={styles.imageViewerImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                )}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                initialScrollIndex={imageViewerIndex}
+                getItemLayout={(data, index) => ({
+                  length: screenWidth,
+                  offset: screenWidth * index,
+                  index,
+                })}
+                onMomentumScrollEnd={(event) => {
+                  const newIndex = Math.round(event.nativeEvent.contentOffset.x / screenWidth);
+                  setImageViewerIndex(newIndex);
+                }}
+                style={styles.imageViewerList}
+                contentContainerStyle={styles.imageViewerListContent}
+              />
+
+              {imageViewerImages.length > 1 && (
+                <View style={styles.imageViewerDots}>
+                  {imageViewerImages.map((_, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.imageViewerDot,
+                        index === imageViewerIndex && styles.imageViewerDotActive,
+                      ]}
+                    />
+                  ))}
+                </View>
+              )}
+            </View>
           )}
         </View>
       </Modal>
+
+      {/* Booking Modal for Services and Portfolio */}
+      <LiveBookingModal
+        visible={showBookingModal}
+        item={bookingItem}
+        onClose={() => {
+          setShowBookingModal(false);
+          setBookingItem(null);
+          setBookingSource(null);
+        }}
+        onConfirm={handleBookingConfirm}
+      />
       </Animated.View>
     </PanGestureHandler>
+  );
+};
+
+const LiveBookingModal = ({
+  visible,
+  item,
+  onClose,
+  onConfirm,
+}: {
+  visible: boolean;
+  item: any;
+  onClose: () => void;
+  onConfirm: (date: string, time: string) => void;
+}) => {
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [selectedTime, setSelectedTime] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(10, 0, 0, 0);
+      setSelectedDate(tomorrow);
+      setSelectedTime(tomorrow);
+      setShowDatePicker(false);
+      setShowTimePicker(false);
+    }
+  }, [visible]);
+
+  const handleDateChange = (event: any, date?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+    }
+    if (date) {
+      setSelectedDate(date);
+    }
+  };
+
+  const handleTimeChange = (event: any, time?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowTimePicker(false);
+    }
+    if (time) {
+      setSelectedTime(time);
+    }
+  };
+
+  const handleConfirm = () => {
+    const bookingDateTime = new Date(selectedDate);
+    bookingDateTime.setHours(selectedTime.getHours(), selectedTime.getMinutes(), 0, 0);
+    const now = new Date();
+
+    if (bookingDateTime <= now) {
+      Alert.alert('Invalid Date/Time', 'Please select a future date and time.');
+      return;
+    }
+
+    const formattedDate = selectedDate.toISOString().split('T')[0];
+    const formattedTime = `${selectedTime.getHours().toString().padStart(2, '0')}:${selectedTime.getMinutes().toString().padStart(2, '0')}`;
+    onConfirm(formattedDate, formattedTime);
+  };
+
+  const formatDisplayDate = (date: Date) => {
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
+  const formatDisplayTime = (date: Date) => {
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  };
+
+  const itemName = item?.title || item?.service?.name || item?.product?.name || 'Item';
+
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.bookingModalOverlay}>
+        <View style={styles.bookingModalContent}>
+          <View style={styles.bookingModalHeader}>
+            <Text style={styles.bookingModalTitle}>Book {itemName}</Text>
+            <TouchableOpacity onPress={onClose} style={styles.bookingModalCloseButton}>
+              <Ionicons name="close" size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.bookingModalBody}>
+            <Text style={styles.bookingModalLabel}>Select Date</Text>
+            <TouchableOpacity
+              style={styles.dateTimePickerButton}
+              onPress={() => setShowDatePicker(true)}
+            >
+              <Ionicons name="calendar-outline" size={20} color="#3498DB" />
+              <Text style={styles.dateTimePickerText}>{formatDisplayDate(selectedDate)}</Text>
+            </TouchableOpacity>
+
+            {Platform.OS === 'ios' && showDatePicker && (
+              <DateTimePicker
+                value={selectedDate}
+                mode="date"
+                display="spinner"
+                themeVariant="light"
+                onChange={handleDateChange}
+                minimumDate={new Date()}
+              />
+            )}
+            {Platform.OS === 'android' && showDatePicker && (
+              <DateTimePicker
+                value={selectedDate}
+                mode="date"
+                display="default"
+                onChange={handleDateChange}
+                minimumDate={new Date()}
+              />
+            )}
+
+            <Text style={styles.bookingModalLabel}>Select Time</Text>
+            <TouchableOpacity
+              style={styles.dateTimePickerButton}
+              onPress={() => setShowTimePicker(true)}
+            >
+              <Ionicons name="time-outline" size={20} color="#3498DB" />
+              <Text style={styles.dateTimePickerText}>{formatDisplayTime(selectedTime)}</Text>
+            </TouchableOpacity>
+
+            {Platform.OS === 'ios' && showTimePicker && (
+              <DateTimePicker
+                value={selectedTime}
+                mode="time"
+                display="spinner"
+                themeVariant="light"
+                onChange={handleTimeChange}
+              />
+            )}
+            {Platform.OS === 'android' && showTimePicker && (
+              <DateTimePicker
+                value={selectedTime}
+                mode="time"
+                display="default"
+                onChange={handleTimeChange}
+              />
+            )}
+
+            <TouchableOpacity style={styles.bookingModalConfirm} onPress={handleConfirm}>
+              <Ionicons name="checkmark-circle" size={20} color="white" />
+              <Text style={styles.bookingModalConfirmText}>Confirm Booking</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 };
 
@@ -1734,6 +2182,18 @@ const styles = StyleSheet.create({
   loadingText: {
     color: '#888',
     fontSize: 16,
+  },
+  endedGoBackButton: {
+    marginTop: 24,
+    backgroundColor: '#3498DB',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  endedGoBackButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
   videoContainer: {
     width: screenWidth,
@@ -2776,11 +3236,11 @@ const styles = StyleSheet.create({
   // Booking Modal Styles
   bookingModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
     justifyContent: 'flex-end',
   },
   bookingModalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: '#1a1a1a',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '80%',
@@ -2788,50 +3248,55 @@ const styles = StyleSheet.create({
   },
   bookingModalHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
   },
   bookingModalTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
-    color: '#333',
+    color: 'white',
   },
   bookingModalCloseButton: {
-    padding: 4,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   bookingModalBody: {
     padding: 20,
   },
   bookingModalLabel: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: 'white',
     marginTop: 16,
     marginBottom: 8,
   },
   dateTimePickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     padding: 16,
     borderRadius: 12,
     marginBottom: 8,
+    gap: 10,
   },
   dateTimePickerText: {
     fontSize: 16,
-    color: '#333',
-    marginLeft: 12,
+    color: 'white',
     flex: 1,
   },
   notesInput: {
-    backgroundColor: '#f5f5f5',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
-    color: '#333',
+    color: 'white',
     minHeight: 100,
     textAlignVertical: 'top',
     marginBottom: 8,
@@ -2840,12 +3305,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: 20,
     borderTopWidth: 1,
-    borderTopColor: '#eee',
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
     gap: 12,
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#2a2a2a',
     padding: 16,
     borderRadius: 12,
     alignItems: 'center',
@@ -2853,7 +3318,7 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#666',
+    color: 'white',
   },
   confirmButton: {
     flex: 1,
@@ -2866,6 +3331,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
+  },
+  bookingModalConfirm: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3498DB',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 30,
+    marginBottom: 20,
+    gap: 8,
+  },
+  bookingModalConfirmText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   bookingInfoContainer: {
     flexDirection: 'row',
@@ -2908,6 +3389,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 1000,
   },
+  imageViewerList: {
+    flex: 1,
+    width: '100%',
+  },
+  imageViewerListContent: {
+    alignItems: 'center',
+  },
+  imageViewerSlide: {
+    width: screenWidth,
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerDots: {
+    position: 'absolute',
+    bottom: 40,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  imageViewerDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.4)',
+  },
+  imageViewerDotActive: {
+    backgroundColor: 'white',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+
 });
 
 // Shop Modal Component
@@ -3241,7 +3758,7 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
                   onPress={() => setShowBookingModal(false)}
                   style={styles.bookingModalCloseButton}
                 >
-                  <Ionicons name="close" size={24} color="#333" />
+                  <Ionicons name="close" size={24} color="white" />
                 </TouchableOpacity>
               </View>
 
@@ -3284,6 +3801,7 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
                     value={selectedDate}
                     mode="date"
                     display="spinner"
+                    themeVariant="light"
                     onChange={handleDateChange}
                     minimumDate={new Date()}
                   />
@@ -3294,6 +3812,7 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
                     value={selectedTime}
                     mode="time"
                     display="spinner"
+                    themeVariant="light"
                     onChange={handleTimeChange}
                   />
                 )}
@@ -3368,7 +3887,7 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
               <TouchableOpacity style={styles.cartButton} onPress={onOpenCart}>
                 <Ionicons name="bag-handle" size={24} color="white" />
                 {cartItems.length > 0 && (
-                  <View style={styles.cartBadge}>
+                  <View style={styles.cartBadge} pointerEvents="none">
                     <Text style={styles.cartBadgeText}>{cartItems.length}</Text>
                   </View>
                 )}
@@ -3635,7 +4154,7 @@ const MiniCartModal = ({ visible, onClose, cartItems, modalHeight, onHeightChang
   const panRef = useRef<any>(null);
   const baseHeight = useRef(modalHeight);
   const animatedHeight = useRef(new Animated.Value(modalHeight)).current;
-  const total = cartItems.reduce((sum: number, item: any) => sum + (item.live_price * item.quantity), 0);
+  const total = cartItems.reduce((sum: number, item: any) => sum + ((item.live_price || item.price || 0) * item.quantity), 0);
 
   // Update animated height when prop changes
   React.useEffect(() => {
@@ -3833,18 +4352,11 @@ const MiniCartModal = ({ visible, onClose, cartItems, modalHeight, onHeightChang
 };
 
 // Share Modal Component
-const ShareModal = ({ visible, onClose, modalHeight, onHeightChange, selectedUsers, onUserSelect, onShare, insetsBottom = 0 }: any) => {
+const ShareModal = ({ visible, onClose, modalHeight, onHeightChange, conversations, conversationsLoading, selectedUsers, onUserSelect, onShare, onShareExternal, isSharing = false, insetsBottom = 0 }: any) => {
   const panRef = useRef<any>(null);
   const baseHeight = useRef(modalHeight);
   const animatedHeight = useRef(new Animated.Value(modalHeight)).current;
   
-  // Mock users data - in real app, fetch from API
-  const [users, setUsers] = useState([
-    { id: '1', username: 'user1', avatar_url: 'https://via.placeholder.com/40' },
-    { id: '2', username: 'user2', avatar_url: 'https://via.placeholder.com/40' },
-    { id: '3', username: 'user3', avatar_url: 'https://via.placeholder.com/40' },
-  ]);
-
   // Update animated height when prop changes
   React.useEffect(() => {
     Animated.spring(animatedHeight, {
@@ -3924,9 +4436,9 @@ const ShareModal = ({ visible, onClose, modalHeight, onHeightChange, selectedUse
         style={[styles.userItem, isSelected && styles.userItemSelected]}
         onPress={() => toggleUserSelection(item)}
       >
-        <Image source={{ uri: item.avatar_url }} style={styles.userAvatar} />
+        <Image source={{ uri: item.avatar }} style={styles.userAvatar} />
         <Text style={[styles.userName, isSelected && styles.userNameSelected]}>
-          {item.username}
+          {item.name}
         </Text>
         {isSelected && (
           <View style={styles.checkmark}>
@@ -3964,27 +4476,54 @@ const ShareModal = ({ visible, onClose, modalHeight, onHeightChange, selectedUse
             </TouchableOpacity>
           </View>
 
-        <Text style={styles.shareSubtitle}>Select friends to share with</Text>
+        <Text style={styles.shareSubtitle}>Select chats to share with</Text>
 
         <View style={{ flex: 1 }}>
-          <FlatList
-            data={users}
-            renderItem={renderUserItem}
-            keyExtractor={(item) => item.id}
-            showsVerticalScrollIndicator={false}
-            style={styles.usersList}
-            contentContainerStyle={{ paddingBottom: 10 + (insetsBottom || 0) }}
-          />
+          {conversationsLoading ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color="#3498DB" />
+              <Text style={{ color: '#888', marginTop: 12 }}>Loading chats...</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={conversations}
+              renderItem={renderUserItem}
+              keyExtractor={(item) => item.id}
+              showsVerticalScrollIndicator={false}
+              style={styles.usersList}
+              contentContainerStyle={{ paddingBottom: 10 + (insetsBottom || 0) }}
+              ListEmptyComponent={
+                <View style={{ alignItems: 'center', marginTop: 30 }}>
+                  <Ionicons name="chatbubbles-outline" size={48} color="#666" />
+                  <Text style={{ color: '#888', marginTop: 12 }}>No chat conversations yet</Text>
+                </View>
+              }
+            />
+          )}
         </View>
 
         <TouchableOpacity
-          style={[styles.shareButton, selectedUsers.length === 0 && styles.shareButtonDisabled]}
+          style={[
+            styles.shareButton,
+            (selectedUsers.length === 0 || conversationsLoading || isSharing) && styles.shareButtonDisabled,
+          ]}
           onPress={onShare}
-          disabled={selectedUsers.length === 0}
+          disabled={selectedUsers.length === 0 || conversationsLoading || isSharing}
         >
-          <Text style={styles.shareButtonText}>
-            Share ({selectedUsers.length})
-          </Text>
+          {isSharing ? (
+            <ActivityIndicator color="white" size="small" />
+          ) : (
+            <Text style={styles.shareButtonText}>
+              Share to Chats {selectedUsers.length > 0 ? `(${selectedUsers.length})` : ''}
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.shareButton, { marginTop: 10, backgroundColor: 'rgba(255,255,255,0.12)' }]}
+          onPress={onShareExternal}
+        >
+          <Text style={[styles.shareButtonText, { color: 'white' }]}>Share to Other Apps</Text>
         </TouchableOpacity>
         </Animated.View>
       </PanGestureHandler>

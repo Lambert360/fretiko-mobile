@@ -187,6 +187,35 @@ export const CallProvider: React.FC<{
   const notAnsweredPlayerRef = useRef<AudioPlayer | null>(null);
   const ringingDurationRef = useRef<number>(30000);
 
+  // Retry navigation to CallScreen for a few seconds. This is needed when the
+  // app is launched from a killed state by a CallKeep answer event, because the
+  // navigation ref isn't ready at the moment the answer callback fires.
+  const navigateToCallScreenWithRetry = useCallback(() => {
+    if (!navigationRef) return;
+
+    const attempt = () => {
+      if (navigationRef.current) {
+        try {
+          navigationRef.current.navigate('CallScreen');
+        } catch (e) {
+          console.warn('Failed to navigate to CallScreen:', e);
+        }
+        return true;
+      }
+      return false;
+    };
+
+    if (attempt()) return;
+
+    let attempts = 0;
+    const interval = setInterval(() => {
+      attempts += 1;
+      if (attempt() || attempts >= 30) {
+        clearInterval(interval);
+      }
+    }, 100);
+  }, [navigationRef]);
+
   useEffect(() => {
     userIdRef.current = user?.id;
   }, [user?.id]);
@@ -294,7 +323,7 @@ export const CallProvider: React.FC<{
   }, []);
 
   // === Show incoming call (full-screen UI) ===
-  const showIncomingCall = useCallback((info: IncomingCallInfo) => {
+  const showIncomingCall = useCallback(async (info: IncomingCallInfo) => {
     if (incomingCallRef.current) return; // Already showing an incoming call
     if (currentCallSessionIdRef.current) return; // Already in a call
 
@@ -320,8 +349,8 @@ export const CallProvider: React.FC<{
       callSessionId: info.callSessionId,
     });
 
-    navigationRef?.current?.navigate('CallScreen');
-  }, []);
+    navigateToCallScreenWithRetry();
+  }, [navigateToCallScreenWithRetry]);
 
   // === Decline incoming call (from full-screen UI) ===
   const declineIncomingCall = useCallback(() => {
@@ -577,7 +606,9 @@ export const CallProvider: React.FC<{
       stopCallSounds();
 
       // Keep the terminal state visible briefly before the screen closes.
-      const terminalStatus: CallStatus = callStatus === 'not_answered' ? 'not_answered' : 'ended';
+      const missedReasons: Array<string | undefined> = ['missed', 'declined', 'timeout', 'not_answered', 'cancelled'];
+      const isMissed = callStatus === 'not_answered' || missedReasons.includes(reason);
+      const terminalStatus: CallStatus = isMissed ? 'not_answered' : 'ended';
       setCallStatus(terminalStatus);
 
       if (callEndTimeoutRef.current) {
@@ -781,7 +812,11 @@ export const CallProvider: React.FC<{
         setShowVideoUI(true);
       }
 
-      setCallStatus('connecting');
+      // If the Agora `onUserJoined` callback already fired during initializeAgoraCall
+      // (the remote user was already in the channel), it set callStatus to 'connected'.
+      // Don't overwrite that back to 'connecting', otherwise UI elements like the
+      // gift button that require 'connected' state will never appear.
+      setCallStatus((current) => (current === 'connected' ? current : 'connecting'));
       setIsInCall(true);
 
       if (realtimeAPI.isConnected()) {
@@ -805,6 +840,10 @@ export const CallProvider: React.FC<{
     try {
       switch (data.signalType) {
         case 'gift_animation':
+          // Ignore our own gift_animation broadcasts; we already showed it locally.
+          if (data.from === userIdRef.current) {
+            break;
+          }
           if (data.data && data.data.quantity) {
             const meta = data.data.giftMetadata || {};
             const animationId = `gift-${Date.now()}-${Math.random()}`;
@@ -830,7 +869,9 @@ export const CallProvider: React.FC<{
         case 'call_accepted':
           setTimeout(() => {
             stopCallSounds();
-            setCallStatus('connecting');
+            // Preserve 'connected' if the remote user already joined via Agora;
+            // otherwise mark the call as connecting.
+            setCallStatus((current) => (current === 'connected' ? current : 'connecting'));
             setIsInCall(true);
             playCallSound('connected');
           }, 0);
@@ -1100,7 +1141,7 @@ export const CallProvider: React.FC<{
       setIncomingCallForBanner(null);
 
       acceptIncomingCall(info);
-      navigationRef?.current?.navigate('CallScreen');
+      navigateToCallScreenWithRetry();
     });
 
     callkeepService.onEndCall((callUUID) => {
@@ -1151,10 +1192,9 @@ export const CallProvider: React.FC<{
       }
 
       if (currentCallSessionIdRef.current === callSessionId) {
+        const missedReasons = ['declined', 'missed', 'cancelled', 'timeout', 'not_answered'];
         const mappedReason: 'completed' | 'declined' | 'missed' | 'cancelled' =
-          reason === 'declined' || reason === 'missed' || reason === 'cancelled'
-            ? reason
-            : 'completed';
+          missedReasons.includes(reason as string) ? 'missed' : 'completed';
         endCallRef.current(mappedReason, true);
       }
     });
@@ -1189,6 +1229,27 @@ export const CallProvider: React.FC<{
         // Use the new full-screen incoming call flow instead of the banner
         showIncomingCall(info);
 
+      } else if (eventType === 'participant_joined') {
+        // Server-side signal (sent when the callee hits POST /chat/calls/:id/join)
+        // that fires regardless of whether the callee's socket is connected —
+        // unlike the client-emitted 'call_accepted' call_signal, which is lost
+        // if the callee's app was locked/backgrounded and its socket had
+        // disconnected. This is the reliable way for the caller to learn the
+        // call was accepted, so handle it here globally (not just in
+        // IndividualChatScreen, which may be unfocused/unmounted mid-call).
+        const joinedCallSessionId = callData?.callSessionId;
+        const isSelf = callData?.participantId === userIdRef.current;
+        if (
+          !isSelf &&
+          currentCallSessionIdRef.current &&
+          (joinedCallSessionId === currentCallSessionIdRef.current || !joinedCallSessionId)
+        ) {
+          stopCallSounds();
+          setCallStatus((current) => (current === 'connected' ? current : 'connecting'));
+          setIsInCall(true);
+          playCallSound('connected');
+        }
+
       } else if (eventType === 'call_ended') {
         if (incomingCallRef.current) {
           callkeepService.endCallkeepCall(incomingCallRef.current.callSessionId);
@@ -1207,10 +1268,9 @@ export const CallProvider: React.FC<{
           (endedSessionId === currentCallSessionIdRef.current || conversationId === chatIdRef.current)
         ) {
           const serverReason = callData?.reason as string | undefined;
+          const missedReasons = ['declined', 'missed', 'cancelled', 'timeout', 'not_answered'];
           const mappedReason: 'completed' | 'declined' | 'missed' | 'cancelled' =
-            serverReason === 'declined' || serverReason === 'missed' || serverReason === 'cancelled'
-              ? serverReason
-              : 'completed';
+            missedReasons.includes(serverReason as string) ? 'missed' : 'completed';
           endCallRef.current(mappedReason, true);
         }
       }

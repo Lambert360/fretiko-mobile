@@ -24,7 +24,9 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { useAuth } from '../contexts/AuthContext';
 import { auctionsAPI, auctionSocket, AuctionWithDetails, PublicBidHistoryItem } from '../services/auctionsAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
+import { chatAPI, ChatConversation } from '../services/chatAPI';
 import AdaptiveText from '../components/AdaptiveText';
+import ShareModal from '../components/ShareModal';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -119,6 +121,11 @@ const AuctionDetailsScreen = () => {
   const [viewerImageIndex, setViewerImageIndex] = useState(0);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
+  const [isSharing, setIsSharing] = useState(false);
   const [auctionOrder, setAuctionOrder] = useState<Order | null>(null);
   const [checkingOrder, setCheckingOrder] = useState(false);
   const [currentItem, setCurrentItem] = useState<any>(null);
@@ -546,6 +553,59 @@ const AuctionDetailsScreen = () => {
   };
 
   const handleShare = async () => {
+    if (!auction) return;
+
+    setShowShareModal(true);
+    setSelectedConversations([]);
+    setChatConversationsLoading(true);
+
+    try {
+      const { conversations } = await chatAPI.getConversations(1, 50);
+      setChatConversations(conversations);
+    } catch (error) {
+      console.error('Error loading chat conversations:', error);
+      Alert.alert('Error', 'Failed to load conversations for sharing');
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  };
+
+  const handleShareToChats = async () => {
+    if (!auction || selectedConversations.length === 0) return;
+
+    setIsSharing(true);
+
+    try {
+      const auctionData = {
+        id: auction.id,
+        title: auction.title,
+        currentBid: auction.current_bid || 0,
+        image: auction.images?.[0] || auction.thumbnail_url || '',
+      };
+
+      await Promise.all(
+        selectedConversations.map((conversation) =>
+          chatAPI.sendMessage({
+            conversationId: conversation.id,
+            messageType: 'text',
+            content: auction.title,
+            metadata: { auctionData },
+          })
+        )
+      );
+
+      Alert.alert('Shared', `Auction shared to ${selectedConversations.length} chat${selectedConversations.length === 1 ? '' : 's'}.`);
+      setShowShareModal(false);
+      setSelectedConversations([]);
+    } catch (error) {
+      console.error('Error sharing auction to chats:', error);
+      Alert.alert('Error', 'Failed to share auction to chats');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleShareExternal = async () => {
     if (!auction) return;
 
     try {
@@ -1526,6 +1586,20 @@ const AuctionDetailsScreen = () => {
 
         </View>
       </Modal>
+
+      <ShareModal
+        visible={showShareModal}
+        title="Share Auction"
+        onClose={() => setShowShareModal(false)}
+        conversations={chatConversations}
+        conversationsLoading={chatConversationsLoading}
+        selectedConversations={selectedConversations}
+        onSelect={setSelectedConversations}
+        onShare={handleShareToChats}
+        onShareExternal={handleShareExternal}
+        isSharing={isSharing}
+        insetsBottom={insets.bottom}
+      />
     </View>
   );
 };

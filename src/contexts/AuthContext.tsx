@@ -6,7 +6,18 @@ import { authAPI } from '../services/api';
 import { warningsAPI } from '../services/warningsAPI';
 import { pushNotificationService } from '../services/pushNotificationService';
 import { setVoipAuthToken } from '../services/voipPushNotification';
+import { userAPI } from '../services/userAPI';
 import { API_CONFIG } from '../config/api';
+
+// Store auth tokens with AFTER_FIRST_UNLOCK Keychain accessibility (rather
+// than the default WHEN_UNLOCKED) so they can still be read while the
+// device is locked — e.g. when the app cold-starts from a CallKit "Answer"
+// tap on the lock screen and immediately needs the token to call
+// /chat/calls/:id/join. WHEN_UNLOCKED throws "User interaction is not
+// allowed" in that scenario, silently breaking the accept-call flow.
+const SECURE_STORE_TOKEN_OPTIONS: SecureStore.SecureStoreOptions = {
+  keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+};
 
 // Custom error class for unauthorized access
 class UnauthorizedException extends Error {
@@ -433,6 +444,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           // false here, hiding any suspension detected earlier in the
           // session.
           await checkAccountStatus(accessToken);
+
+          // Re-sync device timezone on foreground too (not just cold
+          // start/login), so a vendor who travels while keeping the app
+          // backgrounded still gets schedule reminders at their new local
+          // time. No-ops server-side if the timezone hasn't changed.
+          try {
+            const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            if (deviceTimezone) {
+              await userAPI.updateTimezone(deviceTimezone);
+            }
+          } catch (error) {
+            console.log('⚠️ Could not sync device timezone on foreground (non-critical):', error);
+          }
         }
       }
     });
@@ -478,6 +502,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
 
     registerPushToken();
+  }, [authState.isAuthenticated, authState.accessToken, authState.user?.id]);
+
+  // Silently sync the device's IANA timezone to the backend so schedule
+  // reminders/digests (e.g. vendor "8 AM daily digest", "1 hour before
+  // service" alerts) fire at the vendor's actual local time instead of a
+  // hardcoded default. Safe to call on every login/app open - the backend
+  // no-ops if unchanged and merges rather than overwrites preferences.
+  useEffect(() => {
+    if (!authState.isAuthenticated || !authState.accessToken) {
+      return;
+    }
+
+    const syncTimezone = async () => {
+      try {
+        const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (deviceTimezone) {
+          await userAPI.updateTimezone(deviceTimezone);
+        }
+      } catch (error) {
+        console.log('⚠️ Could not sync device timezone (non-critical):', error);
+      }
+    };
+
+    syncTimezone();
   }, [authState.isAuthenticated, authState.accessToken, authState.user?.id]);
 
   // Function to refresh access token
@@ -538,8 +586,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             }
 
             if (isSecureStoreAvailable) {
-              await SecureStore.setItemAsync('accessToken', refreshData.accessToken);
-              await SecureStore.setItemAsync('refreshToken', refreshData.refreshToken);
+              await SecureStore.setItemAsync('accessToken', refreshData.accessToken, SECURE_STORE_TOKEN_OPTIONS);
+              await SecureStore.setItemAsync('refreshToken', refreshData.refreshToken, SECURE_STORE_TOKEN_OPTIONS);
             }
           } catch (secureStoreError) {
             console.log('Error storing tokens in SecureStore:', secureStoreError);
@@ -668,8 +716,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (isSecureStoreAvailable) {
         try {
           // Save tokens securely
-          await SecureStore.setItemAsync('accessToken', accessToken);
-          await SecureStore.setItemAsync('refreshToken', refreshToken);
+          await SecureStore.setItemAsync('accessToken', accessToken, SECURE_STORE_TOKEN_OPTIONS);
+          await SecureStore.setItemAsync('refreshToken', refreshToken, SECURE_STORE_TOKEN_OPTIONS);
           console.log('✅ Tokens saved to SecureStore');
         } catch (secureStoreError: any) {
           console.log('⚠️ SecureStore save failed, using fallback:', secureStoreError.message);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,11 +11,14 @@ import {
   ActivityIndicator,
   FlatList,
   Modal,
+  Animated,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { liveSalesAPI, CreateStreamData, TimeSlot } from '../services/liveSalesAPI';
@@ -131,9 +134,15 @@ const LiveStreamSetupScreen = () => {
   const [editLivePrice, setEditLivePrice] = useState('');
   const [editLiveStock, setEditLiveStock] = useState('');
 
+  // Out-of-stock toast for product selection modal
+  const [outOfStockProduct, setOutOfStockProduct] = useState<Product | null>(null);
+  const outOfStockOpacity = useRef(new Animated.Value(0)).current;
+  const outOfStockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // UI state
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [goLiveStep, setGoLiveStep] = useState('');
 
   // Load vendor's products and services
   useEffect(() => {
@@ -157,17 +166,51 @@ const LiveStreamSetupScreen = () => {
     }
   };
 
-  // Select a static cover image
+  // Select a static cover image and crop it to a 16:9 center crop
+  // without using the iOS native editing UI, whose confirm/crop button
+  // is invisible on the app's dark theme.
   const selectImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [16, 9],
+      allowsEditing: false,
       quality: 0.8,
     });
 
-    if (!result.canceled && result.assets[0]) {
-      setThumbnailUri(result.assets[0].uri);
+    if (result.canceled || !result.assets[0]) return;
+
+    const asset = result.assets[0];
+    const originalWidth = asset.width ?? 0;
+    const originalHeight = asset.height ?? 0;
+
+    if (!originalWidth || !originalHeight) {
+      setThumbnailUri(asset.uri);
+      setPreviewVideoUri(null);
+      return;
+    }
+
+    // Calculate the largest 16:9 center crop that fits within the image
+    let cropWidth = originalWidth;
+    let cropHeight = Math.round(cropWidth * 9 / 16);
+
+    if (cropHeight > originalHeight) {
+      cropHeight = originalHeight;
+      cropWidth = Math.round(cropHeight * 16 / 9);
+    }
+
+    const originX = Math.round((originalWidth - cropWidth) / 2);
+    const originY = Math.round((originalHeight - cropHeight) / 2);
+
+    try {
+      const cropped = await manipulateAsync(
+        asset.uri,
+        [{ crop: { originX, originY, width: cropWidth, height: cropHeight } }],
+        { compress: 0.8, format: SaveFormat.JPEG }
+      );
+      setThumbnailUri(cropped.uri);
+      setPreviewVideoUri(null);
+    } catch (error) {
+      console.error('Failed to crop thumbnail:', error);
+      setThumbnailUri(asset.uri);
       setPreviewVideoUri(null);
     }
   };
@@ -184,6 +227,41 @@ const LiveStreamSetupScreen = () => {
       setPreviewVideoUri(result.assets[0].uri);
       setThumbnailUri(null);
     }
+  };
+
+  // Show an out-of-stock toast when a vendor taps a product with no stock
+  const showOutOfStockToast = (product: Product) => {
+    if (outOfStockTimeoutRef.current) {
+      clearTimeout(outOfStockTimeoutRef.current);
+    }
+
+    setOutOfStockProduct(product);
+    outOfStockOpacity.setValue(0);
+
+    Animated.timing(outOfStockOpacity, {
+      toValue: 1,
+      duration: 250,
+      useNativeDriver: true,
+    }).start();
+
+    outOfStockTimeoutRef.current = setTimeout(() => {
+      Animated.timing(outOfStockOpacity, {
+        toValue: 0,
+        duration: 500,
+        useNativeDriver: true,
+      }).start(() => {
+        setOutOfStockProduct(null);
+        outOfStockTimeoutRef.current = null;
+      });
+    }, 2500);
+  };
+
+  const handleProductPress = (product: Product) => {
+    if (product.quantity <= 0) {
+      showOutOfStockToast(product);
+      return;
+    }
+    handleAddProduct(product);
   };
 
   // Add product to stream
@@ -205,6 +283,13 @@ const LiveStreamSetupScreen = () => {
     setEditingProduct(newProduct);
     setEditLivePrice(product.price.toString());
     setEditLiveStock(product.quantity.toString());
+
+    // On iOS, the product configuration modal renders behind the product list
+    // modal because React Native iOS does not stack multiple Modals reliably.
+    // Close the selection modal so the configuration modal is visible.
+    if (Platform.OS === 'ios') {
+      setProductModalVisible(false);
+    }
   };
 
   // Save product configuration
@@ -348,6 +433,7 @@ const LiveStreamSetupScreen = () => {
         if (isRemote) {
           thumbnailUrl = thumbnailUri;
         } else {
+          setGoLiveStep('Uploading thumbnail...');
           const fileName =
             thumbnailUri.split('/').pop() || `thumbnail-${Date.now()}.jpg`;
           const fileType = fileName.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
@@ -363,6 +449,7 @@ const LiveStreamSetupScreen = () => {
         if (isRemote) {
           previewVideoUrl = previewVideoUri;
         } else {
+          setGoLiveStep('Uploading display video...');
           const fileName =
             previewVideoUri.split('/').pop() || `preview-video-${Date.now()}.mp4`;
           const fileType = fileName.toLowerCase().endsWith('.mov') ? 'video/quicktime' : 'video/mp4';
@@ -392,6 +479,7 @@ const LiveStreamSetupScreen = () => {
         })) : undefined,
       };
 
+      setGoLiveStep('Starting live...');
       const stream = await liveSalesAPI.createStream(streamData);
 
       Alert.alert(
@@ -410,6 +498,7 @@ const LiveStreamSetupScreen = () => {
       Alert.alert('Error', error.message || 'Failed to create live stream');
     } finally {
       setCreating(false);
+      setGoLiveStep('');
     }
   };
 
@@ -749,6 +838,19 @@ const LiveStreamSetupScreen = () => {
             <View style={{ width: 28 }} />
           </View>
 
+          {/* Out-of-stock toast */}
+          {outOfStockProduct && (
+            <Animated.View
+              style={[styles.outOfStockToast, { opacity: outOfStockOpacity }]}
+              pointerEvents="none"
+            >
+              <Ionicons name="close-circle" size={20} color="#E74C3C" />
+              <Text style={styles.outOfStockText} numberOfLines={2}>
+                {outOfStockProduct.name} is out of stock
+              </Text>
+            </Animated.View>
+          )}
+
           <FlatList
             data={availableProducts}
             keyExtractor={(item) => item.id}
@@ -757,7 +859,7 @@ const LiveStreamSetupScreen = () => {
               return (
                 <TouchableOpacity
                   style={[styles.modalProductCard, isSelected && styles.modalProductCardSelected]}
-                  onPress={() => !isSelected && handleAddProduct(item)}
+                  onPress={() => handleProductPress(item)}
                   disabled={isSelected}
                 >
                   <Image
@@ -819,6 +921,8 @@ const LiveStreamSetupScreen = () => {
                 value={getDateValue(slotDate)}
                 mode="date"
                 display="spinner"
+                themeVariant={Platform.OS === 'ios' ? 'dark' : 'light'}
+                textColor={Platform.OS === 'ios' ? '#FFFFFF' : undefined}
                 onChange={(event, date) => {
                   if (date) setSlotDate(formatSlotDate(date));
                   setShowDatePicker(false);
@@ -841,6 +945,8 @@ const LiveStreamSetupScreen = () => {
                 value={getTimeValue(slotStartTime)}
                 mode="time"
                 display="spinner"
+                themeVariant={Platform.OS === 'ios' ? 'dark' : 'light'}
+                textColor={Platform.OS === 'ios' ? '#FFFFFF' : undefined}
                 onChange={(event, date) => {
                   if (date) {
                     const formatted = formatSlotTime(date);
@@ -868,6 +974,8 @@ const LiveStreamSetupScreen = () => {
                 value={getTimeValue(slotEndTime)}
                 mode="time"
                 display="spinner"
+                themeVariant={Platform.OS === 'ios' ? 'dark' : 'light'}
+                textColor={Platform.OS === 'ios' ? '#FFFFFF' : undefined}
                 onChange={(event, date) => {
                   if (date) {
                     const formatted = formatSlotTime(date);
@@ -974,7 +1082,10 @@ const LiveStreamSetupScreen = () => {
           disabled={creating}
         >
           {creating ? (
-            <ActivityIndicator size="small" color="white" />
+            <>
+              <ActivityIndicator size="small" color="white" />
+              <Text style={styles.goLiveButtonText}>{goLiveStep || 'Starting...'}</Text>
+            </>
           ) : (
             <>
               <Ionicons name="videocam" size={24} color="white" />
@@ -1447,6 +1558,27 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  outOfStockToast: {
+    position: 'absolute',
+    top: 90,
+    left: 30,
+    right: 30,
+    backgroundColor: 'rgba(231, 76, 60, 0.95)',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    zIndex: 100,
+  },
+  outOfStockText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '600',
+    flex: 1,
   },
 });
 

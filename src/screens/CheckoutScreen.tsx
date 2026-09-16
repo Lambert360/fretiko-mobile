@@ -580,10 +580,10 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
     
     // Validate that user has selected a delivery option
     if (requiresInterstateDelivery) {
-      if (!selectedInterstateCompany) {
+      if (!selectedInterstateCompany && selectedRider !== 'pickup') {
         Alert.alert(
-          'Delivery Company Required',
-          'Please select a logistics partner for interstate/international delivery before proceeding.',
+          'Delivery Option Required',
+          'Please select either Self Pickup or a logistics partner for interstate/international delivery before proceeding.',
           [{ text: 'OK' }]
         );
         return;
@@ -597,8 +597,8 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       return;
     }
 
-    // Validate delivery address only if delivery rider is selected (not pickup)
-    if (requiresInterstateDelivery || (selectedRider !== 'pickup' && typeof selectedRider === 'object')) {
+    // Validate delivery address only if a delivery rider/logistics partner is selected (not pickup)
+    if (selectedRider !== 'pickup') {
       if (!deliveryAddress.fullName || !deliveryAddress.address || 
           !deliveryAddress.phone || !deliveryAddress.city || 
           !deliveryAddress.state) {
@@ -698,20 +698,20 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         
         const orderData = {
           ...baseOrderData,
-          selectedRider: requiresInterstateDelivery ? undefined : selectedRider === 'pickup' ? {
+          selectedRider: selectedRider === 'pickup' ? {
             riderId: 'pickup',
             riderName: 'Self Pickup',
             vehicleType: 'pickup',
             deliveryPrice: 0,
             estimatedArrival: 0,
-          } : selectedRider ? {
+          } : (!requiresInterstateDelivery && selectedRider) ? {
             riderId: selectedRider.id,
             riderName: selectedRider.name,
             vehicleType: selectedRider.vehicleType,
             deliveryPrice: selectedRider.price,
             estimatedArrival: selectedRider.estimatedArrival,
           } : undefined,
-          interstateCompany: requiresInterstateDelivery && selectedInterstateCompany ? {
+          interstateCompany: (requiresInterstateDelivery && selectedRider !== 'pickup' && selectedInterstateCompany) ? {
             companyId: selectedInterstateCompany.companyId,
             companyName: selectedInterstateCompany.companyName,
             deliveryPrice: selectedInterstateCompany.deliveryPrice,
@@ -1217,7 +1217,25 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
               )}
             </View>
           ) : requiresInterstateDelivery ? (
-            selectedInterstateCompany ? (
+            selectedRider === 'pickup' ? (
+              // Interstate item, but vendor is handling delivery themselves: show selected pickup option
+              <View style={styles.selectedRiderCard}>
+                <View style={styles.selectedRiderInfo}>
+                  <View style={styles.selectedRiderAvatar}>
+                    <Ionicons name="walk" size={20} color="#FFF" />
+                  </View>
+                  <View style={styles.selectedRiderDetails}>
+                    <Text style={styles.selectedRiderName}>Self Pickup</Text>
+                    <Text style={styles.selectedRiderDistance}>
+                      Pick up your order directly from the vendor
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.selectedRiderPrice}>
+                  <Text style={styles.selectedRiderPriceText}>Free</Text>
+                </View>
+              </View>
+            ) : selectedInterstateCompany ? (
               <View style={styles.selectedRiderCard}>
                 <View style={styles.selectedRiderInfo}>
                   <View style={styles.selectedRiderAvatar}>
@@ -1239,7 +1257,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                 <View style={styles.multiVendorNoticeBox}>
                   <Ionicons name="information-circle" size={18} color="#007AFF" />
                   <Text style={styles.multiVendorNoticeText}>
-                    This order ships across states/countries and requires a verified logistics partner.
+                    This order ships across states/countries and requires a verified logistics partner, unless the vendor is handling delivery themselves.
                   </Text>
                 </View>
                 <TouchableOpacity style={styles.selectRiderCard} onPress={handleSelectRider}>
@@ -1250,6 +1268,28 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                     <Text style={styles.selectRiderTitle}>Choose Delivery Partner</Text>
                     <Text style={styles.selectRiderSubtitle}>
                       Select from verified interstate/international logistics companies
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#666" />
+                </TouchableOpacity>
+
+                <View style={styles.orDivider}>
+                  <View style={styles.orLine} />
+                  <Text style={styles.orText}>OR</Text>
+                  <View style={styles.orLine} />
+                </View>
+
+                <TouchableOpacity
+                  style={styles.pickupCard}
+                  onPress={() => setSelectedRider('pickup')}
+                >
+                  <View style={styles.selectRiderIcon}>
+                    <Ionicons name="walk" size={24} color="#27AE60" />
+                  </View>
+                  <View style={styles.selectRiderInfo}>
+                    <Text style={styles.selectRiderTitle}>Self Pickup</Text>
+                    <Text style={styles.selectRiderSubtitle}>
+                      Vendor is handling delivery themselves - Free
                     </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={20} color="#666" />
@@ -1334,7 +1374,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
                     Pick up your order directly from the vendor - Free
                   </Text>
                 </View>
-                <Ionicons name="checkmark-circle" size={20} color="#27AE60" />
+                <Ionicons name="chevron-forward" size={20} color="#666" />
               </TouchableOpacity>
             </View>
           )}

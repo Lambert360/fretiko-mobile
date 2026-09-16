@@ -14,6 +14,7 @@ interface ProductVideoPlayerProps {
   aspectRatio?: number; // width / height (e.g., 16/9, 9/16, 1)
   containerWidth?: number;
   maxHeight?: number;
+  minHeight?: number;
   onLoad?: (status: any) => void;
   onPlaybackStatusUpdate?: (status: any) => void;
 }
@@ -24,6 +25,7 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
   aspectRatio = 9 / 16, // Default to vertical video
   containerWidth = screenWidth,
   maxHeight,
+  minHeight,
   onLoad,
   onPlaybackStatusUpdate
 }) => {
@@ -49,6 +51,10 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
       displayHeight = maxHeight;
     }
 
+    if (minHeight && displayHeight < minHeight) {
+      displayHeight = minHeight;
+    }
+
     console.log(`📐 Video dimensions:`, {
       naturalWidth,
       naturalHeight,
@@ -68,7 +74,7 @@ export const ProductVideoPlayer: React.FC<ProductVideoPlayerProps> = ({
         aspectRatio: naturalAspectRatio
       });
     }
-  }, [containerWidth, maxHeight, onLoad]);
+  }, [containerWidth, maxHeight, minHeight, onLoad]);
 
   // Memoize video URI to prevent unnecessary re-creations
   const memoizedVideoUri = useMemo(() => videoUri, [videoUri]);

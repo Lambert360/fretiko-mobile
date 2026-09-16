@@ -29,30 +29,47 @@ class CallkeepService {
 
     this.setupPromise = (async () => {
       try {
-        await RNCallKeep.setup({
-          ios: {
-            appName: 'Fretiko',
-            supportsVideo: true,
-            maximumCallGroups: '1',
-            maximumCallsPerCallGroup: '1',
-            includesCallsInRecents: false,
-          },
-          android: {
-            alertTitle: 'Permissions required',
-            alertDescription:
-              'Fretiko needs phone account permission to manage incoming calls.',
-            cancelButton: 'Cancel',
-            okButton: 'Allow',
-            imageName: 'phone_account_icon',
-            additionalPermissions: [],
-            selfManaged: false,
-            foregroundService: {
-              channelId: 'com.kinging.fretikomobile.calls',
-              channelName: 'Fretiko Calls',
-              notificationTitle: 'Fretiko call in progress',
-              notificationIcon: 'ic_launcher',
+        // RNCallKeep.setup() on Android can hang while it waits for the user to
+        // respond to a phone-account permission Alert. In a headless/killed
+        // context there is no UI, so that Alert can never be answered. Race
+        // setup against a timeout and continue anyway: the native phone account
+        // registration step inside setup() completes synchronously before the
+        // alert, so callers are not blocked from ringing/displaying calls.
+        const SETUP_TIMEOUT_MS = 4000;
+        await Promise.race([
+          RNCallKeep.setup({
+            ios: {
+              appName: 'Fretiko',
+              supportsVideo: true,
+              maximumCallGroups: '1',
+              maximumCallsPerCallGroup: '1',
+              includesCallsInRecents: false,
             },
-          },
+            android: {
+              alertTitle: 'Permissions required',
+              alertDescription:
+                'Fretiko needs phone account permission to manage incoming calls.',
+              cancelButton: 'Cancel',
+              okButton: 'Allow',
+              imageName: 'phone_account_icon',
+              additionalPermissions: [],
+              selfManaged: false,
+              foregroundService: {
+                channelId: 'com.kinging.fretikomobile.calls',
+                channelName: 'Fretiko Calls',
+                notificationTitle: 'Fretiko call in progress',
+                notificationIcon: 'ic_launcher',
+              },
+            },
+          }),
+          new Promise<void>((_, reject) =>
+            setTimeout(
+              () => reject(new Error('CallKeep setup timed out waiting for phone account permission')),
+              SETUP_TIMEOUT_MS,
+            ),
+          ),
+        ]).catch((err) => {
+          console.warn('⚠️ CallKeep setup warning (continuing):', err);
         });
 
         RNCallKeep.setAvailable(true);

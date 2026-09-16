@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,8 @@ import { ordersAPI } from '../services/ordersAPI';
 import { liveStreamSocket } from '../services/liveStreamSocket';
 import { riderSelectionBridge } from '../utils/riderSelectionBridge';
 import { addressSelectionBridge } from '../utils/addressSelectionBridge';
+import { InterstateCompanySelection } from './InterstateDeliveryScreen';
+import LocationSelector from '../components/LocationSelector';
 import giftCardAPI from '../services/giftCardAPI';
 
 interface LiveCartCheckoutScreenProps {
@@ -31,6 +33,7 @@ interface LiveCartCheckoutScreenProps {
       cartItems: any[];
       streamTitle: string;
       vendorId: string;
+      vendorLocation?: { state?: string; country?: string; city?: string };
       onCheckoutSuccess?: () => void;
     };
   };
@@ -42,7 +45,7 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { streamId, cartItems, streamTitle, vendorId, onCheckoutSuccess } = route.params;
+  const { streamId, cartItems, streamTitle, vendorId, vendorLocation, onCheckoutSuccess } = route.params;
 
   // Debug: Log cart items structure when screen loads
   useEffect(() => {
@@ -63,20 +66,24 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
   const [loading, setLoading] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
   const [selectedRider, setSelectedRider] = useState<any>(null); // No default - user must choose
+  const [selectedInterstateCompany, setSelectedInterstateCompany] = useState<InterstateCompanySelection | null>(null);
   const riderCallbackKeyRef = React.useRef<string | null>(null);
   const addressCallbackKeyRef = React.useRef<string | null>(null);
+  const prevRequiresInterstateRef = React.useRef<boolean>(false);
   const [deliveryAddress, setDeliveryAddress] = useState({
     fullName: '',
     phone: '',
     address: '',
     city: '',
     state: '',
+    country: '',
     postalCode: '',
   });
 
   // Gift card state - one shared gift card can be applied across all items in the
   // live cart (products, services, portfolio bookings), allocated sequentially.
   const [showGiftCardForm, setShowGiftCardForm] = useState(false);
+  const [showLocationSelector, setShowLocationSelector] = useState(false);
   const [giftCardNumber, setGiftCardNumber] = useState('');
   const [giftCardPin, setGiftCardPin] = useState('');
   const [giftCardApplying, setGiftCardApplying] = useState(false);
@@ -84,6 +91,32 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
   const [giftCardBalance, setGiftCardBalance] = useState(0);
   const [giftCardError, setGiftCardError] = useState<string | null>(null);
   const [giftCardCustomAmount, setGiftCardCustomAmount] = useState('');
+
+  // Detect interstate/international delivery based on vendor vs buyer location
+  const requiresInterstateDelivery = useMemo(() => {
+    if (!vendorLocation) return false;
+
+    const sellerCountry = (vendorLocation.country || '').trim().toLowerCase();
+    const sellerState = (vendorLocation.state || '').trim().toLowerCase();
+    const buyerCountry = (deliveryAddress.country || '').trim().toLowerCase();
+    const buyerState = (deliveryAddress.state || '').trim().toLowerCase();
+
+    if (sellerCountry && buyerCountry && sellerCountry !== buyerCountry) return true;
+    return !!(
+      (!sellerCountry || !buyerCountry || sellerCountry === buyerCountry) &&
+      sellerState &&
+      buyerState &&
+      sellerState !== buyerState
+    );
+  }, [vendorLocation, deliveryAddress]);
+
+  useEffect(() => {
+    if (prevRequiresInterstateRef.current !== requiresInterstateDelivery) {
+      setSelectedRider(null);
+      setSelectedInterstateCompany(null);
+      prevRequiresInterstateRef.current = requiresInterstateDelivery;
+    }
+  }, [requiresInterstateDelivery]);
 
   useEffect(() => {
     loadCheckoutData();
@@ -100,15 +133,42 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
     }
   };
 
+  const getCartItemImage = (item: any) => {
+    return item.primary_image_url ||
+      item.product?.primary_image_url ||
+      item.product?.image_url ||
+      item.images?.[0]?.image_url ||
+      'https://via.placeholder.com/50';
+  };
+
+  const getCartItemName = (item: any) => {
+    return item.name || item.product?.name || item.service?.name || item.title || 'Item';
+  };
+
+  const getCartItemUnitPrice = (item: any) => {
+    if (item.type === 'portfolio') return Number(item.price || 0);
+    return Number(item.live_price || 0);
+  };
+
+  const formatDeliveryAddress = () => {
+    const { fullName, phone, address, city, state, country, postalCode } = deliveryAddress;
+    const parts = [fullName, phone, address, city, state, country, postalCode].filter(Boolean);
+    return parts.join(', ');
+  };
+
   const calculateTotal = () => {
     const itemTotal = cartItems.reduce((sum, item) => {
-      // Portfolio items use 'price', others use 'live_price'
-      const itemPrice = item.type === 'portfolio' ? item.price : item.live_price;
-      return sum + (itemPrice * item.quantity);
+      return sum + (getCartItemUnitPrice(item) * item.quantity);
     }, 0);
-    const deliveryFee = selectedRider && selectedRider !== 'pickup'
-      ? selectedRider.price
-      : 0;
+
+    let deliveryFee = 0;
+
+    if (requiresInterstateDelivery && selectedInterstateCompany) {
+      deliveryFee = selectedInterstateCompany.deliveryPrice;
+    } else if (selectedRider && selectedRider !== 'pickup') {
+      deliveryFee = selectedRider.price;
+    }
+
     return itemTotal + deliveryFee;
   };
 
@@ -194,23 +254,39 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
   };
 
   const handleCheckout = () => {
-    // Only validate delivery for products
-    const hasProducts = cartItems.some(item => item.type === 'product');
-    
-    // Validate that user has selected a delivery option (only for products)
-    if (hasProducts && !selectedRider) {
-      Alert.alert(
-        'Delivery Option Required',
-        'Please select either Self Pickup or a Delivery Rider before proceeding.',
-        [{ text: 'OK' }]
-      );
-      return;
+    // Products, services, and portfolio bookings can all be picked up or delivered
+    // by a rider, so delivery selection applies to any of them.
+    const hasDeliverableItems = cartItems.some(
+      item => item.type === 'product' || item.type === 'service' || item.type === 'portfolio'
+    );
+    const needsDelivery = hasDeliverableItems && selectedRider !== 'pickup';
+
+    // Validate that user has selected a delivery option
+    if (hasDeliverableItems) {
+      if (requiresInterstateDelivery && !selectedInterstateCompany) {
+        Alert.alert(
+          'Delivery Partner Required',
+          'This order requires interstate/international delivery. Please select a verified logistics partner.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      if (!requiresInterstateDelivery && !selectedRider) {
+        Alert.alert(
+          'Delivery Option Required',
+          'Please select either Self Pickup or a Delivery Rider before proceeding.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
     }
-    
-    if (hasProducts && selectedRider !== 'pickup') {
+
+    if (needsDelivery || requiresInterstateDelivery) {
       if (!deliveryAddress.fullName || !deliveryAddress.address ||
           !deliveryAddress.phone || !deliveryAddress.city ||
-          !deliveryAddress.state) {
+          !deliveryAddress.state ||
+          (requiresInterstateDelivery && !deliveryAddress.country)) {
         Alert.alert(
           'Delivery Address Required',
           'Please provide the delivery address for your order.',
@@ -241,30 +317,39 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
     // Build item summary
     const productCount = cartItems.filter(item => item.type === 'product').length;
     const serviceCount = cartItems.filter(item => item.type === 'service').length;
-    
+    const portfolioCount = cartItems.filter(item => item.type === 'portfolio').length;
+
     let itemSummary = '';
     if (cartItems.length === 1) {
       const item = cartItems[0];
       if (item.type === 'product') {
-        itemSummary = `${item.quantity}x ${item.name}`;
+        itemSummary = `${item.quantity}x ${getCartItemName(item)}`;
       } else {
-        itemSummary = item.name;
+        itemSummary = getCartItemName(item);
       }
     } else {
       const parts: string[] = [];
       if (productCount > 0) parts.push(`${productCount} product${productCount > 1 ? 's' : ''}`);
       if (serviceCount > 0) parts.push(`${serviceCount} service${serviceCount > 1 ? 's' : ''}`);
+      if (portfolioCount > 0) parts.push(`${portfolioCount} portfolio service${portfolioCount > 1 ? 's' : ''}`);
       itemSummary = parts.join(' and ');
     }
 
     // Build confirmation message
     let confirmationMessage = `You're purchasing ${itemSummary} from the live stream "${streamTitle}".\n\n`;
     
-    if (hasProducts) {
-      const deliveryInfo = selectedRider === 'pickup'
-        ? 'Self Pickup (Free)'
-        : `Delivery by ${selectedRider.name} (₣${selectedRider.price.toFixed(2)})`;
-      confirmationMessage += `Delivery: ${deliveryInfo}\n\n`;
+    if (hasDeliverableItems) {
+      let deliveryInfo = '';
+      if (requiresInterstateDelivery && selectedInterstateCompany) {
+        deliveryInfo = `${selectedInterstateCompany.isInternational ? 'International' : 'Interstate'} delivery by ${selectedInterstateCompany.companyName} (₣${selectedInterstateCompany.deliveryPrice.toFixed(2)})`;
+      } else if (selectedRider === 'pickup') {
+        deliveryInfo = 'Self Pickup (Free)';
+      } else if (selectedRider) {
+        deliveryInfo = `Delivery by ${selectedRider.name} (₣${selectedRider.price.toFixed(2)})`;
+      }
+      if (deliveryInfo) {
+        confirmationMessage += `Delivery: ${deliveryInfo}\n\n`;
+      }
     }
     
     if (giftCardApplied && getGiftCardDiscount() > 0) {
@@ -354,9 +439,22 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
         return { cardNumber: giftCardNumber.trim(), pin: giftCardPin.trim(), amount: allocation };
       };
 
-      // Process products. Purchases/bookings are executed sequentially (rather than in
-      // parallel) so a shared gift card's balance is allocated correctly across items.
-      for (const item of productItems) {
+      // Purchases/bookings are executed sequentially (rather than in parallel) so a
+      // shared gift card's balance is allocated correctly across items.
+      // Delivery is a base price for the whole cart (one rider/partner run), so the
+      // fee is only attached to the very first order in the cart (product, service,
+      // or portfolio - whichever comes first); every other item is still handled by
+      // the same rider/partner but with a zero delivery fee.
+      let deliveryFeeAssigned = false;
+      const hasRider = selectedRider && selectedRider !== 'pickup';
+      const hasInterstate = requiresInterstateDelivery && selectedInterstateCompany;
+      const hasDelivery = hasRider || hasInterstate;
+
+      for (let i = 0; i < productItems.length; i++) {
+        const item = productItems[i];
+        const isFeeItem = !deliveryFeeAssigned;
+        if (hasDelivery) deliveryFeeAssigned = true;
+
         // For LiveStreamProduct, use product_id (actual product ID), not id (live_stream_product.id)
         // The item should have product_id from the LiveStreamProduct interface
         const productId = item.product_id;
@@ -375,8 +473,9 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
           hasProductId: !!item.product_id,
         });
 
-        const hasRider = selectedRider && selectedRider !== 'pickup';
-        const itemTotal = (item.live_price * item.quantity) + (hasRider ? 10.0 : 0); // Matches backend delivery fee estimate
+        const riderDeliveryPrice = (hasRider && isFeeItem) ? selectedRider.price : 0;
+        const interstateDeliveryPrice = (hasInterstate && isFeeItem) ? selectedInterstateCompany.deliveryPrice : 0;
+        const itemTotal = (item.live_price * item.quantity) + riderDeliveryPrice + interstateDeliveryPrice;
 
         const purchaseData = {
           stream_id: streamId,
@@ -384,14 +483,13 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
           quantity: item.quantity,
           continue_watching: false,
           rider_id: hasRider ? selectedRider.id : undefined,
-          delivery_address: hasRider ? {
-            fullName: deliveryAddress.fullName,
-            phone: deliveryAddress.phone,
-            address: deliveryAddress.address,
-            city: deliveryAddress.city,
-            state: deliveryAddress.state,
-            postalCode: deliveryAddress.postalCode,
-          } : undefined,
+          deliveryPrice: hasRider ? (isFeeItem ? selectedRider.price : 0) : undefined,
+          delivery_address: hasDelivery ? formatDeliveryAddress() : undefined,
+          interstateCompany: hasInterstate
+            ? (isFeeItem
+              ? selectedInterstateCompany
+              : { ...selectedInterstateCompany, deliveryPrice: 0 })
+            : undefined,
           giftCard: buildGiftCardForAmount(itemTotal),
         };
 
@@ -418,7 +516,12 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
       for (const item of serviceItems) {
         // For LiveStreamService, use service_id (actual service ID), not id (live_stream_service.id)
         const serviceId = item.service_id || item.id;
-        const itemTotal = item.live_price * item.quantity;
+        const isFeeItem = !deliveryFeeAssigned;
+        if (hasDelivery) deliveryFeeAssigned = true;
+
+        const riderDeliveryPrice = (hasRider && isFeeItem) ? selectedRider.price : 0;
+        const interstateDeliveryPrice = (hasInterstate && isFeeItem) ? selectedInterstateCompany.deliveryPrice : 0;
+        const itemTotal = (item.live_price * item.quantity) + riderDeliveryPrice + interstateDeliveryPrice;
 
         // Services use booking API
         const bookingData = {
@@ -428,6 +531,14 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
           service_time: new Date().toTimeString().split(' ')[0].substring(0, 5), // Current time HH:MM
           service_notes: `Booked from live stream: ${streamTitle}`,
           continue_watching: false,
+          rider_id: hasRider ? selectedRider.id : undefined,
+          deliveryPrice: hasRider ? (isFeeItem ? selectedRider.price : 0) : undefined,
+          delivery_address: hasDelivery ? formatDeliveryAddress() : undefined,
+          interstateCompany: hasInterstate
+            ? (isFeeItem
+              ? selectedInterstateCompany
+              : { ...selectedInterstateCompany, deliveryPrice: 0 })
+            : undefined,
           giftCard: buildGiftCardForAmount(itemTotal),
         };
 
@@ -441,7 +552,12 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
           throw new Error(`Portfolio service "${item.title || item.id}" is missing booking date/time. Please remove it from cart and re-add it with a scheduled date/time.`);
         }
 
-        const itemTotal = item.price * item.quantity;
+        const isFeeItem = !deliveryFeeAssigned;
+        if (hasDelivery) deliveryFeeAssigned = true;
+
+        const riderDeliveryPrice = (hasRider && isFeeItem) ? selectedRider.price : 0;
+        const interstateDeliveryPrice = (hasInterstate && isFeeItem) ? selectedInterstateCompany.deliveryPrice : 0;
+        const itemTotal = (item.price * item.quantity) + riderDeliveryPrice + interstateDeliveryPrice;
 
         // Portfolio services use bookPortfolioService API
         const bookingData = {
@@ -450,6 +566,14 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
           service_date: item.bookingDate, // Use selected date from cart
           service_time: item.bookingTime, // Use selected time from cart
           service_notes: `Booked portfolio item: ${item.title} from live stream: ${streamTitle}`,
+          rider_id: hasRider ? selectedRider.id : undefined,
+          deliveryPrice: hasRider ? (isFeeItem ? selectedRider.price : 0) : undefined,
+          delivery_address: hasDelivery ? formatDeliveryAddress() : undefined,
+          interstateCompany: hasInterstate
+            ? (isFeeItem
+              ? selectedInterstateCompany
+              : { ...selectedInterstateCompany, deliveryPrice: 0 })
+            : undefined,
           giftCard: buildGiftCardForAmount(itemTotal),
         };
 
@@ -588,25 +712,86 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
           </Text>
           {cartItems.map((item, index) => (
             <View key={item.cartId} style={[styles.itemCard, index > 0 && { marginTop: 12 }]}>
-              <Image source={{ uri: item.primary_image_url }} style={styles.productImage} />
+              <Image source={{ uri: getCartItemImage(item) }} style={styles.productImage} />
               <View style={styles.itemInfo}>
-                <Text style={styles.productName}>{item.name}</Text>
+                <Text style={styles.productName}>{getCartItemName(item)}</Text>
                 <Text style={styles.productQuantity}>Quantity: {item.quantity}</Text>
-                <Text style={styles.productPrice}>₣{(item.live_price * item.quantity).toFixed(2)}</Text>
+                <Text style={styles.productPrice}>₣{(getCartItemUnitPrice(item) * item.quantity).toFixed(2)}</Text>
               </View>
             </View>
           ))}
         </View>
 
         {/* Delivery Options */}
-        {cartItems.some(item => item.type === 'product') && (
+        {cartItems.some(item => item.type === 'product' || item.type === 'service' || item.type === 'portfolio') && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Delivery Option</Text>
+            <Text style={styles.sectionTitle}>
+              {requiresInterstateDelivery ? 'Interstate / International Delivery' : 'Delivery Option'}
+            </Text>
             <Text style={styles.sectionSubtitle}>
-              Choose how you'd like to receive your items
+              {requiresInterstateDelivery
+                ? 'This order requires a verified logistics partner'
+                : "Choose how you'd like to receive your items"}
             </Text>
 
-            {selectedRider === 'pickup' ? (
+            {requiresInterstateDelivery ? (
+              selectedInterstateCompany ? (
+                <View style={styles.selectedOption}>
+                  <View style={styles.optionIcon}>
+                    <Ionicons name="business" size={24} color="#3498DB" />
+                  </View>
+                  <View style={styles.optionInfo}>
+                    <Text style={styles.optionTitle}>{selectedInterstateCompany.companyName}</Text>
+                    <Text style={styles.optionSubtitle}>
+                      {selectedInterstateCompany.isInternational ? 'International' : 'Interstate'} delivery • Est. {selectedInterstateCompany.estimatedDeliveryDays} day(s)
+                    </Text>
+                    <Text style={styles.optionPrice}>₣{selectedInterstateCompany.deliveryPrice.toFixed(2)}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.changeButton}
+                    onPress={() => setSelectedInterstateCompany(null)}
+                  >
+                    <Text style={styles.changeText}>Change</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.selectOption}
+                  onPress={() => {
+                    if (!deliveryAddress.state || !deliveryAddress.country) {
+                      Alert.alert('Address Required', 'Please enter your delivery state and country first.');
+                      return;
+                    }
+                    if (riderCallbackKeyRef.current) riderSelectionBridge.clear(riderCallbackKeyRef.current);
+                    const callbackKey = `live_cart_interstate_${Date.now()}`;
+                    riderCallbackKeyRef.current = callbackKey;
+                    riderSelectionBridge.register(callbackKey, (company: InterstateCompanySelection) => setSelectedInterstateCompany(company));
+                    navigation.navigate('InterstateDelivery', {
+                      pickupLocation: {
+                        state: vendorLocation?.state,
+                        country: vendorLocation?.country,
+                        city: vendorLocation?.city,
+                      },
+                      deliveryLocation: {
+                        state: deliveryAddress.state,
+                        country: deliveryAddress.country,
+                        city: deliveryAddress.city,
+                      },
+                      callbackKey,
+                    });
+                  }}
+                >
+                  <View style={styles.optionIcon}>
+                    <Ionicons name="business" size={24} color="#3498DB" />
+                  </View>
+                  <View style={styles.optionInfo}>
+                    <Text style={styles.optionTitle}>Choose Delivery Partner</Text>
+                    <Text style={styles.optionSubtitle}>Select from verified interstate/international logistics companies</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#666" />
+                </TouchableOpacity>
+              )
+            ) : selectedRider === 'pickup' ? (
               <View style={styles.selectedOption}>
                 <View style={styles.optionIcon}>
                   <Ionicons name="walk" size={24} color="#3498DB" />
@@ -651,17 +836,20 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
                     const callbackKey = `live_cart_rider_${Date.now()}`;
                     riderCallbackKeyRef.current = callbackKey;
                     riderSelectionBridge.register(callbackKey, (rider: any) => setSelectedRider(rider));
+                    const itemTypes = cartItems.some((item: any) => item.type === 'service' || item.type === 'portfolio') ? ['service'] : ['product'];
                     navigation.navigate('RiderSelection', {
                       pickupLocation: {
                         latitude: 6.5244,
                         longitude: 3.3792,
-                        address: deliveryAddress.city ? `Vendor Location, ${deliveryAddress.city}` : 'Vendor Location',
-                        state: deliveryAddress.state || undefined,
-                        city: deliveryAddress.city || undefined,
+                        address: vendorLocation?.city ? `Vendor Location, ${vendorLocation.city}` : 'Vendor Location',
+                        state: vendorLocation?.state || undefined,
+                        country: vendorLocation?.country || undefined,
+                        city: vendorLocation?.city || undefined,
                       },
                       deliveryLocation: { latitude: 6.5244, longitude: 3.3792, address: deliveryAddress.address || 'Delivery Address' },
                       orderDetails: { weight: cartItems.length * 0.5, itemCount: cartItems.length, distance: 5 },
                       callbackKey,
+                      itemTypes,
                     });
                   }}
                 >
@@ -670,7 +858,7 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
                   </View>
                   <View style={styles.optionInfo}>
                     <Text style={styles.optionTitle}>Select Delivery Rider</Text>
-                    <Text style={styles.optionSubtitle}>Choose a rider for fast delivery</Text>
+                    <Text style={styles.optionSubtitle}>Choose a verified local rider</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={20} color="#666" />
                 </TouchableOpacity>
@@ -702,7 +890,7 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
         )}
 
         {/* Delivery Address */}
-        {selectedRider !== 'pickup' && cartItems.some(item => item.type === 'product') && (
+        {selectedRider !== 'pickup' && cartItems.some(item => item.type === 'product' || item.type === 'service' || item.type === 'portfolio') && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Delivery Address</Text>
             <Text style={styles.sectionSubtitle}>
@@ -740,13 +928,18 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
                   value={deliveryAddress.city}
                   onChangeText={(text) => setDeliveryAddress(prev => ({ ...prev, city: text }))}
                 />
-                <TextInput
-                  style={styles.addressInputHalf}
-                  placeholder="State *"
-                  placeholderTextColor="#666"
-                  value={deliveryAddress.state}
-                  onChangeText={(text) => setDeliveryAddress(prev => ({ ...prev, state: text }))}
-                />
+                <TouchableOpacity
+                  style={[styles.addressInput, styles.addressInputHalf, { marginBottom: 0 }]}
+                  onPress={() => setShowLocationSelector(true)}
+                >
+                  {deliveryAddress.state ? (
+                    <Text style={styles.addressInputText} numberOfLines={1}>
+                      {deliveryAddress.state}, {deliveryAddress.country}
+                    </Text>
+                  ) : (
+                    <Text style={styles.addressInputPlaceholder}>State / Country *</Text>
+                  )}
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -758,6 +951,7 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
                 addressCallbackKeyRef.current = callbackKey;
                 addressSelectionBridge.register(callbackKey, (address: any) => setDeliveryAddress(address));
                 navigation.navigate('AddressBook', {
+                  selectMode: true,
                   callbackKey,
                 });
               }}
@@ -775,7 +969,7 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Items Total</Text>
               <Text style={styles.summaryValue}>
-                ₣{cartItems.reduce((sum, item) => sum + (item.live_price * item.quantity), 0).toFixed(2)}
+                ₣{cartItems.reduce((sum, item) => sum + (getCartItemUnitPrice(item) * item.quantity), 0).toFixed(2)}
               </Text>
             </View>
 
@@ -783,6 +977,13 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Delivery Fee</Text>
                 <Text style={styles.summaryValue}>₣{selectedRider.price.toFixed(2)}</Text>
+              </View>
+            )}
+
+            {requiresInterstateDelivery && selectedInterstateCompany && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Delivery Fee ({selectedInterstateCompany.companyName})</Text>
+                <Text style={styles.summaryValue}>₣{selectedInterstateCompany.deliveryPrice.toFixed(2)}</Text>
               </View>
             )}
 
@@ -911,6 +1112,17 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
           </View>
         </View>
       </ScrollView>
+
+      {/* Location Selector */}
+      <LocationSelector
+        visible={showLocationSelector}
+        selectedLocation={deliveryAddress.state ? `${deliveryAddress.state}, ${deliveryAddress.country}` : ''}
+        onLocationSelect={() => {}}
+        onClose={() => setShowLocationSelector(false)}
+        onLocationSelectDetailed={(state: string, country: string) =>
+          setDeliveryAddress((prev: any) => ({ ...prev, state, country }))
+        }
+      />
 
       {/* Bottom Checkout Button */}
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 20 }]}>
@@ -1149,6 +1361,14 @@ const styles = StyleSheet.create({
   },
   addressInputHalf: {
     flex: 1,
+  },
+  addressInputText: {
+    color: '#FFF',
+    fontSize: 14,
+  },
+  addressInputPlaceholder: {
+    color: '#666',
+    fontSize: 14,
   },
   addressRow: {
     flexDirection: 'row',

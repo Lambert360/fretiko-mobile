@@ -50,6 +50,7 @@
         "android.permission.MANAGE_OWN_CALLS",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
         "android.permission.USE_FULL_SCREEN_INTENT",
         "android.permission.READ_PHONE_STATE",
         "android.permission.READ_PHONE_NUMBERS",
@@ -58,7 +59,64 @@
       "versionCode": 7,
       "package": "com.kinging.fretikomobile",
       "googleServicesFile": "./google-services.json",
-      "useNextNotificationsApi": true
+      "useNextNotificationsApi": true,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "fretiko.com",
+              "pathPrefix": "/post"
+            },
+            {
+              "scheme": "https",
+              "host": "fretiko.com",
+              "pathPrefix": "/product"
+            },
+            {
+              "scheme": "https",
+              "host": "fretiko.com",
+              "pathPrefix": "/service"
+            },
+            {
+              "scheme": "https",
+              "host": "fretiko.com",
+              "pathPrefix": "/auction"
+            },
+            {
+              "scheme": "https",
+              "host": "fretiko.com",
+              "pathPrefix": "/story"
+            },
+            {
+              "scheme": "https",
+              "host": "fretiko.com",
+              "pathPrefix": "/profile"
+            },
+            {
+              "scheme": "https",
+              "host": "fretiko.com",
+              "pathPrefix": "/wishlist"
+            },
+            {
+              "scheme": "https",
+              "host": "fretiko.com",
+              "pathPrefix": "/r"
+            },
+            {
+              "scheme": "https",
+              "host": "fretiko.com",
+              "pathPrefix": "/live"
+            },
+            {
+              "scheme": "fretiko"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "notification": {
       "icon": "./assets/horse.png",
@@ -115,6 +173,7 @@
       "expo-maps",
       "./plugins/withFirebaseAndroidGradle",
       "./plugins/withCallkeep",
+      "./plugins/withAndroidCallPermissions",
       "expo-web-browser",
       "expo-apple-authentication",
       "expo-asset",
