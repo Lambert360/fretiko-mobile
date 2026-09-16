@@ -23,15 +23,15 @@ class StaticFaceDetectionModule : Module() {
         val uri = Uri.parse(imageUri)
         val inputStream = context.contentResolver.openInputStream(uri)
         if (inputStream == null) {
-          promise.reject("ERR_OPEN", "Cannot open image: $imageUri")
+          promise.reject("ERR_OPEN", "Cannot open image: $imageUri", null)
           return@AsyncFunction
         }
         val bitmap: Bitmap = BitmapFactory.decodeStream(inputStream)
-          ?: run {
-            inputStream.close()
-            promise.reject("ERR_DECODE", "Cannot decode image: $imageUri")
-            return@AsyncFunction
-          }
+        if (bitmap == null) {
+          inputStream.close()
+          promise.reject("ERR_DECODE", "Cannot decode image: $imageUri", null)
+          return@AsyncFunction
+        }
         inputStream.close()
 
         val image = InputImage.fromBitmap(bitmap, 0)
@@ -95,10 +95,10 @@ class StaticFaceDetectionModule : Module() {
           }
           .addOnFailureListener { e ->
             bitmap.recycle()
-            promise.reject("ERR_DETECT", e.message ?: "Face detection failed")
+            promise.reject("ERR_DETECT", e.message, e)
           }
       } catch (e: Exception) {
-        promise.reject("ERR_EXCEPTION", e.message ?: "Unknown error")
+        promise.reject("ERR_EXCEPTION", e.message, e)
       }
     }
   }
