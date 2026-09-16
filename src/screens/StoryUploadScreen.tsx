@@ -146,8 +146,7 @@ const StoryUploadScreen = () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [9, 16],
+        allowsEditing: false,
         quality: 1,
       });
 

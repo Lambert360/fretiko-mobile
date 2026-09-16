@@ -33,7 +33,6 @@ import {
   ImageSVG,
   useImage,
   useCanvasRef,
-  useSVG,
   Skia,
   ImageFormat,
   Group,
@@ -227,18 +226,23 @@ export default function FilterEditorScreen() {
   const totalSat = s - bTone * 0.15;
   const skinWarm = wWarm + bTone * 0.05;
 
-  // Saturation: mix with luminance
-  const sr = 0.299 + 0.701 * totalSat;
-  const sg = 0.587 * (1 - totalSat);
-  const sb = 0.114 * (1 - totalSat);
+  // Saturation matrix needs an absolute factor where 1 = identity, 0 = grayscale.
+  // totalSat is a delta (0 = neutral) → satM = 1 + totalSat.
+  const satM = Math.max(0, 1 + totalSat);
+  const rDiag = 0.299 + 0.701 * satM;
+  const gOff = 0.587 * (1 - satM);
+  const bOff = 0.114 * (1 - satM);
+  const rOff = 0.299 * (1 - satM);
+  const gDiag = 0.587 + 0.413 * satM;
+  const bDiag = 0.114 + 0.886 * satM;
   const cf = 1 + totalContrast;
   const ff = 1 - 0.15 * f;
   const ft = 0.15 * f;
 
   const colorMatrix = [
-    sr * cf * ff,    sg * cf * ff,    sb * cf * ff,    0, (totalBright + skinWarm + t * 0.5 - 0.5 * totalContrast) * ff + ft,
-    sr * cf * ff,    (0.587 + 0.413 * totalSat) * cf * ff, sb * cf * ff, 0, (totalBright - t - 0.5 * totalContrast) * ff + ft,
-    sr * cf * ff,    sg * cf * ff,    (0.114 + 0.886 * totalSat) * cf * ff, 0, (totalBright - skinWarm + t * 0.5 - 0.5 * totalContrast) * ff + ft,
+    rDiag * cf * ff, gOff * cf * ff,  bOff * cf * ff, 0, (totalBright + skinWarm + t * 0.5 - 0.5 * totalContrast) * ff + ft,
+    rOff * cf * ff,  gDiag * cf * ff, bOff * cf * ff, 0, (totalBright - t - 0.5 * totalContrast) * ff + ft,
+    rOff * cf * ff,  gOff * cf * ff,  bDiag * cf * ff, 0, (totalBright - skinWarm + t * 0.5 - 0.5 * totalContrast) * ff + ft,
     0,              0,               0,               1, 0,
   ];
 
@@ -447,7 +451,15 @@ function ARAssetView({
   scale: number;
   rotation: number;
 }) {
-  const svg = useSVG(asset.svg);
+  // asset.svg is an inline SVG string — useSVG() would treat it as a URI and
+  // fail to load. Parse it directly with MakeFromString instead.
+  const svg = React.useMemo(() => {
+    try {
+      return Skia.SVG.MakeFromString(asset.svg);
+    } catch {
+      return null;
+    }
+  }, [asset.svg]);
 
   if (!svg) return null;
 
@@ -460,10 +472,7 @@ function ARAssetView({
 
   return (
     <Group
-      transform={[
-        { rotate: rotation },
-        { scale: scale },
-      ]}
+      transform={[{ rotate: (rotation * Math.PI) / 180 }]}
       origin={{ x: anchorX, y: anchorY }}
     >
       <ImageSVG
