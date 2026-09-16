@@ -32,6 +32,7 @@ import {
   BeautyParams,
   BEAUTY_PRESETS,
   BEAUTY_PARAM_META,
+  DEFAULT_BEAUTY_PARAMS,
   getParamsByCategory,
   BeautyPreset,
 } from '../filters/faceAR/BeautyFilter';
@@ -70,15 +71,16 @@ export default function BeautyFilterPanel({
   onReset,
 }: BeautyFilterPanelProps) {
   const [expandedCategory, setExpandedCategory] = useState<string | null>('skin');
+  const safeParams = params || DEFAULT_BEAUTY_PARAMS;
 
   const handleParamChange = useCallback(
     (key: keyof BeautyParams, value: number) => {
       onParamsChange({
-        ...params,
+        ...safeParams,
         [key]: value,
       });
     },
-    [params, onParamsChange]
+    [safeParams, onParamsChange]
   );
 
   const toggleCategory = (category: string) => {
@@ -192,7 +194,7 @@ export default function BeautyFilterPanel({
                           key={meta.key}
                           label={meta.label}
                           icon={meta.icon as any}
-                          value={params[meta.key]}
+                          value={safeParams[meta.key]}
                           max={meta.max}
                           onChange={(v) => handleParamChange(meta.key, v)}
                         />

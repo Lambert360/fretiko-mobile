@@ -200,12 +200,17 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
     const arAssetId = useSharedValue(initialARAssetId);
     const faceRollAngle = useSharedValue(0);
 
-    // === Coordinate scale (ML Kit preview → canvas frame) ===
-    // ML Kit returns coordinates in preview resolution (screen size).
-    // Canvas operates at frame resolution (camera sensor size).
-    // We compute scale factors to map between them.
-    const faceScaleX = useSharedValue(1);
-    const faceScaleY = useSharedValue(1);
+    // === Coordinate scale (ML Kit window space → upright canvas space) ===
+    // autoMode=true returns face coords in window units (screenWidth x screenHeight).
+    // The camera preview is drawn cover-fit into the view, so the frame is cropped
+    // to fill the screen. We compute the cover-fit scale + crop offset so face
+    // coords map exactly onto the rendered canvas.
+    const faceInvScale = useSharedValue(1);
+    const faceCropX = useSharedValue(0);
+    const faceCropY = useSharedValue(0);
+
+    // Debug: throttle face logs so logcat isn't flooded
+    const faceLogCounter = useSharedValue(0);
 
     // === Video recording shared values ===
     const isRecording = useSharedValue(false);
@@ -259,10 +264,13 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
       [sBrightness, sContrast, sSaturation, sWarmth, sTint, sVignette, sGrain, sFade]
     );
 
-    // Set initial filter
+    // Set initial filter — keep shared values in sync when the prop changes
+    // (e.g. persisted state loading from AsyncStorage after mount)
     useEffect(() => {
+      filterId.value = initialFilterId;
+      intensity.value = initialIntensity / 100;
       updateFilterParams(initialFilterId);
-    }, [initialFilterId, updateFilterParams]);
+    }, [initialFilterId, initialIntensity, filterId, intensity, updateFilterParams]);
 
     // Sync AR asset when prop changes
     useEffect(() => {
@@ -468,17 +476,18 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
           const f = faces[0];
           hasFace.value = true;
 
-          // With autoMode=true, ML Kit returns coordinates in screen space.
-          // Scale from screen space to canvas frame space.
-          const sx = faceScaleX.value;
-          const sy = faceScaleY.value;
+          // autoMode returns coords in window space. Convert to canvas space
+          // by undoing the cover-fit crop: canvasCoord = (windowCoord + crop) / fitScale
+          const invScale = faceInvScale.value;
+          const cropX = faceCropX.value;
+          const cropY = faceCropY.value;
 
           // Bounds — flat structure: { x, y, width, height }
           const bounds = f.bounds;
-          faceW.value = bounds.width * sx;
-          faceH.value = bounds.height * sy;
-          faceCenterX.value = (bounds.x + bounds.width / 2) * sx;
-          faceCenterY.value = (bounds.y + bounds.height / 2) * sy;
+          faceW.value = bounds.width * invScale;
+          faceH.value = bounds.height * invScale;
+          faceCenterX.value = (bounds.x + bounds.width / 2 + cropX) * invScale;
+          faceCenterY.value = (bounds.y + bounds.height / 2 + cropY) * invScale;
 
           // Roll angle for AR asset rotation
           faceRollAngle.value = f.rollAngle || 0;
@@ -487,24 +496,34 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
           const lm = f.landmarks;
           if (lm) {
             if (lm.LEFT_EYE) {
-              faceLeftEyeX.value = lm.LEFT_EYE.x * sx;
-              faceLeftEyeY.value = lm.LEFT_EYE.y * sy;
+              faceLeftEyeX.value = (lm.LEFT_EYE.x + cropX) * invScale;
+              faceLeftEyeY.value = (lm.LEFT_EYE.y + cropY) * invScale;
             }
             if (lm.RIGHT_EYE) {
-              faceRightEyeX.value = lm.RIGHT_EYE.x * sx;
-              faceRightEyeY.value = lm.RIGHT_EYE.y * sy;
+              faceRightEyeX.value = (lm.RIGHT_EYE.x + cropX) * invScale;
+              faceRightEyeY.value = (lm.RIGHT_EYE.y + cropY) * invScale;
             }
             if (lm.NOSE_BASE) {
-              faceNoseX.value = lm.NOSE_BASE.x * sx;
-              faceNoseY.value = lm.NOSE_BASE.y * sy;
+              faceNoseX.value = (lm.NOSE_BASE.x + cropX) * invScale;
+              faceNoseY.value = (lm.NOSE_BASE.y + cropY) * invScale;
             }
             if (lm.MOUTH_BOTTOM) {
-              faceMouthX.value = lm.MOUTH_BOTTOM.x * sx;
-              faceMouthY.value = lm.MOUTH_BOTTOM.y * sy;
+              faceMouthX.value = (lm.MOUTH_BOTTOM.x + cropX) * invScale;
+              faceMouthY.value = (lm.MOUTH_BOTTOM.y + cropY) * invScale;
             } else if (lm.MOUTH_LEFT) {
-              faceMouthX.value = lm.MOUTH_LEFT.x * sx;
-              faceMouthY.value = lm.MOUTH_LEFT.y * sy;
+              faceMouthX.value = (lm.MOUTH_LEFT.x + cropX) * invScale;
+              faceMouthY.value = (lm.MOUTH_LEFT.y + cropY) * invScale;
             }
+          }
+
+          // Debug: log first detected face coords every ~90 scans (~3s)
+          faceLogCounter.value += 1;
+          if (faceLogCounter.value % 90 === 1) {
+            console.log(
+              `FACE@${faceLogCounter.value}: bounds=(${bounds.x.toFixed(0)},${bounds.y.toFixed(0)},${bounds.width.toFixed(0)}x${bounds.height.toFixed(0)}) ` +
+              `canvas=(${faceCenterX.value.toFixed(0)},${faceCenterY.value.toFixed(0)}) ` +
+              `roll=${faceRollAngle.value.toFixed(1)} lm=${lm ? 'Y' : 'N'}`
+            );
           }
         } else {
           hasFace.value = false;
@@ -537,13 +556,19 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
             const w = frame.width;
             const h = frame.height;
 
-            // Update coordinate scale: ML Kit returns preview-resolution coords,
-            // canvas operates at frame resolution.
+            // ML Kit autoMode returns coords in window space (screenW x screenH).
+            // The canvas is canvasW x canvasH (frame dims), displayed cover-fit:
+            //   fitScale = max(screenW/canvasW, screenH/canvasH)
+            //   displayedSize = canvasW*fitScale x canvasH*fitScale (>= screen)
+            //   crop = (displayedSize - screen) / 2  (in window units)
+            // canvasCoord = (windowCoord + crop) / fitScale
             const isLandscape = frame.orientation === 'left' || frame.orientation === 'right';
             const canvasW = isLandscape ? h : w;
             const canvasH = isLandscape ? w : h;
-            faceScaleX.value = canvasW / screenWidth;
-            faceScaleY.value = canvasH / screenHeight;
+            const fitScale = Math.max(screenWidth / canvasW, screenHeight / canvasH);
+            faceInvScale.value = 1 / fitScale;
+            faceCropX.value = (canvasW * fitScale - screenWidth) / 2;
+            faceCropY.value = (canvasH * fitScale - screenHeight) / 2;
 
             try {
             render(({ canvas, frameTexture }) => {
@@ -609,10 +634,10 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                   // - Skin tone evening (reduce redness, even out)
                   // - Glow (brightness lift)
                   // - Sharpening (contrast boost)
-                  const bSkin = bSkinSmoothing.value / 100;
-                  const bTone = bSkinTone.value / 100;
-                  const bGlowVal = bGlow.value / 100;
-                  const bSharpen = bSharpening.value / 100;
+                  const bSkin = bSkinSmoothing.value;
+                  const bTone = bSkinTone.value;
+                  const bGlowVal = bGlow.value;
+                  const bSharpen = bSharpening.value;
 
                   // Combined adjustments
                   const totalBright = b + bGlowVal * 0.1 + bSkin * 0.05;
@@ -756,77 +781,98 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                 const svg = PRELOADED_SVGS[arId];
                 const asset = SVG_ASSET_MAP[arId];
                 if (svg && asset) {
-                  // Compute face landmark positions from shared values
-                  const leftEyeX = faceLeftEyeX.value;
-                  const leftEyeY = faceLeftEyeY.value;
-                  const rightEyeX = faceRightEyeX.value;
-                  const rightEyeY = faceRightEyeY.value;
-                  const noseX = faceNoseX.value;
-                  const noseY = faceNoseY.value;
-                  const mouthX = faceMouthX.value;
-                  const mouthY = faceMouthY.value;
-
-                  // betweenEyes = midpoint of left and right eye
-                  const betweenEyesX = (leftEyeX + rightEyeX) / 2;
-                  const betweenEyesY = (leftEyeY + rightEyeY) / 2;
-
-                  // eyeToNoseDist for deriving forehead/topHead
-                  const eyeToNoseDist = Math.abs(noseY - betweenEyesY);
-
-                  // faceSize for scaling
-                  const faceSize = Math.max(faceW.value, faceH.value);
-                  const scale = asset.scale * (faceSize / 200);
-
-                  // Determine anchor point position based on asset's anchorPoint
-                  let anchorX: number;
-                  let anchorY: number;
-                  switch (asset.anchorPoint) {
-                    case 'topHead':
-                      anchorX = betweenEyesX;
-                      anchorY = betweenEyesY - eyeToNoseDist * 2.5;
-                      break;
-                    case 'betweenEyes':
-                      anchorX = betweenEyesX;
-                      anchorY = betweenEyesY;
-                      break;
-                    case 'nose':
-                      anchorX = noseX;
-                      anchorY = noseY;
-                      break;
-                    case 'mouth':
-                      anchorX = mouthX;
-                      anchorY = mouthY;
-                      break;
-                    case 'leftEye':
-                      anchorX = leftEyeX;
-                      anchorY = leftEyeY;
-                      break;
-                    case 'rightEye':
-                      anchorX = rightEyeX;
-                      anchorY = rightEyeY;
-                      break;
-                    default:
-                      anchorX = faceCenterX.value;
-                      anchorY = faceCenterY.value;
-                  }
-
-                  // Apply position offset (scaled)
-                  anchorX += asset.positionOffset.x * scale;
-                  anchorY += asset.positionOffset.y * scale;
-
-                  // Rotation from face roll angle
-                  const rotation = faceRollAngle.value;
-
-                  // Draw the SVG centered on the anchor point
-                  const svgWidth = svg.width();
-                  const svgHeight = svg.height();
-
+                  // The canvas already carries the frame-orientation transform
+                  // (rotate + mirror) applied by renderToTexture. Our face coords
+                  // are in upright display space, so we invert that transform
+                  // before drawing — otherwise AR is double-rotated/mirrored.
                   canvas.save();
-                  canvas.translate(anchorX, anchorY);
-                  canvas.rotate(rotation, 0, 0);
-                  canvas.scale(scale, scale);
-                  canvas.translate(-svgWidth / 2, -svgHeight / 2);
-                  canvas.drawSvg(svg, svgWidth, svgHeight);
+                  {
+                    const rotDeg =
+                      frame.orientation === 'right' ? 90 :
+                      frame.orientation === 'down' ? 180 :
+                      frame.orientation === 'left' ? 270 : 0;
+                    const c2x = isLandscape ? canvasH / 2 : canvasW / 2;
+                    const c2y = isLandscape ? canvasW / 2 : canvasH / 2;
+                    // CTM = T1·M·R·T2 → undo with T2⁻¹·R⁻¹·M⁻¹·T1⁻¹
+                    canvas.translate(c2x, c2y);
+                    canvas.rotate(rotDeg);
+                    if (frame.isMirrored) canvas.scale(-1, 1);
+                    canvas.translate(-canvasW / 2, -canvasH / 2);
+
+                    // Compute face landmark positions from shared values
+                    const leftEyeX = faceLeftEyeX.value;
+                    const leftEyeY = faceLeftEyeY.value;
+                    const rightEyeX = faceRightEyeX.value;
+                    const rightEyeY = faceRightEyeY.value;
+                    const noseX = faceNoseX.value;
+                    const noseY = faceNoseY.value;
+                    const mouthX = faceMouthX.value;
+                    const mouthY = faceMouthY.value;
+
+                    // betweenEyes = midpoint of left and right eye
+                    const betweenEyesX = (leftEyeX + rightEyeX) / 2;
+                    const betweenEyesY = (leftEyeY + rightEyeY) / 2;
+
+                    // eyeToNoseDist for deriving forehead/topHead
+                    const eyeToNoseDist = Math.abs(noseY - betweenEyesY);
+
+                    // faceSize for scaling
+                    const faceSize = Math.max(faceW.value, faceH.value);
+                    const scale = asset.scale * (faceSize / 200);
+
+                    // Determine anchor point position based on asset's anchorPoint
+                    let anchorX: number;
+                    let anchorY: number;
+                    switch (asset.anchorPoint) {
+                      case 'topHead':
+                        anchorX = betweenEyesX;
+                        anchorY = betweenEyesY - eyeToNoseDist * 2.5;
+                        break;
+                      case 'betweenEyes':
+                        anchorX = betweenEyesX;
+                        anchorY = betweenEyesY;
+                        break;
+                      case 'nose':
+                        anchorX = noseX;
+                        anchorY = noseY;
+                        break;
+                      case 'mouth':
+                        anchorX = mouthX;
+                        anchorY = mouthY;
+                        break;
+                      case 'leftEye':
+                        anchorX = leftEyeX;
+                        anchorY = leftEyeY;
+                        break;
+                      case 'rightEye':
+                        anchorX = rightEyeX;
+                        anchorY = rightEyeY;
+                        break;
+                      default:
+                        anchorX = faceCenterX.value;
+                        anchorY = faceCenterY.value;
+                    }
+
+                    // Apply position offset (scaled)
+                    anchorX += asset.positionOffset.x * scale;
+                    anchorY += asset.positionOffset.y * scale;
+
+                    // Roll is measured in image space; mirrored preview needs
+                    // the visual roll negated.
+                    const rotation = frame.isMirrored
+                      ? -faceRollAngle.value
+                      : faceRollAngle.value;
+
+                    // Draw the SVG centered on the anchor point
+                    const svgWidth = svg.width();
+                    const svgHeight = svg.height();
+
+                    canvas.translate(anchorX, anchorY);
+                    canvas.rotate(rotation, 0, 0);
+                    canvas.scale(scale, scale);
+                    canvas.translate(-svgWidth / 2, -svgHeight / 2);
+                    canvas.drawSvg(svg, svgWidth, svgHeight);
+                  }
                   canvas.restore();
                 }
               }

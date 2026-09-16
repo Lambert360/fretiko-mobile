@@ -109,12 +109,13 @@ export default function FilterEditorScreen() {
   useEffect(() => {
     if (!imageUri) return;
     detectFaces(imageUri).then((result) => {
+      console.log(`🔍 Static face detection: ${result.faces.length} face(s), img ${result.imageWidth}x${result.imageHeight}`);
       if (result.faces.length > 0) {
         setDetectedFace(result.faces[0]);
         setFaceImageDims({ width: result.imageWidth, height: result.imageHeight });
       }
     }).catch((e) => {
-      console.error('Static face detection failed:', e);
+      console.error('❌ Static face detection failed:', e);
     });
   }, [imageUri]);
 
@@ -142,7 +143,7 @@ export default function FilterEditorScreen() {
 
   const handleBeautyPresetSelect = useCallback((preset: BeautyPreset) => {
     setActiveBeautyPreset(preset.id);
-    setBeautyPreset(preset.id);
+    setBeautyPreset(preset);
   }, [setBeautyPreset]);
 
   const handleARAssetSelect = useCallback((assetId: string | null) => {
@@ -259,9 +260,17 @@ export default function FilterEditorScreen() {
   }
 
   // === AR overlay positioning ===
-  // Scale face coords from image space to display space
-  const scaleX = displayWidth / (faceImageDims.width || 1);
-  const scaleY = displayHeight / (faceImageDims.height || 1);
+  // The image is drawn with fit="contain" (letterboxed, centered).
+  // Map face coords from image space to display space:
+  //   fitScale = min(displayW/imgW, displayH/imgH)
+  //   displayed = imgW*fitScale x imgH*fitScale, centered in the canvas
+  //   displayCoord = imgCoord*fitScale + centerOffset
+  const arFitScale = Math.min(
+    displayWidth / (faceImageDims.width || 1),
+    displayHeight / (faceImageDims.height || 1)
+  );
+  const arOffsetX = (displayWidth - faceImageDims.width * arFitScale) / 2;
+  const arOffsetY = (displayHeight - faceImageDims.height * arFitScale) / 2;
 
   let arElements: React.ReactNode[] = [];
   if (hasAR && detectedFace && detectedFace.landmarks) {
@@ -272,20 +281,20 @@ export default function FilterEditorScreen() {
     const mouth = lm.MOUTH_BOTTOM;
 
     if (leftEye && rightEye && nose) {
-      const leftEyeX = leftEye.x * scaleX;
-      const leftEyeY = leftEye.y * scaleY;
-      const rightEyeX = rightEye.x * scaleX;
-      const rightEyeY = rightEye.y * scaleY;
-      const noseX = nose.x * scaleX;
-      const noseY = nose.y * scaleY;
-      const mouthX = (mouth?.x || noseX) * scaleX;
-      const mouthY = (mouth?.y || noseY) * scaleY;
+      const leftEyeX = leftEye.x * arFitScale + arOffsetX;
+      const leftEyeY = leftEye.y * arFitScale + arOffsetY;
+      const rightEyeX = rightEye.x * arFitScale + arOffsetX;
+      const rightEyeY = rightEye.y * arFitScale + arOffsetY;
+      const noseX = nose.x * arFitScale + arOffsetX;
+      const noseY = nose.y * arFitScale + arOffsetY;
+      const mouthX = (mouth?.x || nose.x) * arFitScale + arOffsetX;
+      const mouthY = (mouth?.y || nose.y) * arFitScale + arOffsetY;
 
       const betweenEyesX = (leftEyeX + rightEyeX) / 2;
       const betweenEyesY = (leftEyeY + rightEyeY) / 2;
       const eyeToNoseDist = Math.abs(noseY - betweenEyesY);
-      const faceW = detectedFace.bounds.width * scaleX;
-      const faceH = detectedFace.bounds.height * scaleY;
+      const faceW = detectedFace.bounds.width * arFitScale;
+      const faceH = detectedFace.bounds.height * arFitScale;
       const faceSize = Math.max(faceW, faceH);
 
       const asset = SVG_FACE_AR_ASSETS.find((a) => a.id === activeARAsset);
@@ -319,8 +328,8 @@ export default function FilterEditorScreen() {
             anchorY = rightEyeY;
             break;
           default:
-            anchorX = (detectedFace.bounds.x + detectedFace.bounds.width / 2) * scaleX;
-            anchorY = (detectedFace.bounds.y + detectedFace.bounds.height / 2) * scaleY;
+            anchorX = (detectedFace.bounds.x + detectedFace.bounds.width / 2) * arFitScale + arOffsetX;
+            anchorY = (detectedFace.bounds.y + detectedFace.bounds.height / 2) * arFitScale + arOffsetY;
         }
         anchorX += asset.positionOffset.x * scale;
         anchorY += asset.positionOffset.y * scale;

@@ -73,7 +73,7 @@ export const CameraFilterProvider: React.FC<{ children: React.ReactNode }> = ({ 
           const state = JSON.parse(saved);
           if (state.filterId) setFilterId(state.filterId);
           if (state.filterIntensity) setFilterIntensity(state.filterIntensity);
-          if (state.beautyParams) setBeautyParamsState(state.beautyParams);
+          if (state.beautyParams && typeof state.beautyParams === 'object') setBeautyParamsState({ ...DEFAULT_BEAUTY_PARAMS, ...state.beautyParams });
           if (state.beautyPresetId) setBeautyPresetId(state.beautyPresetId);
           if (state.arAssetId !== undefined) setARAssetId(state.arAssetId);
         }
@@ -104,6 +104,7 @@ export const CameraFilterProvider: React.FC<{ children: React.ReactNode }> = ({ 
   }, []);
 
   const setBeautyPreset = useCallback((preset: BeautyPreset) => {
+    if (!preset || !preset.params) return;
     setBeautyParamsState(preset.params);
     setBeautyPresetId(preset.id);
   }, []);
