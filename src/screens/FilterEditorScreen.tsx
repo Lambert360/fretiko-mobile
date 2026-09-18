@@ -348,6 +348,15 @@ export default function FilterEditorScreen() {
         const lm = face.landmarks;
         if (!lm?.LEFT_EYE || !lm?.RIGHT_EYE) return;
         const { leftEye, rightEye } = sortEyes(toDisplay(lm.LEFT_EYE), toDisplay(lm.RIGHT_EYE));
+        if (idx === 0) {
+          console.log(
+            `👓 AR placement input: L=(${lm.LEFT_EYE.x.toFixed(0)},${lm.LEFT_EYE.y.toFixed(0)}) ` +
+            `R=(${lm.RIGHT_EYE.x.toFixed(0)},${lm.RIGHT_EYE.y.toFixed(0)}) ` +
+            `disp L=(${leftEye.x.toFixed(0)},${leftEye.y.toFixed(0)}) R=(${rightEye.x.toFixed(0)},${rightEye.y.toFixed(0)}) ` +
+            `bounds=(${face.bounds.x.toFixed(0)},${face.bounds.y.toFixed(0)},${face.bounds.width.toFixed(0)}x${face.bounds.height.toFixed(0)}) ` +
+            `fitScale=${arFitScale.toFixed(2)}`
+          );
+        }
         const b = face.bounds;
         const geom = sanitizeFaceGeom(
           {
@@ -372,6 +381,14 @@ export default function FilterEditorScreen() {
           }
         );
         const placement = computeARPlacement(fit, geom, svgW);
+        if (placement && idx === 0) {
+          console.log(
+            `👓 placement: scale=${placement.scale.toFixed(2)} cx=${placement.cx.toFixed(0)} ` +
+            `cy=${placement.cy.toFixed(0)} rot=${placement.rotationDeg.toFixed(1)} ` +
+            `geomL=(${geom.leftEye.x.toFixed(0)},${geom.leftEye.y.toFixed(0)}) ` +
+            `geomR=(${geom.rightEye.x.toFixed(0)},${geom.rightEye.y.toFixed(0)})`
+          );
+        }
         if (placement) {
           arElements.push(
             <ARAssetView
@@ -379,6 +396,12 @@ export default function FilterEditorScreen() {
               asset={asset}
               placement={placement}
             />
+          );
+          // Debug: white dot at the anchor + white ring at each target eye
+          debugElements.push(
+            <Circle key={`anchor-${idx}`} cx={placement.cx} cy={placement.cy} r={6} color="#FFFFFF" />,
+            <Circle key={`targetL-${idx}`} cx={geom.leftEye.x} cy={geom.leftEye.y} r={8} color="#FFFFFF" style="stroke" strokeWidth={2} />,
+            <Circle key={`targetR-${idx}`} cx={geom.rightEye.x} cy={geom.rightEye.y} r={8} color="#FFFFFF" style="stroke" strokeWidth={2} />
           );
         }
       });
