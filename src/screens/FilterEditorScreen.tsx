@@ -457,6 +457,14 @@ export default function FilterEditorScreen() {
           {arElements}
           {debugElements}
         </Canvas>
+        {/* Debug HUD — shows face count + first-face eye data on screen */}
+        <View style={styles.debugHud} pointerEvents="none">
+          <Text style={styles.debugHudText}>
+            faces={detectedFaces.length} img={faceImageDims.width}x{faceImageDims.height}
+            {detectedFaces[0] ? ` b0=(${detectedFaces[0].bounds.x.toFixed(0)},${detectedFaces[0].bounds.y.toFixed(0)},${detectedFaces[0].bounds.width.toFixed(0)}x${detectedFaces[0].bounds.height.toFixed(0)})` : ''}
+            {detectedFaces[0]?.landmarks?.LEFT_EYE ? ` L=(${detectedFaces[0].landmarks.LEFT_EYE.x.toFixed(0)},${detectedFaces[0].landmarks.LEFT_EYE.y.toFixed(0)}) R=(${detectedFaces[0].landmarks.RIGHT_EYE?.x.toFixed(0)},${detectedFaces[0].landmarks.RIGHT_EYE?.y.toFixed(0)})` : ''}
+          </Text>
+        </View>
       </View>
 
       {/* Top bar */}
@@ -571,6 +579,20 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  debugHud: {
+    position: 'absolute',
+    bottom: 4,
+    left: 4,
+    right: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 4,
+    padding: 4,
+  },
+  debugHudText: {
+    color: '#0F0',
+    fontSize: 9,
+    fontFamily: 'monospace' as any,
   },
   topBar: {
     position: 'absolute',
