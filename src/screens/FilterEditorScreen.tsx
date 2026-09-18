@@ -350,11 +350,11 @@ export default function FilterEditorScreen() {
         const { leftEye, rightEye } = sortEyes(toDisplay(lm.LEFT_EYE), toDisplay(lm.RIGHT_EYE));
         if (idx === 0) {
           console.log(
-            `👓 AR placement input: L=(${lm.LEFT_EYE.x.toFixed(0)},${lm.LEFT_EYE.y.toFixed(0)}) ` +
+            `👓 faces=${detectedFaces.length} AR input: L=(${lm.LEFT_EYE.x.toFixed(0)},${lm.LEFT_EYE.y.toFixed(0)}) ` +
             `R=(${lm.RIGHT_EYE.x.toFixed(0)},${lm.RIGHT_EYE.y.toFixed(0)}) ` +
             `disp L=(${leftEye.x.toFixed(0)},${leftEye.y.toFixed(0)}) R=(${rightEye.x.toFixed(0)},${rightEye.y.toFixed(0)}) ` +
             `bounds=(${face.bounds.x.toFixed(0)},${face.bounds.y.toFixed(0)},${face.bounds.width.toFixed(0)}x${face.bounds.height.toFixed(0)}) ` +
-            `fitScale=${arFitScale.toFixed(2)}`
+            `fitScale=${arFitScale.toFixed(2)} img=${faceImageDims.width}x${faceImageDims.height} disp=${displayWidth.toFixed(0)}x${displayHeight.toFixed(0)}`
           );
         }
         const b = face.bounds;
@@ -381,12 +381,15 @@ export default function FilterEditorScreen() {
           }
         );
         const placement = computeARPlacement(fit, geom, svgW);
+        console.log(
+          `👓 face#${idx} geomL=(${geom.leftEye.x.toFixed(0)},${geom.leftEye.y.toFixed(0)}) ` +
+          `geomR=(${geom.rightEye.x.toFixed(0)},${geom.rightEye.y.toFixed(0)}) ` +
+          `bounds disp=(${(b.x * arFitScale + arOffsetX).toFixed(0)},${(b.y * arFitScale + arOffsetY).toFixed(0)},${(b.width * arFitScale).toFixed(0)}x${(b.height * arFitScale).toFixed(0)})`
+        );
         if (placement && idx === 0) {
           console.log(
             `👓 placement: scale=${placement.scale.toFixed(2)} cx=${placement.cx.toFixed(0)} ` +
-            `cy=${placement.cy.toFixed(0)} rot=${placement.rotationDeg.toFixed(1)} ` +
-            `geomL=(${geom.leftEye.x.toFixed(0)},${geom.leftEye.y.toFixed(0)}) ` +
-            `geomR=(${geom.rightEye.x.toFixed(0)},${geom.rightEye.y.toFixed(0)})`
+            `cy=${placement.cy.toFixed(0)} rot=${placement.rotationDeg.toFixed(1)}`
           );
         }
         if (placement) {
