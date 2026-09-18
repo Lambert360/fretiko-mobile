@@ -57,7 +57,7 @@ import {
 import { agoraFramePusher } from '../filters/AgoraFramePusher';
 import type { IRtcEngine } from 'react-native-agora';
 import { SVG_FACE_AR_ASSETS, SVGAsset, AR_FIT } from '../filters/faceAR/faceARAssets';
-import { computeARPlacement, sanitizeFaceGeom, sortEyes } from '../filters/faceAR/arPlacement';
+import { computeARPlacement, sanitizeFaceGeom, eyesPlausible, sortEyes } from '../filters/faceAR/arPlacement';
 import { SkiaVideoRecorder } from '../../modules/skia-video-recorder';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -855,6 +855,17 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                       { x: fd[fi], y: fd[fi + 1] },
                       { x: fd[fi + 2], y: fd[fi + 3] }
                     );
+                    const fBounds = {
+                      x: fd[fi + 8] - fd[fi + 10] / 2,
+                      y: fd[fi + 9] - fd[fi + 11] / 2,
+                      width: fd[fi + 10],
+                      height: fd[fi + 11],
+                    };
+                    // Skip phantom faces (logos/posters) — only the first
+                    // (largest) face gets synthesized fallback eyes.
+                    if (fi > 0 && !eyesPlausible(leftEye, rightEye, fBounds)) {
+                      continue;
+                    }
                     const geom = sanitizeFaceGeom(
                       {
                         leftEye,
@@ -863,12 +874,7 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                         mouth: fd[fi + 6] > 0 ? { x: fd[fi + 6], y: fd[fi + 7] } : undefined,
                         faceCenter: { x: fd[fi + 8], y: fd[fi + 9] },
                       },
-                      {
-                        x: fd[fi + 8] - fd[fi + 10] / 2,
-                        y: fd[fi + 9] - fd[fi + 11] / 2,
-                        width: fd[fi + 10],
-                        height: fd[fi + 11],
-                      }
+                      fBounds
                     );
                     const placement = computeARPlacement(fit, geom, svg.width());
                     if (!placement) continue;

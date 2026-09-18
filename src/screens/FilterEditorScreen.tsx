@@ -46,7 +46,7 @@ import { getFilterById } from '../filters/filterCatalog';
 import { DEFAULT_COLOR_PARAMS, FilterDefinition, ColorFilterParams } from '../filters/types';
 import { BEAUTY_PRESETS, BeautyPreset, DEFAULT_BEAUTY_PARAMS } from '../filters/faceAR/BeautyFilter';
 import { SVG_FACE_AR_ASSETS, SVGAsset, AR_FIT } from '../filters/faceAR/faceARAssets';
-import { computeARPlacement, sanitizeFaceGeom, sortEyes, ARPlacement } from '../filters/faceAR/arPlacement';
+import { computeARPlacement, sanitizeFaceGeom, eyesPlausible, sortEyes, ARPlacement } from '../filters/faceAR/arPlacement';
 import { detectFaces, DetectedFace } from '../../modules/static-face-detection/src/StaticFaceDetection';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -343,21 +343,35 @@ export default function FilterEditorScreen() {
     });
 
     if (asset && fit && svg) {
-      // Draw the asset on EVERY detected face (like Snapchat/TikTok)
-      detectedFaces.forEach((face, idx) => {
+      // Draw the asset on EVERY detected face (like Snapchat/TikTok).
+      // Largest face first — it's the primary subject; for it we allow
+      // synthesized eyes if ML Kit's landmarks are imprecise. For other
+      // (possibly phantom) faces, require plausible eyes or skip.
+      const sortedFaces = [...detectedFaces].sort(
+        (a, b2) => b2.bounds.width * b2.bounds.height - a.bounds.width * a.bounds.height
+      );
+      sortedFaces.forEach((face, idx) => {
         const lm = face.landmarks;
         if (!lm?.LEFT_EYE || !lm?.RIGHT_EYE) return;
         const { leftEye, rightEye } = sortEyes(toDisplay(lm.LEFT_EYE), toDisplay(lm.RIGHT_EYE));
-        if (idx === 0) {
-          console.log(
-            `👓 faces=${detectedFaces.length} AR input: L=(${lm.LEFT_EYE.x.toFixed(0)},${lm.LEFT_EYE.y.toFixed(0)}) ` +
-            `R=(${lm.RIGHT_EYE.x.toFixed(0)},${lm.RIGHT_EYE.y.toFixed(0)}) ` +
-            `disp L=(${leftEye.x.toFixed(0)},${leftEye.y.toFixed(0)}) R=(${rightEye.x.toFixed(0)},${rightEye.y.toFixed(0)}) ` +
-            `bounds=(${face.bounds.x.toFixed(0)},${face.bounds.y.toFixed(0)},${face.bounds.width.toFixed(0)}x${face.bounds.height.toFixed(0)}) ` +
-            `fitScale=${arFitScale.toFixed(2)} img=${faceImageDims.width}x${faceImageDims.height} disp=${displayWidth.toFixed(0)}x${displayHeight.toFixed(0)}`
-          );
-        }
         const b = face.bounds;
+        const dispBounds = {
+          x: b.x * arFitScale + arOffsetX,
+          y: b.y * arFitScale + arOffsetY,
+          width: b.width * arFitScale,
+          height: b.height * arFitScale,
+        };
+        const plausible = eyesPlausible(leftEye, rightEye, dispBounds);
+        if (!plausible && idx > 0) {
+          console.log(`👓 face#${idx} skipped — implausible eyes (likely phantom)`);
+          return;
+        }
+        console.log(
+          `👓 face#${idx} eyes disp L=(${leftEye.x.toFixed(0)},${leftEye.y.toFixed(0)}) ` +
+          `R=(${rightEye.x.toFixed(0)},${rightEye.y.toFixed(0)}) ` +
+          `bounds=(${dispBounds.x.toFixed(0)},${dispBounds.y.toFixed(0)},${dispBounds.width.toFixed(0)}x${dispBounds.height.toFixed(0)}) ` +
+          `plausible=${plausible} fitScale=${arFitScale.toFixed(2)} img=${faceImageDims.width}x${faceImageDims.height} faces=${detectedFaces.length}`
+        );
         const geom = sanitizeFaceGeom(
           {
             leftEye,
@@ -373,12 +387,7 @@ export default function FilterEditorScreen() {
               y: (b.y + b.height / 2) * arFitScale + arOffsetY,
             },
           },
-          {
-            x: b.x * arFitScale + arOffsetX,
-            y: b.y * arFitScale + arOffsetY,
-            width: b.width * arFitScale,
-            height: b.height * arFitScale,
-          }
+          dispBounds
         );
         const placement = computeARPlacement(fit, geom, svgW);
         console.log(

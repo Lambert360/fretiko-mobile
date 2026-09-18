@@ -70,6 +70,31 @@ export interface ARFaceBounds {
 }
 
 /**
+ * Are the detected eyes plausible for the given face bounds? On real faces the
+ * interocular distance is roughly 0.28–0.5× face width and both eyes sit well
+ * inside the bounds. Phantom faces detected on posters/logos and imprecise
+ * landmark detections fail this check.
+ */
+export function eyesPlausible(
+  leftEye: ARPoint,
+  rightEye: ARPoint,
+  bounds: ARFaceBounds,
+): boolean {
+  'worklet';
+  const eyeDist = Math.abs(rightEye.x - leftEye.x);
+  return (
+    leftEye.x > bounds.x - bounds.width * 0.1 &&
+    rightEye.x < bounds.x + bounds.width * 1.1 &&
+    leftEye.y > bounds.y - bounds.height * 0.15 &&
+    leftEye.y < bounds.y + bounds.height * 0.75 &&
+    rightEye.y > bounds.y - bounds.height * 0.15 &&
+    rightEye.y < bounds.y + bounds.height * 0.75 &&
+    eyeDist > bounds.width * 0.15 &&
+    eyeDist < bounds.width * 0.6
+  );
+}
+
+/**
  * Sanity-check detected landmarks against the face bounds. On real faces the
  * interocular distance is roughly 0.28–0.5× face width and both eyes sit well
  * inside the bounds. On stylized/occluded faces ML Kit can return eyes outside
@@ -86,16 +111,7 @@ export function sanitizeFaceGeom(
   const faceCx = bounds.x + bounds.width / 2;
   const eyeLineY = bounds.y + bounds.height * 0.42; // eyes ~42% down the face box
 
-  const eyeDist = Math.abs(rightEye.x - leftEye.x);
-  const plausible =
-    leftEye.x > bounds.x - bounds.width * 0.1 &&
-    rightEye.x < bounds.x + bounds.width * 1.1 &&
-    leftEye.y > bounds.y - bounds.height * 0.15 &&
-    leftEye.y < bounds.y + bounds.height * 0.75 &&
-    rightEye.y > bounds.y - bounds.height * 0.15 &&
-    rightEye.y < bounds.y + bounds.height * 0.75 &&
-    eyeDist > bounds.width * 0.15 &&
-    eyeDist < bounds.width * 0.6;
+  const plausible = eyesPlausible(leftEye, rightEye, bounds);
 
   if (!plausible) {
     // Synthesize eyes from the bounds: standard proportions
