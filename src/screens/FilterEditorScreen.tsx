@@ -34,10 +34,9 @@ import {
   useImage,
   useCanvasRef,
   Skia,
+  SkImage,
   ImageFormat,
   Group,
-  Rect as SkiaRect,
-  Circle,
 } from '@shopify/react-native-skia';
 import FilterCarousel from '../components/FilterCarousel';
 import FilterIntensitySlider from '../components/FilterIntensitySlider';
@@ -122,7 +121,23 @@ export default function FilterEditorScreen() {
     return () => { cancelled = true; };
   }, [imageUri]);
 
-  const image = useImage(resizedUri);
+  const rawImage = useImage(resizedUri);
+  // Force a full CPU-side decode. Skia keeps codec-backed images lazy and only
+  // uploads rows as needed; on some Android GPUs that leaves the bottom of the
+  // texture permanently blank (partial render / grey block). A raster copy
+  // uploads completely in one shot.
+  const [image, setImage] = useState<SkImage | null>(null);
+  useEffect(() => {
+    if (!rawImage) {
+      setImage(null);
+      return;
+    }
+    try {
+      setImage(rawImage.makeNonTextureImage() ?? rawImage);
+    } catch {
+      setImage(rawImage);
+    }
+  }, [rawImage]);
 
   // Run face detection on the (resized) image — same pixel space as displayed
   useEffect(() => {
@@ -290,46 +305,6 @@ export default function FilterEditorScreen() {
   const arOffsetX = (displayWidth - faceImageDims.width * arFitScale) / 2;
   const arOffsetY = (displayHeight - faceImageDims.height * arFitScale) / 2;
 
-  // === Debug landmark markers — visualize what ML Kit tracked ===
-  // Draws every landmark as a colored dot + face bounds as a rect, per face.
-  const debugElements: React.ReactNode[] = [];
-  const LANDMARK_COLORS: Record<string, string> = {
-    LEFT_EYE: '#00FF00', RIGHT_EYE: '#00FF00',
-    NOSE_BASE: '#FF0000',
-    MOUTH_BOTTOM: '#00FFFF', MOUTH_LEFT: '#00FFFF', MOUTH_RIGHT: '#00FFFF',
-    LEFT_CHEEK: '#FF00FF', RIGHT_CHEEK: '#FF00FF',
-    LEFT_EAR: '#FFFF00', RIGHT_EAR: '#FFFF00',
-  };
-  detectedFaces.forEach((face, idx) => {
-    const b = face.bounds;
-    debugElements.push(
-      <SkiaRect
-        key={`bounds-${idx}`}
-        x={b.x * arFitScale + arOffsetX}
-        y={b.y * arFitScale + arOffsetY}
-        width={b.width * arFitScale}
-        height={b.height * arFitScale}
-        style="stroke"
-        strokeWidth={2}
-        color="#00FF00"
-      />
-    );
-    if (face.landmarks) {
-      Object.entries(face.landmarks).forEach(([name, pt]) => {
-        if (!pt) return;
-        debugElements.push(
-          <Circle
-            key={`lm-${idx}-${name}`}
-            cx={pt.x * arFitScale + arOffsetX}
-            cy={pt.y * arFitScale + arOffsetY}
-            r={4}
-            color={LANDMARK_COLORS[name] || '#FFFFFF'}
-          />
-        );
-      });
-    }
-  });
-
   let arElements: React.ReactNode[] = [];
   if (hasAR) {
     const asset = SVG_FACE_AR_ASSETS.find((a) => a.id === activeARAsset);
@@ -363,15 +338,8 @@ export default function FilterEditorScreen() {
         };
         const plausible = eyesPlausible(leftEye, rightEye, dispBounds);
         if (!plausible && idx > 0) {
-          console.log(`👓 face#${idx} skipped — implausible eyes (likely phantom)`);
           return;
         }
-        console.log(
-          `👓 face#${idx} eyes disp L=(${leftEye.x.toFixed(0)},${leftEye.y.toFixed(0)}) ` +
-          `R=(${rightEye.x.toFixed(0)},${rightEye.y.toFixed(0)}) ` +
-          `bounds=(${dispBounds.x.toFixed(0)},${dispBounds.y.toFixed(0)},${dispBounds.width.toFixed(0)}x${dispBounds.height.toFixed(0)}) ` +
-          `plausible=${plausible} fitScale=${arFitScale.toFixed(2)} img=${faceImageDims.width}x${faceImageDims.height} faces=${detectedFaces.length}`
-        );
         const geom = sanitizeFaceGeom(
           {
             leftEye,
@@ -390,17 +358,6 @@ export default function FilterEditorScreen() {
           dispBounds
         );
         const placement = computeARPlacement(fit, geom, svgW);
-        console.log(
-          `👓 face#${idx} geomL=(${geom.leftEye.x.toFixed(0)},${geom.leftEye.y.toFixed(0)}) ` +
-          `geomR=(${geom.rightEye.x.toFixed(0)},${geom.rightEye.y.toFixed(0)}) ` +
-          `bounds disp=(${(b.x * arFitScale + arOffsetX).toFixed(0)},${(b.y * arFitScale + arOffsetY).toFixed(0)},${(b.width * arFitScale).toFixed(0)}x${(b.height * arFitScale).toFixed(0)})`
-        );
-        if (placement && idx === 0) {
-          console.log(
-            `👓 placement: scale=${placement.scale.toFixed(2)} cx=${placement.cx.toFixed(0)} ` +
-            `cy=${placement.cy.toFixed(0)} rot=${placement.rotationDeg.toFixed(1)}`
-          );
-        }
         if (placement) {
           arElements.push(
             <ARAssetView
@@ -408,12 +365,6 @@ export default function FilterEditorScreen() {
               asset={asset}
               placement={placement}
             />
-          );
-          // Debug: white dot at the anchor + white ring at each target eye
-          debugElements.push(
-            <Circle key={`anchor-${idx}`} cx={placement.cx} cy={placement.cy} r={6} color="#FFFFFF" />,
-            <Circle key={`targetL-${idx}`} cx={geom.leftEye.x} cy={geom.leftEye.y} r={8} color="#FFFFFF" style="stroke" strokeWidth={2} />,
-            <Circle key={`targetR-${idx}`} cx={geom.rightEye.x} cy={geom.rightEye.y} r={8} color="#FFFFFF" style="stroke" strokeWidth={2} />
           );
         }
       });
@@ -455,16 +406,7 @@ export default function FilterEditorScreen() {
             />
           )}
           {arElements}
-          {debugElements}
         </Canvas>
-        {/* Debug HUD — shows face count + first-face eye data on screen */}
-        <View style={styles.debugHud} pointerEvents="none">
-          <Text style={styles.debugHudText}>
-            faces={detectedFaces.length} img={faceImageDims.width}x{faceImageDims.height}
-            {detectedFaces[0] ? ` b0=(${detectedFaces[0].bounds.x.toFixed(0)},${detectedFaces[0].bounds.y.toFixed(0)},${detectedFaces[0].bounds.width.toFixed(0)}x${detectedFaces[0].bounds.height.toFixed(0)})` : ''}
-            {detectedFaces[0]?.landmarks?.LEFT_EYE ? ` L=(${detectedFaces[0].landmarks.LEFT_EYE.x.toFixed(0)},${detectedFaces[0].landmarks.LEFT_EYE.y.toFixed(0)}) R=(${detectedFaces[0].landmarks.RIGHT_EYE?.x.toFixed(0)},${detectedFaces[0].landmarks.RIGHT_EYE?.y.toFixed(0)})` : ''}
-          </Text>
-        </View>
       </View>
 
       {/* Top bar */}
@@ -534,28 +476,27 @@ function ARAssetView({
 
   if (!svg) return null;
 
+  // IMPORTANT: ImageSVG's width/height props only set the SVG container size —
+  // a root <svg> with absolute width/height attrs (all our assets have them)
+  // still renders at intrinsic size, so the asset would draw oversized and
+  // shifted. Instead we render at intrinsic size and apply the full placement
+  // as a canvas transform: p' = (cx,cy) + R * scale * (p - refMid).
+  // refMid lands on (cx,cy); refL/refR land exactly on the target eyes.
   const svgWidth = svg.width();
   const svgHeight = svg.height();
-  const renderWidth = svgWidth * placement.scale;
-  const renderHeight = svgHeight * placement.scale;
-  // position so the ref midpoint lands exactly on (cx, cy)
-  const offsetX =
-    placement.cx - placement.refMidX * placement.scale;
-  const offsetY =
-    placement.cy - placement.refMidY * placement.scale;
 
   return (
     <Group
-      transform={[{ rotate: (placement.rotationDeg * Math.PI) / 180 }]}
-      origin={{ x: placement.cx, y: placement.cy }}
+      transform={[
+        { translateX: placement.cx },
+        { translateY: placement.cy },
+        { rotate: (placement.rotationDeg * Math.PI) / 180 },
+        { scale: placement.scale },
+        { translateX: -placement.refMidX },
+        { translateY: -placement.refMidY },
+      ]}
     >
-      <ImageSVG
-        svg={svg}
-        x={offsetX}
-        y={offsetY}
-        width={renderWidth}
-        height={renderHeight}
-      />
+      <ImageSVG svg={svg} x={0} y={0} width={svgWidth} height={svgHeight} />
     </Group>
   );
 }
@@ -579,20 +520,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  debugHud: {
-    position: 'absolute',
-    bottom: 4,
-    left: 4,
-    right: 4,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 4,
-    padding: 4,
-  },
-  debugHudText: {
-    color: '#0F0',
-    fontSize: 9,
-    fontFamily: 'monospace' as any,
   },
   topBar: {
     position: 'absolute',

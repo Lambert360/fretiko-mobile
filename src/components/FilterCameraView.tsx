@@ -203,8 +203,6 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
     // All detected faces (canvas-space), flat array, 12 values per face:
     // [leftEyeX, leftEyeY, rightEyeX, rightEyeY, noseX, noseY, mouthX, mouthY, centerX, centerY, w, h]
     const allFacesData = useSharedValue<number[]>([]);
-    // Debug: draw landmark markers on tracked faces
-    const showFaceDebug = useSharedValue(true);
 
     // === Coordinate scale (ML Kit window space → upright canvas space) ===
     // autoMode=true returns face coords in window units (screenWidth x screenHeight).
@@ -638,11 +636,9 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
               const arActiveNow =
                 arAssetId.value !== null && arAssetId.value !== 'none' &&
                 allFacesData.value.length > 0;
-              const debugActive =
-                showFaceDebug.value && allFacesData.value.length >= 12;
 
               // If nothing is active, render as-is
-              if (!colorActive && !beautyActiveNow && !warpActiveNow && !arActiveNow && !debugActive) {
+              if (!colorActive && !beautyActiveNow && !warpActiveNow && !arActiveNow) {
                 canvas.drawImage(frameTexture, 0, 0);
 
                 // Push composited frame to Agora and/or recorder if enabled
@@ -891,7 +887,7 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                     // CTM = T1·M·R·T2 → undo with T2⁻¹·R⁻¹·M⁻¹·T1⁻¹
                     canvas.save();
                     canvas.translate(c2x, c2y);
-                    canvas.rotate(rotDeg);
+                    canvas.rotate(rotDeg, 0, 0);
                     if (frame.isMirrored) canvas.scale(-1, 1);
                     canvas.translate(-canvasW / 2, -canvasH / 2);
 
@@ -907,48 +903,6 @@ const FilterCameraView = forwardRef<FilterCameraViewRef, FilterCameraViewProps>(
                     canvas.restore();
                   }
                 }
-              }
-
-              // === DEBUG: landmark markers (dots + bounds box per face) ===
-              if (showFaceDebug.value && allFacesData.value.length >= 12) {
-                const faces = allFacesData.value;
-                const rotDeg =
-                  frame.orientation === 'right' ? 90 :
-                  frame.orientation === 'down' ? 180 :
-                  frame.orientation === 'left' ? 270 : 0;
-                const c2x = isLandscape ? canvasH / 2 : canvasW / 2;
-                const c2y = isLandscape ? canvasW / 2 : canvasH / 2;
-                canvas.save();
-                canvas.translate(c2x, c2y);
-                canvas.rotate(rotDeg);
-                if (frame.isMirrored) canvas.scale(-1, 1);
-                canvas.translate(-canvasW / 2, -canvasH / 2);
-                for (let fi = 0; fi + 11 < faces.length; fi += 12) {
-                  const boxPaint = Skia.Paint();
-                  boxPaint.setStyle(1); // stroke
-                  boxPaint.setStrokeWidth(4);
-                  boxPaint.setColor(Skia.Color('#00FF00'));
-                  canvas.drawRect(
-                    Skia.XYWHRect(
-                      faces[fi + 8] - faces[fi + 10] / 2,
-                      faces[fi + 9] - faces[fi + 11] / 2,
-                      faces[fi + 10],
-                      faces[fi + 11]
-                    ),
-                    boxPaint
-                  );
-                  // landmark dots — green eyes, red nose, cyan mouth
-                  const colors = ['#00FF00', '#00FF00', '#00FF00', '#00FF00', '#FF0000', '#FF0000', '#00FFFF', '#00FFFF'];
-                  for (let li = 0; li < 4; li++) {
-                    const lx = faces[fi + li * 2];
-                    const ly = faces[fi + li * 2 + 1];
-                    if (lx === 0 && ly === 0) continue;
-                    const dotPaint = Skia.Paint();
-                    dotPaint.setColor(Skia.Color(colors[li * 2]));
-                    canvas.drawCircle(lx, ly, 10, dotPaint);
-                  }
-                }
-                canvas.restore();
               }
 
               // === PUSH COMPOSITED FRAME TO AGORA AND/OR RECORDER ===
