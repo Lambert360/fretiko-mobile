@@ -409,6 +409,67 @@ export const authAPI = {
       throw new Error(error.message || 'MFA verification failed');
     }
   },
+
+  // Bootstraps a short-lived Supabase session for Settings > Security screens
+  // (enrollment/management), authenticated via the app JWT (axios interceptor).
+  mfaSession: async (): Promise<{ supabaseAccessToken: string; supabaseRefreshToken: string }> => {
+    try {
+      const response = await api.post('/auth/mfa/session');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Could not start MFA session');
+    }
+  },
+
+  mfaEnroll: async (supabaseAccessToken: string, supabaseRefreshToken: string) => {
+    try {
+      const response = await api.post('/auth/mfa/enroll', { supabaseAccessToken, supabaseRefreshToken });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Could not start MFA enrollment');
+    }
+  },
+
+  mfaVerifyEnrollment: async (
+    supabaseAccessToken: string,
+    supabaseRefreshToken: string,
+    factorId: string,
+    code: string,
+  ) => {
+    try {
+      const response = await api.post('/auth/mfa/verify', {
+        supabaseAccessToken,
+        supabaseRefreshToken,
+        factorId,
+        code,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Invalid or expired code');
+    }
+  },
+
+  mfaListFactors: async (supabaseAccessToken: string, supabaseRefreshToken: string) => {
+    try {
+      const response = await api.post('/auth/mfa/factors', { supabaseAccessToken, supabaseRefreshToken });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Could not load MFA status');
+    }
+  },
+
+  mfaUnenroll: async (supabaseAccessToken: string, supabaseRefreshToken: string, factorId: string) => {
+    try {
+      const response = await api.post('/auth/mfa/unenroll', {
+        supabaseAccessToken,
+        supabaseRefreshToken,
+        factorId,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Could not disable MFA');
+    }
+  },
 };
 
 // Test connection to backend

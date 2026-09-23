@@ -45,6 +45,8 @@ import { SocialSignUpScreen } from './src/screens/SocialSignUpScreen';
 // Import profile and user screens
 import { EditProfileScreen } from './src/screens/EditProfileScreen';
 import { AccountSettingsScreen } from './src/screens/AccountSettingsScreen';
+import { MFAEnrollmentScreen } from './src/screens/MFAEnrollmentScreen';
+import { MFAManagementScreen } from './src/screens/MFAManagementScreen';
 import { RoleSelectionScreen } from './src/screens/RoleSelectionScreen';
 import { ConnectionsListScreen } from './src/screens/ConnectionsListScreen';
 import { ConnectionDetailsScreen } from './src/screens/ConnectionDetailsScreen';
@@ -575,6 +577,8 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="ReferralHandler" component={ReferralHandlerScreen as any} />
               <Stack.Screen name="EditProfile" component={EditProfileScreen as any} />
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
+              <Stack.Screen name="MFAEnrollment" component={MFAEnrollmentScreen} />
+              <Stack.Screen name="MFAManagement" component={MFAManagementScreen} />
               <Stack.Screen name="RiderVerification" component={RiderVerificationScreen} />
               <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} />
               <Stack.Screen name="Mentions" component={MentionsScreen} />
