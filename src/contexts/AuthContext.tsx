@@ -68,6 +68,10 @@ export interface AuthState {
   isSuspended: boolean;
   isDeleted: boolean;
   isCheckingSuspension: boolean;
+  mfaRequired?: boolean;
+  mfaFactorId?: string;
+  supabaseAccessToken?: string;
+  supabaseRefreshToken?: string;
 }
 
 export interface AuthContextType extends AuthState {
@@ -93,6 +97,8 @@ export interface AuthContextType extends AuthState {
   checkAccountStatus: (accessTokenOverride?: string | null) => Promise<boolean>;
   acceptTerms: () => Promise<void>;
   refreshUserProfile: () => Promise<void>;
+  verifyMFA: (code: string) => Promise<void>;
+  clearMFAState: () => void;
 }
 
 // Create the context
@@ -122,6 +128,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isSuspended: false,
     isDeleted: false,
     isCheckingSuspension: false,
+    mfaRequired: false,
+    mfaFactorId: undefined,
+    supabaseAccessToken: undefined,
+    supabaseRefreshToken: undefined,
   });
 
   // Ref to track latest auth state for AppState handler (prevents stale closure)
@@ -890,6 +900,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       const response = await authAPI.signin({ email, password });
       
+      // MFA step-up check: if backend returned mfaRequired, stop here and wait for code
+      if (response.mfaRequired === true) {
+        setAuthState(prev => ({
+          ...prev,
+          isLoading: false,
+          mfaRequired: true,
+          mfaFactorId: response.mfaFactorId,
+          supabaseAccessToken: response.supabaseAccessToken,
+          supabaseRefreshToken: response.supabaseRefreshToken,
+        }));
+        return;
+      }
+      
       // ✅ Backend returns snake_case (is_seller, is_rider)
       // Add camelCase aliases for compatibility with ProfileScreen
       const enrichedUser = {
@@ -922,6 +945,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isSuspended: isSuspended,
         isDeleted: false,
         isCheckingSuspension: false,
+        mfaRequired: false,
       });
       
       // Always re-verify with the backend (also picks up deletion status and
@@ -1307,6 +1331,64 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, []);
 
+  const verifyMFA = useCallback(async (code: string) => {
+    try {
+      if (!authStateRef.current.supabaseAccessToken || !authStateRef.current.mfaFactorId) {
+        throw new Error('MFA session expired, please sign in again');
+      }
+
+      setAuthState(prev => ({ ...prev, isLoading: true }));
+
+      const response = await authAPI.mfaLoginVerify({
+        supabaseAccessToken: authStateRef.current.supabaseAccessToken!,
+        supabaseRefreshToken: authStateRef.current.supabaseRefreshToken!,
+        factorId: authStateRef.current.mfaFactorId!,
+        code,
+      });
+
+      const enrichedUser = {
+        ...response.user,
+        isSeller: response.user.is_seller,
+        isRider: response.user.is_rider,
+      };
+
+      const isSuspended = response.isSuspended === true;
+      await saveAuthData(enrichedUser, response.accessToken, response.refreshToken, isSuspended, false);
+
+      setAuthState({
+        user: enrichedUser,
+        accessToken: response.accessToken,
+        isLoading: false,
+        isAuthenticated: true,
+        isNewUser: false,
+        isSuspended: isSuspended,
+        isDeleted: false,
+        isCheckingSuspension: false,
+        mfaRequired: false,
+        mfaFactorId: undefined,
+        supabaseAccessToken: undefined,
+        supabaseRefreshToken: undefined,
+      });
+
+      await checkAccountStatus(response.accessToken);
+      console.log('✅ MFA verification successful');
+    } catch (error: any) {
+      setAuthState(prev => ({ ...prev, isLoading: false }));
+      console.error('❌ MFA verification failed:', error);
+      throw error;
+    }
+  }, []);
+
+  const clearMFAState = useCallback(() => {
+    setAuthState(prev => ({
+      ...prev,
+      mfaRequired: false,
+      mfaFactorId: undefined,
+      supabaseAccessToken: undefined,
+      supabaseRefreshToken: undefined,
+    }));
+  }, []);
+
   // Memoize context value to prevent unnecessary re-renders
   const value = useMemo<AuthContextType>(() => ({
     ...authState,
@@ -1320,7 +1402,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     checkAccountStatus,
     acceptTerms,
     refreshUserProfile,
-  }), [authState, signin, signup, socialSignIn, migrate, signout, clearNewUserFlag, checkAccountStatus, acceptTerms, refreshUserProfile]);
+    verifyMFA,
+    clearMFAState,
+  }), [authState, signin, signup, socialSignIn, migrate, signout, clearNewUserFlag, checkAccountStatus, acceptTerms, refreshUserProfile, verifyMFA, clearMFAState]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

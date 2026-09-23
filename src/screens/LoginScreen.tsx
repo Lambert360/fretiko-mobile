@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SocialAuthButtons } from '../components/SocialAuthButtons';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import { MFAVerificationScreen } from './MFAVerificationScreen';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -50,7 +51,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   const [needsMigration, setNeedsMigration] = useState(false);
   const insets = useSafeAreaInsets();
 
-  const { signin, migrate, socialSignIn } = useAuth();
+  const { signin, migrate, socialSignIn, mfaRequired } = useAuth();
+
+  // Show MFA verification screen if MFA is required
+  useEffect(() => {
+    if (mfaRequired) {
+      // MFAVerificationScreen will be rendered below
+    }
+  }, [mfaRequired]);
 
   // Google Sign-In is configured globally in App.tsx
 
@@ -313,6 +321,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
       setIsLoading(false);
     }
   };
+
+  // Show MFA verification screen if required
+  if (mfaRequired) {
+    return <MFAVerificationScreen navigation={navigation} />;
+  }
 
   return (
     <SafeAreaView style={styles.container}>

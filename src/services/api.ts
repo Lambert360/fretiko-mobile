@@ -382,6 +382,33 @@ export const authAPI = {
       throw new Error(error.response?.data?.message || 'Password reset confirmation failed');
     }
   },
+
+  // MFA login verification (step-up after password success)
+  mfaLoginVerify: async (mfaData: {
+    supabaseAccessToken: string;
+    supabaseRefreshToken: string;
+    factorId: string;
+    code: string;
+  }) => {
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/mfa/login-verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(mfaData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'MFA verification failed');
+      }
+
+      return await response.json();
+    } catch (error: any) {
+      throw new Error(error.message || 'MFA verification failed');
+    }
+  },
 };
 
 // Test connection to backend
