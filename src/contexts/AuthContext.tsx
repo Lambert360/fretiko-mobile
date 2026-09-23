@@ -97,7 +97,7 @@ export interface AuthContextType extends AuthState {
   checkAccountStatus: (accessTokenOverride?: string | null) => Promise<boolean>;
   acceptTerms: () => Promise<void>;
   refreshUserProfile: () => Promise<void>;
-  verifyMFA: (code: string) => Promise<void>;
+  verifyMFA: (code: string, options?: { isBackupCode?: boolean; rememberDevice?: boolean }) => Promise<void>;
   clearMFAState: () => void;
 }
 
@@ -898,7 +898,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
 
-      const response = await authAPI.signin({ email, password });
+      const deviceToken = await SecureStore.getItemAsync('mfa_device_token').catch(() => null);
+      const response = await authAPI.signin({ email, password, deviceToken: deviceToken || undefined });
       
       // MFA step-up check: if backend returned mfaRequired, stop here and wait for code
       if (response.mfaRequired === true) {
@@ -1331,7 +1332,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, []);
 
-  const verifyMFA = useCallback(async (code: string) => {
+  const verifyMFA = useCallback(async (code: string, options?: { isBackupCode?: boolean; rememberDevice?: boolean }) => {
     try {
       if (!authStateRef.current.supabaseAccessToken || !authStateRef.current.mfaFactorId) {
         throw new Error('MFA session expired, please sign in again');
@@ -1344,7 +1345,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         supabaseRefreshToken: authStateRef.current.supabaseRefreshToken!,
         factorId: authStateRef.current.mfaFactorId!,
         code,
+        isBackupCode: options?.isBackupCode,
+        rememberDevice: options?.rememberDevice,
       });
+
+      if (response.deviceToken) {
+        await SecureStore.setItemAsync('mfa_device_token', response.deviceToken);
+      }
 
       const enrichedUser = {
         ...response.user,

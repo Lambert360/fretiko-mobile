@@ -293,7 +293,7 @@ export const authAPI = {
   },
 
   // Sign in existing user
-  signin: async (credentials: { email: string; password: string }) => {
+  signin: async (credentials: { email: string; password: string; deviceToken?: string }) => {
     try {
       const backendUrl = `${API_CONFIG.BASE_URL}/auth/signin`;
       console.log('🔍 Attempting signin to:', backendUrl);
@@ -389,6 +389,8 @@ export const authAPI = {
     supabaseRefreshToken: string;
     factorId: string;
     code: string;
+    isBackupCode?: boolean;
+    rememberDevice?: boolean;
   }) => {
     try {
       const response = await fetch(`${API_CONFIG.BASE_URL}/auth/mfa/login-verify`, {
@@ -468,6 +470,15 @@ export const authAPI = {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Could not disable MFA');
+    }
+  },
+
+  mfaBackupCodes: async (): Promise<{ codes: string[] }> => {
+    try {
+      const response = await api.post('/auth/mfa/backup-codes');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Could not generate backup codes');
     }
   },
 };

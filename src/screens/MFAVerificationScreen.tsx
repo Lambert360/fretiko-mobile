@@ -22,24 +22,31 @@ interface MFAVerificationScreenProps {
 export const MFAVerificationScreen: React.FC<MFAVerificationScreenProps> = ({ navigation }) => {
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isBackupCode, setIsBackupCode] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(false);
   const insets = useSafeAreaInsets();
   const { verifyMFA, clearMFAState, mfaRequired } = useAuth();
   const codeInputRef = useRef<TextInput>(null);
 
   const handleVerifyMFA = async () => {
-    if (!code.trim() || code.length !== 6) {
-      Alert.alert('Invalid Code', 'Please enter a 6-digit code');
+    if (!code.trim()) {
+      Alert.alert('Invalid Code', 'Please enter a code');
       return;
     }
 
-    if (!/^\d{6}$/.test(code)) {
-      Alert.alert('Invalid Code', 'Code must contain only numbers');
+    if (isBackupCode) {
+      if (!/^[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(code.trim().toUpperCase())) {
+        Alert.alert('Invalid Code', 'Backup codes look like XXXXX-XXXXX');
+        return;
+      }
+    } else if (!/^\d{6}$/.test(code)) {
+      Alert.alert('Invalid Code', 'Code must be 6 digits');
       return;
     }
 
     setIsLoading(true);
     try {
-      await verifyMFA(code);
+      await verifyMFA(code.trim().toUpperCase(), { isBackupCode, rememberDevice });
     } catch (error: any) {
       Alert.alert('Verification Failed', error.message || 'Invalid or expired code');
       setCode('');
@@ -77,7 +84,9 @@ export const MFAVerificationScreen: React.FC<MFAVerificationScreenProps> = ({ na
             <Ionicons name="shield-checkmark" size={64} color="#007AFF" />
             <Text style={styles.title}>Two-Factor Authentication</Text>
             <Text style={styles.subtitle}>
-              Enter the 6-digit code from your authenticator app
+              {isBackupCode
+                ? 'Enter one of your backup codes (XXXXX-XXXXX)'
+                : 'Enter the 6-digit code from your authenticator app'}
             </Text>
           </View>
 
@@ -85,16 +94,46 @@ export const MFAVerificationScreen: React.FC<MFAVerificationScreenProps> = ({ na
             <TextInput
               ref={codeInputRef}
               style={styles.codeInput}
-              placeholder="000000"
+              placeholder={isBackupCode ? 'XXXXX-XXXXX' : '000000'}
               placeholderTextColor="#999"
-              keyboardType="number-pad"
-              maxLength={6}
+              keyboardType={isBackupCode ? 'default' : 'number-pad'}
+              autoCapitalize="characters"
+              maxLength={isBackupCode ? 11 : 6}
               value={code}
               onChangeText={setCode}
               editable={!isLoading}
               autoFocus
               textAlign="center"
             />
+
+            <TouchableOpacity
+              style={styles.toggleRow}
+              onPress={() => {
+                setIsBackupCode(prev => !prev);
+                setCode('');
+              }}
+              disabled={isLoading}
+            >
+              <Ionicons
+                name={isBackupCode ? 'checkbox' : 'square-outline'}
+                size={20}
+                color="#007AFF"
+              />
+              <Text style={styles.toggleText}>Use a backup code instead</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.toggleRow}
+              onPress={() => setRememberDevice(prev => !prev)}
+              disabled={isLoading}
+            >
+              <Ionicons
+                name={rememberDevice ? 'checkbox' : 'square-outline'}
+                size={20}
+                color="#007AFF"
+              />
+              <Text style={styles.toggleText}>Remember this device for 30 days</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.verifyButton, isLoading && styles.buttonDisabled]}
@@ -186,6 +225,17 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     marginBottom: 12,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    marginBottom: 4,
+  },
+  toggleText: {
+    fontSize: 14,
+    color: '#333',
   },
   verifyButtonText: {
     color: '#fff',

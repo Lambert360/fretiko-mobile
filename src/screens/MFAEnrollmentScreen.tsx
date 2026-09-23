@@ -28,6 +28,7 @@ export const MFAEnrollmentScreen: React.FC<MFAEnrollmentScreenProps> = ({ naviga
   const [uri, setUri] = useState<string | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
   const [code, setCode] = useState('');
+  const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
   const sessionRef = useRef<{ supabaseAccessToken: string; supabaseRefreshToken: string } | null>(null);
 
   useEffect(() => {
@@ -70,11 +71,8 @@ export const MFAEnrollmentScreen: React.FC<MFAEnrollmentScreenProps> = ({ naviga
         factorId,
         code,
       );
-      Alert.alert(
-        'Two-Factor Authentication Enabled',
-        'Your account is now protected with an extra layer of security.',
-        [{ text: 'OK', onPress: () => navigation.goBack() }],
-      );
+      const backupResult = await authAPI.mfaBackupCodes();
+      setBackupCodes(backupResult.codes);
     } catch (err: any) {
       Alert.alert('Verification Failed', err.message || 'Invalid or expired code');
       setCode('');
@@ -149,6 +147,24 @@ export const MFAEnrollmentScreen: React.FC<MFAEnrollmentScreenProps> = ({ naviga
                   )}
                 </TouchableOpacity>
               </View>
+
+              {backupCodes && (
+                <View style={styles.backupBox}>
+                  <Text style={styles.backupTitle}>Two-Factor Authentication Enabled</Text>
+                  <Text style={styles.backupWarning}>
+                    Save these backup codes somewhere safe. Each can only be used once, and they will not be shown again.
+                  </Text>
+                  {backupCodes.map((c) => (
+                    <Text key={c} selectable style={styles.backupCode}>{c}</Text>
+                  ))}
+                  <TouchableOpacity
+                    style={styles.doneButton}
+                    onPress={() => navigation.goBack()}
+                  >
+                    <Text style={styles.doneButtonText}>I've Saved Them</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </>
           )}
         </ScrollView>
@@ -191,4 +207,10 @@ const styles = StyleSheet.create({
   verifyButton: { backgroundColor: '#007AFF', paddingVertical: 14, borderRadius: 8, alignItems: 'center' },
   verifyButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   buttonDisabled: { opacity: 0.6 },
+  backupBox: { marginTop: 24, backgroundColor: '#F8F8F8', borderRadius: 10, padding: 16 },
+  backupTitle: { fontSize: 16, fontWeight: '700', color: '#34C759', textAlign: 'center', marginBottom: 8 },
+  backupWarning: { fontSize: 12, color: '#FF9500', fontWeight: '600', marginBottom: 12, lineHeight: 17, textAlign: 'center' },
+  backupCode: { fontSize: 15, fontWeight: '600', color: '#000', letterSpacing: 1.5, marginBottom: 6, textAlign: 'center' },
+  doneButton: { marginTop: 12, paddingVertical: 10, borderRadius: 8, backgroundColor: '#007AFF', alignItems: 'center' },
+  doneButtonText: { color: '#fff', fontWeight: '600', fontSize: 14 },
 });

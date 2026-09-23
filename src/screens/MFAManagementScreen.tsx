@@ -25,8 +25,10 @@ interface MfaFactor {
 export const MFAManagementScreen: React.FC<MFAManagementScreenProps> = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isDisabling, setIsDisabling] = useState<string | null>(null);
+  const [isGeneratingCodes, setIsGeneratingCodes] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [factors, setFactors] = useState<MfaFactor[]>([]);
+  const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
 
   const loadFactors = useCallback(async () => {
     setIsLoading(true);
@@ -65,6 +67,30 @@ export const MFAManagementScreen: React.FC<MFAManagementScreenProps> = ({ naviga
               Alert.alert('Error', err.message || 'Could not disable MFA');
             } finally {
               setIsDisabling(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleGenerateBackupCodes = () => {
+    Alert.alert(
+      'Generate New Backup Codes',
+      'This will invalidate any previously issued backup codes. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Generate',
+          onPress: async () => {
+            setIsGeneratingCodes(true);
+            try {
+              const result = await authAPI.mfaBackupCodes();
+              setBackupCodes(result.codes);
+            } catch (err: any) {
+              Alert.alert('Error', err.message || 'Could not generate backup codes');
+            } finally {
+              setIsGeneratingCodes(false);
             }
           },
         },
@@ -119,6 +145,42 @@ export const MFAManagementScreen: React.FC<MFAManagementScreenProps> = ({ naviga
                 </TouchableOpacity>
               </View>
             ))}
+
+            <View style={styles.backupSection}>
+              <Text style={styles.backupTitle}>Backup Codes</Text>
+              <Text style={styles.backupDescription}>
+                Backup codes let you sign in if you lose your authenticator app. Each code can only be used once.
+              </Text>
+
+              {backupCodes ? (
+                <View style={styles.codesBox}>
+                  <Text style={styles.codesWarning}>
+                    Save these codes somewhere safe. They will not be shown again.
+                  </Text>
+                  {backupCodes.map((c) => (
+                    <Text key={c} selectable style={styles.codeLine}>{c}</Text>
+                  ))}
+                  <TouchableOpacity
+                    style={styles.doneButton}
+                    onPress={() => setBackupCodes(null)}
+                  >
+                    <Text style={styles.doneButtonText}>I've Saved Them</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.generateButton, isGeneratingCodes && styles.buttonDisabled]}
+                  onPress={handleGenerateBackupCodes}
+                  disabled={isGeneratingCodes}
+                >
+                  {isGeneratingCodes ? (
+                    <ActivityIndicator color="#007AFF" size="small" />
+                  ) : (
+                    <Text style={styles.generateButtonText}>Generate Backup Codes</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
           </>
         ) : (
           <>
@@ -170,4 +232,20 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.6 },
   enableButton: { backgroundColor: '#007AFF', paddingVertical: 14, borderRadius: 8, alignItems: 'center' },
   enableButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  backupSection: { marginTop: 32, paddingTop: 24, borderTopWidth: 1, borderTopColor: '#eee' },
+  backupTitle: { fontSize: 17, fontWeight: '600', color: '#000', marginBottom: 6 },
+  backupDescription: { fontSize: 13, color: '#666', lineHeight: 19, marginBottom: 16 },
+  generateButton: {
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    alignItems: 'center',
+  },
+  generateButtonText: { color: '#007AFF', fontWeight: '600', fontSize: 14 },
+  codesBox: { backgroundColor: '#F8F8F8', borderRadius: 10, padding: 16 },
+  codesWarning: { fontSize: 12, color: '#FF9500', fontWeight: '600', marginBottom: 12, lineHeight: 17 },
+  codeLine: { fontSize: 15, fontWeight: '600', color: '#000', letterSpacing: 1.5, marginBottom: 6, textAlign: 'center' },
+  doneButton: { marginTop: 12, paddingVertical: 10, borderRadius: 8, backgroundColor: '#007AFF', alignItems: 'center' },
+  doneButtonText: { color: '#fff', fontWeight: '600', fontSize: 14 },
 });
