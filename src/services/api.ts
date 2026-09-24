@@ -3,39 +3,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { API_CONFIG } from '../config/api';
 
-// Retry utility for network resilience
-const withRetry = async <T>(
-  operation: () => Promise<T>,
-  maxRetries: number = 3,
-  baseDelay: number = 1000
-): Promise<T> => {
-  let lastError: any;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await operation();
-    } catch (error: any) {
-      lastError = error;
-
-      // Don't retry on certain errors
-      if (error?.response?.status && error.response.status >= 400 && error.response.status < 500) {
-        throw error; // Client errors shouldn't be retried
-      }
-
-      if (attempt === maxRetries) {
-        throw lastError;
-      }
-
-      // Exponential backoff with jitter
-      const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
-      console.log(`🔄 Retrying API call (attempt ${attempt + 2}/${maxRetries + 1}) after ${Math.round(delay)}ms...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-
-  throw lastError;
-};
-
 // Create axios instance with base configuration
 export const api = axios.create({
   baseURL: API_CONFIG.BASE_URL,
@@ -293,7 +260,7 @@ export const authAPI = {
   },
 
   // Sign in existing user
-  signin: async (credentials: { email: string; password: string }) => {
+  signin: async (credentials: { email: string; password: string; deviceToken?: string }) => {
     try {
       const backendUrl = `${API_CONFIG.BASE_URL}/auth/signin`;
       console.log('🔍 Attempting signin to:', backendUrl);
@@ -382,16 +349,103 @@ export const authAPI = {
       throw new Error(error.response?.data?.message || 'Password reset confirmation failed');
     }
   },
-};
 
-// Test connection to backend
-export const testConnection = async () => {
-  try {
-    const response = await api.get('/');
-    console.log('✅ Backend connection successful');
-    return true;
-  } catch (error) {
-    console.error('❌ Backend connection failed:', error);
-    return false;
-  }
+  // MFA login verification (step-up after password success)
+  mfaLoginVerify: async (mfaData: {
+    supabaseAccessToken: string;
+    supabaseRefreshToken: string;
+    factorId: string;
+    code: string;
+    isBackupCode?: boolean;
+    rememberDevice?: boolean;
+  }) => {
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/mfa/login-verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(mfaData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'MFA verification failed');
+      }
+
+      return await response.json();
+    } catch (error: any) {
+      throw new Error(error.message || 'MFA verification failed');
+    }
+  },
+
+  // Bootstraps a short-lived Supabase session for Settings > Security screens
+  // (enrollment/management), authenticated via the app JWT (axios interceptor).
+  mfaSession: async (): Promise<{ supabaseAccessToken: string; supabaseRefreshToken: string }> => {
+    try {
+      const response = await api.post('/auth/mfa/session');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Could not start MFA session');
+    }
+  },
+
+  mfaEnroll: async (supabaseAccessToken: string, supabaseRefreshToken: string) => {
+    try {
+      const response = await api.post('/auth/mfa/enroll', { supabaseAccessToken, supabaseRefreshToken });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Could not start MFA enrollment');
+    }
+  },
+
+  mfaVerifyEnrollment: async (
+    supabaseAccessToken: string,
+    supabaseRefreshToken: string,
+    factorId: string,
+    code: string,
+  ) => {
+    try {
+      const response = await api.post('/auth/mfa/verify', {
+        supabaseAccessToken,
+        supabaseRefreshToken,
+        factorId,
+        code,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Invalid or expired code');
+    }
+  },
+
+  mfaListFactors: async (supabaseAccessToken: string, supabaseRefreshToken: string) => {
+    try {
+      const response = await api.post('/auth/mfa/factors', { supabaseAccessToken, supabaseRefreshToken });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Could not load MFA status');
+    }
+  },
+
+  mfaUnenroll: async (supabaseAccessToken: string, supabaseRefreshToken: string, factorId: string) => {
+    try {
+      const response = await api.post('/auth/mfa/unenroll', {
+        supabaseAccessToken,
+        supabaseRefreshToken,
+        factorId,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Could not disable MFA');
+    }
+  },
+
+  mfaBackupCodes: async (): Promise<{ codes: string[] }> => {
+    try {
+      const response = await api.post('/auth/mfa/backup-codes');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Could not generate backup codes');
+    }
+  },
 };

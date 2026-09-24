@@ -267,7 +267,7 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
           
           <TouchableOpacity
             style={styles.settingItem}
-            onPress={() => Alert.alert('Coming Soon', 'Privacy settings will be available soon!')}
+            onPress={() => navigation.navigate('MFAManagement')}
           >
             <View style={styles.settingInfo}>
               <Ionicons name="shield-outline" size={20} color="#007AFF" />

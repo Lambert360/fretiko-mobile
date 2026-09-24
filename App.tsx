@@ -9,6 +9,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import * as WebBrowser from 'expo-web-browser';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { setAudioModeAsync } from 'expo-audio';
 
 // Import base64 polyfill first
 import './src/utils/base64-polyfill';
@@ -44,6 +45,8 @@ import { SocialSignUpScreen } from './src/screens/SocialSignUpScreen';
 // Import profile and user screens
 import { EditProfileScreen } from './src/screens/EditProfileScreen';
 import { AccountSettingsScreen } from './src/screens/AccountSettingsScreen';
+import { MFAEnrollmentScreen } from './src/screens/MFAEnrollmentScreen';
+import { MFAManagementScreen } from './src/screens/MFAManagementScreen';
 import { RoleSelectionScreen } from './src/screens/RoleSelectionScreen';
 import { ConnectionsListScreen } from './src/screens/ConnectionsListScreen';
 import { ConnectionDetailsScreen } from './src/screens/ConnectionDetailsScreen';
@@ -212,6 +215,20 @@ const AppNavigator: React.FC = () => {
   const navigationRef = useRef<any>(null);
   const rootViewRef = useRef<any>(null);
   const hasHandledInitialNotificationRef = useRef(false);
+
+  // Feed videos (e.g. post/video-feed playback in PostCard/VideoCard) use
+  // expo-video, which shares its native audio session with expo-audio. By
+  // default that session does not play audio while the device's physical
+  // silent/mute switch is on (iOS), which made posted videos appear to have
+  // no sound even though the source files include audio. Opt in once at
+  // startup so video sound always plays, matching the ringer-only override
+  // already used for calls in CallContext.
+  useEffect(() => {
+    setAudioModeAsync({
+      playsInSilentMode: true,
+      interruptionMode: 'mixWithOthers',
+    }).catch(() => {});
+  }, []);
 
   // Configure native Google Sign-In
   useEffect(() => {
@@ -560,6 +577,8 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="ReferralHandler" component={ReferralHandlerScreen as any} />
               <Stack.Screen name="EditProfile" component={EditProfileScreen as any} />
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
+              <Stack.Screen name="MFAEnrollment" component={MFAEnrollmentScreen} />
+              <Stack.Screen name="MFAManagement" component={MFAManagementScreen} />
               <Stack.Screen name="RiderVerification" component={RiderVerificationScreen} />
               <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} />
               <Stack.Screen name="Mentions" component={MentionsScreen} />
