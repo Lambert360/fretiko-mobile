@@ -3,39 +3,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { API_CONFIG } from '../config/api';
 
-// Retry utility for network resilience
-const withRetry = async <T>(
-  operation: () => Promise<T>,
-  maxRetries: number = 3,
-  baseDelay: number = 1000
-): Promise<T> => {
-  let lastError: any;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await operation();
-    } catch (error: any) {
-      lastError = error;
-
-      // Don't retry on certain errors
-      if (error?.response?.status && error.response.status >= 400 && error.response.status < 500) {
-        throw error; // Client errors shouldn't be retried
-      }
-
-      if (attempt === maxRetries) {
-        throw lastError;
-      }
-
-      // Exponential backoff with jitter
-      const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
-      console.log(`🔄 Retrying API call (attempt ${attempt + 2}/${maxRetries + 1}) after ${Math.round(delay)}ms...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-
-  throw lastError;
-};
-
 // Create axios instance with base configuration
 export const api = axios.create({
   baseURL: API_CONFIG.BASE_URL,
@@ -481,16 +448,4 @@ export const authAPI = {
       throw new Error(error.response?.data?.message || 'Could not generate backup codes');
     }
   },
-};
-
-// Test connection to backend
-export const testConnection = async () => {
-  try {
-    const response = await api.get('/');
-    console.log('✅ Backend connection successful');
-    return true;
-  } catch (error) {
-    console.error('❌ Backend connection failed:', error);
-    return false;
-  }
 };
