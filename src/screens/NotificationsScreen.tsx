@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
+import { navigateToAuctionDetails } from '../utils/auctionNavigation';
 
 // Import our new notifications API
 import notificationsAPI, {
@@ -43,14 +44,22 @@ interface FrontendNotification extends Omit<Notification, 'created_at' | 'is_rea
 // Route an order/delivery notification to the correct screen based on the
 // recipient's role (buyer/vendor/rider), as indicated by the backend's
 // `recipient_role` / `target_screen` fields on the notification data payload.
-const navigateToOrderScreenForRole = (navigation: any, data: any, orderId: string) => {
+// Falls back to comparing payload user ids / the current user's role flags for
+// older notifications that predate those fields.
+const navigateToOrderScreenForRole = (navigation: any, data: any, orderId: string, user?: any) => {
   const role = data?.recipient_role;
   const targetScreen = data?.target_screen;
 
-  if (targetScreen === 'VendorOrderDetails' || role === 'vendor') {
+  const isVendorOrRider =
+    role === 'vendor' ||
+    role === 'rider' ||
+    targetScreen === 'VendorOrderDetails' ||
+    targetScreen === 'Workspace' ||
+    (user?.id && (data?.vendor_id === user.id || data?.rider_id === user.id)) ||
+    (!role && !targetScreen && (user as any)?.is_rider);
+
+  if (isVendorOrRider) {
     navigation.navigate('VendorOrderDetails', { orderId });
-  } else if (targetScreen === 'Workspace' || role === 'rider') {
-    navigation.navigate('Workspace');
   } else {
     navigation.navigate('OrderTracking', { orderId });
   }
@@ -59,7 +68,7 @@ const navigateToOrderScreenForRole = (navigation: any, data: any, orderId: strin
 const NotificationsScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  const { accessToken, isAuthenticated } = useAuth();
+  const { accessToken, isAuthenticated, user } = useAuth();
   const [activeTab, setActiveTab] = useState<'All' | 'Orders' | 'Chats'>('All');
   const [notifications, setNotifications] = useState<FrontendNotification[]>([]);
   const [stats, setStats] = useState<NotificationStats | null>(null);
@@ -246,7 +255,7 @@ const NotificationsScreen = () => {
       // Route an order/delivery notification to the correct screen based on
       // the recipient's role (buyer/vendor/rider), as indicated by the backend.
       const navigateToOrderScreen = (orderId: string) =>
-        navigateToOrderScreenForRole(navigation, notification.data, orderId);
+        navigateToOrderScreenForRole(navigation, notification.data, orderId, user);
 
       // Navigate based on notification type
       switch (notification.type) {
@@ -386,6 +395,38 @@ const NotificationsScreen = () => {
           }
           break;
 
+        case 'outbid' as any:
+        case 'new_bid' as any:
+        case 'auction_started' as any:
+        case 'auction_ended' as any:
+        case 'auction_won' as any:
+        case 'auction_item_won' as any:
+        case 'auction_sold' as any:
+        case 'auction_extended' as any:
+        case 'auction_win_forfeited' as any:
+        case 'auction_win_expired' as any:
+        case 'auction_sale_failed' as any:
+        case 'bid_invalidated' as any:
+        case 'fraud_alert' as any:
+          // Auction notifications — deep-link to the auction (live vs timed
+          // resolved by the shared routing helper / screen self-redirect)
+          if (notification.data?.auction_id) {
+            navigateToAuctionDetails(navigation, notification.data);
+          } else {
+            Alert.alert(notification.title, notification.message);
+          }
+          break;
+
+        case 'schedule' as any:
+          // Service schedule reminders carry the target screen in data
+          const targetScreen = notification.data?.target_screen;
+          if (targetScreen === 'ScheduleCalendar' || targetScreen === 'VendorOrderDetails' || targetScreen === 'OrderTracking') {
+            (navigation as any).navigate(targetScreen, notification.data?.order_id ? { orderId: notification.data.order_id } : undefined);
+          } else {
+            Alert.alert(notification.title, notification.message);
+          }
+          break;
+
         default:
           // Generic notification handling - show full message
           console.log('Unknown notification type:', notification.type);
@@ -396,7 +437,7 @@ const NotificationsScreen = () => {
       console.error('Error handling notification press:', error);
       Alert.alert('Error', 'Unable to open notification. Please try again.');
     }
-  }, [navigation]);
+  }, [navigation, user]);
 
   /**
    * Handle notification action buttons
@@ -481,7 +522,7 @@ const NotificationsScreen = () => {
           // Navigate to order details, routed by recipient role (buyer/vendor/rider)
           const orderId = notif.data?.order_id;
           if (orderId) {
-            navigateToOrderScreenForRole(navigation, notif.data, orderId);
+            navigateToOrderScreenForRole(navigation, notif.data, orderId, user);
           } else {
             Alert.alert('Error', 'Order ID not found');
           }
@@ -555,7 +596,7 @@ const NotificationsScreen = () => {
       console.error('Error handling notification action:', error);
       Alert.alert('Error', 'Unable to complete action. Please try again.');
     }
-  }, [markAsRead, notifications, handleNotificationPress, navigation]);
+  }, [markAsRead, notifications, handleNotificationPress, navigation, user]);
 
   /**
    * Handle search
@@ -674,6 +715,22 @@ const NotificationsScreen = () => {
       case 'live': return 'radio';
       case 'payment': return 'card';
       case 'chat': return 'chatbubble';
+      case 'schedule': return 'calendar';
+      case 'dispute':
+      case 'user_warning': return 'alert-circle';
+      case 'outbid':
+      case 'new_bid':
+      case 'auction_started':
+      case 'auction_ended':
+      case 'auction_won':
+      case 'auction_item_won':
+      case 'auction_sold':
+      case 'auction_extended':
+      case 'auction_win_forfeited':
+      case 'auction_win_expired':
+      case 'auction_sale_failed':
+      case 'bid_invalidated':
+      case 'fraud_alert': return 'hammer';
       default: return 'notifications';
     }
   };
@@ -688,6 +745,22 @@ const NotificationsScreen = () => {
       case 'live': return '#FF4757';
       case 'payment': return '#2ECC71';
       case 'chat': return '#17A2B8';
+      case 'schedule': return '#3498DB';
+      case 'dispute':
+      case 'user_warning':
+      case 'fraud_alert': return '#E74C3C';
+      case 'outbid':
+      case 'new_bid':
+      case 'auction_started':
+      case 'auction_ended':
+      case 'auction_won':
+      case 'auction_item_won':
+      case 'auction_sold':
+      case 'auction_extended':
+      case 'auction_win_forfeited':
+      case 'auction_win_expired':
+      case 'auction_sale_failed':
+      case 'bid_invalidated': return '#F39C12';
       default: return '#95A5A6';
     }
   };
@@ -739,7 +812,7 @@ const NotificationsScreen = () => {
         <View style={styles.headerActions}>
           <TouchableOpacity 
             style={styles.headerAction}
-            onPress={() => Alert.alert('Coming Soon', 'Notification settings will be available in the next update! 🔔', [{ text: 'OK' }])}
+            onPress={() => (navigation as any).navigate('NotificationSettings')}
           >
             <Ionicons name="settings-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>

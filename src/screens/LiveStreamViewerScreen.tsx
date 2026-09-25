@@ -31,9 +31,13 @@ import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { cartAPI } from '../services/cartAPI';
 import LottieGiftEffect from '../components/LottieGiftEffect';
+import { playSoundboardSound, stopSoundboardSound } from '../services/auctionSoundService';
 import GiftEffectStage from '../components/GiftEffectStage';
 import GiftSelectorModal from '../components/GiftSelectorModal';
 import WatchRewardPill from '../components/WatchRewardPill';
+import { MediaViewerModal } from '../components/MediaViewerModal';
+import { AdultContentGate, isAdultContentError } from '../components/AdultContentGate';
+import { VideoView, useVideoPlayer } from 'expo-video';
 
 // Import Agora RTC SDK for direct streaming (industry standard)
 import {
@@ -74,8 +78,14 @@ const LiveStreamViewerScreen = () => {
 
   // Stream state
   const [stream, setStream] = useState<LiveStream | null>(initialStream || null);
+
+  // VOD player for ended streams (HLS replay from Cloud Recording)
+  const vodPlayer = useVideoPlayer(null, player => {
+    player.loop = false;
+  });
   const [viewerCount, setViewerCount] = useState(initialStream?.viewer_count || 0);
   const [isStreamPaused, setIsStreamPaused] = useState(false);
+  const [adultRestricted, setAdultRestricted] = useState(false);
 
   const [isHostVideoMuted, setIsHostVideoMuted] = useState(false);
   const [isHostAudioMuted, setIsHostAudioMuted] = useState(false);
@@ -180,6 +190,9 @@ const LiveStreamViewerScreen = () => {
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [imageViewerImages, setImageViewerImages] = useState<string[]>([]);
   const [imageViewerIndex, setImageViewerIndex] = useState(0);
+  // Video viewer for highlighted services whose primary media is a video
+  const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
+  const [mediaViewerUri, setMediaViewerUri] = useState('');
 
   // Service/portfolio booking modal state
   const [showBookingModal, setShowBookingModal] = useState(false);
@@ -262,14 +275,27 @@ const LiveStreamViewerScreen = () => {
       setStream(streamData);
       setViewerCount(streamData.viewer_count);
 
+      // Load the replay source for ended streams
+      if (streamData.status === 'ended' && streamData.stream_url) {
+        try {
+          await vodPlayer.replaceAsync(streamData.stream_url);
+        } catch (vodError) {
+          console.warn('Failed to load VOD source:', vodError);
+        }
+      }
+
       // ✅ If stream is LIVE, get Agora token for RTC
       if (streamData.status === 'live') {
         await loadAgoraConfig();
       }
     } catch (error) {
       console.error('Error loading stream:', error);
-      Alert.alert('Error', 'Failed to load stream details');
-      navigation.goBack();
+      if (isAdultContentError(error)) {
+        setAdultRestricted(true);
+      } else {
+        Alert.alert('Error', 'Failed to load stream details');
+        navigation.goBack();
+      }
     } finally {
       setLoading(false);
     }
@@ -493,10 +519,24 @@ const LiveStreamViewerScreen = () => {
       }
     };
 
+    // Host soundboard sounds — play the file natively, no visual indicator
+    const soundPlayedHandler = (data: { streamId?: string; soundId: string; soundUrl?: string }) => {
+      if (data?.soundId && (!data.streamId || data.streamId === streamId)) {
+        playSoundboardSound(data.soundId, data.soundUrl);
+      }
+    };
+    const soundStoppedHandler = (data: { streamId?: string; soundId: string }) => {
+      if (data?.soundId && (!data.streamId || data.streamId === streamId)) {
+        stopSoundboardSound(data.soundId);
+      }
+    };
+
     // Register event listeners EARLY, before async setupSocket completes
     // This ensures listeners are ready when events arrive
     liveStreamSocket.on('view_count_updated', handleViewerCountUpdate);
     liveStreamSocket.on('highlight_item', highlightItemHandler);
+    liveStreamSocket.on('sound_played', soundPlayedHandler);
+    liveStreamSocket.on('sound_stopped', soundStoppedHandler);
 
     const setupSocket = async () => {
       try {
@@ -546,6 +586,8 @@ const LiveStreamViewerScreen = () => {
       liveStreamSocket.off('new_gift', handleNewGift);
       liveStreamSocket.off('stream_status_update', handleStreamStatusUpdate);
       liveStreamSocket.off('showcase_item', handleShowcaseItem);
+      liveStreamSocket.off('sound_played', soundPlayedHandler);
+      liveStreamSocket.off('sound_stopped', soundStoppedHandler);
       liveStreamSocket.leaveStream();
       liveSalesAPI.leaveStream(streamId).catch(console.error);
     };
@@ -683,7 +725,13 @@ const LiveStreamViewerScreen = () => {
       if (productId && item.product) {
         return item.product.primary_image_url || 'https://via.placeholder.com/200x200?text=Product';
       }
-      // It's a service - return placeholder or null (we'll use icon instead)
+      // Service — use its uploaded thumbnail/image when available
+      if (item.service) {
+        const svc = item.service;
+        return svc.images?.[0]
+          || (svc.media_type === 'image' ? svc.primary_media_url : undefined)
+          || '';
+      }
       return ''; // Empty string signals we should use icon
     } catch (error) {
       console.error('Error getting showcase image URL:', error);
@@ -927,7 +975,7 @@ const LiveStreamViewerScreen = () => {
 
   const handleShareExternally = async () => {
     try {
-      const shareUrl = `https://fretiko.com/live/${streamId}`;
+      const shareUrl = `https://www.fretiko.com/live/${streamId}`;
       const message = stream?.title
         ? `Join my live stream "${stream.title}" on Fretiko!\n\n${shareUrl}`
         : `Join my live stream on Fretiko!\n\n${shareUrl}`;
@@ -1345,6 +1393,10 @@ const LiveStreamViewerScreen = () => {
     );
   };
 
+  if (adultRestricted) {
+    return <AdultContentGate navigation={navigation} contentLabel="live stream" />;
+  }
+
   if (loading || !stream) {
     return (
       <View style={styles.loadingContainer}>
@@ -1356,7 +1408,16 @@ const LiveStreamViewerScreen = () => {
   if (stream?.status === 'ended') {
     return (
       <View style={styles.loadingContainer}>
-        <Ionicons name="videocam-off" size={64} color="#E74C3C" />
+        {stream.stream_url ? (
+          <VideoView
+            style={styles.vodPlayer}
+            player={vodPlayer}
+            nativeControls
+            contentFit="contain"
+          />
+        ) : (
+          <Ionicons name="videocam-off" size={64} color="#E74C3C" />
+        )}
         <Text style={[styles.loadingText, { marginTop: 16, marginBottom: 8 }]}>
           This live stream has ended
         </Text>
@@ -1520,6 +1581,19 @@ const LiveStreamViewerScreen = () => {
                 imageUrls = portfolio.images?.map((img) => img.image_url) || [];
                 initialIndex = portfolio.images?.findIndex((img) => img.is_primary) ?? 0;
                 if (initialIndex < 0) initialIndex = 0;
+              } else if (isServiceItem(highlightedItem)) {
+                const svc = (highlightedItem as LiveStreamService).service;
+                const videoUri = svc?.media_type === 'video'
+                  ? (svc?.videos?.[0] || svc?.primary_media_url)
+                  : undefined;
+                if (videoUri) {
+                  setMediaViewerUri(videoUri);
+                  setMediaViewerVisible(true);
+                  return;
+                }
+                imageUrls = svc?.images?.length
+                  ? svc.images
+                  : (svc?.media_type === 'image' && svc?.primary_media_url ? [svc.primary_media_url] : []);
               }
 
               if (imageUrls.length > 0) {
@@ -1530,16 +1604,22 @@ const LiveStreamViewerScreen = () => {
             }}
             activeOpacity={0.8}
           >
-            <Image
-              source={{
-                uri: 'product' in highlightedItem
-                  ? (highlightedItem as LiveStreamProduct).product.primary_image_url || 'https://via.placeholder.com/80'
-                  : 'images' in highlightedItem
-                  ? (highlightedItem as LivePortfolioService).images.find(img => img.is_primary)?.image_url || (highlightedItem as LivePortfolioService).images[0]?.image_url || 'https://via.placeholder.com/80'
-                  : 'https://via.placeholder.com/80'
-              }}
-              style={styles.highlightCardImage}
-            />
+            {isServiceItem(highlightedItem) && !getShowcaseImageUrl(highlightedItem) ? (
+              <View style={[styles.highlightCardImage, styles.showcaseServiceIcon]}>
+                <Ionicons name="briefcase" size={24} color="#3498DB" />
+              </View>
+            ) : (
+              <Image
+                source={{
+                  uri: 'product' in highlightedItem
+                    ? (highlightedItem as LiveStreamProduct).product.primary_image_url || 'https://via.placeholder.com/80'
+                    : 'images' in highlightedItem
+                    ? (highlightedItem as LivePortfolioService).images.find(img => img.is_primary)?.image_url || (highlightedItem as LivePortfolioService).images[0]?.image_url || 'https://via.placeholder.com/80'
+                    : getShowcaseImageUrl(highlightedItem) || 'https://via.placeholder.com/80'
+                }}
+                style={styles.highlightCardImage}
+              />
+            )}
           </TouchableOpacity>
           <View style={styles.highlightCardInfo}>
             <Text style={styles.highlightCardTitle} numberOfLines={1}>
@@ -1583,11 +1663,7 @@ const LiveStreamViewerScreen = () => {
         <View style={styles.showcaseOverlay}>
           <View style={styles.showcaseCard}>
             {/* Image or Icon based on item type */}
-            {isServiceItem(showcasedItem) ? (
-              <View style={[styles.showcaseImage, styles.showcaseServiceIcon]}>
-                <Ionicons name="briefcase" size={60} color="#3498DB" />
-              </View>
-            ) : getShowcaseImageUrl(showcasedItem) ? (
+            {getShowcaseImageUrl(showcasedItem) ? (
               <Image
                 source={{ uri: getShowcaseImageUrl(showcasedItem) }}
                 style={styles.showcaseImage}
@@ -1595,6 +1671,10 @@ const LiveStreamViewerScreen = () => {
                   console.error('Error loading showcase image:', e.nativeEvent.error);
                 }}
               />
+            ) : isServiceItem(showcasedItem) ? (
+              <View style={[styles.showcaseImage, styles.showcaseServiceIcon]}>
+                <Ionicons name="briefcase" size={60} color="#3498DB" />
+              </View>
             ) : (
               <View style={[styles.showcaseImage, styles.showcaseServiceIcon]}>
                 <Ionicons name="image-outline" size={60} color="#666" />
@@ -1988,6 +2068,14 @@ const LiveStreamViewerScreen = () => {
         </View>
       </Modal>
 
+      {/* Video viewer for services whose primary media is a video */}
+      <MediaViewerModal
+        visible={mediaViewerVisible}
+        onClose={() => setMediaViewerVisible(false)}
+        type="video"
+        uri={mediaViewerUri}
+      />
+
       {/* Booking Modal for Services and Portfolio */}
       <LiveBookingModal
         visible={showBookingModal}
@@ -2115,7 +2203,8 @@ const LiveBookingModal = ({
                 value={selectedDate}
                 mode="date"
                 display="spinner"
-                themeVariant="light"
+                themeVariant="dark"
+                textColor="#FFFFFF"
                 onChange={handleDateChange}
                 minimumDate={new Date()}
               />
@@ -2144,7 +2233,8 @@ const LiveBookingModal = ({
                 value={selectedTime}
                 mode="time"
                 display="spinner"
-                themeVariant="light"
+                themeVariant="dark"
+                textColor="#FFFFFF"
                 onChange={handleTimeChange}
               />
             )}
@@ -2182,6 +2272,11 @@ const styles = StyleSheet.create({
   loadingText: {
     color: '#888',
     fontSize: 16,
+  },
+  vodPlayer: {
+    width: screenWidth,
+    height: screenHeight * 0.6,
+    backgroundColor: 'black',
   },
   endedGoBackButton: {
     marginTop: 24,
@@ -3430,6 +3525,8 @@ const styles = StyleSheet.create({
 // Shop Modal Component
 const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHeightChange, cartItems, onAddToCart, onOpenCart, insetsBottom = 0, streamId }: any) => {
   const panRef = useRef<any>(null);
+  // Service booking picker — services need a date/time before adding to cart
+  const [serviceBookingItem, setServiceBookingItem] = React.useState<any>(null);
   const baseHeight = useRef(modalHeight);
   const animatedHeight = useRef(new Animated.Value(modalHeight)).current;
   
@@ -3498,6 +3595,7 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
 
   const renderShopItem = ({ item }: any) => {
     const isInCart = cartItems.some((cartItem: any) => cartItem.id === item.id);
+    const cartItem = cartItems.find((ci: any) => ci.id === item.id);
     const isProduct = 'product' in item;
     const isService = 'service' in item;
 
@@ -3506,7 +3604,12 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
       if (isProduct) {
         return item.product?.primary_image_url || 'https://via.placeholder.com/60?text=Product';
       }
-      // Services don't have images, return null to render icon instead
+      if (isService) {
+        const svc = item.service;
+        return svc?.images?.[0]
+          || (svc?.media_type === 'image' ? svc?.primary_media_url : undefined)
+          || null;
+      }
       return null;
     };
 
@@ -3541,28 +3644,41 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
           {isService && (
             <>
               <Text style={styles.shopItemServiceBadge}>Service</Text>
-              {item.available_slots && item.available_slots.length > 0 && (
+              {cartItem?.bookingDate && cartItem?.bookingTime ? (
+                <View style={styles.timeSlotsContainer}>
+                  <Ionicons name="calendar" size={12} color="#3498DB" />
+                  <Text style={styles.timeSlotsText}>
+                    {cartItem.bookingDate} at {cartItem.bookingTime}
+                  </Text>
+                </View>
+              ) : item.available_slots && item.available_slots.length > 0 ? (
                 <View style={styles.timeSlotsContainer}>
                   <Ionicons name="time" size={12} color="#3498DB" />
                   <Text style={styles.timeSlotsText}>
                     {item.available_slots.filter((slot: any) => slot.available).length} slots available
                   </Text>
                 </View>
-              )}
+              ) : null}
             </>
           )}
         </View>
         <TouchableOpacity
           style={[styles.addToCartButton, isInCart && styles.addToCartButtonAdded]}
-          onPress={() => onAddToCart(item, 1)}
+          onPress={() => {
+            if (isService) {
+              if (!isInCart) setServiceBookingItem(item);
+            } else {
+              onAddToCart(item, 1);
+            }
+          }}
         >
           <Ionicons
-            name={isInCart ? "checkmark" : "add"}
+            name={isInCart ? "checkmark" : isService ? "calendar" : "add"}
             size={16}
             color="white"
           />
           <Text style={styles.addToCartText}>
-            {isInCart ? "Added" : "Add"}
+            {isInCart ? "Added" : isService ? "Book" : "Add"}
           </Text>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -3801,7 +3917,8 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
                     value={selectedDate}
                     mode="date"
                     display="spinner"
-                    themeVariant="light"
+                    themeVariant="dark"
+                    textColor="#FFFFFF"
                     onChange={handleDateChange}
                     minimumDate={new Date()}
                   />
@@ -3812,7 +3929,8 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
                     value={selectedTime}
                     mode="time"
                     display="spinner"
-                    themeVariant="light"
+                    themeVariant="dark"
+                    textColor="#FFFFFF"
                     onChange={handleTimeChange}
                   />
                 )}
@@ -3949,6 +4067,17 @@ const ShopModal = ({ visible, onClose, items, portfolioItems, modalHeight, onHei
           </ScrollView>
         </Animated.View>
       </PanGestureHandler>
+
+      {/* Booking picker for stream services (same modal the showcase path uses) */}
+      <LiveBookingModal
+        visible={!!serviceBookingItem}
+        item={serviceBookingItem}
+        onClose={() => setServiceBookingItem(null)}
+        onConfirm={(date: string, time: string) => {
+          onAddToCart(serviceBookingItem, 1, date, time);
+          setServiceBookingItem(null);
+        }}
+      />
     </View>
   );
 };

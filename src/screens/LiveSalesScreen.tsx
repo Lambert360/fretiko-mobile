@@ -3,6 +3,7 @@ import {
   View,
   Text,
   FlatList,
+  TextInput,
   TouchableOpacity,
   Image,
   StyleSheet,
@@ -276,6 +277,10 @@ const LiveSalesScreen = () => {
   // Plugged vendors section visibility
   const [showPluggedVendors, setShowPluggedVendors] = useState(true);
   const pluggedSectionHeight = useRef(new Animated.Value(1)).current;
+
+  // Live stream search (vendor name or stream title)
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   
   // Check if user is a vendor (can create streams)
   // Debug user data
@@ -404,6 +409,16 @@ const LiveSalesScreen = () => {
   // Refresh all streams
   const refreshStreams = () => {
     loadAllData(true);
+  };
+
+  // Toggle the search bar; closing clears the query and restores the feed
+  const handleSearchToggle = () => {
+    if (searchVisible) {
+      setSearchVisible(false);
+      setSearchQuery('');
+    } else {
+      setSearchVisible(true);
+    }
   };
 
   // Handle stream selection
@@ -549,6 +564,45 @@ const LiveSalesScreen = () => {
     />
   );
 
+  // Streams shown in the main feed. While searching, query the backend so
+  // results cover every live stream — not just the loaded pages. The local
+  // merged filter remains as a fallback while the request is in flight or if
+  // it fails.
+  const isSearching = searchQuery.trim().length > 0;
+  const [searchResults, setSearchResults] = useState<LiveStream[] | null>(null);
+
+  useEffect(() => {
+    if (!isSearching) {
+      setSearchResults(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const results = await liveSalesAPI.getActiveStreams(50, 0, false, searchQuery.trim());
+        setSearchResults(results.filter(s => s.status === 'live'));
+      } catch (error) {
+        console.error('Live stream search failed:', error);
+        setSearchResults(null);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchQuery, isSearching]);
+
+  const feedStreams = useMemo<LiveStream[]>(() => {
+    if (!isSearching) return mainStreams;
+    if (searchResults) return searchResults;
+    const query = searchQuery.trim().toLowerCase();
+    const merged = [...pluggedStreams, ...mainStreams];
+    const unique = merged.filter(
+      (stream, index, self) => index === self.findIndex(s => s.id === stream.id),
+    );
+    return unique.filter(
+      (stream) =>
+        stream.title?.toLowerCase().includes(query) ||
+        stream.vendor?.username?.toLowerCase().includes(query),
+    );
+  }, [isSearching, searchQuery, searchResults, pluggedStreams, mainStreams]);
+
   // Build main feed rows with hero banners inserted after every 10 streams
   type MainRow =
     | { type: 'grid'; streams: LiveStream[] }
@@ -561,9 +615,9 @@ const LiveSalesScreen = () => {
     let streamIdx = 0;
     let heroBannerIndex = 0;
 
-    while (streamIdx < mainStreams.length) {
-      const itemsToAdd = Math.min(ITEMS_PER_SECTION, mainStreams.length - streamIdx);
-      const sectionItems = mainStreams.slice(streamIdx, streamIdx + itemsToAdd);
+    while (streamIdx < feedStreams.length) {
+      const itemsToAdd = Math.min(ITEMS_PER_SECTION, feedStreams.length - streamIdx);
+      const sectionItems = feedStreams.slice(streamIdx, streamIdx + itemsToAdd);
 
       for (let i = 0; i < sectionItems.length; i += 2) {
         rows.push({ type: 'grid', streams: sectionItems.slice(i, i + 2) });
@@ -572,7 +626,8 @@ const LiveSalesScreen = () => {
       streamIdx += itemsToAdd;
 
       if (
-        streamIdx < mainStreams.length &&
+        !isSearching &&
+        streamIdx < feedStreams.length &&
         itemsToAdd >= HERO_CARD_THRESHOLD &&
         heroImages.length > 0
       ) {
@@ -585,7 +640,7 @@ const LiveSalesScreen = () => {
     }
 
     return rows;
-  }, [mainStreams, heroImages]);
+  }, [feedStreams, isSearching, heroImages]);
 
   // Render main feed row (grid or hero banner)
   const renderMainRow = ({ item, index }: { item: MainRow; index: number }) => {
@@ -622,12 +677,16 @@ const LiveSalesScreen = () => {
   // Render empty state
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
-      <Ionicons name="videocam-outline" size={80} color="#444" />
-      <Text style={styles.emptyTitle}>No Live Streams</Text>
-      <Text style={styles.emptySubtitle}>
-        No one is streaming right now. {isVendor ? 'Be the first to go live!' : 'Check back later!'}
+      <Ionicons name={isSearching ? 'search-outline' : 'videocam-outline'} size={80} color="#444" />
+      <Text style={styles.emptyTitle}>
+        {isSearching ? 'No Matching Streams' : 'No Live Streams'}
       </Text>
-      {isVendor && (
+      <Text style={styles.emptySubtitle}>
+        {isSearching
+          ? `No live streams match "${searchQuery.trim()}". Try a different vendor name or stream title.`
+          : `No one is streaming right now. ${isVendor ? 'Be the first to go live!' : 'Check back later!'}`}
+      </Text>
+      {isVendor && !isSearching && (
         <TouchableOpacity style={styles.emptyButton} onPress={handleGoLive}>
           <Text style={styles.emptyButtonText}>Start Live Stream</Text>
         </TouchableOpacity>
@@ -661,11 +720,34 @@ const LiveSalesScreen = () => {
           <TouchableOpacity style={styles.headerIcon} onPress={() => navigation.navigate('TopVendorLeaderboard')}>
             <Ionicons name="trophy-outline" size={24} color="white" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerIcon}>
-            <Ionicons name="search" size={24} color="white" />
+          <TouchableOpacity style={styles.headerIcon} onPress={handleSearchToggle}>
+            <Ionicons name={searchVisible ? 'close' : 'search'} size={24} color="white" />
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Search bar — filters livestreams by title or vendor name */}
+      {searchVisible && (
+        <View style={styles.searchBarContainer}>
+          <Ionicons name="search" size={18} color="#888" style={styles.searchBarIcon} />
+          <TextInput
+            style={styles.searchBarInput}
+            placeholder="Search live streams or vendors"
+            placeholderTextColor="#888"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoFocus
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close-circle" size={18} color="#888" />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* Main content */}
       <FlatList
@@ -678,10 +760,10 @@ const LiveSalesScreen = () => {
         ]}
         ListHeaderComponent={() => (
           <View>
-            {heroImages.length > 0 && (
+            {!isSearching && heroImages.length > 0 && (
               <HeroMedia hero={heroImages[0]} height={160} />
             )}
-            <Animated.View 
+            <Animated.View
               style={[
                 styles.pluggedVendorsSection,
                 {
@@ -693,7 +775,7 @@ const LiveSalesScreen = () => {
                 }
               ]}
             >
-              {pluggedStreams.length > 0 && (
+              {!isSearching && pluggedStreams.length > 0 && (
                 <>
                   <View style={styles.pluggedHeader}>
                     <Text style={styles.pluggedTitle}>Your Plugs</Text>
@@ -791,6 +873,30 @@ const styles = StyleSheet.create({
   },
   headerIcon: {
     padding: 8,
+  },
+
+  // Search bar
+  searchBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 4,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  searchBarIcon: {
+    marginRight: 8,
+  },
+  searchBarInput: {
+    flex: 1,
+    color: 'white',
+    fontSize: 15,
+    paddingVertical: 0,
   },
   
   // Plugged vendors section

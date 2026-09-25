@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { auctionsAPI, AuctionWithDetails } from '../services/auctionsAPI';
+import { navigateToAuctionDetails } from '../utils/auctionNavigation';
 
 /**
  * Auction Category Screen
@@ -70,7 +71,7 @@ const AuctionCategoryScreen = () => {
   };
 
   const navigateToAuction = (auction: AuctionWithDetails) => {
-    navigation.navigate('AuctionDetails', { auctionId: auction.id });
+    navigateToAuctionDetails(navigation, auction);
   };
 
   const renderAuctionItem = ({ item }: { item: AuctionWithDetails }) => (

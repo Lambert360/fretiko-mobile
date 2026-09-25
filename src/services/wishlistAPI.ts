@@ -60,6 +60,7 @@ export interface CreateGiftOrderRequest {
     vehicleType?: string;
     deliveryPrice?: number;
     estimatedArrival?: number;
+    distance?: number;
   };
 }
 

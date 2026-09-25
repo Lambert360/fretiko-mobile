@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { workspaceAPI, WorkspaceOrder } from '../services/workspaceAPI';
 import WorkspaceLiveStreamAnalytics from '../components/WorkspaceLiveStreamAnalytics';
@@ -23,6 +24,7 @@ import { walletAPI } from '../services/walletAPI';
 const WorkspaceScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active');
   const [activeOrders, setActiveOrders] = useState<WorkspaceOrder[]>([]);
@@ -162,6 +164,12 @@ const WorkspaceScreen: React.FC = () => {
           await workspaceAPI.markOrderReadyForPickup(orderId);
           Alert.alert('Success', 'Order is ready! Buyer will be notified to collect it.');
           break;
+        case 'complete_service':
+          // ✅ Service/portfolio booking complete — order → delivered,
+          // buyer confirms before escrow release
+          await workspaceAPI.completeServiceBooking(orderId);
+          Alert.alert('Success', 'Service marked as complete. Awaiting buyer confirmation.');
+          break;
       }
       loadWorkspaceData(false);
     } catch (error: any) {
@@ -237,6 +245,8 @@ const WorkspaceScreen: React.FC = () => {
       case 'live_stream': return { label: 'Live', icon: 'videocam-outline', color: '#FF2D92' };
       case 'auction': return { label: 'Auction', icon: 'hammer-outline', color: '#FF9500' };
       case 'service_booking': return { label: 'Service', icon: 'construct-outline', color: '#34C759' };
+      case 'invoice': return { label: 'Chat', icon: 'chatbubble-ellipses-outline', color: '#5856D6' };
+      case 'wishlist': return { label: 'Gift', icon: 'gift-outline', color: '#FF2D55' };
       default: return { label: 'Store', icon: 'storefront-outline', color: '#007AFF' };
     }
   };
@@ -253,7 +263,12 @@ const WorkspaceScreen: React.FC = () => {
       case 'pending': 
         return { action: 'accept', label: 'Accept Order', icon: 'checkmark-outline', enabled: true };
       
-      case 'processing': 
+      case 'processing':
+        // ✅ Service/portfolio bookings complete via the service endpoint —
+        // they never enter the pickup/delivery pipeline
+        if (order.bookingType === 'service' || order.bookingType === 'portfolio') {
+          return { action: 'complete_service', label: 'Mark Service Complete', icon: 'construct-outline', enabled: true };
+        }
         // ✅ Self-pickup: Button says "Mark Ready for Pickup"
         // ✅ Rider delivery: Button says "Mark Ready" (for rider)
         if (isSelfPickup) {
@@ -279,8 +294,11 @@ const WorkspaceScreen: React.FC = () => {
         return { action: 'none', label: 'Delivered', icon: 'checkmark-done-outline', enabled: false };
       case 'completed':
         return { action: 'none', label: 'Completed', icon: 'checkmark-done-circle', enabled: false };
+      // 'paid' is actionable — paid orders are awaiting vendor acceptance,
+      // so they fall through to the same accept action as 'pending' via
+      // the render check on status
       case 'paid':
-        return { action: 'none', label: 'Awaiting Vendor', icon: 'time-outline', enabled: false };
+        return { action: 'accept', label: 'Accept Order', icon: 'checkmark-outline', enabled: true };
       default:
         return null;
     }
@@ -349,7 +367,7 @@ const WorkspaceScreen: React.FC = () => {
 
         {quickAction && (
           <View style={styles.actionRow}>
-            {item.status === 'pending' ? (
+            {(item.status === 'pending' || item.status === 'paid') ? (
               <View style={styles.pendingActionsRow}>
                 <TouchableOpacity
                   style={[styles.quickActionButton, styles.acceptButton, { opacity: isLoadingAction ? 0.6 : 1 }]}
@@ -709,9 +727,9 @@ const WorkspaceScreen: React.FC = () => {
         onClose={() => setShowLiveStreamAnalytics(false)}
       />
 
-      {/* Schedule Calendar FAB */}
+      {/* Schedule Calendar FAB - positioned above system navigation */}
       <TouchableOpacity
-        style={styles.fab}
+        style={[styles.fab, { bottom: 24 + insets.bottom }]}
         onPress={() => navigation.navigate('ScheduleCalendar')}
       >
         <Ionicons name="calendar-outline" size={24} color="white" />
@@ -1100,7 +1118,6 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: 24,
     right: 24,
     width: 56,
     height: 56,

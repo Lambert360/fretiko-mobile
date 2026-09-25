@@ -68,6 +68,7 @@ import {
 import { auctionsAPI, AuctionWithDetails } from '../services/auctionsAPI';
 import AuctionCard from '../components/AuctionCard';
 import { getActiveAuctions, getUpcomingAuctions } from '../utils/auctionMappers';
+import { navigateToAuctionDetails } from '../utils/auctionNavigation';
 import { liveSalesAPI, LiveStream, LiveStreamProduct } from '../services/liveSalesAPI';
 import ProductsTab from '../components/ProductsTab';
 
@@ -338,13 +339,18 @@ const HomeScreen = () => {
           .map((item: UnifiedFeedItem) => item.serviceData as VideoFeedItem);
         setVideoFeedData(serviceItems);
       } catch (feedError) {
-        // Feed errors are non-critical, log but don't block
+        // Feed errors are non-critical, log but don't block.
+        // Keep whatever feed we already have on screen — blanking the tab on a
+        // transient failure (e.g. network still reconnecting on app resume)
+        // leaves the user staring at an empty "No Content Available" state.
         const feedErrorInfo = handleError(feedError, () => loadData(showLoading));
-        console.warn('🔴 Error loading unified feed, using empty array:', feedErrorInfo);
-        setVideoFeedData([]);
-        setUnifiedFeedData([]);
-        setUnifiedFeedOffset(0);
-        setHasMoreFeedItems(false);
+        console.warn('🔴 Error loading unified feed, keeping existing data:', feedErrorInfo);
+        if (unifiedFeedData.length === 0) {
+          setVideoFeedData([]);
+          setUnifiedFeedData([]);
+          setUnifiedFeedOffset(0);
+          setHasMoreFeedItems(false);
+        }
         setLoadingMoreFeedItems(false);
       }
 
@@ -990,8 +996,8 @@ const HomeScreen = () => {
         messageType: 'text',
         content: service.title,
         metadata: { serviceData },
-        externalMessage: `Check out this service: ${service.title}\n\nPrice: ₣${service.price}\nProvider: @${service.username}\n\nView on Fretiko: https://fretiko.com/service/${itemId}`,
-        externalUrl: `https://fretiko.com/service/${itemId}`,
+        externalMessage: `Check out this service: ${service.title}\n\nPrice: ₣${service.price}\nProvider: @${service.username}\n\nView on Fretiko: https://www.fretiko.com/service/${itemId}`,
+        externalUrl: `https://www.fretiko.com/service/${itemId}`,
         onSuccess,
       });
     } catch (error: any) {
@@ -1679,7 +1685,7 @@ const HomeScreen = () => {
               key={auction.id}
               auction={auction}
               variant="horizontal"
-              onPress={(a) => navigation.navigate('AuctionDetails', { auctionId: a.id })}
+              onPress={(a) => navigateToAuctionDetails(navigation, a)}
             />
           ))}
         </ScrollView>
@@ -1890,7 +1896,8 @@ const HomeScreen = () => {
             <View style={{ flex: 1 }}><Text style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>Live Sales</Text><Text style={{ color: '#888', fontSize: 11, marginTop: 1 }}>Watch and shop live streams</Text></View>
             <View style={{ backgroundColor: '#FF4757', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Text style={{ color: 'white', fontSize: 9, fontWeight: 'bold' }}>LIVE</Text></View>
           </TouchableOpacity>
-          <TouchableOpacity 
+          {/* Temporarily hidden — Stores screen under rework
+          <TouchableOpacity
             style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: '#1a1a1a', marginHorizontal: 20, borderRadius: 10, marginBottom: 12 }}
             onPress={() => {
               toggleSidebar();
@@ -1901,6 +1908,7 @@ const HomeScreen = () => {
             <View style={{ flex: 1 }}><Text style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>Stores</Text><Text style={{ color: '#888', fontSize: 11, marginTop: 1 }}>Browse verified premium stores</Text></View>
             <Ionicons name="chevron-forward" size={14} color="#888" />
           </TouchableOpacity>
+          */}
           <TouchableOpacity 
             style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: '#1a1a1a', marginHorizontal: 20, borderRadius: 10, marginBottom: 12 }}
             onPress={() => {
@@ -2441,7 +2449,7 @@ const HomeScreen = () => {
               key={auction.id}
               auction={auction}
               variant="horizontal"
-              onPress={() => navigation.navigate('AuctionDetails', { auctionId: auction.id })}
+              onPress={() => navigateToAuctionDetails(navigation, auction)}
             />
           ))}
         </ScrollView>
@@ -3343,7 +3351,7 @@ const HomeScreen = () => {
                       onShare={async (postId) => {
                         try {
                           const shareContent = postItem.content || 'Check out this post on Fretiko!';
-                          const shareUrl = `https://fretiko.com/post/${postId}`;
+                          const shareUrl = `https://www.fretiko.com/post/${postId}`;
 
                           const postData = {
                             id: postId,
@@ -3412,15 +3420,13 @@ const HomeScreen = () => {
                         top: insets.top + 70,
                         left: 0,
                         right: 0,
-                        justifyContent: 'center',
                         alignItems: 'center',
-                        paddingVertical: 20,
-                        backgroundColor: 'rgba(0,0,0,0.4)',
+                        paddingVertical: 32,
                         zIndex: 100,
                       }}
                     >
-                      <ActivityIndicator size="large" color="#3498DB" />
-                      <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '600', marginTop: 12 }}>
+                      <ActivityIndicator size="small" color="#3498DB" />
+                      <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16, marginTop: 8 }}>
                         Refreshing...
                       </Text>
                     </View>
@@ -3928,15 +3934,13 @@ const HomeScreen = () => {
                   top: insets.top + 70,
                   left: 0,
                   right: 0,
-                  justifyContent: 'center',
                   alignItems: 'center',
-                  paddingVertical: 20,
-                  backgroundColor: 'rgba(0,0,0,0.4)',
+                  paddingVertical: 32,
                   zIndex: 100,
                 }}
               >
-                <ActivityIndicator size="large" color="#3498DB" />
-                <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '600', marginTop: 12 }}>
+                <ActivityIndicator size="small" color="#3498DB" />
+                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16, marginTop: 8 }}>
                   Refreshing...
                 </Text>
               </View>

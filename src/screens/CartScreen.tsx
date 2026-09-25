@@ -46,6 +46,7 @@ interface CartItem {
   sellerLocation?: { state?: string; country?: string; city?: string } | null;
   isOutOfState?: boolean;
   isOutOfCountry?: boolean;
+  isAvailable?: boolean;
 }
 
 interface CartSummary {
@@ -127,6 +128,12 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
     return Object.values(groups);
   }, [cartItems, selectedItems]);
 
+  // True when every purchasable item is selected (unavailable items don't count)
+  const allAvailableSelected = React.useMemo(() => {
+    const available = cartItems.filter(item => item.isAvailable !== false);
+    return available.length > 0 && available.every(item => selectedItems.has(item.id));
+  }, [cartItems, selectedItems]);
+
   useEffect(() => {
     loadCart();
     
@@ -169,9 +176,9 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
       setCartItems(items);
       setCartSummary(summary);
       
-      // Select all items by default on initial load
+      // Select all available items by default on initial load
       if (items.length > 0 && selectedItems.size === 0) {
-        setSelectedItems(new Set(items.map(item => item.id)));
+        setSelectedItems(new Set(items.filter(item => item.isAvailable !== false).map(item => item.id)));
       }
     } catch (error) {
       console.error('❌ Error loading cart:', error);
@@ -297,7 +304,12 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   const toggleItemSelection = (itemId: string) => {
     // Find the item to log its details
     const item = cartItems.find(i => i.id === itemId);
-    
+
+    if (item?.isAvailable === false && !selectedItems.has(itemId)) {
+      Alert.alert('Unavailable', 'This item is no longer available.');
+      return;
+    }
+
     setSelectedItems(prev => {
       const newSet = new Set(prev);
       const isCurrentlySelected = newSet.has(itemId);
@@ -316,7 +328,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   };
 
   const selectAll = () => {
-    setSelectedItems(new Set(cartItems.map(item => item.id)));
+    setSelectedItems(new Set(cartItems.filter(item => item.isAvailable !== false).map(item => item.id)));
   };
 
   const deselectAll = () => {
@@ -324,7 +336,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   };
 
   const toggleSelectAll = () => {
-    if (selectedItems.size === cartItems.length) {
+    if (allAvailableSelected) {
       deselectAll();
     } else {
       selectAll();
@@ -337,7 +349,9 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
 
     setSelectedItems(prev => {
       const newSet = new Set(prev);
-      vendorGroup.items.forEach(item => newSet.add(item.id));
+      vendorGroup.items
+        .filter(item => item.isAvailable !== false)
+        .forEach(item => newSet.add(item.id));
       return newSet;
     });
   };
@@ -378,6 +392,16 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
 
     // Validate that all selected items are from vendors in the same state/country
     const selectedCartItems = cartItems.filter(item => selectedItems.has(item.id));
+
+    const unavailableSelected = selectedCartItems.filter(item => item.isAvailable === false);
+    if (unavailableSelected.length > 0) {
+      Alert.alert(
+        'Items Unavailable',
+        `${unavailableSelected.map(item => item.productName).join(', ')} ${unavailableSelected.length === 1 ? 'is' : 'are'} no longer available. Please remove them from your cart.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
 
     const uniqueCountries = new Set(
       selectedCartItems
@@ -457,17 +481,19 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
 
   const renderCartItem = ({ item }: { item: CartItem }) => {
     const isSelected = selectedItems.has(item.id);
-    
+    const isUnavailable = item.isAvailable === false;
+
     return (
-    <View style={[styles.cartItem, !isSelected && styles.cartItemUnselected]}>
+    <View style={[styles.cartItem, (!isSelected || isUnavailable) && styles.cartItemUnselected]}>
       {/* Selection Checkbox */}
-      <TouchableOpacity 
-        onPress={() => toggleItemSelection(item.id)} 
+      <TouchableOpacity
+        onPress={() => toggleItemSelection(item.id)}
         style={styles.checkbox}
         activeOpacity={0.7}
       >
-        <View style={[styles.checkboxInner, isSelected && styles.checkboxSelected]}>
-          {isSelected && <Ionicons name="checkmark" size={16} color="#FFF" />}
+        <View style={[styles.checkboxInner, isSelected && styles.checkboxSelected, isUnavailable && styles.checkboxDisabled]}>
+          {isSelected && !isUnavailable && <Ionicons name="checkmark" size={16} color="#FFF" />}
+          {isUnavailable && <Ionicons name="close" size={16} color="#666" />}
         </View>
       </TouchableOpacity>
 
@@ -500,7 +526,13 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
           ) : null}
         </View>
         <Text style={styles.category}>{item.category}</Text>
-        
+        {isUnavailable && (
+          <View style={styles.unavailableBadge}>
+            <Ionicons name="alert-circle-outline" size={10} color="#E74C3C" />
+            <Text style={styles.unavailableText}>No longer available</Text>
+          </View>
+        )}
+
         <View style={styles.priceContainer}>
           <Text style={styles.currentPrice}>{walletAPI.formatFreti(item.price)}</Text>
           {item.originalPrice && (
@@ -659,10 +691,10 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
             style={styles.headerButton} 
             onPress={toggleSelectAll}
           >
-            <Ionicons 
-              name={selectedItems.size === cartItems.length ? "checkbox" : "square-outline"} 
-              size={24} 
-              color={selectedItems.size === cartItems.length ? "#3498DB" : "#FFF"} 
+            <Ionicons
+              name={allAvailableSelected ? "checkbox" : "square-outline"}
+              size={24}
+              color={allAvailableSelected ? "#3498DB" : "#FFF"}
             />
           </TouchableOpacity>
         </View>
@@ -713,7 +745,9 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
 
               {/* Render Grouped Cart Items */}
               {vendorGroups.map((group, groupIndex) => {
-                const allVendorItemsSelected = group.items.every(item => selectedItems.has(item.id));
+                const allVendorItemsSelected = group.items
+                  .filter(item => item.isAvailable !== false)
+                  .every(item => selectedItems.has(item.id));
                 
                 return (
                 <View key={group.vendorId} style={styles.vendorGroup}>
@@ -879,6 +913,25 @@ const styles = StyleSheet.create({
   checkboxSelected: {
     backgroundColor: '#3498DB',
     borderColor: '#3498DB',
+  },
+  checkboxDisabled: {
+    borderColor: '#444',
+  },
+  unavailableBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FDEDEC',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    gap: 2,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+  },
+  unavailableText: {
+    color: '#E74C3C',
+    fontSize: 9,
+    fontWeight: '600',
   },
   productImage: {
     width: 80,

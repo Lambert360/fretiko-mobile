@@ -24,6 +24,8 @@ import { addressSelectionBridge } from '../utils/addressSelectionBridge';
 import { InterstateCompanySelection } from './InterstateDeliveryScreen';
 import LocationSelector from '../components/LocationSelector';
 import giftCardAPI from '../services/giftCardAPI';
+import { riderLocationAPI } from '../services/riderLocationAPI';
+import { resolveAddressCoords, cityCentroid } from '../utils/deliveryGeo';
 
 interface LiveCartCheckoutScreenProps {
   navigation: any;
@@ -150,10 +152,12 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
     return Number(item.live_price || 0);
   };
 
-  const formatDeliveryAddress = () => {
+  const formatDeliveryAddress = (coords?: { latitude: number; longitude: number } | null) => {
     const { fullName, phone, address, city, state, country, postalCode } = deliveryAddress;
-    const parts = [fullName, phone, address, city, state, country, postalCode].filter(Boolean);
-    return parts.join(', ');
+    return {
+      fullName, phone, address, city, state, country, postalCode,
+      ...(coords ?? {}),
+    };
   };
 
   const calculateTotal = () => {
@@ -450,6 +454,12 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
       const hasInterstate = requiresInterstateDelivery && selectedInterstateCompany;
       const hasDelivery = hasRider || hasInterstate;
 
+      // Resolve delivery coords once — shared by every item's order so the
+      // backend can recompute route distance server-side.
+      const deliveryCoords = hasDelivery && deliveryAddress.address
+        ? await resolveAddressCoords(deliveryAddress)
+        : null;
+
       for (let i = 0; i < productItems.length; i++) {
         const item = productItems[i];
         const isFeeItem = !deliveryFeeAssigned;
@@ -484,7 +494,8 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
           continue_watching: false,
           rider_id: hasRider ? selectedRider.id : undefined,
           deliveryPrice: hasRider ? (isFeeItem ? selectedRider.price : 0) : undefined,
-          delivery_address: hasDelivery ? formatDeliveryAddress() : undefined,
+          distanceKm: hasRider ? (selectedRider.routeDistanceKm ?? selectedRider.distanceFromPickup) : undefined,
+          delivery_address: hasDelivery ? formatDeliveryAddress(deliveryCoords) : undefined,
           interstateCompany: hasInterstate
             ? (isFeeItem
               ? selectedInterstateCompany
@@ -523,17 +534,19 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
         const interstateDeliveryPrice = (hasInterstate && isFeeItem) ? selectedInterstateCompany.deliveryPrice : 0;
         const itemTotal = (item.live_price * item.quantity) + riderDeliveryPrice + interstateDeliveryPrice;
 
-        // Services use booking API
+        // Services use booking API — honor the slot the viewer picked when
+        // adding to cart; fall back to now for items added without a slot.
         const bookingData = {
           stream_id: streamId,
           service_id: serviceId,
-          service_date: new Date().toISOString().split('T')[0], // Today's date
-          service_time: new Date().toTimeString().split(' ')[0].substring(0, 5), // Current time HH:MM
+          service_date: item.bookingDate || new Date().toISOString().split('T')[0],
+          service_time: item.bookingTime || new Date().toTimeString().split(' ')[0].substring(0, 5),
           service_notes: `Booked from live stream: ${streamTitle}`,
           continue_watching: false,
           rider_id: hasRider ? selectedRider.id : undefined,
           deliveryPrice: hasRider ? (isFeeItem ? selectedRider.price : 0) : undefined,
-          delivery_address: hasDelivery ? formatDeliveryAddress() : undefined,
+          distanceKm: hasRider ? (selectedRider.routeDistanceKm ?? selectedRider.distanceFromPickup) : undefined,
+          delivery_address: hasDelivery ? formatDeliveryAddress(deliveryCoords) : undefined,
           interstateCompany: hasInterstate
             ? (isFeeItem
               ? selectedInterstateCompany
@@ -568,7 +581,8 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
           service_notes: `Booked portfolio item: ${item.title} from live stream: ${streamTitle}`,
           rider_id: hasRider ? selectedRider.id : undefined,
           deliveryPrice: hasRider ? (isFeeItem ? selectedRider.price : 0) : undefined,
-          delivery_address: hasDelivery ? formatDeliveryAddress() : undefined,
+          distanceKm: hasRider ? (selectedRider.routeDistanceKm ?? selectedRider.distanceFromPickup) : undefined,
+          delivery_address: hasDelivery ? formatDeliveryAddress(deliveryCoords) : undefined,
           interstateCompany: hasInterstate
             ? (isFeeItem
               ? selectedInterstateCompany
@@ -672,7 +686,7 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={0}
     >
       {/* Header */}
@@ -831,23 +845,37 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
               <View style={styles.deliveryOptions}>
                 <TouchableOpacity
                   style={styles.selectOption}
-                  onPress={() => {
+                  onPress={async () => {
                     if (riderCallbackKeyRef.current) riderSelectionBridge.clear(riderCallbackKeyRef.current);
                     const callbackKey = `live_cart_rider_${Date.now()}`;
                     riderCallbackKeyRef.current = callbackKey;
                     riderSelectionBridge.register(callbackKey, (rider: any) => setSelectedRider(rider));
                     const itemTypes = cartItems.some((item: any) => item.type === 'service' || item.type === 'portfolio') ? ['service'] : ['product'];
+                    // Real coords where resolvable — delivery via geocoder,
+                    // pickup via vendor city centroid; route km drives per-km pricing.
+                    const deliveryCoords = await resolveAddressCoords(deliveryAddress);
+                    const pickupCoords = cityCentroid(vendorLocation?.city, vendorLocation?.state, vendorLocation?.country);
+                    const routeKm = pickupCoords && deliveryCoords
+                      ? Math.max(0.1, riderLocationAPI.calculateDistance(
+                          pickupCoords.latitude, pickupCoords.longitude,
+                          deliveryCoords.latitude, deliveryCoords.longitude,
+                        ) * 1.3)
+                      : 5;
                     navigation.navigate('RiderSelection', {
                       pickupLocation: {
-                        latitude: 6.5244,
-                        longitude: 3.3792,
+                        latitude: pickupCoords?.latitude ?? 6.5244,
+                        longitude: pickupCoords?.longitude ?? 3.3792,
                         address: vendorLocation?.city ? `Vendor Location, ${vendorLocation.city}` : 'Vendor Location',
                         state: vendorLocation?.state || undefined,
                         country: vendorLocation?.country || undefined,
                         city: vendorLocation?.city || undefined,
                       },
-                      deliveryLocation: { latitude: 6.5244, longitude: 3.3792, address: deliveryAddress.address || 'Delivery Address' },
-                      orderDetails: { weight: cartItems.length * 0.5, itemCount: cartItems.length, distance: 5 },
+                      deliveryLocation: {
+                        latitude: deliveryCoords?.latitude ?? 6.5244,
+                        longitude: deliveryCoords?.longitude ?? 3.3792,
+                        address: deliveryAddress.address || 'Delivery Address',
+                      },
+                      orderDetails: { weight: cartItems.length * 0.5, itemCount: cartItems.length, distance: Math.round(routeKm * 100) / 100 },
                       callbackKey,
                       itemTypes,
                     });
@@ -882,7 +910,7 @@ const LiveCartCheckoutScreen: React.FC<LiveCartCheckoutScreenProps> = ({
                       Pick up directly from the vendor - Free
                     </Text>
                   </View>
-                  <Ionicons name="checkmark-circle" size={20} color="#27AE60" />
+                  <Ionicons name="chevron-forward" size={20} color="#666" />
                 </TouchableOpacity>
               </View>
             )}

@@ -121,7 +121,7 @@ const ServiceBookingScreen: React.FC<ServiceBookingProps> = ({ navigation, route
           },
         ]
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error booking service:', error);
       Alert.alert(
         'Booking Failed',
@@ -307,6 +307,8 @@ const ServiceBookingScreen: React.FC<ServiceBookingProps> = ({ navigation, route
           value={selectedDate}
           mode="date"
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          themeVariant={Platform.OS === 'ios' ? 'dark' : 'light'}
+          textColor={Platform.OS === 'ios' ? '#FFFFFF' : undefined}
           onChange={onDateChange}
           minimumDate={new Date()}
         />
@@ -318,6 +320,8 @@ const ServiceBookingScreen: React.FC<ServiceBookingProps> = ({ navigation, route
           value={selectedTime}
           mode="time"
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          themeVariant={Platform.OS === 'ios' ? 'dark' : 'light'}
+          textColor={Platform.OS === 'ios' ? '#FFFFFF' : undefined}
           onChange={onTimeChange}
         />
       )}

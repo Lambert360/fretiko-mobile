@@ -64,6 +64,7 @@ import PINResetSuccessScreen from './src/screens/PINResetSuccessScreen';
 
 // Import product and service screens
 import ProductUploadScreen from './src/screens/ProductUploadScreen';
+import ManageStoreScreen from './src/screens/ManageStoreScreen';
 import ProductDetailsScreen from './src/screens/ProductDetailsScreen';
 import ServiceUploadScreen from './src/screens/ServiceUploadScreen';
 import ServiceDetailsScreen from './src/screens/ServiceDetailsScreen';
@@ -107,10 +108,8 @@ import AuctionWatchlistScreen from './src/screens/AuctionWatchlistScreen';
 import CreateAuctionScreen from './src/screens/CreateAuctionScreen';
 import LiveStreamViewerScreen from './src/screens/LiveStreamViewerScreen';
 import TopVendorLeaderboardScreen from './src/screens/TopVendorLeaderboardScreen';
-import LiveStreamHostScreen from './src/screens/LiveStreamHostScreen';
 import LiveStreamBroadcastScreen from './src/screens/LiveStreamBroadcastScreen';
 import LiveStreamSetupScreen from './src/screens/LiveStreamSetupScreen';
-import LiveMiniCheckoutScreen from './src/screens/LiveMiniCheckoutScreen';
 import LiveCartCheckoutScreen from './src/screens/LiveCartCheckoutScreen';
 import LiveAuctionCartCheckoutScreen from './src/screens/LiveAuctionCartCheckoutScreen';
 import AuctionLiveViewerScreen from './src/screens/AuctionLiveViewerScreen';
@@ -166,6 +165,7 @@ import PostDetailsScreen from './src/screens/PostDetailsScreen';
 import MyPostsScreen from './src/screens/MyPostsScreen';
 import ReferralScreen from './src/screens/ReferralScreen';
 import ReferralHandlerScreen from './src/screens/ReferralHandlerScreen';
+import OrderLinkHandlerScreen from './src/screens/OrderLinkHandlerScreen';
 
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
 import { linking } from './src/navigation/linkingConfig';
@@ -558,6 +558,7 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="MyPosts" component={MyPostsScreen} />
               <Stack.Screen name="ReferralScreen" component={ReferralScreen} />
               <Stack.Screen name="ReferralHandler" component={ReferralHandlerScreen as any} />
+              <Stack.Screen name="OrderLinkHandler" component={OrderLinkHandlerScreen as any} />
               <Stack.Screen name="EditProfile" component={EditProfileScreen as any} />
               <Stack.Screen name="AccountSettings" component={AccountSettingsScreen} />
               <Stack.Screen name="RiderVerification" component={RiderVerificationScreen} />
@@ -581,6 +582,7 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="PINResetNewPinScreen" component={PINResetNewPinScreen} />
               <Stack.Screen name="PINResetSuccessScreen" component={PINResetSuccessScreen} />
               <Stack.Screen name="ProductUpload" component={ProductUploadScreen} />
+              <Stack.Screen name="ManageStore" component={ManageStoreScreen} />
               <Stack.Screen name="ProductDetails" component={ProductDetailsScreen as any} />
               <Stack.Screen name="ServiceUpload" component={ServiceUploadScreen} />
               <Stack.Screen name="ServiceDetails" component={ServiceDetailsScreen} />
@@ -632,10 +634,8 @@ const AppNavigator: React.FC = () => {
               <Stack.Screen name="LiveSales" component={LiveSalesScreen} />
               <Stack.Screen name="TopVendorLeaderboard" component={TopVendorLeaderboardScreen} options={{ title: 'Top Vendors' }} />
               <Stack.Screen name="LiveStreamViewer" component={LiveStreamViewerScreen} />
-              <Stack.Screen name="LiveStreamHost" component={LiveStreamHostScreen} />
               <Stack.Screen name="LiveStreamBroadcast" component={LiveStreamBroadcastScreen} />
               <Stack.Screen name="LiveStreamSetup" component={LiveStreamSetupScreen} />
-              <Stack.Screen name="LiveMiniCheckout" component={LiveMiniCheckoutScreen} />
               <Stack.Screen name="LiveCartCheckout" component={LiveCartCheckoutScreen as any} />
               <Stack.Screen name="LiveAuctionCartCheckout" component={LiveAuctionCartCheckoutScreen as any} />
               <Stack.Screen name="Stores" component={StoresScreen} />
@@ -670,6 +670,7 @@ const AppNavigator: React.FC = () => {
             <Stack.Screen name="Signup" component={SignupScreen} />
             <Stack.Screen name="SocialSignUp" component={SocialSignUpScreen} />
             <Stack.Screen name="ReferralHandler" component={ReferralHandlerScreen as any} />
+            <Stack.Screen name="OrderLinkHandler" component={OrderLinkHandlerScreen as any} />
             <Stack.Screen name="RoleSelection" component={RoleSelectionScreen as any} />
             <Stack.Screen name="EmailVerification" component={EmailVerificationScreen as any} />
             <Stack.Screen name="Welcome" component={WelcomeScreen} />

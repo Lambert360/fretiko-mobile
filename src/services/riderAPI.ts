@@ -27,6 +27,8 @@ export interface Rider {
   vehicleType: 'wheelbarrow' | 'bike' | 'car';
   price: number;
   distanceFromPickup: number;
+  /** Pickup→delivery route km the per-km price was computed on (new backends) */
+  routeDistanceKm?: number;
   estimatedArrival: number;
   isAvailable: boolean;
   unavailableReason?: string;
@@ -62,6 +64,11 @@ export interface InterstateCompanyOption {
   estimatedDeliveryDaysMin: number;
   estimatedDeliveryDaysMax: number;
   isInternational: boolean;
+  perKgRate?: number;
+  internationalPerKgRate?: number;
+  includedWeightKg?: number;
+  maxWeightKg?: number;
+  quotedPrice?: number; // server-computed fee for the order's weight
 }
 
 const normalizeLocation = <T extends { state?: string; country?: string }>(location: T): T => {
@@ -139,11 +146,13 @@ export const riderAPI = {
   getInterstateOptions: async (request: {
     pickupLocation: { state?: string; country?: string };
     deliveryLocation: { state?: string; country?: string };
+    weightKg?: number; // order chargeable weight — drives per-kg quotes & capacity filtering
   }): Promise<InterstateCompanyOption[]> => {
     try {
       const normalizedRequest = {
         pickupLocation: normalizeLocation(request.pickupLocation),
         deliveryLocation: normalizeLocation(request.deliveryLocation),
+        weightKg: request.weightKg,
       };
       const headers = await getAuthHeaders();
       const response = await api.post('/riders/interstate-options', normalizedRequest, { headers });

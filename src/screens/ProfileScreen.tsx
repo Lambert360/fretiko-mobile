@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Animated, Dimensions, FlatList, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
-import { userAPI, UserStats } from '../services/userAPI';
+import { userAPI, UserStats, formatCitizenNumber } from '../services/userAPI';
 import { walletAPI, Wallet, WalletStats } from '../services/walletAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
 import { giftAPI, UserGift } from '../services/giftAPI';
@@ -27,6 +27,8 @@ interface UserProfile {
   dateOfBirth?: string;
   isSeller: boolean;
   isRider?: boolean;
+  citizenNumber?: number;
+  citizenNumberSeenAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -54,6 +56,8 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
   const [currentWalletView, setCurrentWalletView] = useState(0);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingBackground, setUploadingBackground] = useState(false);
+  const [showCitizenReveal, setShowCitizenReveal] = useState(false);
+  const citizenRevealAnim = useRef(new Animated.Value(0)).current;
   
   // For ProfileScreen, this is always the user's own profile
   const isOwnProfile = true;
@@ -140,18 +144,29 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
         userAPI.getStats(),
         walletAPI.getWallet(),
         walletAPI.getWalletStats(),
-        ordersAPI.getMyOrders({ status: ['delivered', 'shipped', 'processing', 'cancelled'] }),
+        ordersAPI.getMyOrders({ status: ['delivered', 'shipped', 'processing', 'cancelled'], limit: 10 }),
         giftAPI.getUserGifts().catch(() => ({ gifts: [], total_gifts: 0, total_value: 0 })), // Gracefully handle errors
         giftCardAPI.getMyGiftCards(accessToken).catch(() => []), // Gracefully handle errors
         searchAPI.getFeaturedContent(SearchType.PRODUCTS, undefined, 10).catch(() => ({ products: [] })) // Get featured/trending products
       ]);
       
       setProfile(profileData);
+      // One-time citizen number reveal for users who haven't seen it yet
+      // (backfilled accounts, social signups that skip the Welcome screen)
+      if (profileData?.citizenNumber && !profileData?.citizenNumberSeenAt) {
+        setShowCitizenReveal(true);
+        Animated.spring(citizenRevealAnim, {
+          toValue: 1,
+          tension: 50,
+          friction: 7,
+          useNativeDriver: true,
+        }).start();
+      }
       setStats(statsData);
       setWallet(walletData);
       setWalletStats(walletStatsData);
       // Get latest 10 orders for profile display
-      setOrders(ordersData.slice(0, 10));
+      setOrders(ordersData.orders.slice(0, 10));
       // Get latest 10 gifts for profile display
       setGifts(giftsData.gifts.slice(0, 10));
       // Get latest 10 gift cards for profile display
@@ -229,6 +244,18 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
       }),
     ]).start();
     callback();
+  };
+
+  // Called when the user dismisses the one-time citizen number reveal —
+  // stamps citizen_number_seen_at on the server so it never shows again
+  const handleClaimCitizenship = async () => {
+    setShowCitizenReveal(false);
+    try {
+      await userAPI.markCitizenNumberSeen();
+      setProfile(prev => prev ? { ...prev, citizenNumberSeenAt: new Date().toISOString() } : prev);
+    } catch (error) {
+      console.log('Could not mark citizen number as seen:', error);
+    }
   };
 
   const handleAvatarUpload = async () => {
@@ -619,6 +646,40 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
       >
         {userData && (
           <>
+            {/* Citizen ID Card — permanent member number (FRT-XXXXXX) */}
+            {profile?.citizenNumber != null && (
+              <View style={styles.citizenCard}>
+                <View style={styles.citizenCardHeader}>
+                  <View style={styles.citizenCardBrand}>
+                    <Ionicons name="cloud" size={16} color="#3498DB" />
+                    <Text style={styles.citizenCardBrandText}>FRETIKO</Text>
+                  </View>
+                  <Text style={styles.citizenCardType}>FRETIZEN ID</Text>
+                </View>
+                <Text style={styles.citizenCardNumber}>{formatCitizenNumber(profile.citizenNumber)}</Text>
+                <View style={styles.citizenCardFooter}>
+                  <View style={styles.citizenCardNameWrap}>
+                    <Text style={styles.citizenCardLabel}>FRETIZEN</Text>
+                    <AdaptiveText
+                      style={styles.citizenCardName}
+                      baseFontSize={13}
+                      minFontSize={9}
+                      maxChars={20}
+                      numberOfLines={1}
+                    >
+                      {profile.username || 'Fretizen'}
+                    </AdaptiveText>
+                  </View>
+                  <View>
+                    <Text style={styles.citizenCardLabel}>CITIZEN SINCE</Text>
+                    <Text style={styles.citizenCardValue}>
+                      {new Date(profile.createdAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
             {/* Enhanced Wallet Section */}
             <Animated.View style={[styles.modernCard]}>
               <View style={styles.cardHeader}>
@@ -1031,6 +1092,14 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
               </View>
               <Text style={styles.modalText}>My Posts</Text>
             </TouchableOpacity>
+            {(profile?.isSeller || profile?.isRider) && (
+              <TouchableOpacity style={styles.modalOption} onPress={() => handleButtonPress(() => { navigation.navigate('ManageStore'); setIsOptionsVisible(false); })}>
+                <View style={styles.modalIconContainer}>
+                  <Ionicons name="file-tray-stacked-outline" size={20} color="#FFFFFF" />
+                </View>
+                <Text style={styles.modalText}>Manage Store</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.modalOption} onPress={() => handleButtonPress(() => { navigation.navigate('ReferralScreen'); setIsOptionsVisible(false); })}>
               <View style={styles.modalIconContainer}>
                 <Ionicons name="card-outline" size={20} color="#FF8A00" />
@@ -1172,6 +1241,36 @@ const ProfileScreen = ({ navigation }: ProfileScreenProps) => {
             </TouchableOpacity>
           </Animated.View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* One-time Citizen Number Reveal — shown once per account, ever */}
+      <Modal transparent visible={showCitizenReveal} animationType="fade" onRequestClose={handleClaimCitizenship}>
+        <View style={styles.citizenRevealOverlay}>
+          <Animated.View
+            style={[
+              styles.citizenRevealCard,
+              {
+                opacity: citizenRevealAnim,
+                transform: [
+                  { scale: citizenRevealAnim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] }) },
+                ],
+              },
+            ]}
+          >
+            <Ionicons name="cloud" size={48} color="#3498DB" />
+            <Text style={styles.citizenRevealTitle}>You are a Fretizen</Text>
+            <Text style={styles.citizenRevealSubtitle}>
+              A citizen of Fretiko. Every Fretizen holds a permanent number — yours can never be taken or reused.
+            </Text>
+            <View style={styles.citizenRevealNumberBadge}>
+              <Text style={styles.citizenRevealNumber}>{formatCitizenNumber(profile?.citizenNumber)}</Text>
+            </View>
+            <Text style={styles.citizenRevealHint}>Find it on your Fretizen ID card below your profile.</Text>
+            <TouchableOpacity style={styles.citizenRevealButton} onPress={handleClaimCitizenship}>
+              <Text style={styles.citizenRevealButtonText}>Claim your citizenship</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
       </Modal>
     </View>
   );
@@ -2101,6 +2200,148 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 4,
     textAlign: 'center',
+  },
+  // Citizen ID card — styled like a resident ID badge for the "city in the clouds"
+  citizenCard: {
+    backgroundColor: '#101418',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 152, 219, 0.35)',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 18,
+    overflow: 'hidden',
+  },
+  citizenCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  citizenCardBrand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  citizenCardBrandText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 3,
+  },
+  citizenCardType: {
+    color: '#3498DB',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 2,
+  },
+  citizenCardNumber: {
+    color: '#FFFFFF',
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 4,
+    fontVariant: ['tabular-nums'],
+    textAlign: 'center',
+    marginBottom: 14,
+  },
+  citizenCardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  citizenCardNameWrap: {
+    flex: 1,
+    flexShrink: 1,
+    marginRight: 12,
+  },
+  citizenCardLabel: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    marginBottom: 2,
+  },
+  citizenCardValue: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 13,
+    fontWeight: '600',
+    maxWidth: 160,
+  },
+  // Same as citizenCardValue but without fontSize — AdaptiveText computes it
+  citizenCardName: {
+    color: 'rgba(255,255,255,0.9)',
+    fontWeight: '600',
+    maxWidth: 200,
+  },
+  // One-time citizen number reveal modal
+  citizenRevealOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  citizenRevealCard: {
+    backgroundColor: '#101418',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 152, 219, 0.4)',
+    padding: 32,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 360,
+  },
+  citizenRevealTitle: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginTop: 16,
+  },
+  citizenRevealSubtitle: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginTop: 10,
+  },
+  citizenRevealNumberBadge: {
+    backgroundColor: 'rgba(52, 152, 219, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(52, 152, 219, 0.5)',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    marginTop: 20,
+  },
+  citizenRevealNumber: {
+    color: '#3498DB',
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: 4,
+    fontVariant: ['tabular-nums'],
+  },
+  citizenRevealHint: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 14,
+  },
+  citizenRevealButton: {
+    backgroundColor: '#3498DB',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    marginTop: 22,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+  },
+  citizenRevealButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
 });
 

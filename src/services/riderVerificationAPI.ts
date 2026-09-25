@@ -96,6 +96,25 @@ export const riderVerificationAPI = {
     }
   },
 
+  // Get current user's rider status — covers claimed partner accounts AND
+  // self-applied verifications (both land in verified_riders)
+  getMyRiderStatus: async (): Promise<{
+    rider_status: 'active' | 'suspended' | 'terminated' | 'dormant' | null;
+    request_status: 'in_progress' | 'under_review' | 'verified' | 'rejected' | null;
+  }> => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await api.get('/rider-verification/my-status', { headers });
+      return {
+        rider_status: response.data?.rider_status || null,
+        request_status: response.data?.request_status || null,
+      };
+    } catch (error: any) {
+      console.error('Get my rider status error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to get rider status');
+    }
+  },
+
   // Upload document
   uploadDocument: async (file: ImagePicker.ImagePickerAsset, type: string): Promise<DocumentUploadResponse> => {
     try {

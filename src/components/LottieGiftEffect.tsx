@@ -6,7 +6,7 @@ import GiftAnimation from './GiftAnimation';
 import { getCachedAssetUri } from '../utils/giftAssetCache';
 
 interface LottieStep {
-  lottieUrl: string;
+  lottieUrl: string | number;
   label?: string;
   delayMs?: number;
 }
@@ -19,7 +19,7 @@ interface LottieGiftEffectProps {
     quantity: number;
     display_lottie_url?: string;
     lottie_config?: any;
-    sound_url?: string;
+    sound_url?: string | number;
     animation_type?: 'lottie_single' | 'lottie_combo' | 'lottie_overlap' | string;
     senderName?: string;
   };
@@ -27,7 +27,7 @@ interface LottieGiftEffectProps {
 }
 
 interface LottieConfig {
-  lottieUrl?: string;
+  lottieUrl?: string | number;
   steps?: LottieStep[];
 }
 
@@ -199,7 +199,7 @@ const LottieGiftEffect: React.FC<LottieGiftEffectProps> = ({ gift, onComplete })
           activeSteps[index] ? (
             <LottieView
               key={`${gift.id}-${index}`}
-              source={{ uri: step.lottieUrl }}
+              source={(typeof step.lottieUrl === 'number' ? step.lottieUrl : { uri: step.lottieUrl }) as any}
               autoPlay
               loop={false}
               style={isOverlap ? styles.lottieOverlap : styles.lottie}

@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Calendar, DateData } from 'react-native-calendars';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleAPI, ScheduledOrder, MonthSummary } from '../services/scheduleAPI';
 import { walletAPI } from '../services/walletAPI';
 
@@ -19,6 +20,7 @@ interface ScheduleCalendarScreenProps {
 }
 
 const ScheduleCalendarScreen: React.FC<ScheduleCalendarScreenProps> = ({ navigation }) => {
+  const insets = useSafeAreaInsets();
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [currentMonth, setCurrentMonth] = useState<string>(new Date().toISOString().slice(0, 7));
   const [monthSummary, setMonthSummary] = useState<MonthSummary>({});
@@ -199,6 +201,7 @@ const ScheduleCalendarScreen: React.FC<ScheduleCalendarScreenProps> = ({ navigat
 
       <ScrollView
         style={styles.content}
+        contentContainerStyle={{ paddingBottom: 16 + insets.bottom }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }

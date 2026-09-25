@@ -18,6 +18,24 @@ import { giftAPI, VirtualGift } from '../services/giftAPI';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
+// Local preview entry - plays the bundled gavel lottie + gavel sound.
+// Not a catalog gift; only exists on this preview screen for now.
+const GAVEL_LOTTIE_MODULE = require('../../assets/lottie/gavel.lottie');
+const GAVEL_SOUND_MODULE = require('../../assets/sounds/gavel.MP3');
+const LOCAL_GAVEL_GIFT: VirtualGift = {
+  id: 'local-gavel-preview',
+  name: 'Gavel',
+  emoji: '🔨',
+  credit_value: 0,
+  is_active: true,
+  sort_order: -1,
+  lottie_config: { lottieUrl: GAVEL_LOTTIE_MODULE },
+  sound_url: GAVEL_SOUND_MODULE,
+  animation_type: 'lottie_single',
+  created_at: '',
+  updated_at: '',
+};
+
 const GiftLottiePreviewScreen = () => {
   const navigation = useNavigation();
   const [gifts, setGifts] = useState<VirtualGift[]>([]);
@@ -32,9 +50,12 @@ const GiftLottiePreviewScreen = () => {
       try {
         setLoading(true);
         const data = await giftAPI.getAvailableGifts();
-        if (mounted) setGifts(data);
+        if (mounted) setGifts([LOCAL_GAVEL_GIFT, ...data]);
       } catch (err: any) {
-        if (mounted) setError(err.message || 'Failed to load gifts');
+        if (mounted) {
+          setError(err.message || 'Failed to load gifts');
+          setGifts([LOCAL_GAVEL_GIFT]);
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -232,7 +253,7 @@ const styles = StyleSheet.create({
   },
   stageArea: {
     position: 'absolute',
-    bottom: 0,
+    bottom: 4,
     left: 0,
     right: 0,
     height: screenHeight * 0.45,

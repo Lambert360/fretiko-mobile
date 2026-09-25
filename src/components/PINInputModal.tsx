@@ -30,14 +30,18 @@ const PINInputModal: React.FC<PINInputModalProps> = ({
 }) => {
   const [pin, setPin] = useState(['', '', '']); // 3-digit PIN
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const inputRefs = useRef<Array<TextInput | null>>([]);
+  const submittingRef = useRef(false);
   const shakeAnimation = useRef(new Animated.Value(0)).current;
+  const busy = loading || submitting;
 
   useEffect(() => {
     if (visible) {
       // Reset PIN when modal opens
       setPin(['', '', '']); // 3 digits
       setError('');
+      submittingRef.current = false;
       // Focus first input
       setTimeout(() => inputRefs.current[0]?.focus(), 100);
     }
@@ -71,21 +75,30 @@ const PINInputModal: React.FC<PINInputModalProps> = ({
   };
 
   const handleSubmit = async (fullPin?: string) => {
+    // Prevent duplicate submissions — auto-submit and the button can both
+    // fire before the parent's loading state propagates
+    if (submittingRef.current) return;
+
     const pinToSubmit = fullPin || pin.join('');
-    
+
     if (pinToSubmit.length !== 3) {
       setError('Please enter all 3 digits');
       shakeError();
       return;
     }
 
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
       await onSubmit(pinToSubmit);
     } catch (err: any) {
-      setError(err.message || 'Invalid PIN. Please try again.');
+      setError(err.message || 'Incorrect PIN. Please try again.');
       shakeError();
       setPin(['', '', '']); // Reset to 3 digits
       inputRefs.current[0]?.focus();
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   };
 
@@ -126,7 +139,7 @@ const PINInputModal: React.FC<PINInputModalProps> = ({
             {pin.map((digit, index) => (
               <TextInput
                 key={index}
-                ref={(ref) => (inputRefs.current[index] = ref)}
+                ref={(ref) => { inputRefs.current[index] = ref; }}
                 style={[
                   styles.pinInput,
                   digit ? styles.pinInputFilled : null,
@@ -138,7 +151,7 @@ const PINInputModal: React.FC<PINInputModalProps> = ({
                 keyboardType="number-pad"
                 maxLength={1}
                 selectTextOnFocus
-                editable={!loading}
+                editable={!busy}
               />
             ))}
           </View>
@@ -156,7 +169,7 @@ const PINInputModal: React.FC<PINInputModalProps> = ({
             <TouchableOpacity
               style={[styles.button, styles.cancelButton]}
               onPress={onCancel}
-              disabled={loading}
+              disabled={busy}
             >
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
@@ -164,9 +177,9 @@ const PINInputModal: React.FC<PINInputModalProps> = ({
             <TouchableOpacity
               style={[styles.button, styles.submitButton]}
               onPress={() => handleSubmit()}
-              disabled={loading || pin.join('').length !== 3}
+              disabled={busy || pin.join('').length !== 3}
             >
-              {loading ? (
+              {busy ? (
                 <ActivityIndicator color="white" />
               ) : (
                 <Text style={styles.submitButtonText}>Verify PIN</Text>

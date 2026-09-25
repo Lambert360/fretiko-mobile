@@ -28,6 +28,7 @@ import ShareModal from '../components/ShareModal';
 import { MediaViewerModal } from '../components/MediaViewerModal';
 import RichText from '../components/RichText';
 import AdaptiveText from '../components/AdaptiveText';
+import { AdultContentGate, isAdultContentError } from '../components/AdultContentGate';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -67,6 +68,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
   const [selectedRating, setSelectedRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
   const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewEligibility, setReviewEligibility] = useState<{ canReview: boolean; hasPurchased: boolean; hasReviewed: boolean } | null>(null);
   const [isInWishlist, setIsInWishlist] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -79,6 +81,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
   const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
   const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
   const [isSharing, setIsSharing] = useState(false);
+  const [adultRestricted, setAdultRestricted] = useState(false);
   
   // Animation values
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -91,6 +94,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
     loadProduct();
     loadReviews();
     checkWishlistStatus();
+    loadReviewEligibility();
     setSelectedVariantId(null);
     
     // Fade in animation
@@ -108,7 +112,11 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
       setProduct(productData);
     } catch (error) {
       console.error('Error loading product:', error);
-      Alert.alert('Error', 'Failed to load product details');
+      if (isAdultContentError(error)) {
+        setAdultRestricted(true);
+      } else {
+        Alert.alert('Error', 'Failed to load product details');
+      }
     } finally {
       setLoading(false);
     }
@@ -120,6 +128,22 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
       setReviews(reviewsData);
     } catch (error) {
       console.error('Error loading reviews:', error);
+    }
+  };
+
+  const loadReviewEligibility = async () => {
+    if (!user) {
+      setReviewEligibility(null);
+      return;
+    }
+    try {
+      const eligibility = await productsAPI.getReviewEligibility(productId);
+      setReviewEligibility(eligibility);
+    } catch (error) {
+      // Older backend without the endpoint, or logged-out — leave the button
+      // available and let submit-time errors carry the message.
+      console.error('Error loading review eligibility:', error);
+      setReviewEligibility(null);
     }
   };
 
@@ -199,11 +223,13 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
       setReviewText('');
       loadReviews(); // Reload reviews
       loadProduct(); // Reload product to update average rating
+      loadReviewEligibility(); // Refresh so the button reflects "already reviewed"
       
       Alert.alert('Success', 'Your review has been submitted!');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error submitting review:', error);
-      Alert.alert('Error', 'Failed to submit review');
+      const msg = error?.response?.data?.message;
+      Alert.alert('Error', typeof msg === 'string' ? msg : 'Failed to submit review');
     } finally {
       setSubmittingReview(false);
     }
@@ -267,7 +293,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
     if (!product) return;
 
     try {
-      const shareUrl = `https://fretiko.com/product/${product.id}`;
+      const shareUrl = `https://www.fretiko.com/product/${product.id}`;
       await Share.share({
         message: `Check out this amazing product: ${product.name} for ₣${(product.price || 0).toFixed(2)} on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
         url: shareUrl,
@@ -545,6 +571,17 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
       tags.push({ label: 'Delivery' });
     }
 
+    // Weight tag — buyers see what drives the courier delivery price.
+    // Variant weight overrides the product-level weight when selected.
+    const displayWeight = selectedVariant?.weight_kg ?? product.weight_kg;
+    if (displayWeight != null && displayWeight > 0) {
+      tags.push({
+        label: `${parseFloat(displayWeight.toFixed(3))} kg`,
+        color: '#9C27B0',
+        bg: 'rgba(156, 39, 176, 0.12)',
+      });
+    }
+
     if (tags.length === 0) return null;
 
     return (
@@ -603,6 +640,10 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
         <Text style={styles.loadingText}>Loading product...</Text>
       </View>
     );
+  }
+
+  if (adultRestricted) {
+    return <AdultContentGate navigation={navigation} contentLabel="product" />;
   }
 
   if (!product) {
@@ -783,13 +824,24 @@ const ProductDetailsScreen: React.FC<ProductDetailsProps> = ({ navigation, route
           <View style={styles.reviewsContainer}>
             <View style={styles.reviewsHeader}>
               <Text style={styles.sectionTitle}>Reviews ({reviews.length})</Text>
-              <TouchableOpacity
-                style={styles.addReviewButton}
-                onPress={() => setShowReviewModal(true)}
-              >
-                <Ionicons name="add" size={16} color="#3498DB" />
-                <Text style={styles.addReviewText}>Add Review</Text>
-              </TouchableOpacity>
+              {(!reviewEligibility || !reviewEligibility.hasReviewed) && (
+                <TouchableOpacity
+                  style={styles.addReviewButton}
+                  onPress={() => {
+                    if (reviewEligibility && !reviewEligibility.canReview) {
+                      Alert.alert(
+                        'Verified Purchase Required',
+                        'You can review this product after your order is delivered.'
+                      );
+                      return;
+                    }
+                    setShowReviewModal(true);
+                  }}
+                >
+                  <Ionicons name="add" size={16} color="#3498DB" />
+                  <Text style={styles.addReviewText}>Add Review</Text>
+                </TouchableOpacity>
+              )}
             </View>
             
             {reviews.length > 0 ? (

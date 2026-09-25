@@ -17,19 +17,21 @@ import {
   Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { notificationsAPI } from '../services/notificationsAPI';
 import { pushNotificationService } from '../services/pushNotificationService';
 
 export const NotificationSettingsScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
   const { user, accessToken } = useAuth();
+  const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushTokenRegistered, setPushTokenRegistered] = useState(false);
   
   // Notification preferences
-  const [preferences, setPreferences] = useState({
+  const [preferences, setPreferences] = useState<Record<string, boolean>>({
     orders: true,
     messages: true,
     delivery: true,
@@ -38,6 +40,15 @@ export const NotificationSettingsScreen: React.FC<{ navigation: any }> = ({ navi
     live_events: true,
     system: true,
     marketing: false,
+    email_enabled: true,
+    email_auctions: true,
+    email_orders: true,
+    email_payments: true,
+    email_delivery: true,
+    email_promotions: true,
+    email_live: true,
+    email_social: true,
+    email_system: true,
   });
 
   useEffect(() => {
@@ -119,7 +130,7 @@ export const NotificationSettingsScreen: React.FC<{ navigation: any }> = ({ navi
     }
   };
 
-  const handleTogglePreference = async (key: keyof typeof preferences) => {
+  const handleTogglePreference = async (key: string) => {
     try {
       // Update local state optimistically
       const newValue = !preferences[key];
@@ -144,31 +155,31 @@ export const NotificationSettingsScreen: React.FC<{ navigation: any }> = ({ navi
     }
   };
 
-  const handleTestNotification = async () => {
-    try {
-      Alert.alert(
-        'Test Notification',
-        'Send a test notification to your device?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Send',
-            onPress: async () => {
-              await pushNotificationService.scheduleLocalNotification(
-                'Test Notification',
-                'This is a test notification from Fretiko!',
-                { type: 'test' }
-              );
-              Alert.alert('Success', 'Test notification sent!');
-            },
-          },
-        ]
-      );
-    } catch (error) {
-      console.error('❌ Error sending test notification:', error);
-      Alert.alert('Error', 'Failed to send test notification');
-    }
-  };
+  // const handleTestNotification = async () => {
+  //   try {
+  //     Alert.alert(
+  //       'Test Notification',
+  //       'Send a test notification to your device?',
+  //       [
+  //         { text: 'Cancel', style: 'cancel' },
+  //         {
+  //           text: 'Send',
+  //           onPress: async () => {
+  //             await pushNotificationService.scheduleLocalNotification(
+  //               'Test Notification',
+  //               'This is a test notification from Fretiko!',
+  //               { type: 'test' }
+  //             );
+  //             Alert.alert('Success', 'Test notification sent!');
+  //           },
+  //         },
+  //       ]
+  //     );
+  //   } catch (error) {
+  //     console.error('❌ Error sending test notification:', error);
+  //     Alert.alert('Error', 'Failed to send test notification');
+  //   }
+  // };
 
   if (isLoading) {
     return (
@@ -182,7 +193,7 @@ export const NotificationSettingsScreen: React.FC<{ navigation: any }> = ({ navi
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
@@ -237,7 +248,7 @@ export const NotificationSettingsScreen: React.FC<{ navigation: any }> = ({ navi
               </TouchableOpacity>
             )}
 
-            {pushEnabled && (
+            {/* {pushEnabled && (
               <TouchableOpacity
                 style={styles.testButton}
                 onPress={handleTestNotification}
@@ -245,7 +256,7 @@ export const NotificationSettingsScreen: React.FC<{ navigation: any }> = ({ navi
                 <Ionicons name="send-outline" size={20} color="#3498DB" />
                 <Text style={styles.testButtonText}>Send Test Notification</Text>
               </TouchableOpacity>
-            )}
+            )} */}
           </View>
         </View>
 
@@ -435,6 +446,69 @@ export const NotificationSettingsScreen: React.FC<{ navigation: any }> = ({ navi
           </View>
         </View>
 
+        {/* Email Reminders Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="mail-outline" size={24} color="#3498DB" />
+            <Text style={styles.sectionTitle}>Email Reminders</Text>
+          </View>
+
+          <View style={styles.card}>
+            {/* Master email switch */}
+            <View style={styles.preferenceRow}>
+              <View style={styles.preferenceInfo}>
+                <View style={styles.preferenceIcon}>
+                  <Ionicons name="mail-outline" size={20} color="#3498DB" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.preferenceTitle}>Email Reminders</Text>
+                  <Text style={styles.preferenceSubtitle}>
+                    Reminders sent to your email address
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={preferences.email_enabled}
+                onValueChange={() => handleTogglePreference('email_enabled')}
+                trackColor={{ false: '#444', true: '#3498DB' }}
+                thumbColor="#FFFFFF"
+                disabled={isSaving}
+              />
+            </View>
+
+            {/* Per-category email toggles */}
+            {([
+              ['email_auctions', 'hammer-outline', 'Auctions', 'Wins, outbids and checkout deadlines'],
+              ['email_orders', 'cart-outline', 'Orders', 'Pending order and status reminders'],
+              ['email_payments', 'wallet-outline', 'Payments & Escrow', 'Escrow release and payment reminders'],
+              ['email_delivery', 'bicycle-outline', 'Delivery', 'Delivery confirmation reminders'],
+              ['email_promotions', 'megaphone-outline', 'Promotions', 'Offers and promotions by email'],
+              ['email_live', 'videocam-outline', 'Live Events', 'Live stream alerts by email'],
+              ['email_social', 'people-outline', 'Social', 'Connection requests and updates'],
+              ['email_system', 'settings-outline', 'System', 'Important account emails'],
+            ] as const).map(([key, icon, label, subtitle]) => (
+              <View key={key} style={[styles.preferenceRow, styles.preferenceRowBorder]}>
+                <View style={styles.preferenceInfo}>
+                  <View style={styles.preferenceIcon}>
+                    <Ionicons name={icon} size={20} color="#3498DB" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.preferenceTitle}>{label}</Text>
+                    <Text style={styles.preferenceSubtitle}>{subtitle}</Text>
+                  </View>
+                </View>
+                <Switch
+                  value={preferences[key]}
+                  onValueChange={() => handleTogglePreference(key)}
+                  trackColor={{ false: '#444', true: '#3498DB' }}
+                  thumbColor="#FFFFFF"
+                  disabled={isSaving || !preferences.email_enabled}
+                />
+              </View>
+            ))}
+          </View>
+        </View>
+
         {/* Info Section */}
         <View style={styles.infoSection}>
           <Ionicons name="information-circle-outline" size={20} color="#888" />
@@ -469,7 +543,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 60 : 20,
     paddingBottom: 16,
     backgroundColor: '#1A1A1A',
     borderBottomWidth: 1,

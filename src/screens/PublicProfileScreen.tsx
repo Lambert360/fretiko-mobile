@@ -17,7 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
-import { userAPI, UserStats } from '../services/userAPI';
+import { userAPI, UserStats, formatCitizenNumber } from '../services/userAPI';
 import { productsAPI, Product } from '../services/productsAPI';
 import { servicesAPI, VideoFeedItem, Service } from '../services/servicesAPI';
 import { postsAPI, Post } from '../services/postsAPI';
@@ -38,6 +38,7 @@ interface UserProfile {
   location?: string;
   isSeller: boolean;
   isRider?: boolean;
+  citizenNumber?: number;
   createdAt: string;
 }
 
@@ -370,7 +371,7 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
     if (!profile) return;
 
     try {
-      const shareUrl = `https://fretiko.com/profile/${profile.id}`;
+      const shareUrl = `https://www.fretiko.com/profile/${profile.id}`;
       await Share.share({
         message: `Check out ${profile.username}'s profile on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
         url: shareUrl,
@@ -489,6 +490,11 @@ const PublicProfileScreen = ({ navigation, route }: PublicProfileScreenProps) =>
                 <View style={styles.roleIndicator}>
                   <Text style={styles.roleText}>{getUserRole()}</Text>
                 </View>
+                {profile?.citizenNumber != null && (
+                  <Text style={styles.citizenNumberText}>
+                    Fretizen {formatCitizenNumber(profile.citizenNumber)}
+                  </Text>
+                )}
               </View>
             </View>
 
@@ -858,6 +864,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
+  },
+  citizenNumberText: {
+    color: '#3498DB',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    marginTop: 6,
   },
   userDetails: {
     alignItems: 'center',

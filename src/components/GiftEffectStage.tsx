@@ -22,7 +22,7 @@ const GiftEffectStage: React.FC<GiftEffectStageProps> = ({ children }) => {
 const styles = StyleSheet.create({
   overlay: {
     position: 'absolute',
-    bottom: 0,
+    bottom: 4,
     left: 0,
     right: 0,
     height: screenHeight * 0.45,

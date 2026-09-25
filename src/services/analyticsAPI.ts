@@ -25,6 +25,7 @@ export interface AnalyticsData {
     revenueChange: number;
     customersChange: number;
   };
+  sourceBreakdown?: Record<string, { orders: number; revenue: number }>;
 }
 
 export interface AnalyticsReport {
@@ -85,6 +86,107 @@ export interface LiveStreamingAnalytics {
     revenueChange: number;
     engagementChange: number;
   };
+}
+
+export interface CustomerAnalytics {
+  totalCustomers: number;
+  newCustomers: number;
+  returningCustomers: number;
+  customerRetentionRate: number;
+  averageOrdersPerCustomer: number;
+  topCustomers: Array<{
+    customerId: string;
+    customerName: string;
+    totalOrders: number;
+    totalSpent: number;
+  }>;
+}
+
+export interface ProductAnalytics {
+  totalProducts: number;
+  totalSales: number;
+  topSellingProducts: Array<{
+    productId: string;
+    productName: string;
+    category: string;
+    quantitySold: number;
+    revenue: number;
+    averageRating: number;
+  }>;
+  categoryPerformance: Array<{
+    category: string;
+    productsCount: number;
+    totalSales: number;
+    revenue: number;
+  }>;
+  lowStockProducts: Array<{
+    productId: string;
+    productName: string;
+    currentStock: number;
+    minStock: number;
+  }>;
+}
+
+export interface RealtimeAnalytics {
+  activeOrders: number;
+  todayRevenue: number;
+  onlineCustomers: number;
+  pendingOrders: number;
+  completionRate: number;
+}
+
+export interface AnalyticsComparison {
+  current: AnalyticsData;
+  comparison: AnalyticsData;
+  changes: {
+    revenueChange: number;
+    ordersChange: number;
+    customersChange: number;
+    completionRateChange: number;
+  };
+}
+
+export interface StreamRealTimeAnalytics {
+  streamId: string;
+  title: string;
+  status: string;
+  viewerCount: number;
+  totalViewers: number;
+  totalSales: number;
+  engagementCount: number;
+  giftCount: number;
+  giftValue: number;
+  conversionRate: number;
+  streamDuration: number;
+  averageWatchTime: number;
+  peakViewers: number;
+  commentCount: number;
+  reactionCount: number;
+  productsSold: number;
+  engagementRate: number;
+  recentActivity: Array<{
+    type: 'purchase' | 'gift';
+    amount: number;
+    timestamp: string;
+  }>;
+}
+
+export interface VendorRealTimeMetrics {
+  currentActiveStreams: number;
+  currentTotalViewers: number;
+  todayStreamsCount: number;
+  todayTotalViewers: number;
+  todayTotalRevenue: number;
+  todayGiftRevenue: number;
+  averageViewersPerStream: number;
+  activeStreamsList: Array<{
+    id: string;
+    title: string;
+    viewer_count: number;
+    total_sales: number;
+    created_at: string;
+  }>;
+  lastUpdated: string;
 }
 
 export interface AuctionAnalytics {
@@ -241,19 +343,7 @@ class AnalyticsAPI {
   /**
    * Get customer analytics
    */
-  async getCustomerAnalytics(period: AnalyticsPeriod): Promise<{
-    totalCustomers: number;
-    newCustomers: number;
-    returningCustomers: number;
-    customerRetentionRate: number;
-    averageOrdersPerCustomer: number;
-    topCustomers: Array<{
-      customerId: string;
-      customerName: string;
-      totalOrders: number;
-      totalSpent: number;
-    }>;
-  }> {
+  async getCustomerAnalytics(period: AnalyticsPeriod): Promise<CustomerAnalytics> {
     try {
       const headers = await getAuthHeaders();
 
@@ -337,30 +427,7 @@ class AnalyticsAPI {
   /**
    * Get product performance analytics
    */
-  async getProductAnalytics(period: AnalyticsPeriod): Promise<{
-    totalProducts: number;
-    totalSales: number;
-    topSellingProducts: Array<{
-      productId: string;
-      productName: string;
-      category: string;
-      quantitySold: number;
-      revenue: number;
-      averageRating: number;
-    }>;
-    categoryPerformance: Array<{
-      category: string;
-      productsCount: number;
-      totalSales: number;
-      revenue: number;
-    }>;
-    lowStockProducts: Array<{
-      productId: string;
-      productName: string;
-      currentStock: number;
-      minimumStock: number;
-    }>;
-  }> {
+  async getProductAnalytics(period: AnalyticsPeriod): Promise<ProductAnalytics> {
     try {
       const headers = await getAuthHeaders();
 
@@ -388,12 +455,14 @@ class AnalyticsAPI {
     type: 'daily' | 'weekly' | 'monthly' | 'custom',
     startDate?: Date,
     endDate?: Date,
-    format: 'pdf' | 'excel' = 'pdf'
+    format: 'pdf' | 'excel' = 'pdf',
+    source?: 'all' | 'regular' | 'live_stream' | 'auctions' | 'invoice' | 'wishlist'
   ): Promise<{ reportId: string; downloadUrl: string }> {
     try {
       const headers = await getAuthHeaders();
 
       const requestBody: any = { type, format };
+      if (source) requestBody.source = source;
       if (startDate) requestBody.startDate = startDate.toISOString().split('T')[0];
       if (endDate) requestBody.endDate = endDate.toISOString().split('T')[0];
 
@@ -442,7 +511,13 @@ class AnalyticsAPI {
   /**
    * Download a specific report
    */
-  async downloadReport(reportId: string): Promise<string> {
+  async downloadReport(reportId: string): Promise<{
+    downloadUrl: string;
+    reportId: string;
+    format: string;
+    generatedAt: string;
+    expiresAt: string;
+  }> {
     try {
       const headers = await getAuthHeaders();
 
@@ -456,8 +531,7 @@ class AnalyticsAPI {
         throw new Error(`Failed to download report: ${response.status} ${errorData}`);
       }
 
-      const data = await response.json();
-      return data.downloadUrl;
+      return await response.json();
     } catch (error) {
       console.error('Download report error:', error);
       throw error;
@@ -467,13 +541,7 @@ class AnalyticsAPI {
   /**
    * Get real-time analytics (for live updates)
    */
-  async getRealTimeAnalytics(): Promise<{
-    activeOrders: number;
-    todayRevenue: number;
-    onlineCustomers: number;
-    pendingOrders: number;
-    completionRate: number;
-  }> {
+  async getRealTimeAnalytics(): Promise<RealtimeAnalytics> {
     try {
       const headers = await getAuthHeaders();
 
@@ -501,16 +569,7 @@ class AnalyticsAPI {
     currentPeriod: AnalyticsPeriod,
     currentDate: Date,
     comparisonDate: Date
-  ): Promise<{
-    current: AnalyticsData;
-    comparison: AnalyticsData;
-    changes: {
-      revenueChange: number;
-      ordersChange: number;
-      customersChange: number;
-      completionRateChange: number;
-    };
-  }> {
+  ): Promise<AnalyticsComparison> {
     try {
       const headers = await getAuthHeaders();
 
@@ -539,30 +598,7 @@ class AnalyticsAPI {
   /**
    * Get real-time analytics for a specific live stream
    */
-  async getRealTimeLiveStreamAnalytics(streamId: string): Promise<{
-    streamId: string;
-    title: string;
-    status: string;
-    viewerCount: number;
-    totalViewers: number;
-    totalSales: number;
-    engagementCount: number;
-    giftCount: number;
-    giftValue: number;
-    conversionRate: number;
-    streamDuration: number;
-    averageWatchTime: number;
-    peakViewers: number;
-    commentCount: number;
-    reactionCount: number;
-    productsSold: number;
-    engagementRate: number;
-    recentActivity: Array<{
-      type: 'purchase' | 'gift';
-      amount: number;
-      timestamp: string;
-    }>;
-  }> {
+  async getRealTimeLiveStreamAnalytics(streamId: string): Promise<StreamRealTimeAnalytics> {
     try {
       const headers = await getAuthHeaders();
 
@@ -586,23 +622,7 @@ class AnalyticsAPI {
   /**
    * Get real-time metrics for vendor dashboard
    */
-  async getVendorRealTimeMetrics(): Promise<{
-    currentActiveStreams: number;
-    currentTotalViewers: number;
-    todayStreamsCount: number;
-    todayTotalViewers: number;
-    todayTotalRevenue: number;
-    todayGiftRevenue: number;
-    averageViewersPerStream: number;
-    activeStreamsList: Array<{
-      id: string;
-      title: string;
-      viewer_count: number;
-      total_sales: number;
-      created_at: string;
-    }>;
-    lastUpdated: string;
-  }> {
+  async getVendorRealTimeMetrics(): Promise<VendorRealTimeMetrics> {
     try {
       const headers = await getAuthHeaders();
 
@@ -686,48 +706,6 @@ class AnalyticsAPI {
     }
   }
 
-  /**
-   * Get conversion metrics (time to first purchase)
-   */
-  async getConversionMetrics(): Promise<{
-    averageTimeToFirstPurchaseHours: number;
-    medianTimeToFirstPurchaseHours: number;
-    conversionRate: number;
-    totalUsers: number;
-    purchasers: number;
-    nonPurchasers: number;
-    timeBuckets: {
-      within24Hours: number;
-      within7Days: number;
-      within30Days: number;
-      over30Days: number;
-    };
-    timeBucketsPercentage: {
-      within24Hours: number;
-      within7Days: number;
-      within30Days: number;
-      over30Days: number;
-    };
-  }> {
-    try {
-      const headers = await getAuthHeaders();
-
-      const response = await fetch(`${API_BASE_URL}/admin/analytics/conversion-metrics`, {
-        method: 'GET',
-        headers,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to fetch conversion metrics: ${response.status} ${errorData}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Get conversion metrics error:', error);
-      throw error;
-    }
-  }
 }
 
 export const analyticsAPI = new AnalyticsAPI();

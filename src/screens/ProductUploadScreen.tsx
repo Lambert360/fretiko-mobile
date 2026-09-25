@@ -42,6 +42,7 @@ interface ProductVariantForm {
   mediaUri: string | null;
   mediaType: 'image' | 'video' | null;
   isPrimary: boolean;
+  weight: string; // per-item weight in kg — drives delivery pricing
 }
 
 const createEmptyVariant = (): ProductVariantForm => ({
@@ -53,6 +54,7 @@ const createEmptyVariant = (): ProductVariantForm => ({
   mediaUri: null,
   mediaType: null,
   isPrimary: false,
+  weight: '',
 });
 
 const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
@@ -65,9 +67,14 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
   const [category, setCategory] = useState('');
   const [condition, setCondition] = useState('new');
   const [quantity, setQuantity] = useState('1');
+  const [weightKg, setWeightKg] = useState('');
+  const [lengthCm, setLengthCm] = useState('');
+  const [widthCm, setWidthCm] = useState('');
+  const [heightCm, setHeightCm] = useState('');
   const [media, setMedia] = useState<ProductMedia[]>([]);
   const [tags, setTags] = useState('');
   const [location, setLocation] = useState('');
+  const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [shippingOptions, setShippingOptions] = useState({
     pickup: false,
     delivery: false,
@@ -311,6 +318,35 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
       return;
     }
 
+    if ((shippingOptions.delivery || shippingOptions.shipping)) {
+      if (!isMultiItem) {
+        const w = parseFloat(weightKg);
+        if (weightKg.trim() && (isNaN(w) || w < 0)) {
+          Alert.alert('Invalid Weight', 'Please enter a valid weight in kilograms.');
+          return;
+        }
+      } else {
+        const badVariantWeight = validVariants.some(v => {
+          const w = parseFloat(v.weight);
+          return v.weight.trim() && (isNaN(w) || w < 0);
+        });
+        if (badVariantWeight) {
+          Alert.alert('Invalid Weight', 'Please enter a valid weight (kg) for each item.');
+          return;
+        }
+      }
+      const hasAnyWeight = isMultiItem
+        ? validVariants.some(v => v.weight.trim())
+        : weightKg.trim();
+      if (!hasAnyWeight) {
+        Alert.alert(
+          'Weight Missing',
+          'Courier delivery is priced per kilogram. Add the item weight so buyers see the correct delivery cost.',
+        );
+        return;
+      }
+    }
+
     setUploading(true);
 
     try {
@@ -363,9 +399,17 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
       formData.append('condition', condition);
       formData.append('quantity', quantity);
       formData.append('location', location.trim());
+      if (locationCoords) {
+        formData.append('location_latitude', String(locationCoords.latitude));
+        formData.append('location_longitude', String(locationCoords.longitude));
+      }
       formData.append('tags', JSON.stringify(tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0)));
       formData.append('shipping_options', JSON.stringify(shippingOptions));
       formData.append('is_multi_item', String(isMultiItem));
+      if (weightKg.trim()) formData.append('weight_kg', weightKg.trim());
+      if (lengthCm.trim()) formData.append('length_cm', lengthCm.trim());
+      if (widthCm.trim()) formData.append('width_cm', widthCm.trim());
+      if (heightCm.trim()) formData.append('height_cm', heightCm.trim());
 
       if (isMultiItem) {
         const variantMeta = validVariants.map((variant, index) => {
@@ -381,6 +425,7 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
             price: parseFloat(variant.price),
             mediaIndex: index,
             mediaType: variant.mediaType,
+            weightKg: variant.weight.trim() ? parseFloat(variant.weight) : undefined,
           };
         });
         formData.append('variants', JSON.stringify(variantMeta));
@@ -613,6 +658,14 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
                       minAmount={0.01}
                       maxAmount={1000000}
                     />
+                    <TextInput
+                      style={[styles.textInput, { marginTop: 8 }]}
+                      value={variant.weight}
+                      onChangeText={(text) => updateVariant(variant.id, { weight: text.replace(/[^0-9.]/g, '') })}
+                      placeholder="Weight in kg (for delivery cost)"
+                      placeholderTextColor="rgba(255,255,255,0.5)"
+                      keyboardType="decimal-pad"
+                    />
                   </View>
                 </View>
               </View>
@@ -692,6 +745,58 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
               placeholderTextColor="rgba(255,255,255,0.5)"
               keyboardType="numeric"
             />
+          </View>
+
+          {/* Weight — drives courier delivery pricing */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>
+              Weight (kg){shippingOptions.delivery || shippingOptions.shipping ? ' *' : ''}
+            </Text>
+            <TextInput
+              style={styles.textInput}
+              value={weightKg}
+              onChangeText={(text) => setWeightKg(text.replace(/[^0-9.]/g, ''))}
+              placeholder="e.g. 0.5"
+              placeholderTextColor="rgba(255,255,255,0.5)"
+              keyboardType="decimal-pad"
+            />
+            <Text style={styles.helperText}>
+              Logistics companies charge per kilogram — an accurate weight gives buyers the right delivery price.
+            </Text>
+          </View>
+
+          {/* Package dimensions — optional, for volumetric weight */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Package size (cm) — optional</Text>
+            <View style={styles.dimensionsRow}>
+              <TextInput
+                style={[styles.textInput, styles.dimensionInput]}
+                value={lengthCm}
+                onChangeText={(text) => setLengthCm(text.replace(/[^0-9.]/g, ''))}
+                placeholder="L"
+                placeholderTextColor="rgba(255,255,255,0.5)"
+                keyboardType="decimal-pad"
+              />
+              <TextInput
+                style={[styles.textInput, styles.dimensionInput]}
+                value={widthCm}
+                onChangeText={(text) => setWidthCm(text.replace(/[^0-9.]/g, ''))}
+                placeholder="W"
+                placeholderTextColor="rgba(255,255,255,0.5)"
+                keyboardType="decimal-pad"
+              />
+              <TextInput
+                style={[styles.textInput, styles.dimensionInput]}
+                value={heightCm}
+                onChangeText={(text) => setHeightCm(text.replace(/[^0-9.]/g, ''))}
+                placeholder="H"
+                placeholderTextColor="rgba(255,255,255,0.5)"
+                keyboardType="decimal-pad"
+              />
+            </View>
+            <Text style={styles.helperText}>
+              For bulky items (e.g. pillows, shoes boxes) couriers may bill by size instead of scale weight.
+            </Text>
           </View>
         </View>
 
@@ -830,6 +935,7 @@ const ProductUploadScreen = ({ navigation }: ProductUploadScreenProps) => {
         visible={isLocationSelectorVisible}
         selectedLocation={location}
         onLocationSelect={handleLocationSelect}
+        onLocationResolved={(_name, coords) => setLocationCoords(coords)}
         onClose={() => setLocationSelectorVisible(false)}
       />
     </KeyboardAvoidingView>
@@ -1086,6 +1192,14 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: 8,
     lineHeight: 16,
+  },
+  dimensionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  dimensionInput: {
+    flex: 1,
+    textAlign: 'center',
   },
   quantityInput: {
     textAlign: 'center',

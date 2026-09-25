@@ -29,6 +29,7 @@ import { useCart } from '../contexts/CartContext';
 import { useFilters } from '../contexts/FilterContext';
 import { mapProductToCard } from '../utils/dataMappers';
 import { useMemoizedSections } from '../utils/mixedContentHelpers';
+import { navigateToAuctionDetails } from '../utils/auctionNavigation';
 import { chatAPI } from '../services/chatAPI';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -574,7 +575,7 @@ const ProductsTab: React.FC<ProductsTabProps> = ({
               key={auction.id}
               auction={auction}
               variant="horizontal"
-              onPress={(a) => navigation.navigate('AuctionDetails', { auctionId: a.id })}
+              onPress={(a) => navigateToAuctionDetails(navigation, a)}
             />
           ))}
         </ScrollView>

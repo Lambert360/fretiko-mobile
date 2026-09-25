@@ -13,6 +13,7 @@ import {
   Modal,
   Platform,
   Image,
+  Share,
 } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { PanGestureHandler, PanGestureHandlerGestureEvent, PanGestureHandlerStateChangeEvent, State } from 'react-native-gesture-handler';
@@ -20,9 +21,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
-import { useAuctionSounds } from '../services/auctionSoundService';
+import { useAuctionSounds, playBidSound, playSoundboardSound, stopSoundboardSound } from '../services/auctionSoundService';
 import GiftAnimation from '../components/GiftAnimation';
+import GavelLottieEffect from '../components/GavelLottieEffect';
 import { auctionsAPI, auctionSocket, AuctionWithDetails, AuctionItem } from '../services/auctionsAPI';
+import { chatAPI, ChatConversation } from '../services/chatAPI';
+import ShareModal from '../components/ShareModal';
 
 // Import Agora RTC SDK for low-latency live streaming
 import { createAgoraRtcEngine, ChannelProfileType, ClientRoleType, IRtcEngine, RtcSurfaceView, RenderModeType } from 'react-native-agora';
@@ -244,6 +248,16 @@ const AuctionLiveViewerScreen = () => {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+
+  // Gavel lottie overlay — shown when the host taps the gavel
+  const [showGavelLottie, setShowGavelLottie] = useState(false);
+
+  // Share modal state
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
+  const [isSharing, setIsSharing] = useState(false);
   
   // Auction Cart State - stores won items during live auction
   const [wonItems, setWonItems] = useState<Array<{
@@ -310,9 +324,9 @@ const AuctionLiveViewerScreen = () => {
 
   // Image viewer modal state
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
-  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
-  const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
-  const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
+  // Media viewer — swipeable gallery of the item's video + images
+  const [viewerMedia, setViewerMedia] = useState<{ type: 'image' | 'video'; url: string }[]>([]);
+  const [viewerMediaIndex, setViewerMediaIndex] = useState(0);
 
   // Agora RTC state - Direct streaming for low latency
   const [agoraConfig, setAgoraConfig] = useState<any>(null);
@@ -320,7 +334,11 @@ const AuctionLiveViewerScreen = () => {
   const [remoteUid, setRemoteUid] = useState<number | null>(null);
   const [isAgoraJoined, setIsAgoraJoined] = useState(false);
   const [isAgoraInitialized, setIsAgoraInitialized] = useState(false);
+  const [isHostPaused, setIsHostPaused] = useState(false);
+  const [isHostVideoMuted, setIsHostVideoMuted] = useState(false);
+  const [isHostAudioMuted, setIsHostAudioMuted] = useState(false);
   const agoraEngineRef = useRef<IRtcEngine | null>(null);
+  const pausePulseAnim = useRef(new Animated.Value(1)).current;
 
   // WebSocket listener refs for proper cleanup
   const bidHandlerRef = useRef<((data: any) => void) | null>(null);
@@ -329,6 +347,18 @@ const AuctionLiveViewerScreen = () => {
   const itemEventHandlerRef = useRef<((data: any) => void) | null>(null);
   const viewCountHandlerRef = useRef<((data: any) => void) | null>(null);
   const reactionHandlerRef = useRef<((data: any) => void) | null>(null);
+  const streamUrlHandlerRef = useRef<((data: any) => void) | null>(null);
+  const broadcastStatusHandlerRef = useRef<((data: any) => void) | null>(null);
+  const soundHandlerRef = useRef<((data: any) => void) | null>(null);
+  const soundStopHandlerRef = useRef<((data: any) => void) | null>(null);
+  const gavelHandlerRef = useRef<((data: any) => void) | null>(null);
+  // Own-bid dedup: broadcasts never include bidder_id (bidders are anonymized),
+  // so we match our own bids by the alias returned from placeBid, or by the
+  // in-flight amount before that response lands.
+  const myBidderDisplayIdRef = useRef<string | null>(null);
+  const pendingOwnBidAmountRef = useRef<number | null>(null);
+  const currentItemRef = useRef<AuctionItem | null>(null);
+  const itemBiddingStatusRef = useRef<'waiting' | 'countdown' | 'active' | 'ended' | 'sold' | 'passed'>('waiting');
 
   // Bid Notification Bubble Component
   const BidNotificationBubble: React.FC<{
@@ -519,6 +549,8 @@ const AuctionLiveViewerScreen = () => {
           elapsed
         });
         setRemoteUid(uid);
+        setIsHostVideoMuted(false);
+        setIsHostAudioMuted(false);
         console.log('✅ remoteUid state set to:', uid);
       });
 
@@ -527,10 +559,26 @@ const AuctionLiveViewerScreen = () => {
         setRemoteUid((prevUid) => {
           if (prevUid === uid) {
             console.log('🔇 Host disconnected, clearing remote UID');
+            setIsHostVideoMuted(false);
+            setIsHostAudioMuted(false);
             return null;
           }
           return prevUid;
         });
+      });
+
+      engine.addListener('onRemoteVideoStateChanged', (connection: any, uid: number, state: number, reason: number, elapsed: number) => {
+        // state: 0=stopped, 1=starting, 2=decoding, 3=failed
+        // reason: 0=user muted/unmuted, other values indicate non-user reasons
+        if (remoteUid && uid !== remoteUid) return;
+        const isMutedByHost = state === 0 && reason === 0;
+        setIsHostVideoMuted(isMutedByHost);
+      });
+
+      engine.addListener('onRemoteAudioStateChanged', (connection: any, uid: number, state: number, reason: number, elapsed: number) => {
+        // state: 0=stopped, 1=decoding, 2=starting
+        if (remoteUid && uid !== remoteUid) return;
+        setIsHostAudioMuted(state === 0);
       });
 
       engine.addListener('onConnectionStateChanged', (connection: any, state: number, reason: number) => {
@@ -618,13 +666,21 @@ const AuctionLiveViewerScreen = () => {
   }, []);
 
   // ✅ CRITICAL FIX: Initialize Agora when config is ready (NO cleanup here!)
+  // Gate on auction.status === 'active': without it, an ended live auction
+  // re-initializes the engine after every socket-driven cleanup, producing an
+  // init → join → cleanup churn loop for a stream that can never have video.
   useEffect(() => {
-    if (agoraConfig && auction?.auction_type === 'live' && !isAgoraInitialized) {
+    if (
+      agoraConfig &&
+      auction?.auction_type === 'live' &&
+      auction?.status === 'active' &&
+      !isAgoraInitialized
+    ) {
       console.log('🚀 Triggering Agora initialization from useEffect...');
       initializeAgoraEngine();
     }
     // ⚠️ NO cleanup here! Cleanup happens on component unmount only
-  }, [agoraConfig, auction?.auction_type, isAgoraInitialized]);
+  }, [agoraConfig, auction?.auction_type, auction?.status, isAgoraInitialized]);
 
   // ✅ CRITICAL FIX: Cleanup Agora ONLY on component unmount
   useEffect(() => {
@@ -634,14 +690,46 @@ const AuctionLiveViewerScreen = () => {
     };
   }, []);
 
+  // Pause pulse animation
+  useEffect(() => {
+    if (isHostPaused) {
+      const pulseAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pausePulseAnim, {
+            toValue: 1.3,
+            duration: 1500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pausePulseAnim, {
+            toValue: 1,
+            duration: 1500,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulseAnimation.start();
+      return () => pulseAnimation.stop();
+    } else {
+      pausePulseAnim.setValue(1);
+    }
+  }, [isHostPaused]);
+
   // Connect to WebSocket
   useEffect(() => {
     const setupWebSocketListeners = () => {
       // Handle real-time bid updates
       const handleNewBid = (data: any) => {
         if (data.auction_id === auctionId) {
-          // Skip own bids to prevent duplicate notifications (optimistic already shown)
-          if (data.user_id === user?.id) {
+          playBidSound();
+          // Skip own bids to prevent duplicate notifications (optimistic already
+          // shown). The broadcast carries no bidder_id for anonymity - match on
+          // our assigned alias, or on the amount of the bid still in flight.
+          const isOwnBid =
+            (myBidderDisplayIdRef.current !== null &&
+              data.bidder_display_id === myBidderDisplayIdRef.current) ||
+            (pendingOwnBidAmountRef.current !== null &&
+              Number(data.amount) === pendingOwnBidAmountRef.current);
+          if (isOwnBid) {
             console.log('💰 Skipping own bid from WebSocket (optimistic already shown)');
             // Still update the auction state though
             setAuction(prev => prev ? {
@@ -651,14 +739,14 @@ const AuctionLiveViewerScreen = () => {
             } : null);
 
             // Update current item bid (for multi-item auctions)
-            if (currentItem && itemBiddingStatus === 'active') {
+            if (currentItemRef.current && itemBiddingStatusRef.current === 'active') {
               setCurrentItem(prev => prev ? {
                 ...prev,
                 current_bid: data.amount,
               } : null);
               
               // Update bid amount input
-              const nextBid = data.amount + (currentItem?.bid_increment || 1);
+              const nextBid = data.amount + (currentItemRef.current?.bid_increment || 1);
               setBidAmount(nextBid.toString());
               
               // Mark that bids have been received - this will stop the countdown timer
@@ -676,28 +764,28 @@ const AuctionLiveViewerScreen = () => {
 
           // Update current item bid (for multi-item auctions)
           console.log('🔍 Checking currentItem bid update conditions:', {
-            hasCurrentItem: !!currentItem,
-            itemBiddingStatus,
-            currentItemTitle: currentItem?.title,
+            hasCurrentItem: !!currentItemRef.current,
+            itemBiddingStatus: itemBiddingStatusRef.current,
+            currentItemTitle: currentItemRef.current?.title,
             bidAmount: data.amount
           });
-          if (currentItem) {
+          if (currentItemRef.current) {
             // Only update if this bid is for the current item (multi-item auction safety)
-            if (!data.item_id || data.item_id === currentItem.id) {
+            if (!data.item_id || data.item_id === currentItemRef.current.id) {
               setCurrentItem(prev => prev ? {
                 ...prev,
                 current_bid: data.amount,
               } : null);
               
               // Update bid amount input
-              const nextBid = data.amount + (currentItem?.bid_increment || 1);
+              const nextBid = data.amount + (currentItemRef.current?.bid_increment || 1);
               setBidAmount(nextBid.toString());
               
               // Mark that bids have been received - this will stop the countdown timer
               setHasBids(true);
               console.log('💰 Viewer: Bid received - countdown timer stopped');
             } else {
-              console.log('🔄 Ignoring bid for different item:', data.item_id, 'current item:', currentItem.id);
+              console.log('🔄 Ignoring bid for different item:', data.item_id, 'current item:', currentItemRef.current.id);
             }
 
             // NEW: Add bid notification (same as host)
@@ -755,10 +843,13 @@ const AuctionLiveViewerScreen = () => {
         if (data.auction_id === auctionId) {
           switch (data.event_type) {
             case 'item_ready':
-              // Map item_title to title for consistency
+              // Map socket field names to the AuctionItem shape the UI
+              // expects — without id, per-item bid filtering never matches
               const itemReadyData = {
                 ...data,
+                id: data.item_id || data.id,
                 title: data.item_title || data.title,
+                order_in_auction: data.order_in_auction ?? data.item_number,
               };
               setCurrentItem(itemReadyData);
               setItemBiddingStatus('waiting');
@@ -777,12 +868,18 @@ const AuctionLiveViewerScreen = () => {
             
             case 'bidding_open':
               console.log('🔓 Bidding open event received:', data);
-              // Map item_title to title for consistency
+              // Merge into the existing item instead of replacing — older
+              // bidding_open payloads don't carry images/video_url, and
+              // replacing wholesale wipes the media item_ready provided
               const itemData = {
                 ...data,
+                id: data.item_id || data.id,
                 title: data.item_title || data.title,
+                order_in_auction: data.order_in_auction ?? data.item_number,
               };
-              setCurrentItem(itemData); // Update current item with fresh data from backend
+              setCurrentItem(prev =>
+                prev && prev.id === itemData.id ? { ...prev, ...itemData } : itemData
+              );
               setItemBiddingStatus('active');
               setCountdownTimer(null);
               setCanBid(true);
@@ -800,85 +897,27 @@ const AuctionLiveViewerScreen = () => {
               setItemBiddingStatus('ended');
               setCanBid(false);
               if (data.winner) {
-                console.log('🏆 Winner data found:', data.winner);
-                console.log('👤 Current user ID:', user?.id);
-                console.log('🏆 Winner ID:', data.winner.bidder_id);
-                console.log('🎯 Is current user winner?', data.winner.bidder_id === user?.id);
-                
-                // Check if current user won
-                if (data.winner.bidder_id === user?.id) {
-                  const wonItem = {
-                    auctionId: auctionId,
-                    itemId: data.item_id || null,
-                    title: data.item_title || currentItem?.title || 'Auction Item',
-                    winningBid: data.final_bid,
-                    wonAt: new Date().toISOString(),
-                    thumbnail_url: currentItem?.images?.[0],
-                    images: currentItem?.images,
-                  };
-                  
-                  // Save win to database (backend handles duplicate prevention)
-                  try {
-                    // Win is automatically saved by backend when markItemSold is called
-                    // But we still add it to local state for immediate UI update
-                  } catch (error) {
-                    console.error('Error saving auction win:', error);
-                  }
-                  
-                  setWonItems(prev => {
-                    // Check if item already exists (by auctionId + itemId combination)
-                    const exists = prev.find(item => 
-                      item.auctionId === auctionId && 
-                      (item.itemId === wonItem.itemId || (!item.itemId && !wonItem.itemId))
-                    );
-                    if (exists) {
-                      return prev;
-                    }
-                    return [...prev, wonItem];
+                // Public payload carries only the winner's alias — the actual
+                // winner is notified via the targeted auction_item_won
+                // user_notification (handleUserNotification)
+                try {
+                  setWinnerData({
+                    winner_display_id: data.winner.bidder_display_id || 'Winner',
+                    winning_bid: data.final_bid || 0,
+                    item_title: data.item_title || currentItemRef.current?.title || 'Auction Item',
+                    user_participated: userParticipated,
+                    is_winner: false,
                   });
-                  
-                  // Show winner notification with modal for multi-item auction
-                  try {
-                    console.log('🎉 Setting winner modal for WINNER');
-                    setWinnerData({
-                      winner_display_id: user?.username || 'You',
-                      winning_bid: data.final_bid || 0,
-                      item_title: wonItem.title || 'Auction Item',
-                      user_participated: userParticipated,
-                      is_winner: true,
-                    });
-                    setShowWinnerModal(true);
-                    
-                    // Play winner sound when modal shows (synchronized)
-                    if (data.final_bid > 0) {
-                      playWinner(data.final_bid);
-                    }
-                    
-                    console.log('✅ Winner modal should now be visible for winner');
-                  } catch (error) {
-                    console.error('Error setting winner data:', error);
+                  setShowWinnerModal(true);
+
+                  // Play winner sound when modal shows (synchronized)
+                  if (data.final_bid > 0) {
+                    playWinner(data.final_bid);
                   }
-                } else {
-                  // Show winner modal for non-winners too (so everyone sees who won)
-                  try {
-                    setWinnerData({
-                      winner_display_id: data.winner.bidder_display_id || 'Winner',
-                      winning_bid: data.final_bid || 0,
-                      item_title: data.item_title || currentItem?.title || 'Auction Item',
-                      user_participated: userParticipated,
-                      is_winner: false,
-                    });
-                    setShowWinnerModal(true);
-                    
-                    // Play winner sound when modal shows (synchronized)
-                    if (data.final_bid > 0) {
-                      playWinner(data.final_bid);
-                    }
-                    
-                    console.log('🏆 Showing winner modal to non-winner:', data.winner.bidder_display_id);
-                  } catch (error) {
-                    console.error('Error setting winner data for non-winner:', error);
-                  }
+
+                  console.log('🏆 Showing winner modal:', data.winner.bidder_display_id);
+                } catch (error) {
+                  console.error('Error setting winner data:', error);
                 }
               } else {
                 // No winner (item passed/not sold), but still show modal to indicate bidding ended
@@ -886,7 +925,7 @@ const AuctionLiveViewerScreen = () => {
                   setWinnerData({
                     winner_display_id: 'No Winner',
                     winning_bid: 0,
-                    item_title: data.item_title || currentItem?.title || 'Auction Item',
+                    item_title: data.item_title || currentItemRef.current?.title || 'Auction Item',
                     user_participated: userParticipated,
                     is_winner: false,
                   });
@@ -901,55 +940,74 @@ const AuctionLiveViewerScreen = () => {
             case 'item_sold':
               setItemBiddingStatus('sold');
               setCanBid(false);
+              // Public payload carries only the winner's alias — the actual
+              // winner is notified via the targeted auction_item_won
+              // user_notification (handleUserNotification)
+              if (data.winner) {
+                try {
+                  setWinnerData({
+                    winner_display_id: data.winner.bidder_display_id || 'Winner',
+                    winning_bid: data.winner.amount || 0,
+                    item_title: data.item_title || currentItemRef.current?.title || 'Auction Item',
+                    user_participated: userParticipated,
+                    is_winner: false,
+                  });
+                  setShowWinnerModal(true);
+                } catch (error) {
+                  console.error('Error setting non-winner data on item_sold:', error);
+                }
+              }
               break;
           }
         }
       };
 
+      const handleStreamUrlUpdate = (data: any) => {
+        if (data.auction_id !== auctionId) return;
+
+        if (data.stream_url === null) {
+          // Broadcast stopped — the auction may still be live and biddable;
+          // only the video goes away. A real auction end arrives via
+          // auction_status_changed.
+          console.log('📺 Host stopped broadcast, cleaning up Agora viewer');
+          setAuction(prev => (prev ? { ...prev, stream_url: undefined } : null));
+          cleanupAgora();
+          return;
+        }
+
+        // Broadcast (re)started while the auction is still live — restore the
+        // stream url and resync item/bid state from the server. The Agora
+        // init effect rejoins the channel once stream_url is set again.
+        console.log('📺 Broadcast started/restarted, resyncing auction state');
+        setAuction(prev => (prev ? { ...prev, stream_url: data.stream_url } : prev));
+        loadAuctionData();
+      };
+
+      const handleBroadcastStatus = (data: any) => {
+        if (data.auction_id === auctionId) {
+          const paused = data.broadcast_status === 'paused';
+          console.log(`📡 Host ${paused ? 'paused' : 'resumed'} broadcast`);
+          setIsHostPaused(paused);
+        }
+      };
+
       const handleAuctionStatusChanged = (data: any) => {
         if (data.auction_id === auctionId) {
+          // Reflect the new status immediately so the UI can show the
+          // ended state without waiting for the reload to finish.
+          setAuction(prev => (prev ? { ...prev, status: data.status } : prev));
           loadAuctionData();
-          if (data.new_status === 'sold' || data.new_status === 'ended') {
-            // Check if user won this auction
-            if (data.winner_id === user?.id && data.new_status === 'sold' && auction) {
-              // Add won item to cart
-              const wonItem = {
-                auctionId: auction.id,
-                title: auction.title,
-                winningBid: data.winning_bid || auction.current_bid,
-                wonAt: new Date().toISOString(),
-                thumbnail_url: auction.thumbnail_url,
-                images: auction.images,
-              };
-              
-              setWonItems(prev => {
-                // Check if already in cart (prevent duplicates)
-                if (prev.find(item => item.auctionId === auction.id)) {
-                  return prev;
-                }
-                return [...prev, wonItem];
-              });
-              
-              // Show win notification with modal
+          if (data.status === 'sold' || data.status === 'ended') {
+            // The winner is notified via the targeted auction_won
+            // user_notification (handleUserNotification); the public payload
+            // carries only the winner's alias for the announcement modal
+            if (data.status === 'sold' && data.bidder_display_id && userParticipated) {
               try {
-                setWinnerData({
-                  winner_display_id: user?.username || 'You',
-                  winning_bid: data.winning_bid || auction?.current_bid || 0,
-                  item_title: auction?.title || 'Auction Item',
-                  user_participated: userParticipated,
-                  is_winner: true,
-                });
-                setShowWinnerModal(true);
-              } catch (error) {
-                console.error('Error setting winner data:', error);
-              }
-            } else if (data.new_status === 'ended' && data.winner_id !== user?.id) {
-              // User didn't win - show enhanced winner announcement modal
-              try {
-                setWinnerData({
-                  winner_display_id: data.bidder_display_id || 'Winner',
-                  winning_bid: data.winning_bid || auction?.current_bid || 0,
-                  item_title: currentItem?.title || auction?.title || 'Auction Item',
+                // Do not clobber a win modal that already arrived
+                setWinnerData((prev: any) => prev?.is_winner ? prev : {
+                  winner_display_id: data.bidder_display_id,
+                  winning_bid: data.final_bid || auction?.current_bid || 0,
+                  item_title: currentItemRef.current?.title || auction?.title || 'Auction Item',
                   user_participated: userParticipated,
                   is_winner: false,
                 });
@@ -958,37 +1016,86 @@ const AuctionLiveViewerScreen = () => {
                 console.error('Error setting winner data:', error);
               }
             }
+
+            // Stop Agora when the auction ends, regardless of who won
+            if (data.status === 'ended') {
+              console.log('🏁 Auction ended, cleaning up Agora viewer');
+              setItemBiddingStatus('ended');
+              setCanBid(false);
+              cleanupAgora();
+            }
           }
         }
       };
 
-      // Handle auction won event (direct win notification)
-      const handleAuctionWon = (data: any) => {
-        if (data.auction_id && data.winner_id === user?.id && auction) {
+      // Handle targeted win notifications — the backend tells the winner
+      // directly via user_notification so real user ids never appear in the
+      // public item/status broadcasts.
+      //   'auction_item_won' → a live-auction item the user just won
+      //   'auction_won'      → a timed auction the user won
+      const handleUserNotification = (data: any) => {
+        if (!data?.type) return;
+
+        if (data.type === 'auction_item_won' && data.auction_id === auctionId) {
+          console.log('🎉 Targeted item-won notification received:', data);
           const wonItem = {
-            auctionId: data.auction_id || auction.id,
-            title: data.title || auction.title,
-            winningBid: data.winning_bid || auction.current_bid,
+            auctionId: auctionId,
+            itemId: data.item_id || null,
+            title: data.item_title || currentItemRef.current?.title || 'Auction Item',
+            winningBid: data.amount || 0,
             wonAt: new Date().toISOString(),
-            thumbnail_url: auction.thumbnail_url,
-            images: auction.images,
+            thumbnail_url: currentItemRef.current?.images?.[0],
+            images: currentItemRef.current?.images,
           };
-          
+
           setWonItems(prev => {
-            if (prev.find(item => item.auctionId === wonItem.auctionId)) {
+            const exists = prev.find(item =>
+              item.auctionId === auctionId &&
+              (item.itemId === wonItem.itemId || (!item.itemId && !wonItem.itemId))
+            );
+            if (exists) return prev;
+            return [...prev, wonItem];
+          });
+
+          setWinnerData({
+            winner_display_id: user?.username || 'You',
+            winning_bid: wonItem.winningBid,
+            item_title: wonItem.title,
+            user_participated: true,
+            is_winner: true,
+          });
+          setShowWinnerModal(true);
+
+          if (wonItem.winningBid > 0) {
+            playWinner(wonItem.winningBid);
+          }
+          return;
+        }
+
+        if (data.type === 'auction_won' && data.data?.auction_id === auctionId) {
+          console.log('🎉 Targeted auction-won notification received:', data);
+          const wonItem = {
+            auctionId: auctionId,
+            title: data.data?.auction_title || 'Auction Item',
+            winningBid: data.data?.winning_bid || 0,
+            wonAt: new Date().toISOString(),
+          };
+
+          setWonItems(prev => {
+            if (prev.find(item => item.auctionId === wonItem.auctionId && !item.itemId)) {
               return prev;
             }
             return [...prev, wonItem];
           });
-          
-          Alert.alert(
-            '🎉 You Won!',
-            `${wonItem.title} for ₣${wonItem.winningBid.toFixed(2)}`,
-            [
-              { text: 'View Cart', onPress: () => setShowCartModal(true) },
-              { text: 'Continue', style: 'cancel' }
-            ]
-          );
+
+          setWinnerData({
+            winner_display_id: user?.username || 'You',
+            winning_bid: wonItem.winningBid,
+            item_title: wonItem.title,
+            user_participated: true,
+            is_winner: true,
+          });
+          setShowWinnerModal(true);
         }
       };
 
@@ -996,10 +1103,10 @@ const AuctionLiveViewerScreen = () => {
       const handleViewCountUpdate = (data: any) => {
         console.log('👁️ Viewer screen received viewer count update:', data);
         console.log('👁️ Expected auction ID:', auctionId, 'Received auction ID:', data.auction_id);
-        console.log('👁️ Current viewer count:', viewerCount, 'New count:', data.view_count || data.current_viewers || 0);
-        
+        console.log('👁️ Current viewer count:', viewerCount, 'New count:', data.stream_watchers ?? data.view_count ?? data.current_viewers ?? 0);
+
         if (data.auction_id === auctionId) {
-          const newCount = data.view_count || data.current_viewers || 0;
+          const newCount = data.stream_watchers ?? data.view_count ?? data.current_viewers ?? 0;
           console.log('👁️ ✓ Auction ID matches - setting viewer count to:', newCount, 'previous:', viewerCount);
           setViewerCount(newCount);
         } else {
@@ -1084,23 +1191,51 @@ const AuctionLiveViewerScreen = () => {
 
       auctionSocket.on('new_bid', handleNewBid);
       auctionSocket.on('auction_status_changed', handleAuctionStatusChanged);
-      auctionSocket.on('auction_won', handleAuctionWon);
+      auctionSocket.on('user_notification', handleUserNotification);
       auctionSocket.on('item_event', handleItemEvent);
+      auctionSocket.on('stream_url_updated', handleStreamUrlUpdate);
+      auctionSocket.on('broadcast_status', handleBroadcastStatus);
       auctionSocket.on('view_count_updated', handleViewCountUpdate); // Fixed event name
+      // Host soundboard sounds — play the file natively, no visual indicator
+      const handleSoundPlayed = (data: { auction_id?: string; soundId: string; soundUrl?: string }) => {
+        if (data?.soundId && (!data.auction_id || data.auction_id === auctionId)) {
+          playSoundboardSound(data.soundId, data.soundUrl);
+        }
+      };
+      const handleSoundStopped = (data: { auction_id?: string; soundId: string }) => {
+        if (data?.soundId && (!data.auction_id || data.auction_id === auctionId)) {
+          stopSoundboardSound(data.soundId);
+        }
+      };
+      // Host tapped the gavel — play the bundled lottie animation
+      const handleGavelPlayed = (data: { auction_id?: string }) => {
+        if (!data.auction_id || data.auction_id === auctionId) {
+          setShowGavelLottie(true);
+        }
+      };
+
       auctionSocket.on('new_reaction', handleNewReaction);
+      auctionSocket.on('sound_played', handleSoundPlayed);
+      auctionSocket.on('sound_stopped', handleSoundStopped);
+      auctionSocket.on('gavel_played', handleGavelPlayed);
 
       // Store refs for cleanup
       bidHandlerRef.current = handleNewBid;
       statusHandlerRef.current = handleAuctionStatusChanged;
-      wonHandlerRef.current = handleAuctionWon;
+      wonHandlerRef.current = handleUserNotification;
       itemEventHandlerRef.current = handleItemEvent;
       viewCountHandlerRef.current = handleViewCountUpdate;
       reactionHandlerRef.current = handleNewReaction;
+      streamUrlHandlerRef.current = handleStreamUrlUpdate;
+      broadcastStatusHandlerRef.current = handleBroadcastStatus;
+      soundHandlerRef.current = handleSoundPlayed;
+      soundStopHandlerRef.current = handleSoundStopped;
+      gavelHandlerRef.current = handleGavelPlayed;
     };
 
     auctionSocket.connect('viewer-screen');
     setupWebSocketListeners();
-    auctionSocket.joinAuction(auctionId, user?.id);
+    auctionSocket.joinAuction(auctionId, user?.id, 'stream');
     
     // Track auction view for viewer count
     console.log('👁️ Tracking auction view for viewer count...');
@@ -1114,14 +1249,26 @@ const AuctionLiveViewerScreen = () => {
     return () => {
       if (bidHandlerRef.current) auctionSocket.off('new_bid', bidHandlerRef.current);
       if (statusHandlerRef.current) auctionSocket.off('auction_status_changed', statusHandlerRef.current);
-      if (wonHandlerRef.current) auctionSocket.off('auction_won', wonHandlerRef.current);
+      if (wonHandlerRef.current) auctionSocket.off('user_notification', wonHandlerRef.current);
       if (itemEventHandlerRef.current) auctionSocket.off('item_event', itemEventHandlerRef.current);
+      if (streamUrlHandlerRef.current) auctionSocket.off('stream_url_updated', streamUrlHandlerRef.current);
+      if (broadcastStatusHandlerRef.current) auctionSocket.off('broadcast_status', broadcastStatusHandlerRef.current);
       if (viewCountHandlerRef.current) auctionSocket.off('view_count_updated', viewCountHandlerRef.current); // Fixed event name
       if (reactionHandlerRef.current) auctionSocket.off('new_reaction', reactionHandlerRef.current);
+      if (soundHandlerRef.current) auctionSocket.off('sound_played', soundHandlerRef.current);
+      if (soundStopHandlerRef.current) auctionSocket.off('sound_stopped', soundStopHandlerRef.current);
+      if (gavelHandlerRef.current) auctionSocket.off('gavel_played', gavelHandlerRef.current);
       auctionSocket.leaveAuction(auctionId);
       auctionSocket.disconnect('viewer-screen');
     };
   }, [auctionId]); // Only depend on auctionId, not on currentItem or itemBiddingStatus
+
+  // Keep refs in sync so socket handlers (registered once per auctionId)
+  // always see the latest item/status instead of stale mount-time state
+  useEffect(() => {
+    currentItemRef.current = currentItem;
+    itemBiddingStatusRef.current = itemBiddingStatus;
+  });
 
   // Separate useEffect to reset modal state when joining a new auction
   useEffect(() => {
@@ -1195,7 +1342,7 @@ const AuctionLiveViewerScreen = () => {
     const notificationId = `optimistic-${Date.now()}`;
     const optimisticNotification = {
       id: notificationId,
-      bidder_display_id: user?.username || 'You',
+      bidder_display_id: 'You', // Replaced with the real "Bidder #N" alias when the bid confirms
       amount: amount,
       translateY: new Animated.Value(0), // Start at base position (bottom: 100)
       opacity: new Animated.Value(0), // Start transparent
@@ -1238,18 +1385,34 @@ const AuctionLiveViewerScreen = () => {
       setBidNotifications(prev => prev.filter(n => n.id !== notificationId));
     });
 
+    pendingOwnBidAmountRef.current = amount;
     try {
-      await auctionsAPI.placeBid({
+      const placedBid = await auctionsAPI.placeBid({
         auction_id: auctionId,
         amount,
+        item_id: currentItem?.id,
         bid_type: 'manual',
       });
+
+      // Swap the optimistic placeholder for the real bidder alias assigned by
+      // the backend (e.g. "Bidder #2") so our own bubble matches what everyone
+      // else sees, and remember it to dedup future own-bid socket events.
+      if (placedBid?.bidder_display_id) {
+        myBidderDisplayIdRef.current = placedBid.bidder_display_id;
+        setBidNotifications(prev =>
+          prev.map(n => n.id === notificationId
+            ? { ...n, bidder_display_id: placedBid.bidder_display_id }
+            : n
+          )
+        );
+      }
 
       setBidModalVisible(false);
       Alert.alert('Success', 'Bid placed successfully!');
     } catch (error: any) {
       // Error handling in API service
     } finally {
+      pendingOwnBidAmountRef.current = null;
       setPlacingBid(false);
     }
   };
@@ -1279,6 +1442,73 @@ const AuctionLiveViewerScreen = () => {
     if (hours > 0) return `${hours}h ${minutes}m`;
     if (minutes > 0) return `${minutes}m ${secs}s`;
     return `${secs}s`;
+  };
+
+  const handleShare = async () => {
+    if (!auction) return;
+
+    setShowShareModal(true);
+    setSelectedConversations([]);
+    setChatConversationsLoading(true);
+
+    try {
+      const { conversations } = await chatAPI.getConversations(1, 50);
+      setChatConversations(conversations);
+    } catch (error) {
+      console.error('Error loading chat conversations:', error);
+      Alert.alert('Error', 'Failed to load conversations for sharing');
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  };
+
+  const handleShareToChats = async () => {
+    if (!auction || selectedConversations.length === 0) return;
+
+    setIsSharing(true);
+
+    try {
+      const auctionData = {
+        id: auction.id,
+        title: auction.title,
+        currentBid: auction.current_bid || 0,
+        image: auction.images?.[0] || auction.thumbnail_url || '',
+      };
+
+      await Promise.all(
+        selectedConversations.map((conversation) =>
+          chatAPI.sendMessage({
+            conversationId: conversation.id,
+            messageType: 'text',
+            content: auction.title,
+            metadata: { auctionData },
+          })
+        )
+      );
+
+      Alert.alert('Shared', `Auction shared to ${selectedConversations.length} chat${selectedConversations.length === 1 ? '' : 's'}.`);
+      setShowShareModal(false);
+      setSelectedConversations([]);
+    } catch (error) {
+      console.error('Error sharing auction to chats:', error);
+      Alert.alert('Error', 'Failed to share auction to chats');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleShareExternal = async () => {
+    if (!auction) return;
+
+    try {
+      const shareUrl = `https://www.fretiko.com/auction/${auction.id}`;
+      await Share.share({
+        message: `Check out this live auction: ${auction.title} - Current bid: ₣${(auction.current_bid || 0).toFixed(2)} on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
+        url: shareUrl,
+      });
+    } catch (error) {
+      console.error('Error sharing auction:', error);
+    }
   };
 
   // Send reaction
@@ -1346,6 +1576,25 @@ const AuctionLiveViewerScreen = () => {
     );
   }
 
+  // Auction ended (host ended the live stream or the auction closed) - show a
+  // clear ended state instead of leaving the viewer on a dead video screen.
+  if (auction.status === 'ended' || auction.status === 'cancelled') {
+    return (
+      <View style={styles.loadingContainer}>
+        <Ionicons name="videocam-off" size={64} color="#E74C3C" />
+        <Text style={[styles.loadingText, { marginTop: 16, marginBottom: 8 }]}>
+          This live auction has ended
+        </Text>
+        <TouchableOpacity
+          style={styles.endedGoBackButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Text style={styles.endedGoBackButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   const renderedContent = (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Agora RTC Video (for live auctions) */}
@@ -1365,6 +1614,56 @@ const AuctionLiveViewerScreen = () => {
               <Text style={styles.placeholderText}>
                 {!isAgoraJoined ? 'Connecting to auction...' : 'Waiting for host...'}
               </Text>
+            </View>
+          )}
+
+          {/* Host pause overlay - Creative Design */}
+          {isHostPaused && (
+            <Animated.View style={styles.pauseOverlay} pointerEvents="none">
+              <View style={styles.pauseOverlayContent}>
+                <Animated.View
+                  style={[
+                    styles.pauseIconContainer,
+                    { transform: [{ scale: pausePulseAnim }] },
+                  ]}
+                >
+                  <Ionicons name="pause-circle" size={80} color="rgba(255, 255, 255, 0.95)" />
+                </Animated.View>
+                <Text style={styles.pauseTitle}>Host Paused</Text>
+                <Text style={styles.pauseSubtitle}>The live stream is paused</Text>
+                <Animated.View
+                  style={[
+                    styles.pausePulse,
+                    {
+                      transform: [{ scale: pausePulseAnim }],
+                      opacity: pausePulseAnim.interpolate({
+                        inputRange: [1, 1.3],
+                        outputRange: [0.2, 0.05],
+                      }),
+                    },
+                  ]}
+                />
+              </View>
+            </Animated.View>
+          )}
+
+          {/* Host mute overlay */}
+          {(isHostVideoMuted || isHostAudioMuted) && !isHostPaused && (
+            <View style={styles.hostMuteOverlay} pointerEvents="none">
+              <View style={styles.hostMuteContent}>
+                {isHostVideoMuted && (
+                  <View style={styles.hostMuteRow}>
+                    <Ionicons name="videocam-off" size={22} color="rgba(255, 255, 255, 0.95)" />
+                    <Text style={styles.hostMuteText}>Host turned off video</Text>
+                  </View>
+                )}
+                {isHostAudioMuted && (
+                  <View style={styles.hostMuteRow}>
+                    <Ionicons name="mic-off" size={22} color="rgba(255, 255, 255, 0.95)" />
+                    <Text style={styles.hostMuteText}>Host muted microphone</Text>
+                  </View>
+                )}
+              </View>
             </View>
           )}
         </>
@@ -1388,9 +1687,11 @@ const AuctionLiveViewerScreen = () => {
           <View style={styles.topBarRight}>
             {/* Live Badge and Viewer Count */}
             {auction.auction_type === 'live' && (
-              <View style={styles.liveBadge}>
-                <View style={styles.liveDot} />
-                <Text style={styles.liveText}>LIVE</Text>
+              <View style={[styles.liveBadge, isHostPaused && styles.pausedBadge]}>
+                <View style={[styles.liveDot, isHostPaused && styles.pausedDot]} />
+                <Text style={[styles.liveText, isHostPaused && styles.pausedText]}>
+                  {isHostPaused ? "PAUSED" : "LIVE"}
+                </Text>
               </View>
             )}
             <View style={styles.viewerCountContainer}>
@@ -1402,6 +1703,9 @@ const AuctionLiveViewerScreen = () => {
                 })()}
               </Text>
             </View>
+            <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
+              <Ionicons name="share-outline" size={20} color="white" />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -1441,16 +1745,18 @@ const AuctionLiveViewerScreen = () => {
               <TouchableOpacity
                 style={styles.itemImageContainer}
                 onPress={() => {
-                  // Prioritize video if available, otherwise show first image
+                  // Open swipeable gallery: video first, then all images
+                  const media: { type: 'image' | 'video'; url: string }[] = [];
                   if (currentItem.video_url) {
-                    setSelectedVideoUrl(currentItem.video_url);
-                    setMediaType('video');
-                    setImageViewerVisible(true);
-                  } else if (currentItem.images && currentItem.images.length > 0) {
-                    setSelectedImageUrl(currentItem.images[0]);
-                    setMediaType('image');
-                    setImageViewerVisible(true);
+                    media.push({ type: 'video', url: currentItem.video_url });
                   }
+                  (currentItem.images || []).forEach((url: string) => {
+                    media.push({ type: 'image', url });
+                  });
+                  if (media.length === 0) return;
+                  setViewerMedia(media);
+                  setViewerMediaIndex(0);
+                  setImageViewerVisible(true);
                 }}
                 activeOpacity={0.8}
               >
@@ -1788,9 +2094,8 @@ const AuctionLiveViewerScreen = () => {
         animationType="fade"
         onRequestClose={() => {
           setImageViewerVisible(false);
-          setSelectedImageUrl(null);
-          setSelectedVideoUrl(null);
-          setMediaType('image');
+          setViewerMedia([]);
+          setViewerMediaIndex(0);
         }}
         statusBarTranslucent={true}
       >
@@ -1799,46 +2104,99 @@ const AuctionLiveViewerScreen = () => {
             style={styles.imageViewerCloseButton}
             onPress={() => {
               setImageViewerVisible(false);
-              setSelectedImageUrl(null);
-              setSelectedVideoUrl(null);
-              setMediaType('image');
+              setViewerMedia([]);
+              setViewerMediaIndex(0);
             }}
           >
             <Ionicons name="close" size={28} color="#FFFFFF" />
           </TouchableOpacity>
-          
-          {mediaType === 'image' && selectedImageUrl && (
-            <Image
-              source={{ uri: selectedImageUrl }}
-              style={styles.imageViewerImage}
-              resizeMode="contain"
-            />
-          )}
-          
-          {mediaType === 'video' && selectedVideoUrl && (
-            <SimpleVideoViewer videoUri={selectedVideoUrl} />
+
+          <FlatList
+            data={viewerMedia}
+            keyExtractor={(media, index) => `${media.url}-${index}`}
+            horizontal
+            pagingEnabled
+            snapToInterval={screenWidth}
+            decelerationRate="fast"
+            showsHorizontalScrollIndicator={false}
+            style={{ width: screenWidth, height: screenHeight }}
+            onMomentumScrollEnd={(event) => {
+              setViewerMediaIndex(Math.round(event.nativeEvent.contentOffset.x / screenWidth));
+            }}
+            getItemLayout={(_, index) => ({
+              length: screenWidth,
+              offset: screenWidth * index,
+              index,
+            })}
+            renderItem={({ item: media, index }) => (
+              <View style={{ width: screenWidth, height: screenHeight, justifyContent: 'center', alignItems: 'center' }}>
+                {media.type === 'video' ? (
+                  <SimpleVideoViewer videoUri={media.url} isActive={index === viewerMediaIndex} />
+                ) : (
+                  <Image
+                    source={{ uri: media.url }}
+                    style={styles.imageViewerImage}
+                    resizeMode="contain"
+                  />
+                )}
+              </View>
+            )}
+          />
+
+          {viewerMedia.length > 1 && (
+            <View style={styles.imageViewerCounter}>
+              <Text style={styles.imageViewerCounterText}>
+                {viewerMediaIndex + 1} / {viewerMedia.length}
+              </Text>
+            </View>
           )}
         </View>
       </Modal>
+
+      <ShareModal
+        visible={showShareModal}
+        title="Share Auction"
+        onClose={() => setShowShareModal(false)}
+        conversations={chatConversations}
+        conversationsLoading={chatConversationsLoading}
+        selectedConversations={selectedConversations}
+        onSelect={setSelectedConversations}
+        onShare={handleShareToChats}
+        onShareExternal={handleShareExternal}
+        isSharing={isSharing}
+        insetsBottom={insets.bottom}
+      />
+
+      {showGavelLottie && (
+        <GavelLottieEffect onComplete={() => setShowGavelLottie(false)} />
+      )}
     </>
   );
 };
 
 // Simple Video Viewer Component
-const SimpleVideoViewer: React.FC<{ videoUri: string }> = ({ videoUri }) => {
+const SimpleVideoViewer: React.FC<{ videoUri: string; isActive: boolean }> = ({ videoUri, isActive }) => {
   const player = useVideoPlayer(videoUri, (player) => {
     player.loop = false;
     player.muted = false;
   });
+
+  useEffect(() => {
+    if (isActive) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [player, isActive]);
 
   return (
     <VideoView
       player={player}
       style={styles.imageViewerImage}
       contentFit="contain"
-      nativeControls={true}
+      nativeControls={false}
       fullscreenOptions={{
-        allowFullscreen: false,
+        enable: false,
       }}
     />
   );
@@ -1860,6 +2218,18 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 16,
     marginTop: 12,
+  },
+  endedGoBackButton: {
+    backgroundColor: '#8E44AD',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  endedGoBackButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
   video: {
     width: screenWidth,
@@ -1914,6 +2284,91 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
   },
+  pausedBadge: {
+    backgroundColor: '#FFFC00',
+  },
+  pausedDot: {
+    backgroundColor: '#E74C3C',
+  },
+  pausedText: {
+    color: '#E74C3C',
+  },
+  // Host pause overlay - Creative Design
+  pauseOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  pauseOverlayContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  pauseIconContainer: {
+    marginBottom: 20,
+    position: 'relative',
+    zIndex: 2,
+  },
+  pauseTitle: {
+    color: 'white',
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  pauseSubtitle: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  pausePulse: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    top: -20,
+    zIndex: 1,
+  },
+  // Host mute overlay
+  hostMuteOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  hostMuteContent: {
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    minWidth: 200,
+  },
+  hostMuteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  hostMuteText: {
+    color: 'rgba(255, 255, 255, 0.95)',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   viewerCount: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1954,6 +2409,14 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
     marginTop: 4,
+  },
+  shareButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   controlIconButton: {
     width: 40,
@@ -2292,23 +2755,37 @@ const styles = StyleSheet.create({
   // Image viewer styles
   imageViewerOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.95)',
+  },
+  imageViewerCounter: {
+    position: 'absolute',
+    bottom: 50,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  imageViewerCounterText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   imageViewerCloseButton: {
     position: 'absolute',
     top: 50,
     right: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    borderRadius: 20,
-    padding: 8,
-    zIndex: 1,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
   },
   imageViewerImage: {
-    width: '90%',
-    height: '80%',
-    resizeMode: 'contain',
+    width: screenWidth,
+    height: screenHeight,
   },
   // Winner Modal Styles
   winnerModalOverlay: {
@@ -2530,35 +3007,6 @@ const modalStyles = StyleSheet.create({
     color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
-  },
-  imageViewerOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.95)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  imageViewerContainer: {
-    width: '100%',
-    height: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  imageViewerImage: {
-    width: '100%',
-    height: '100%',
-  },
-  imageViewerCloseButton: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
   },
 });
 

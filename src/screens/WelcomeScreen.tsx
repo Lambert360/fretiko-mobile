@@ -21,9 +21,15 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface WelcomeScreenProps {
   navigation: any;
+  route?: { params?: { citizenNumber?: number } };
 }
 
-export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ navigation }) => {
+// Format a citizen number for display: 42 -> "FRT-000042"
+const formatCitizenNumber = (n?: number | null): string =>
+  n == null ? '' : `FRT-${String(n).padStart(6, '0')}`;
+
+export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ navigation, route }) => {
+  const citizenNumber = route?.params?.citizenNumber;
   const { clearNewUserFlag, isAuthenticated, isNewUser, signin } = useAuth();
   const { registrationData, clearRegistrationData } = useRegistration();
   const insets = useSafeAreaInsets();
@@ -117,6 +123,13 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ navigation }) => {
 
           <Text style={styles.welcomeTitle}>Welcome to Fretiko</Text>
           <Text style={styles.welcomeSubtitle}>City in the clouds.</Text>
+
+          {citizenNumber != null && (
+            <View style={styles.citizenBadge}>
+              <Text style={styles.citizenBadgeLabel}>YOU ARE CITIZEN</Text>
+              <Text style={styles.citizenBadgeNumber}>{formatCitizenNumber(citizenNumber)}</Text>
+            </View>
+          )}
 
           <View style={styles.taglineContainer}>
             <View style={styles.taglineDivider} />
@@ -233,6 +246,30 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#3498DB',
     marginHorizontal: 8,
+  },
+  citizenBadge: {
+    marginTop: 32,
+    alignItems: 'center',
+    backgroundColor: 'rgba(52, 152, 219, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(52, 152, 219, 0.5)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+  },
+  citizenBadgeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 2,
+    color: 'rgba(255, 255, 255, 0.6)',
+    marginBottom: 4,
+  },
+  citizenBadgeNumber: {
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: 4,
+    color: '#3498DB',
+    fontVariant: ['tabular-nums'],
   },
   buttonContainer: {
     alignItems: 'center',

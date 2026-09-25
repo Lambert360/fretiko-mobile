@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { auctionsAPI, auctionSocket, AuctionWithDetails } from '../services/auctionsAPI';
+import { navigateToAuctionDetails } from '../utils/auctionNavigation';
 
 /**
  * Auction Watchlist Screen
@@ -38,7 +39,7 @@ const AuctionWatchlistScreen = () => {
   const [removingId, setRemovingId] = useState<string | null>(null);
   
   // Refs for countdown timers
-  const timeUpdateInterval = useRef<NodeJS.Timeout | null>(null);
+  const timeUpdateInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Organize watchlist into sections
   const organizeWatchlist = (auctions: AuctionWithDetails[]) => {
@@ -292,7 +293,7 @@ const AuctionWatchlistScreen = () => {
   };
 
   const navigateToAuction = (auction: AuctionWithDetails) => {
-    navigation.navigate('AuctionDetails', { auctionId: auction.id });
+    navigateToAuctionDetails(navigation, auction);
   };
 
   const renderAuctionItem = ({ item }: { item: AuctionWithDetails }) => (

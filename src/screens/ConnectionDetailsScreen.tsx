@@ -62,6 +62,7 @@ interface RelationshipDetails {
     totalSpent: number;
     relationshipStatus: string;
     lastOrderDate: string;
+    customerSince?: string;
   } | null;
   recentOrders: Order[];
 }
@@ -147,7 +148,7 @@ export const ConnectionDetailsScreen: React.FC<ConnectionDetailsScreenProps> = (
         chatId: conversation.id,
         chatName: relationshipData.targetUser.username,
         chatAvatar: relationshipData.targetUser.avatarUrl || 'https://via.placeholder.com/50',
-        chatType: chatType as const,
+        chatType,
         isOnline: true, // Assume online for now
         verified: false,
         isAI: false,
@@ -163,6 +164,7 @@ export const ConnectionDetailsScreen: React.FC<ConnectionDetailsScreenProps> = (
 
   const formatDate = (dateString: string): string => {
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'N/A';
     const now = new Date();
     const diffTime = Math.abs(now.getTime() - date.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -176,7 +178,7 @@ export const ConnectionDetailsScreen: React.FC<ConnectionDetailsScreenProps> = (
   };
 
   const formatCurrency = (amount: number): string => {
-    return `₣${amount.toFixed(2)}`;
+    return `₣${(Number(amount) || 0).toFixed(2)}`;
   };
 
   const getUserRole = (): string => {
@@ -302,7 +304,7 @@ export const ConnectionDetailsScreen: React.FC<ConnectionDetailsScreenProps> = (
                 <Ionicons name="calendar-outline" size={20} color="#B0B0B0" />
                 <Text style={styles.infoLabel}>Customer Since</Text>
                 <Text style={styles.infoValue}>
-                  {connectionInfo.connectedSince ? formatDate(connectionInfo.connectedSince) : 'N/A'}
+                  {businessMetrics.customerSince ? formatDate(businessMetrics.customerSince) : 'N/A'}
                 </Text>
               </View>
 

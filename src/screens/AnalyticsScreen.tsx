@@ -11,10 +11,15 @@ import {
   StatusBar,
   Dimensions,
   TextInput,
+  Linking,
+  Modal,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { analyticsAPI, AnalyticsData, AnalyticsPeriod, LiveStreamingAnalytics, AuctionAnalytics } from '../services/analyticsAPI';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import { analyticsAPI, AnalyticsData, AnalyticsPeriod, LiveStreamingAnalytics, AuctionAnalytics, AnalyticsSummary, CustomerAnalytics, ProductAnalytics, RealtimeAnalytics, AnalyticsComparison, StreamRealTimeAnalytics, VendorRealTimeMetrics, AnalyticsReport } from '../services/analyticsAPI';
 import { walletAPI, SalesAnalytics } from '../services/walletAPI';
 import LineChart from '../components/LineChart';
 
@@ -23,12 +28,27 @@ const { width: screenWidth } = Dimensions.get('window');
 const AnalyticsScreen: React.FC = () => {
   const navigation = useNavigation();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'livestream' | 'auctions' | 'sales'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'livestream' | 'auctions' | 'sales' | 'products' | 'customers'>('overview');
   const [activePeriod, setActivePeriod] = useState<AnalyticsPeriod>('daily');
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [liveStreamingData, setLiveStreamingData] = useState<LiveStreamingAnalytics | null>(null);
   const [auctionData, setAuctionData] = useState<AuctionAnalytics | null>(null);
   const [salesData, setSalesData] = useState<SalesAnalytics | null>(null);
+  const [productData, setProductData] = useState<ProductAnalytics | null>(null);
+  const [customerData, setCustomerData] = useState<CustomerAnalytics | null>(null);
+  const [realtimeData, setRealtimeData] = useState<RealtimeAnalytics | null>(null);
+  const [summaryData, setSummaryData] = useState<AnalyticsSummary | null>(null);
+  const [comparisonData, setComparisonData] = useState<AnalyticsComparison | null>(null);
+  const [compareMode, setCompareMode] = useState(false);
+  const [vendorRealtime, setVendorRealtime] = useState<VendorRealTimeMetrics | null>(null);
+  const [streamDrilldown, setStreamDrilldown] = useState<StreamRealTimeAnalytics | null>(null);
+  const [drilldownLoading, setDrilldownLoading] = useState(false);
+  const [reportsList, setReportsList] = useState<AnalyticsReport[]>([]);
+  const [reportModalVisible, setReportModalVisible] = useState(false);
+  const [reportGenerating, setReportGenerating] = useState(false);
+  const [reportType, setReportType] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('weekly');
+  const [reportSource, setReportSource] = useState<'all' | 'regular' | 'live_stream' | 'auctions' | 'invoice' | 'wishlist'>('all');
+  const [reportFormat, setReportFormat] = useState<'pdf' | 'excel'>('pdf');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -45,21 +65,135 @@ const AnalyticsScreen: React.FC = () => {
       if (activeTab === 'overview') {
         const data = await analyticsAPI.getAnalytics(activePeriod, currentDate);
         setAnalyticsData(data);
+        // Supporting panels load in parallel — non-blocking failures are fine
+        const [rt, summary, reports] = await Promise.allSettled([
+          analyticsAPI.getRealTimeAnalytics(),
+          analyticsAPI.getAnalyticsSummary(),
+          analyticsAPI.getReports(),
+        ]);
+        if (rt.status === 'fulfilled') setRealtimeData(rt.value);
+        if (summary.status === 'fulfilled') setSummaryData(summary.value);
+        if (reports.status === 'fulfilled') setReportsList(reports.value);
+        if (compareMode) loadComparison();
       } else if (activeTab === 'livestream') {
         const liveData = await analyticsAPI.getLiveStreamingAnalytics(activePeriod, currentDate);
         setLiveStreamingData(liveData);
+        const vendorRt = await analyticsAPI.getVendorRealTimeMetrics().catch(() => null);
+        if (vendorRt) setVendorRealtime(vendorRt);
       } else if (activeTab === 'auctions') {
         const auctionDataResult = await analyticsAPI.getAuctionAnalytics(activePeriod, currentDate);
         setAuctionData(auctionDataResult);
       } else if (activeTab === 'sales') {
         const salesDataResult = await walletAPI.getSalesAnalytics({ period: activePeriod });
         setSalesData(salesDataResult);
+      } else if (activeTab === 'products') {
+        const productDataResult = await analyticsAPI.getProductAnalytics(activePeriod);
+        setProductData(productDataResult);
+      } else if (activeTab === 'customers') {
+        const customerDataResult = await analyticsAPI.getCustomerAnalytics(activePeriod);
+        setCustomerData(customerDataResult);
       }
     } catch (error) {
       console.error('Error loading analytics data:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const loadComparison = async () => {
+    try {
+      // Compare current period against the previous same-length period
+      const prev = new Date(currentDate);
+      if (activePeriod === 'daily') prev.setDate(prev.getDate() - 1);
+      else if (activePeriod === 'weekly') prev.setDate(prev.getDate() - 7);
+      else prev.setMonth(prev.getMonth() - 1);
+      const result = await analyticsAPI.getAnalyticsComparison(activePeriod, currentDate, prev);
+      setComparisonData(result);
+    } catch (error) {
+      console.error('Error loading comparison:', error);
+      setComparisonData(null);
+    }
+  };
+
+  const openStreamDrilldown = async (streamId: string) => {
+    setDrilldownLoading(true);
+    try {
+      const data = await analyticsAPI.getRealTimeLiveStreamAnalytics(streamId);
+      setStreamDrilldown(data);
+    } catch (error) {
+      console.error('Error loading stream drilldown:', error);
+    } finally {
+      setDrilldownLoading(false);
+    }
+  };
+
+  const handleGenerateReport = async () => {
+    setReportGenerating(true);
+    try {
+      await analyticsAPI.generateReport(
+        reportType,
+        currentDate,
+        undefined,
+        reportFormat,
+        reportSource
+      );
+      setReportModalVisible(false);
+      const reports = await analyticsAPI.getReports().catch(() => []);
+      setReportsList(reports);
+    } catch (error) {
+      console.error('Error generating report:', error);
+    } finally {
+      setReportGenerating(false);
+    }
+  };
+
+  const handleDownloadReport = async (report: AnalyticsReport) => {
+    try {
+      const { downloadUrl, format } = await analyticsAPI.downloadReport(report.id);
+      if (!downloadUrl) {
+        Alert.alert('Report not ready', 'This report has no download link yet. Try again in a moment.');
+        return;
+      }
+
+      // Download to device cache, then open the share sheet so the user can
+      // save to Files / Drive / open in a viewer — instead of dumping them
+      // into a browser tab pointed at the storage URL.
+      const ext = format === 'excel' ? 'xlsx'
+        : ['pdf', 'csv', 'json', 'xlsx'].includes(format || '')
+          ? format
+          : downloadUrl.split('.').pop()?.split('?')[0] || 'pdf';
+      const mimeType = ext === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : ext === 'csv' ? 'text/csv'
+        : ext === 'json' ? 'application/json'
+        : 'application/pdf';
+
+      const safeTitle = (report.title || 'analytics-report')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'analytics-report';
+      const fileName = `fretiko-${safeTitle}.${ext}`;
+      const localUri = `${FileSystem.cacheDirectory}${fileName}`;
+
+      const downloadResult = await FileSystem.downloadAsync(downloadUrl, localUri);
+
+      if (await Sharing.isAvailableAsync().catch(() => false)) {
+        await Sharing.shareAsync(downloadResult.uri, {
+          mimeType,
+          dialogTitle: report.title || 'Fretiko Report',
+        });
+      } else {
+        await Linking.openURL(downloadUrl);
+      }
+    } catch (error: any) {
+      console.error('Error downloading report:', error);
+      const msg = String(error?.message || '');
+      if (msg.includes('REPORT_NOT_READY') || msg.includes('202')) {
+        Alert.alert('Report not ready', 'The report is still being generated. Please try again shortly.');
+      } else {
+        Alert.alert('Download failed', 'Could not download the report. Please try again.');
+      }
     }
   };
 
@@ -72,6 +206,18 @@ const AnalyticsScreen: React.FC = () => {
 
   const formatNumber = (num: number) => {
     return new Intl.NumberFormat('en-US').format(num);
+  };
+
+  const getChannelInfo = (source: string) => {
+    switch (source) {
+      case 'regular': return { label: 'Store', icon: 'storefront-outline', color: '#007AFF' };
+      case 'live_stream': return { label: 'Live', icon: 'videocam-outline', color: '#FF2D92' };
+      case 'auction': return { label: 'Auction', icon: 'hammer-outline', color: '#FF9500' };
+      case 'service_booking': return { label: 'Service', icon: 'construct-outline', color: '#34C759' };
+      case 'invoice': return { label: 'Chat', icon: 'chatbubble-ellipses-outline', color: '#5856D6' };
+      case 'wishlist': return { label: 'Gift', icon: 'gift-outline', color: '#FF2D55' };
+      default: return { label: source, icon: 'cube-outline', color: '#8E8E93' };
+    }
   };
 
   const getPeriodText = () => {
@@ -98,13 +244,27 @@ const AnalyticsScreen: React.FC = () => {
     setCurrentDate(newDate);
   };
 
+  const renderTrendChip = (change: number | undefined | null) => {
+    if (change === undefined || change === null) return null;
+    const positive = change >= 0;
+    return (
+      <View style={[styles.trendChip, { backgroundColor: positive ? '#34C75920' : '#FF3B3020' }]}>
+        <Ionicons name={positive ? 'arrow-up' : 'arrow-down'} size={10} color={positive ? '#34C759' : '#FF3B30'} />
+        <Text style={[styles.trendChipText, { color: positive ? '#34C759' : '#FF3B30' }]}>
+          {Math.abs(change).toFixed(1)}%
+        </Text>
+      </View>
+    );
+  };
+
   const renderMetricCard = (
     title: string,
     value: string | number,
     subtitle: string,
     icon: string,
     color: string,
-    showChart?: boolean
+    showChart?: boolean,
+    trend?: number | null
   ) => (
     <View style={[styles.metricCard, { borderLeftColor: color }]}>
       <View style={styles.metricHeader}>
@@ -112,6 +272,7 @@ const AnalyticsScreen: React.FC = () => {
           <Ionicons name={icon as any} size={20} color={color} />
         </View>
         <Text style={styles.metricTitle}>{title}</Text>
+        {renderTrendChip(trend)}
       </View>
 
       <Text style={styles.metricValue}>
@@ -137,8 +298,13 @@ const AnalyticsScreen: React.FC = () => {
     </View>
   );
 
-  const renderReportItem = (report: any, index: number) => (
-    <TouchableOpacity key={index} style={styles.reportItem}>
+  const renderReportItem = (report: AnalyticsReport, index: number) => (
+    <TouchableOpacity
+      key={report.id || index}
+      style={styles.reportItem}
+      onPress={() => report.status === 'completed' && handleDownloadReport(report)}
+      disabled={report.status !== 'completed'}
+    >
       <View style={styles.reportIcon}>
         <Ionicons name="document-text-outline" size={16} color="#666" />
       </View>
@@ -147,7 +313,11 @@ const AnalyticsScreen: React.FC = () => {
         <Text style={styles.reportSubtitle}>{report.subtitle}</Text>
       </View>
       <View style={styles.reportStatus}>
-        <View style={[styles.statusDot, { backgroundColor: report.status === 'completed' ? '#34C759' : '#FF9500' }]} />
+        {report.status === 'completed' ? (
+          <Ionicons name="download-outline" size={16} color="#34C759" />
+        ) : (
+          <View style={[styles.statusDot, { backgroundColor: report.status === 'processing' ? '#FF9500' : '#FF3B30' }]} />
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -178,63 +348,39 @@ const AnalyticsScreen: React.FC = () => {
       </View>
 
       {/* Tab Selector */}
-      <View style={styles.tabContainer}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'overview' && styles.activeTab]}
-          onPress={() => setActiveTab('overview')}
-        >
-          <Ionicons
-            name="analytics-outline"
-            size={16}
-            color={activeTab === 'overview' ? '#007AFF' : '#666'}
-          />
-          <Text style={[styles.tabText, activeTab === 'overview' && styles.activeTabText]}>
-            Overview
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'livestream' && styles.activeTab]}
-          onPress={() => setActiveTab('livestream')}
-        >
-          <Ionicons
-            name="videocam-outline"
-            size={16}
-            color={activeTab === 'livestream' ? '#007AFF' : '#666'}
-          />
-          <Text style={[styles.tabText, activeTab === 'livestream' && styles.activeTabText]}>
-            Live Streams
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'auctions' && styles.activeTab]}
-          onPress={() => setActiveTab('auctions')}
-        >
-          <Ionicons
-            name="hammer-outline"
-            size={16}
-            color={activeTab === 'auctions' ? '#007AFF' : '#666'}
-          />
-          <Text style={[styles.tabText, activeTab === 'auctions' && styles.activeTabText]}>
-            Auctions
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'sales' && styles.activeTab]}
-          onPress={() => setActiveTab('sales')}
-        >
-          <Ionicons
-            name="cash-outline"
-            size={16}
-            color={activeTab === 'sales' ? '#007AFF' : '#666'}
-          />
-          <Text style={[styles.tabText, activeTab === 'sales' && styles.activeTabText]}>
-            Sales
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabScroll}
+        contentContainerStyle={styles.tabContainer}
+      >
+        {([
+          { key: 'overview', label: 'Overview', icon: 'analytics-outline' },
+          { key: 'livestream', label: 'Live Streams', icon: 'videocam-outline' },
+          { key: 'auctions', label: 'Auctions', icon: 'hammer-outline' },
+          { key: 'sales', label: 'Sales', icon: 'cash-outline' },
+          { key: 'products', label: 'Products', icon: 'cube-outline' },
+          { key: 'customers', label: 'Customers', icon: 'people-outline' },
+        ] as const).map(({ key, label, icon }) => (
+          <TouchableOpacity
+            key={key}
+            style={[styles.tab, activeTab === key && styles.activeTab]}
+            onPress={() => setActiveTab(key)}
+          >
+            <Ionicons
+              name={icon}
+              size={16}
+              color={activeTab === key ? '#007AFF' : '#666'}
+            />
+            <Text
+              style={[styles.tabText, activeTab === key && styles.activeTabText]}
+              numberOfLines={1}
+            >
+              {label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       <ScrollView
         style={styles.scrollView}
@@ -267,6 +413,14 @@ const AnalyticsScreen: React.FC = () => {
             <View style={[styles.channelTag, { backgroundColor: '#34C759' }]}>
               <Ionicons name="construct-outline" size={12} color="white" />
               <Text style={styles.channelTagText}>Service</Text>
+            </View>
+            <View style={[styles.channelTag, { backgroundColor: '#5856D6' }]}>
+              <Ionicons name="chatbubble-ellipses-outline" size={12} color="white" />
+              <Text style={styles.channelTagText}>Chat</Text>
+            </View>
+            <View style={[styles.channelTag, { backgroundColor: '#FF2D55' }]}>
+              <Ionicons name="gift-outline" size={12} color="white" />
+              <Text style={styles.channelTagText}>Gift</Text>
             </View>
           </View>
         </View>
@@ -302,9 +456,71 @@ const AnalyticsScreen: React.FC = () => {
 
         {/* Content based on active tab */}
         {activeTab === 'overview' ? (
-          // Overview tab content (existing)
           analyticsData && (
             <React.Fragment>
+              {/* Today / realtime strip */}
+              {realtimeData && (
+                <View style={styles.realtimeStrip}>
+                  <View style={styles.realtimeItem}>
+                    <Ionicons name="flash" size={14} color="#FFD700" />
+                    <Text style={styles.realtimeValue}>{formatCurrency(realtimeData.todayRevenue)}</Text>
+                    <Text style={styles.realtimeLabel}>Today</Text>
+                  </View>
+                  <View style={styles.realtimeItem}>
+                    <Ionicons name="bag-handle" size={14} color="#007AFF" />
+                    <Text style={styles.realtimeValue}>{realtimeData.activeOrders}</Text>
+                    <Text style={styles.realtimeLabel}>Active</Text>
+                  </View>
+                  <View style={styles.realtimeItem}>
+                    <Ionicons name="time" size={14} color="#FF9500" />
+                    <Text style={styles.realtimeValue}>{realtimeData.pendingOrders}</Text>
+                    <Text style={styles.realtimeLabel}>Pending</Text>
+                  </View>
+                  <View style={styles.realtimeItem}>
+                    <Ionicons name="people" size={14} color="#34C759" />
+                    <Text style={styles.realtimeValue}>{realtimeData.onlineCustomers}</Text>
+                    <Text style={styles.realtimeLabel}>Customers</Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Compare toggle */}
+              <TouchableOpacity
+                style={[styles.compareToggle, compareMode && styles.compareToggleActive]}
+                onPress={() => {
+                  const next = !compareMode;
+                  setCompareMode(next);
+                  if (next && !comparisonData) loadComparison();
+                }}
+              >
+                <Ionicons name="git-compare-outline" size={14} color={compareMode ? '#fff' : '#007AFF'} />
+                <Text style={[styles.compareToggleText, compareMode && { color: '#fff' }]}>
+                  {compareMode ? 'Comparing to previous period' : 'Compare with previous period'}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Comparison results */}
+              {compareMode && comparisonData && (
+                <View style={styles.comparisonCard}>
+                  <Text style={styles.sectionTitle}>vs. previous {activePeriod === 'daily' ? 'day' : activePeriod === 'weekly' ? 'week' : 'month'}</Text>
+                  <View style={styles.comparisonRow}>
+                    <Text style={styles.comparisonLabel}>Revenue</Text>
+                    <Text style={styles.comparisonValue}>{formatCurrency(comparisonData.comparison.revenue)}</Text>
+                    {renderTrendChip(comparisonData.changes.revenueChange)}
+                  </View>
+                  <View style={styles.comparisonRow}>
+                    <Text style={styles.comparisonLabel}>Orders</Text>
+                    <Text style={styles.comparisonValue}>{comparisonData.comparison.ordersProcessed}</Text>
+                    {renderTrendChip(comparisonData.changes.ordersChange)}
+                  </View>
+                  <View style={styles.comparisonRow}>
+                    <Text style={styles.comparisonLabel}>Customers</Text>
+                    <Text style={styles.comparisonValue}>{comparisonData.comparison.activeCustomers}</Text>
+                    {renderTrendChip(comparisonData.changes.customersChange)}
+                  </View>
+                </View>
+              )}
+
               {/* Metrics Grid */}
           <View style={styles.metricsContainer}>
             <View style={styles.metricsRow}>
@@ -313,7 +529,9 @@ const AnalyticsScreen: React.FC = () => {
                 analyticsData.ordersProcessed,
                 'orders',
                 'bag-outline',
-                '#007AFF'
+                '#007AFF',
+                false,
+                analyticsData.trends?.ordersChange
               )}
               {renderMetricCard(
                 'Transaction value',
@@ -338,7 +556,9 @@ const AnalyticsScreen: React.FC = () => {
                 formatCurrency(analyticsData.revenue),
                 'in value',
                 'cash-outline',
-                '#34C759'
+                '#34C759',
+                false,
+                analyticsData.trends?.revenueChange
               )}
             </View>
 
@@ -348,7 +568,9 @@ const AnalyticsScreen: React.FC = () => {
                 analyticsData.activeCustomers,
                 'customers served',
                 'people-outline',
-                '#34C759'
+                '#34C759',
+                false,
+                analyticsData.trends?.customersChange
               )}
               {renderMetricCard(
                 'Avg. order value',
@@ -358,13 +580,103 @@ const AnalyticsScreen: React.FC = () => {
                 '#FF9500'
               )}
             </View>
+
+            <View style={styles.metricsRow}>
+              {renderMetricCard(
+                'Completion rate',
+                `${(analyticsData.completionRate || 0).toFixed(1)}%`,
+                'orders delivered',
+                'checkmark-circle-outline',
+                '#007AFF'
+              )}
+              {renderMetricCard(
+                'Satisfaction',
+                analyticsData.customerSatisfaction > 0
+                  ? `${analyticsData.customerSatisfaction.toFixed(1)} ★`
+                  : 'N/A',
+                'average rating',
+                'star-outline',
+                '#FFD700'
+              )}
+            </View>
           </View>
 
-        {/* Reports Section */}
+        {/* Sales by Channel */}
+        {analyticsData.sourceBreakdown && Object.keys(analyticsData.sourceBreakdown).length > 0 && (
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>Sales by Channel</Text>
+            {Object.entries(analyticsData.sourceBreakdown)
+              .sort(([, a], [, b]) => b.revenue - a.revenue)
+              .map(([source, data]) => {
+                const info = getChannelInfo(source);
+                return (
+                  <View key={source} style={styles.channelRow}>
+                    <View style={styles.channelRowLeft}>
+                      <Ionicons name={info.icon as any} size={16} color={info.color} />
+                      <Text style={styles.channelRowLabel}>{info.label}</Text>
+                    </View>
+                    <View style={styles.channelRowRight}>
+                      <Text style={styles.channelRowOrders}>{data.orders} orders</Text>
+                      <Text style={styles.channelRowRevenue}>{formatCurrency(data.revenue)}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+          </View>
+        )}
+
+        {/* All-time summary */}
+        {summaryData && (
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>All Time</Text>
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryValue}>{formatCurrency(summaryData.totalRevenue)}</Text>
+                <Text style={styles.summaryLabel}>Lifetime revenue</Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryValue}>{formatNumber(summaryData.totalOrders)}</Text>
+                <Text style={styles.summaryLabel}>Lifetime orders</Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryValue}>{formatNumber(summaryData.totalCustomers)}</Text>
+                <Text style={styles.summaryLabel}>Customers</Text>
+              </View>
+            </View>
+            {summaryData.topSellingProducts?.length > 0 && (
+              <View style={styles.topSellingList}>
+                <Text style={styles.subsectionTitle}>Top Selling Products</Text>
+                {summaryData.topSellingProducts.slice(0, 5).map((p, i) => (
+                  <View key={p.id || i} style={styles.channelRow}>
+                    <View style={styles.channelRowLeft}>
+                      <Text style={styles.rankBadge}>#{i + 1}</Text>
+                      <Text style={styles.channelRowLabel} numberOfLines={1}>{p.name}</Text>
+                    </View>
+                    <View style={styles.channelRowRight}>
+                      <Text style={styles.channelRowOrders}>{p.quantitySold} sold</Text>
+                      <Text style={styles.channelRowRevenue}>{formatCurrency(p.revenue)}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Reports Section — real generated reports */}
         <View style={styles.reportsSection}>
-          <Text style={styles.reportsTitle}>
-            Report list ({analyticsData?.reports?.length || 0})
-          </Text>
+          <View style={styles.reportsHeaderRow}>
+            <Text style={styles.reportsTitle}>
+              Reports ({reportsList.length})
+            </Text>
+            <TouchableOpacity
+              style={styles.generateButton}
+              onPress={() => setReportModalVisible(true)}
+            >
+              <Ionicons name="add" size={14} color="#fff" />
+              <Text style={styles.generateButtonText}>Generate</Text>
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.searchContainer}>
             <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
@@ -378,7 +690,12 @@ const AnalyticsScreen: React.FC = () => {
           </View>
 
           <View style={styles.reportsList}>
-            {analyticsData?.reports?.map((report, index) => renderReportItem(report, index))}
+            {reportsList
+              .filter(r => !searchQuery || (r.title || '').toLowerCase().includes(searchQuery.toLowerCase()))
+              .map((report, index) => renderReportItem(report, index))}
+            {reportsList.length === 0 && (
+              <Text style={styles.emptyReportsText}>No reports yet — tap Generate to create one.</Text>
+            )}
           </View>
         </View>
             </React.Fragment>
@@ -387,6 +704,29 @@ const AnalyticsScreen: React.FC = () => {
           // Live Streaming tab content
           liveStreamingData && (
             <React.Fragment>
+              {/* Vendor "live now" card */}
+              {vendorRealtime && vendorRealtime.currentActiveStreams > 0 && (
+                <View style={styles.liveNowCard}>
+                  <View style={styles.liveNowHeader}>
+                    <View style={styles.liveDot} />
+                    <Text style={styles.liveNowTitle}>
+                      {vendorRealtime.currentActiveStreams} stream{vendorRealtime.currentActiveStreams > 1 ? 's' : ''} live now
+                    </Text>
+                  </View>
+                  <View style={styles.liveNowStats}>
+                    <Text style={styles.liveNowStat}>
+                      {formatNumber(vendorRealtime.currentTotalViewers)} watching
+                    </Text>
+                    <Text style={styles.liveNowStat}>
+                      {formatCurrency(vendorRealtime.todayTotalRevenue)} today
+                    </Text>
+                    <Text style={styles.liveNowStat}>
+                      {formatCurrency(vendorRealtime.todayGiftRevenue)} gifts
+                    </Text>
+                  </View>
+                </View>
+              )}
+
               {/* Live Streaming Metrics Grid */}
               <View style={styles.metricsContainer}>
                 <View style={styles.metricsRow}>
@@ -447,7 +787,11 @@ const AnalyticsScreen: React.FC = () => {
                 <View style={styles.sectionContainer}>
                   <Text style={styles.sectionTitle}>🔴 Currently Live ({liveStreamingData.activeStreamsCount})</Text>
                   {liveStreamingData.currentActiveStreams.map((stream, index) => (
-                    <View key={stream.id} style={styles.activeStreamCard}>
+                    <TouchableOpacity
+                      key={stream.id}
+                      style={styles.activeStreamCard}
+                      onPress={() => openStreamDrilldown(stream.id)}
+                    >
                       <View style={styles.activeStreamInfo}>
                         <Text style={styles.activeStreamTitle}>{stream.title}</Text>
                         <View style={styles.activeStreamStats}>
@@ -465,7 +809,7 @@ const AnalyticsScreen: React.FC = () => {
                         <View style={styles.liveDot} />
                         <Text style={styles.liveText}>LIVE</Text>
                       </View>
-                    </View>
+                    </TouchableOpacity>
                   ))}
                 </View>
               )}
@@ -836,8 +1180,328 @@ const AnalyticsScreen: React.FC = () => {
               </View>
             </React.Fragment>
           )
+        ) : activeTab === 'products' ? (
+          // Products tab content
+          productData && (
+            <React.Fragment>
+              <View style={styles.metricsContainer}>
+                <View style={styles.metricsRow}>
+                  {renderMetricCard(
+                    'Products',
+                    productData.totalProducts,
+                    'in catalog',
+                    'cube-outline',
+                    '#007AFF'
+                  )}
+                  {renderMetricCard(
+                    'Units sold',
+                    productData.totalSales,
+                    'this period',
+                    'bag-handle-outline',
+                    '#34C759'
+                  )}
+                </View>
+              </View>
+
+              {/* Top selling products */}
+              {productData.topSellingProducts?.length > 0 && (
+                <View style={styles.sectionContainer}>
+                  <Text style={styles.sectionTitle}>Top Selling</Text>
+                  {productData.topSellingProducts.map((p, i) => (
+                    <View key={p.productId || i} style={styles.channelRow}>
+                      <View style={styles.channelRowLeft}>
+                        <Text style={styles.rankBadge}>#{i + 1}</Text>
+                        <View>
+                          <Text style={styles.channelRowLabel} numberOfLines={1}>{p.productName}</Text>
+                          <Text style={styles.channelSubtext}>{p.category}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.channelRowRight}>
+                        <Text style={styles.channelRowOrders}>
+                          {p.quantitySold} sold{p.averageRating > 0 ? ` · ${p.averageRating.toFixed(1)}★` : ''}
+                        </Text>
+                        <Text style={styles.channelRowRevenue}>{formatCurrency(p.revenue)}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Category performance */}
+              {productData.categoryPerformance?.length > 0 && (
+                <View style={styles.sectionContainer}>
+                  <Text style={styles.sectionTitle}>Category Performance</Text>
+                  {productData.categoryPerformance.map((c, i) => (
+                    <View key={c.category || i} style={styles.channelRow}>
+                      <View style={styles.channelRowLeft}>
+                        <Ionicons name="pricetag-outline" size={16} color="#FF9500" />
+                        <Text style={styles.channelRowLabel}>{c.category}</Text>
+                      </View>
+                      <View style={styles.channelRowRight}>
+                        <Text style={styles.channelRowOrders}>{c.totalSales} sold</Text>
+                        <Text style={styles.channelRowRevenue}>{formatCurrency(c.revenue)}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Low stock warnings */}
+              {productData.lowStockProducts?.length > 0 && (
+                <View style={styles.sectionContainer}>
+                  <Text style={styles.sectionTitle}>Low Stock</Text>
+                  {productData.lowStockProducts.map((p, i) => (
+                    <View key={p.productId || i} style={styles.channelRow}>
+                      <View style={styles.channelRowLeft}>
+                        <Ionicons name="warning-outline" size={16} color="#FF3B30" />
+                        <Text style={styles.channelRowLabel} numberOfLines={1}>{p.productName}</Text>
+                      </View>
+                      <Text style={styles.lowStockText}>{p.currentStock} left</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </React.Fragment>
+          )
+        ) : activeTab === 'customers' ? (
+          // Customers tab content
+          customerData && (
+            <React.Fragment>
+              <View style={styles.metricsContainer}>
+                <View style={styles.metricsRow}>
+                  {renderMetricCard(
+                    'Total customers',
+                    customerData.totalCustomers,
+                    'all time',
+                    'people-outline',
+                    '#007AFF'
+                  )}
+                  {renderMetricCard(
+                    'Retention rate',
+                    `${(customerData.customerRetentionRate || 0).toFixed(1)}%`,
+                    'returning buyers',
+                    'repeat-outline',
+                    '#34C759'
+                  )}
+                </View>
+                <View style={styles.metricsRow}>
+                  {renderMetricCard(
+                    'Avg orders',
+                    (customerData.averageOrdersPerCustomer || 0).toFixed(1),
+                    'per customer',
+                    'receipt-outline',
+                    '#FF9500'
+                  )}
+                  {renderMetricCard(
+                    'New vs returning',
+                    `${customerData.newCustomers} / ${customerData.returningCustomers}`,
+                    'this period',
+                    'git-compare-outline',
+                    '#5856D6'
+                  )}
+                </View>
+              </View>
+
+              {/* New/returning ratio bar */}
+              {(customerData.newCustomers + customerData.returningCustomers) > 0 && (
+                <View style={styles.sectionContainer}>
+                  <View style={styles.ratioBar}>
+                    <View style={[styles.ratioSegment, {
+                      flex: customerData.newCustomers,
+                      backgroundColor: '#007AFF',
+                    }]} />
+                    <View style={[styles.ratioSegment, {
+                      flex: customerData.returningCustomers,
+                      backgroundColor: '#34C759',
+                    }]} />
+                  </View>
+                  <View style={styles.ratioLegend}>
+                    <View style={styles.ratioLegendItem}>
+                      <View style={[styles.ratioDot, { backgroundColor: '#007AFF' }]} />
+                      <Text style={styles.ratioLegendText}>New ({customerData.newCustomers})</Text>
+                    </View>
+                    <View style={styles.ratioLegendItem}>
+                      <View style={[styles.ratioDot, { backgroundColor: '#34C759' }]} />
+                      <Text style={styles.ratioLegendText}>Returning ({customerData.returningCustomers})</Text>
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {/* Top customers */}
+              {customerData.topCustomers?.length > 0 && (
+                <View style={styles.sectionContainer}>
+                  <Text style={styles.sectionTitle}>Top Customers</Text>
+                  {customerData.topCustomers.map((c, i) => (
+                    <View key={c.customerId || i} style={styles.channelRow}>
+                      <View style={styles.channelRowLeft}>
+                        <Text style={styles.rankBadge}>#{i + 1}</Text>
+                        <Text style={styles.channelRowLabel} numberOfLines={1}>{c.customerName}</Text>
+                      </View>
+                      <View style={styles.channelRowRight}>
+                        <Text style={styles.channelRowOrders}>{c.totalOrders} orders</Text>
+                        <Text style={styles.channelRowRevenue}>{formatCurrency(c.totalSpent)}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </React.Fragment>
+          )
         ) : null}
       </ScrollView>
+
+      {/* Report generation modal */}
+      <Modal
+        visible={reportModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReportModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Generate Report</Text>
+
+            <Text style={styles.modalLabel}>Period</Text>
+            <View style={styles.modalOptionRow}>
+              {(['daily', 'weekly', 'monthly'] as const).map(t => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.modalOption, reportType === t && styles.modalOptionActive]}
+                  onPress={() => setReportType(t)}
+                >
+                  <Text style={[styles.modalOptionText, reportType === t && styles.modalOptionTextActive]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.modalLabel}>Channel</Text>
+            <View style={styles.modalOptionRow}>
+              {([
+                { key: 'all', label: 'All' },
+                { key: 'regular', label: 'Store' },
+                { key: 'live_stream', label: 'Live' },
+                { key: 'auctions', label: 'Auctions' },
+                { key: 'invoice', label: 'Chat' },
+                { key: 'wishlist', label: 'Gift' },
+              ] as const).map(({ key, label }) => (
+                <TouchableOpacity
+                  key={key}
+                  style={[styles.modalOption, reportSource === key && styles.modalOptionActive]}
+                  onPress={() => setReportSource(key)}
+                >
+                  <Text style={[styles.modalOptionText, reportSource === key && styles.modalOptionTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.modalLabel}>Format</Text>
+            <View style={styles.modalOptionRow}>
+              {(['pdf', 'excel'] as const).map(f => (
+                <TouchableOpacity
+                  key={f}
+                  style={[styles.modalOption, reportFormat === f && styles.modalOptionActive]}
+                  onPress={() => setReportFormat(f)}
+                >
+                  <Text style={[styles.modalOptionText, reportFormat === f && styles.modalOptionTextActive]}>{f.toUpperCase()}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancel}
+                onPress={() => setReportModalVisible(false)}
+                disabled={reportGenerating}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalConfirm, reportGenerating && { opacity: 0.6 }]}
+                onPress={handleGenerateReport}
+                disabled={reportGenerating}
+              >
+                {reportGenerating ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.modalConfirmText}>Generate</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Per-stream drilldown modal */}
+      <Modal
+        visible={!!streamDrilldown || drilldownLoading}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setStreamDrilldown(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {drilldownLoading ? (
+              <ActivityIndicator size="large" color="#007AFF" />
+            ) : streamDrilldown && (
+              <React.Fragment>
+                <View style={styles.drilldownHeader}>
+                  <Text style={styles.modalTitle} numberOfLines={1}>{streamDrilldown.title}</Text>
+                  <TouchableOpacity onPress={() => setStreamDrilldown(null)}>
+                    <Ionicons name="close" size={22} color="#666" />
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.drilldownGrid}>
+                  <View style={styles.drilldownItem}>
+                    <Text style={styles.drilldownValue}>{streamDrilldown.viewerCount}</Text>
+                    <Text style={styles.drilldownLabel}>Watching</Text>
+                  </View>
+                  <View style={styles.drilldownItem}>
+                    <Text style={styles.drilldownValue}>{streamDrilldown.peakViewers}</Text>
+                    <Text style={styles.drilldownLabel}>Peak</Text>
+                  </View>
+                  <View style={styles.drilldownItem}>
+                    <Text style={styles.drilldownValue}>{formatCurrency(streamDrilldown.totalSales)}</Text>
+                    <Text style={styles.drilldownLabel}>Sales</Text>
+                  </View>
+                  <View style={styles.drilldownItem}>
+                    <Text style={styles.drilldownValue}>{formatCurrency(streamDrilldown.giftValue)}</Text>
+                    <Text style={styles.drilldownLabel}>Gifts</Text>
+                  </View>
+                  <View style={styles.drilldownItem}>
+                    <Text style={styles.drilldownValue}>{(streamDrilldown.engagementRate || 0).toFixed(1)}%</Text>
+                    <Text style={styles.drilldownLabel}>Engagement</Text>
+                  </View>
+                  <View style={styles.drilldownItem}>
+                    <Text style={styles.drilldownValue}>{(streamDrilldown.conversionRate || 0).toFixed(1)}%</Text>
+                    <Text style={styles.drilldownLabel}>Conversion</Text>
+                  </View>
+                </View>
+                {streamDrilldown.recentActivity?.length > 0 && (
+                  <View style={styles.drilldownActivity}>
+                    <Text style={styles.modalLabel}>Recent activity</Text>
+                    {streamDrilldown.recentActivity.slice(0, 8).map((a, i) => (
+                      <View key={i} style={styles.drilldownActivityRow}>
+                        <Ionicons
+                          name={a.type === 'gift' ? 'gift-outline' : 'bag-outline'}
+                          size={14}
+                          color={a.type === 'gift' ? '#FF2D55' : '#34C759'}
+                        />
+                        <Text style={styles.drilldownActivityText}>
+                          {a.type === 'gift' ? 'Gift' : 'Purchase'} · {formatCurrency(a.amount)}
+                        </Text>
+                        <Text style={styles.drilldownActivityTime}>
+                          {new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </React.Fragment>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -973,7 +1637,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: 'white',
-    marginBottom: 16,
   },
   searchContainer: {
     flexDirection: 'row',
@@ -1076,6 +1739,9 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   // Tab styles
+  tabScroll: {
+    flexGrow: 0,
+  },
   tabContainer: {
     flexDirection: 'row',
     backgroundColor: '#111',
@@ -1084,21 +1750,21 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   tab: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 8,
   },
   activeTab: {
     backgroundColor: '#007AFF',
   },
   tabText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     color: '#666',
-    marginLeft: 6,
+    marginLeft: 5,
   },
   activeTabText: {
     color: 'white',
@@ -1114,6 +1780,39 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
     marginBottom: 16,
+  },
+  channelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#111',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+  },
+  channelRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  channelRowLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'white',
+  },
+  channelRowRight: {
+    alignItems: 'flex-end',
+  },
+  channelRowOrders: {
+    fontSize: 12,
+    color: '#8E8E93',
+  },
+  channelRowRevenue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#34C759',
+    marginTop: 2,
   },
   activeStreamCard: {
     backgroundColor: '#111',
@@ -1317,6 +2016,347 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: 'white',
+  },
+  // Realtime strip
+  realtimeStrip: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#111',
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+  },
+  realtimeItem: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 4,
+  },
+  realtimeValue: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  realtimeLabel: {
+    fontSize: 10,
+    color: '#666',
+  },
+  // Compare mode
+  compareToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    marginBottom: 16,
+  },
+  compareToggleActive: {
+    backgroundColor: '#007AFF',
+  },
+  compareToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  comparisonCard: {
+    backgroundColor: '#111',
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 16,
+  },
+  comparisonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 6,
+  },
+  comparisonLabel: {
+    flex: 1,
+    fontSize: 14,
+    color: '#999',
+  },
+  comparisonValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'white',
+  },
+  // Trend chip on metric cards
+  trendChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginLeft: 'auto',
+  },
+  trendChipText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  // Summary / shared list bits
+  subsectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#CCC',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#111',
+    borderRadius: 12,
+    padding: 16,
+  },
+  summaryItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  summaryValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  summaryLabel: {
+    fontSize: 11,
+    color: '#666',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  topSellingList: {
+    marginTop: 8,
+  },
+  rankBadge: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#007AFF',
+    width: 26,
+  },
+  channelSubtext: {
+    fontSize: 11,
+    color: '#666',
+  },
+  lowStockText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FF3B30',
+  },
+  // Ratio bar (customers)
+  ratioBar: {
+    flexDirection: 'row',
+    height: 10,
+    borderRadius: 5,
+    overflow: 'hidden',
+    backgroundColor: '#111',
+  },
+  ratioSegment: {
+    height: '100%',
+  },
+  ratioLegend: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 10,
+  },
+  ratioLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  ratioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  ratioLegendText: {
+    fontSize: 12,
+    color: '#999',
+  },
+  // Reports header + generate button
+  reportsHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  generateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+  },
+  generateButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'white',
+  },
+  emptyReportsText: {
+    fontSize: 13,
+    color: '#666',
+    textAlign: 'center',
+    paddingVertical: 20,
+  },
+  // Modals
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: '#1C1C1E',
+    borderRadius: 16,
+    padding: 20,
+    maxHeight: '85%',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: 'white',
+    marginBottom: 16,
+    flex: 1,
+  },
+  modalLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#999',
+    marginBottom: 8,
+    marginTop: 4,
+    textTransform: 'uppercase',
+  },
+  modalOptionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  modalOption: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalOptionActive: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  modalOptionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#999',
+    textTransform: 'capitalize',
+  },
+  modalOptionTextActive: {
+    color: 'white',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 12,
+  },
+  modalCancel: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  modalCancelText: {
+    fontSize: 14,
+    color: '#999',
+  },
+  modalConfirm: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    minWidth: 90,
+    alignItems: 'center',
+  },
+  modalConfirmText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'white',
+  },
+  // Stream drilldown
+  drilldownHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  drilldownGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  drilldownItem: {
+    width: '33%',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  drilldownValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  drilldownLabel: {
+    fontSize: 11,
+    color: '#666',
+    marginTop: 2,
+  },
+  drilldownActivity: {
+    marginTop: 8,
+  },
+  drilldownActivityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+  },
+  drilldownActivityText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#CCC',
+  },
+  drilldownActivityTime: {
+    fontSize: 11,
+    color: '#666',
+  },
+  // Live-now vendor card
+  liveNowCard: {
+    backgroundColor: '#1C1C1E',
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#FF3B30',
+  },
+  liveNowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  liveNowTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: 'white',
+  },
+  liveNowStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  liveNowStat: {
+    fontSize: 12,
+    color: '#999',
   },
 });
 

@@ -16,6 +16,10 @@ export interface UserProfile {
   preferences?: any;
   isSeller: boolean;
   isRider: boolean;
+  catalogHidden?: boolean;
+  isAdultContent?: boolean;
+  citizenNumber?: number;
+  citizenNumberSeenAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -31,6 +35,8 @@ export interface UpdateProfileData {
   gender?: string;
   isSeller?: boolean;
   isRider?: boolean;
+  catalogHidden?: boolean;
+  isAdultContent?: boolean;
   preferences?: any;
 }
 
@@ -478,6 +484,16 @@ export const userAPI = {
     }
   },
 
+  // Stamp the citizen-number reveal as seen (one-time, idempotent server-side)
+  markCitizenNumberSeen: async (): Promise<void> => {
+    try {
+      const headers = await getAuthHeaders();
+      await api.put('/users/citizen-number-seen', {}, { headers });
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to mark citizen number as seen');
+    }
+  },
+
   // Delete user account permanently
   deleteAccount: async (): Promise<{ message: string; deletedData: any }> => {
     try {
@@ -489,6 +505,10 @@ export const userAPI = {
     }
   },
 };
+
+// Format a citizen number for display: 42 -> "FRT-000042"
+export const formatCitizenNumber = (n?: number | null): string =>
+  n == null ? '' : `FRT-${String(n).padStart(6, '0')}`;
 
 // Helper functions for profile data
 export const profileUtils = {

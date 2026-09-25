@@ -19,6 +19,7 @@ interface InterstateDeliveryScreenProps {
     params: {
       pickupLocation: { state?: string; country?: string; city?: string };
       deliveryLocation: { state?: string; country?: string; city?: string };
+      weightKg?: number;
       callbackKey: string;
     };
   };
@@ -34,7 +35,7 @@ export interface InterstateCompanySelection {
 
 const InterstateDeliveryScreen: React.FC<InterstateDeliveryScreenProps> = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
-  const { pickupLocation, deliveryLocation, callbackKey } = route.params;
+  const { pickupLocation, deliveryLocation, weightKg, callbackKey } = route.params;
 
   const [companies, setCompanies] = useState<InterstateCompanyOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +47,7 @@ const InterstateDeliveryScreen: React.FC<InterstateDeliveryScreenProps> = ({ nav
   const loadCompanies = async () => {
     try {
       setLoading(true);
-      const options = await riderAPI.getInterstateOptions({ pickupLocation, deliveryLocation });
+      const options = await riderAPI.getInterstateOptions({ pickupLocation, deliveryLocation, weightKg });
       setCompanies(options);
     } catch (error) {
       console.error('Error loading interstate delivery options:', error);
@@ -57,13 +58,18 @@ const InterstateDeliveryScreen: React.FC<InterstateDeliveryScreenProps> = ({ nav
   };
 
   const handleSelectCompany = (company: InterstateCompanyOption) => {
-    // Simple flat pricing model: base price only for now (no live distance calc on mobile yet)
-    const deliveryPrice = company.basePrice;
+    // Server quotes weight-based price when per-kg pricing is configured;
+    // falls back to base price for legacy partner configs.
+    const deliveryPrice = company.quotedPrice ?? company.basePrice;
     const estimatedDeliveryDays = company.estimatedDeliveryDaysMax;
+
+    const rateLine = company.perKgRate
+      ? ` (${walletAPI.formatFreti(company.isInternational ? (company.internationalPerKgRate ?? company.perKgRate) : company.perKgRate)}/kg${weightKg ? ` × ${weightKg}kg` : ''})`
+      : '';
 
     Alert.alert(
       'Confirm Delivery Company',
-      `Select ${company.companyName} for ${walletAPI.formatFreti(deliveryPrice)}? Estimated delivery: ${company.estimatedDeliveryDaysMin}-${company.estimatedDeliveryDaysMax} day(s).`,
+      `Select ${company.companyName} for ${walletAPI.formatFreti(deliveryPrice)}${rateLine}? Estimated delivery: ${company.estimatedDeliveryDaysMin}-${company.estimatedDeliveryDaysMax} day(s).`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -151,8 +157,12 @@ const InterstateDeliveryScreen: React.FC<InterstateDeliveryScreenProps> = ({ nav
                 </Text>
               </View>
               <View style={styles.companyPricing}>
-                <Text style={styles.companyPrice}>{walletAPI.formatFreti(company.basePrice)}</Text>
-                <Text style={styles.companyPriceLabel}>base fee</Text>
+                <Text style={styles.companyPrice}>{walletAPI.formatFreti(company.quotedPrice ?? company.basePrice)}</Text>
+                <Text style={styles.companyPriceLabel}>
+                  {company.perKgRate
+                    ? `${walletAPI.formatFreti(company.isInternational ? (company.internationalPerKgRate ?? company.perKgRate) : company.perKgRate)}/kg`
+                    : 'base fee'}
+                </Text>
               </View>
             </View>
           </TouchableOpacity>

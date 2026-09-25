@@ -52,6 +52,8 @@ export interface Rider {
   vehicleType: 'wheelbarrow' | 'bike' | 'car' | 'van' | 'truck';
   price: number;
   distanceFromPickup: number;
+  /** Pickup→delivery route km the per-km price was computed on (new backends) */
+  routeDistanceKm?: number;
   estimatedArrival: number;
   isAvailable: boolean;
   unavailableReason?: string;

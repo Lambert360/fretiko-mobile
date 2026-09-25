@@ -409,6 +409,8 @@ const CreateInvoiceScreen: React.FC = () => {
               value={item.appointmentDate ? new Date(item.appointmentDate) : new Date()}
               mode="date"
               display="default"
+              themeVariant={Platform.OS === 'ios' ? 'dark' : 'light'}
+              textColor={Platform.OS === 'ios' ? '#FFFFFF' : undefined}
               onChange={(event, date) => handleDateChange(index, event, date)}
               minimumDate={new Date()}
             />
@@ -425,6 +427,8 @@ const CreateInvoiceScreen: React.FC = () => {
               value={new Date()}
               mode="time"
               display="default"
+              themeVariant={Platform.OS === 'ios' ? 'dark' : 'light'}
+              textColor={Platform.OS === 'ios' ? '#FFFFFF' : undefined}
               onChange={(event, time) => handleTimeChange(index, event, time)}
             />
           )}

@@ -5,8 +5,9 @@
  */
 
 import React from 'react';
-import { useAudioPlayer } from 'expo-audio';
+import { useAudioPlayer, createAudioPlayer, AudioPlayer } from 'expo-audio';
 import { Asset } from 'expo-asset';
+import { getCachedAssetUri, prefetchGiftAssets } from '../utils/giftAssetCache';
 
 // Sound asset imports - using require() which Metro should resolve
 // Note: These paths are relative to src/services/ -> ../../ goes to root, then assets/sounds/
@@ -18,6 +19,127 @@ const GAVEL_SOUND_MODULE = require('../../assets/sounds/gavel.MP3');
 const CROWD_SOUND_MODULE = require('../../assets/sounds/crowd_sound.MP3');
 const WINNER1_SOUND_MODULE = require('../../assets/sounds/winner1.MP3');
 const WINNER2_SOUND_MODULE = require('../../assets/sounds/winner2.MP3');
+const BID_SOUND_MODULE = require('../../assets/sounds/kaching.mp3');
+
+// Module-level player for the bid sound so it can play outside the hook's
+// lifecycle (e.g. auction detail screens that don't mount useAuctionSounds).
+let bidSoundPlayer: AudioPlayer | null = null;
+
+/**
+ * Play the kaching sound when a new bid event arrives.
+ */
+export const playBidSound = () => {
+  try {
+    if (!bidSoundPlayer) {
+      bidSoundPlayer = createAudioPlayer(BID_SOUND_MODULE);
+      bidSoundPlayer.volume = 0.9;
+    }
+    bidSoundPlayer.seekTo(0);
+    bidSoundPlayer.play();
+  } catch (error) {
+    console.warn('Error playing bid sound:', error);
+  }
+};
+
+// =====================
+// SOUNDBOARD PLAYBACK
+// =====================
+
+/**
+ * Built-in soundboard slots shipped inside the app bundle. Referenced by
+ * 'builtin:*' keys in the host's quick-play slots and in sound_played
+ * socket payloads so every device resolves them to local assets.
+ */
+export const BUILTIN_SOUNDS: Record<string, { name: string; emoji: string; module: number }> = {
+  'builtin:cheer': { name: 'Cheer', emoji: '🎉', module: CHEER_SOUND_MODULE },
+  'builtin:clap': { name: 'Clap', emoji: '👏', module: CLAPPING_SOUND_MODULE },
+  'builtin:laugh': { name: 'Laugh', emoji: '😂', module: LAUGH_SOUND_MODULE },
+};
+
+// Pooled players for soundboard playback, keyed by soundId so each sound
+// gets a reusable player that works outside the hook's lifecycle (viewer
+// screens receiving socket events don't mount useAuctionSounds).
+const soundboardPlayers = new Map<string, AudioPlayer>();
+
+/**
+ * Play a soundboard sound by id.
+ * - 'builtin:*' keys resolve to bundled assets
+ * - anything else plays the remote sound_url (download-cached on first play)
+ */
+export const playSoundboardSound = async (soundId: string, soundUrl?: string) => {
+  try {
+    const builtin = BUILTIN_SOUNDS[soundId];
+    const source: string | number | undefined = builtin
+      ? builtin.module
+      : soundUrl
+        ? ((await getCachedAssetUri(soundUrl)) as string | undefined)
+        : undefined;
+
+    if (!source) {
+      console.warn(`No playable source for soundboard sound: ${soundId}`);
+      return;
+    }
+
+    let player = soundboardPlayers.get(soundId);
+    if (!player) {
+      player = createAudioPlayer(source);
+      player.volume = 0.9;
+      soundboardPlayers.set(soundId, player);
+    } else if (!builtin && typeof source === 'string') {
+      // URL may have changed for a re-uploaded sound — refresh the source
+      player.replace(source);
+    }
+
+    player.seekTo(0);
+    player.play();
+  } catch (error) {
+    console.warn('Error playing soundboard sound:', soundId, error);
+  }
+};
+
+/**
+ * Stop a soundboard sound mid-play (pause + rewind so it can be replayed).
+ */
+export const stopSoundboardSound = (soundId: string) => {
+  try {
+    const player = soundboardPlayers.get(soundId);
+    if (player) {
+      player.pause();
+      player.seekTo(0);
+    }
+  } catch (error) {
+    console.warn('Error stopping soundboard sound:', soundId, error);
+  }
+};
+
+/** Stop every soundboard sound currently playing. */
+export const stopAllSoundboardSounds = () => {
+  soundboardPlayers.forEach((player) => {
+    try {
+      player.pause();
+      player.seekTo(0);
+    } catch {}
+  });
+};
+
+/** Whether a given soundboard sound is currently playing. */
+export const isSoundboardPlaying = (soundId: string) =>
+  !!soundboardPlayers.get(soundId)?.playing;
+
+/** Ids of all soundboard sounds currently playing. */
+export const getPlayingSoundboardIds = (): string[] =>
+  [...soundboardPlayers.entries()].filter(([, p]) => p.playing).map(([id]) => id);
+
+/**
+ * Warm the cache for remote soundboard sounds so first playback is instant.
+ */
+export const prefetchSoundboardSounds = async (sounds: { sound_url?: string }[]) => {
+  try {
+    await prefetchGiftAssets(sounds.map((s) => s.sound_url));
+  } catch (error) {
+    console.warn('Failed to prefetch soundboard sounds:', error);
+  }
+};
 
 /**
  * Hook to use auction sound effects
@@ -104,6 +226,13 @@ export const useAuctionSounds = () => {
   const timerWasPlayingRef = React.useRef<boolean>(false);
   const gavelWasPlayingRef = React.useRef<boolean>(false);
   const winnerWasPlayingRef = React.useRef<boolean>(false);
+
+  // Fallback timeouts: if a player never reports playing (replay at EOF,
+  // unloaded asset, silent failure) the poll can't detect completion, so a
+  // hard timeout fires the callback instead of stalling the phase machine.
+  const timerFallbackRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gavelFallbackRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const winnerFallbackRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Configure players when they're ready (after soundUris are loaded)
   React.useEffect(() => {
@@ -250,21 +379,44 @@ export const useAuctionSounds = () => {
       if (timerCompleteCallbackRef.current) {
         timerCompleteCallbackRef.current = null; // Clear previous callback
       }
+      if (timerFallbackRef.current) {
+        clearTimeout(timerFallbackRef.current);
+        timerFallbackRef.current = null;
+      }
       if (onComplete) {
         console.log('✅ Timer callback registered');
         timerCompleteCallbackRef.current = onComplete;
+        // Hard fallback: if playback is never observed by the poll (e.g. an
+        // at-EOF replay that silently ends), still fire completion so the
+        // auction can't hang in 'timer_playing'.
+        const durationMs =
+          Number.isFinite(timerPlayer.duration) && timerPlayer.duration > 0
+            ? timerPlayer.duration * 1000
+            : 4000;
+        timerFallbackRef.current = setTimeout(() => {
+          const callback = timerCompleteCallbackRef.current;
+          if (callback) {
+            console.warn('⏱️ Timer completion fallback fired (playback not observed)');
+            timerCompleteCallbackRef.current = null;
+            timerWasPlayingRef.current = false;
+            callback();
+          }
+        }, durationMs + 1000);
       }
-      if (timerPlayer.playing) {
-        timerPlayer.seekTo(0);
-        timerPlayer.play(); // Restart playback after seeking
-      } else {
-        timerPlayer.play();
-      }
+      // Always rewind before playing — play() at end-of-file does not restart
+      // reliably, which previously stalled the completion callback on replay.
+      timerPlayer.seekTo(0);
+      timerPlayer.play();
       console.log('▶️ Timer play() called');
       // Don't mark as playing here - let the statusChange listener detect when it actually starts
     } catch (error) {
       console.error('Error playing timer sound:', error);
       timerWasPlayingRef.current = false;
+      timerCompleteCallbackRef.current = null;
+      if (timerFallbackRef.current) {
+        clearTimeout(timerFallbackRef.current);
+        timerFallbackRef.current = null;
+      }
       if (onComplete) onComplete();
     }
   };
@@ -307,16 +459,36 @@ export const useAuctionSounds = () => {
       if (gavelCompleteCallbackRef.current) {
         gavelCompleteCallbackRef.current = null;
       }
+      if (gavelFallbackRef.current) {
+        clearTimeout(gavelFallbackRef.current);
+        gavelFallbackRef.current = null;
+      }
       if (onComplete) {
         gavelCompleteCallbackRef.current = onComplete;
+        const durationMs =
+          Number.isFinite(gavelPlayer.duration) && gavelPlayer.duration > 0
+            ? gavelPlayer.duration * 1000
+            : 4000;
+        gavelFallbackRef.current = setTimeout(() => {
+          const callback = gavelCompleteCallbackRef.current;
+          if (callback) {
+            console.warn('⏱️ Gavel completion fallback fired (playback not observed)');
+            gavelCompleteCallbackRef.current = null;
+            gavelWasPlayingRef.current = false;
+            callback();
+          }
+        }, durationMs + 1000);
       }
-      if (gavelPlayer.playing) {
-        gavelPlayer.seekTo(0);
-      } else {
-        gavelPlayer.play();
-      }
+      gavelPlayer.seekTo(0);
+      gavelPlayer.play();
     } catch (error) {
       console.error('Error playing gavel sound:', error);
+      gavelWasPlayingRef.current = false;
+      gavelCompleteCallbackRef.current = null;
+      if (gavelFallbackRef.current) {
+        clearTimeout(gavelFallbackRef.current);
+        gavelFallbackRef.current = null;
+      }
       if (onComplete) onComplete();
     }
   };
@@ -326,6 +498,16 @@ export const useAuctionSounds = () => {
    * >100 Freti = winner2, ≤100 = winner1
    */
   const playWinner = async (finalBidAmount: number, onComplete?: () => void) => {
+    const fireComplete = () => {
+      winnerCompleteCallbackRef.current = null;
+      winnerWasPlayingRef.current = false;
+      if (winnerFallbackRef.current) {
+        clearTimeout(winnerFallbackRef.current);
+        winnerFallbackRef.current = null;
+      }
+      if (onComplete) onComplete();
+    };
+
     try {
       const useWinner2 = finalBidAmount > 100;
       const player = useWinner2 ? winner2Player : winner1Player;
@@ -334,36 +516,50 @@ export const useAuctionSounds = () => {
       // Check if sound is loaded
       if (!soundUris[soundName]) {
         console.warn(`Winner sound ${soundName} not loaded yet`);
-        if (onComplete) onComplete();
+        fireComplete();
         return;
       }
 
       if (winnerCompleteCallbackRef.current) {
         winnerCompleteCallbackRef.current = null;
       }
+      if (winnerFallbackRef.current) {
+        clearTimeout(winnerFallbackRef.current);
+        winnerFallbackRef.current = null;
+      }
       if (onComplete) {
         winnerCompleteCallbackRef.current = onComplete;
+        const durationMs =
+          Number.isFinite(player?.duration) && player.duration > 0
+            ? player.duration * 1000
+            : 5000;
+        winnerFallbackRef.current = setTimeout(() => {
+          const callback = winnerCompleteCallbackRef.current;
+          if (callback) {
+            console.warn('⏱️ Winner completion fallback fired (playback not observed)');
+            winnerCompleteCallbackRef.current = null;
+            winnerWasPlayingRef.current = false;
+            callback();
+          }
+        }, durationMs + 1000);
       }
 
       // Add safety check for player state
       try {
         if (player && typeof player.seekTo === 'function' && typeof player.play === 'function') {
-          if (player.playing) {
-            player.seekTo(0);
-          } else {
-            player.play();
-          }
+          player.seekTo(0);
+          player.play();
         } else {
           console.warn(`Winner player ${soundName} is not properly initialized`);
-          if (onComplete) onComplete();
+          fireComplete();
         }
       } catch (playerError) {
         console.error(`Error with winner player ${soundName}:`, playerError);
-        if (onComplete) onComplete();
+        fireComplete();
       }
     } catch (error) {
       console.error('Error playing winner sound:', error);
-      if (onComplete) onComplete();
+      fireComplete();
     }
   };
 

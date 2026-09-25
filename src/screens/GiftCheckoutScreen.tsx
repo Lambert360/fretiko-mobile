@@ -18,6 +18,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { wishlistAPI, WishlistItem } from '../services/wishlistAPI';
 import { walletAPI } from '../services/walletAPI';
 import { riderAPI, Rider } from '../services/riderAPI';
+import { riderLocationAPI } from '../services/riderLocationAPI';
+import { resolveAddressCoords, cityCentroid } from '../utils/deliveryGeo';
 import { riderSelectionBridge } from '../utils/riderSelectionBridge';
 
 interface GiftCheckoutScreenProps {
@@ -107,7 +109,7 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
     return itemTotal + deliveryFee;
   };
 
-  const handleSelectRider = () => {
+  const handleSelectRider = async () => {
     // Validate address is filled before allowing rider selection
     if (!deliveryAddress.address || !deliveryAddress.city) {
       Alert.alert(
@@ -121,23 +123,32 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
     // Navigate to rider selection screen
     // Use delivery address state/city as the pickup location hint so the backend
     // can filter riders to the correct area (vendor location isn't available here).
+    const deliveryCoords = await resolveAddressCoords(deliveryAddress);
+    const pickupCoords = cityCentroid(deliveryAddress.city, deliveryAddress.state, undefined);
+    const routeKm = pickupCoords && deliveryCoords
+      ? Math.max(0.1, riderLocationAPI.calculateDistance(
+          pickupCoords.latitude, pickupCoords.longitude,
+          deliveryCoords.latitude, deliveryCoords.longitude,
+        ) * 1.3)
+      : 5;
+
     navigation.navigate('RiderSelection', {
       pickupLocation: {
-        latitude: 6.5244,
-        longitude: 3.3792,
+        latitude: pickupCoords?.latitude ?? 6.5244,
+        longitude: pickupCoords?.longitude ?? 3.3792,
         address: deliveryAddress.city ? `Vendor Location, ${deliveryAddress.city}` : 'Vendor Location',
         state: deliveryAddress.state || undefined,
         city: deliveryAddress.city || undefined,
       },
       deliveryLocation: {
-        latitude: 6.5244, // TODO: Geocode delivery address
-        longitude: 3.3792,
+        latitude: deliveryCoords?.latitude ?? 6.5244,
+        longitude: deliveryCoords?.longitude ?? 3.3792,
         address: `${deliveryAddress.address}, ${deliveryAddress.city}`,
       },
       orderDetails: {
         weight: items.length * 0.5, // Estimate 0.5kg per item
         itemCount: items.length,
-        distance: 5, // TODO: Calculate actual distance
+        distance: Math.round(routeKm * 100) / 100,
       },
       callbackKey: (() => {
         if (riderCallbackKeyRef.current) riderSelectionBridge.clear(riderCallbackKeyRef.current);
@@ -211,10 +222,17 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
             vehicleType: selectedRider.vehicleType,
             deliveryPrice: selectedRider.price,
             estimatedArrival: selectedRider.estimatedArrival,
+            distance: selectedRider.routeDistanceKm ?? selectedRider.distanceFromPickup,
           }
         : selectedRider === 'pickup'
         ? { riderId: 'pickup' }
         : undefined;
+
+      // Resolve delivery coords once — sent with every gift order so the
+      // backend can recompute route distance server-side.
+      const deliveryCoords = riderInfo && riderInfo.riderId !== 'pickup' && deliveryAddress.address
+        ? await resolveAddressCoords(deliveryAddress)
+        : null;
 
       const results = await Promise.all(
         items.map(item =>
@@ -225,6 +243,7 @@ const GiftCheckoutScreen: React.FC<GiftCheckoutScreenProps> = ({ navigation, rou
             giftMessage: giftMessage.trim() || undefined,
             isSurprise: false, // Based on user requirements
             deliveryAddress: {
+              ...(deliveryCoords ?? {}),
               fullName: deliveryAddress.fullName,
               phone: deliveryAddress.phone,
               address: deliveryAddress.address,

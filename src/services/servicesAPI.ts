@@ -74,6 +74,10 @@ export interface CreateServiceRequest {
   booking_type?: 'add_to_cart' | 'book_now';
 }
 
+export interface UpdateServiceRequest extends Partial<CreateServiceRequest> {
+  status?: 'draft' | 'active' | 'busy' | 'inactive';
+}
+
 export interface VideoFeedItem {
   id: string;
   title: string;
@@ -408,7 +412,7 @@ class ServicesAPI {
   }
 
   // Update service
-  async updateService(id: string, serviceData: Partial<CreateServiceRequest>): Promise<Service> {
+  async updateService(id: string, serviceData: UpdateServiceRequest): Promise<Service> {
     try {
       const response = await api.put(`/services/${id}`, serviceData);
       return response.data;

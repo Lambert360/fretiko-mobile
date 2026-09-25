@@ -30,7 +30,8 @@
         "ITSAppUsesNonExemptEncryption": false
       },
       "associatedDomains": [
-        "applinks:fretiko.com"
+        "applinks:fretiko.com",
+        "applinks:www.fretiko.com"
       ]
     },
     "android": {
@@ -111,7 +112,69 @@
               "pathPrefix": "/live"
             },
             {
+              "scheme": "https",
+              "host": "fretiko.com",
+              "pathPrefix": "/order"
+            },
+            {
               "scheme": "fretiko"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "www.fretiko.com",
+              "pathPrefix": "/post"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fretiko.com",
+              "pathPrefix": "/product"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fretiko.com",
+              "pathPrefix": "/service"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fretiko.com",
+              "pathPrefix": "/auction"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fretiko.com",
+              "pathPrefix": "/story"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fretiko.com",
+              "pathPrefix": "/profile"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fretiko.com",
+              "pathPrefix": "/wishlist"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fretiko.com",
+              "pathPrefix": "/r"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fretiko.com",
+              "pathPrefix": "/live"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fretiko.com",
+              "pathPrefix": "/order"
             }
           ],
           "category": ["BROWSABLE", "DEFAULT"]

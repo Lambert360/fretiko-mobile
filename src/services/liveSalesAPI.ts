@@ -64,6 +64,10 @@ export interface LiveStreamService {
     category_name?: string;
     duration_minutes: number;
     location_type: 'online' | 'in_person' | 'hybrid';
+    images?: string[];
+    videos?: string[];
+    primary_media_url?: string;
+    media_type?: 'image' | 'video';
   };
   live_price: number;
   available_slots: Array<{
@@ -164,6 +168,10 @@ export interface CreateStreamData {
     end_time: string;
     duration_minutes: number;
   }>;
+  services?: {
+    service_id: string;
+    live_price: number;
+  }[];
 }
 
 export interface LiveGiftCardData {
@@ -187,6 +195,7 @@ export interface LivePurchaseData {
   continue_watching?: boolean;
   rider_id?: string;
   deliveryPrice?: number;
+  distanceKm?: number; // km from the rider quote — server recomputes per-km fee
   delivery_address?: any;
   interstateCompany?: LiveInterstateCompanyData;
   giftCard?: LiveGiftCardData;
@@ -201,6 +210,7 @@ export interface LiveBookingData {
   continue_watching?: boolean;
   rider_id?: string;
   deliveryPrice?: number;
+  distanceKm?: number;
   delivery_address?: any;
   interstateCompany?: LiveInterstateCompanyData;
   giftCard?: LiveGiftCardData;
@@ -214,6 +224,7 @@ export interface LivePortfolioBookingData {
   service_notes?: string;
   rider_id?: string;
   deliveryPrice?: number;
+  distanceKm?: number;
   delivery_address?: any;
   interstateCompany?: LiveInterstateCompanyData;
   giftCard?: LiveGiftCardData;
@@ -361,13 +372,16 @@ class LiveSalesAPI {
   /**
    * Get all active live streams for discovery feed
    */
-  async getActiveStreams(limit = 20, offset = 0, excludePlugged = false): Promise<LiveStream[]> {
+  async getActiveStreams(limit = 20, offset = 0, excludePlugged = false, search?: string): Promise<LiveStream[]> {
     try {
       const params = new URLSearchParams();
       params.append('limit', limit.toString());
       params.append('offset', offset.toString());
       if (excludePlugged) {
         params.append('exclude_plugged', 'true');
+      }
+      if (search?.trim()) {
+        params.append('search', search.trim());
       }
 
       return await this.request<LiveStream[]>(

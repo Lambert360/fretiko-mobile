@@ -8,6 +8,7 @@ export enum SearchType {
   SERVICES = 'services',
   PEOPLE = 'people',
   PROVIDERS = 'providers',
+  VENDORS = 'vendors',
 }
 
 export interface SearchQuery {
@@ -20,6 +21,7 @@ export interface SearchQuery {
   maxPrice?: number;
   minRating?: number;
   sortBy?: 'relevance' | 'price_asc' | 'price_desc' | 'rating' | 'newest' | 'popular';
+  verifiedOnly?: boolean;
   page?: number;
   limit?: number;
 }
@@ -69,6 +71,7 @@ export interface SearchResult {
     services: any[];
     people: UserResult[];
     providers: RiderResult[];
+    vendors: UserResult[];
   };
   suggestions: string[];
 }
@@ -84,12 +87,14 @@ export interface DiscoverContent {
     services: any[];
     people: any[];
     providers: any[];
+    vendors: any[];
   };
   recommendations: {
     products: any[];
     services: any[];
     people: any[];
     providers: any[];
+    vendors: any[];
   };
   timestamp: string;
 }

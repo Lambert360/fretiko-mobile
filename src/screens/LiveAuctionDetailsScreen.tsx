@@ -20,6 +20,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { useAuth } from '../contexts/AuthContext';
 import { auctionsAPI, auctionSocket, AuctionWithDetails, AuctionItem, PublicBidHistoryItem } from '../services/auctionsAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
+import { playBidSound } from '../services/auctionSoundService';
 import AdaptiveText from '../components/AdaptiveText';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -155,6 +156,7 @@ const LiveAuctionDetailsScreen = () => {
           id: win.id,
           auctionId: win.auction_id,
           itemId: win.item_id || null,
+          orderId: win.order_id || null,
           title: win.item?.title || win.auction?.title || 'Auction Item',
           winningBid: win.winning_bid,
           wonAt: win.won_at || new Date().toISOString(),
@@ -172,19 +174,29 @@ const LiveAuctionDetailsScreen = () => {
     }
   };
 
-  // Check if an order exists for this auction
+  // Check if any of this auction's items have already been paid for
+  // by looking at the user's auction wins. Each win is item-scoped, so
+  // finding an order_id means at least one item has been paid for.
   const checkAuctionOrder = async (id?: string) => {
     const targetAuctionId = id || auction?.id;
     if (!targetAuctionId || !user) return;
-    
+
     setCheckingOrder(true);
     try {
-      const orders = await ordersAPI.getMyOrders();
-      const order = orders.find(o => 
-        o.source === 'auction' && 
-        o.metadata?.auction_id === targetAuctionId
+      const allWins = await auctionsAPI.getUserAuctionWins();
+      const paidWin = allWins.find(
+        (win: any) =>
+          win.auction_id === targetAuctionId &&
+          (win.status === 'checked_out' || win.order_id) &&
+          win.order_id,
       );
-      setAuctionOrder(order || null);
+
+      if (paidWin?.order_id) {
+        const order = await ordersAPI.getOrder(paidWin.order_id);
+        setAuctionOrder(order || null);
+      } else {
+        setAuctionOrder(null);
+      }
     } catch (error) {
       console.error('Error checking auction order:', error);
       setAuctionOrder(null);
@@ -247,11 +259,6 @@ const LiveAuctionDetailsScreen = () => {
 
       // Load bid history
       await loadBidHistory();
-      
-      // Check if order exists for this auction (if user is winner)
-      if (auctionData.winner_id === user?.id && auctionData.status === 'sold') {
-        await checkAuctionOrder(auctionData.id);
-      }
 
     } catch (error) {
       console.error('Error loading auction:', error);
@@ -390,7 +397,7 @@ const LiveAuctionDetailsScreen = () => {
 
     // Connect to WebSocket for real-time updates
     auctionSocket.connect('details-screen');
-    auctionSocket.joinAuction(auctionId, user?.id);
+    auctionSocket.joinAuction(auctionId, user?.id, 'details');
 
     // Track auction view for viewer count
     auctionsAPI.trackAuctionView(auctionId).catch(error => {
@@ -400,6 +407,7 @@ const LiveAuctionDetailsScreen = () => {
     // Listen for real-time bid updates
     const handleNewBid = (data: any) => {
       if (data.auction_id === auctionId) {
+        playBidSound();
         setAuction(prev => {
           const updated = prev ? {
             ...prev,
@@ -475,10 +483,13 @@ const LiveAuctionDetailsScreen = () => {
 
     const handleViewCountUpdate = (data: any) => {
       if (data.auction_id === auctionId) {
+        // This screen displays the details-viewer count (people on the
+        // details/lobby screen), not the stream-watcher count.
+        const detailsViewers = data.details_viewers ?? data.view_count;
         setAuction(prev => {
           const updated = prev ? {
             ...prev,
-            view_count: data.view_count,
+            view_count: detailsViewers,
           } : null;
           auctionRef.current = updated;
           return updated;
@@ -532,6 +543,30 @@ const LiveAuctionDetailsScreen = () => {
       }
     };
   }, [auctionId]);
+
+  // Winners for multi-item live auctions are item-scoped (user_auction_wins),
+  // so auction.winner_id is unreliable — re-derive wins/orders whenever auth
+  // or the auction resolves, not only when the 'ended' socket event happens
+  // to fire while this screen is open.
+  useEffect(() => {
+    if (!user?.id || !auction) return;
+    if (auction.time_status !== 'ended' && auction.status !== 'ended' && auction.status !== 'sold') return;
+    loadUserWonItems();
+    checkAuctionOrder(auction.id);
+  }, [user?.id, auction?.id, auction?.status, auction?.time_status]);
+
+  // Refresh wins/orders when returning to this screen (e.g., back from
+  // checkout) so a paid win swaps the checkout button for the order view
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      const currentAuction = auctionRef.current;
+      if (!currentAuction || !user?.id) return;
+      if (currentAuction.time_status !== 'ended' && currentAuction.status !== 'ended' && currentAuction.status !== 'sold') return;
+      loadUserWonItems();
+      checkAuctionOrder(currentAuction.id);
+    });
+    return unsubscribe;
+  }, [navigation, user?.id]);
 
   // Start timer - for both active auctions and upcoming auctions (to countdown to start)
   useEffect(() => {
@@ -1021,7 +1056,7 @@ const LiveAuctionDetailsScreen = () => {
                   </View>
                   <View style={styles.itemPricing}>
                     <Text style={styles.itemPrice}>{auctionsAPI.formatPrice(auction.starting_price)}</Text>
-                    {auction.reserve_price && (
+                    {!!auction.reserve_price && (
                       <Text style={styles.itemReserve}>Reserve: {auctionsAPI.formatPrice(auction.reserve_price)}</Text>
                     )}
                   </View>
@@ -1052,7 +1087,7 @@ const LiveAuctionDetailsScreen = () => {
                     </View>
                     <View style={styles.itemPricing}>
                       <Text style={styles.itemPrice}>{auctionsAPI.formatPrice(item.starting_price)}</Text>
-                      {item.reserve_price && (
+                      {!!item.reserve_price && (
                         <Text style={styles.itemReserve}>Reserve: {auctionsAPI.formatPrice(item.reserve_price)}</Text>
                       )}
                     </View>
@@ -1382,12 +1417,12 @@ const LiveAuctionDetailsScreen = () => {
                 )}
                 
                 {/* Item Title and Price Overlay */}
-                {(item.title || item.price) && (
+                {!!(item.title || item.price) && (
                   <View style={styles.imageViewerItemInfo}>
-                    {item.title && (
+                    {!!item.title && (
                       <Text style={styles.imageViewerItemTitle}>{item.title}</Text>
                     )}
-                    {item.price && (
+                    {!!item.price && (
                       <Text style={styles.imageViewerItemPrice}>{item.price}</Text>
                     )}
                   </View>

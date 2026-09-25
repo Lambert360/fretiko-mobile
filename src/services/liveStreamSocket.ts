@@ -313,6 +313,14 @@ class LiveStreamSocketService {
       this.emit('highlight_item', data);
     });
 
+    this.socket.on('sound_played', (data: any) => {
+      this.emit('sound_played', data);
+    });
+
+    this.socket.on('sound_stopped', (data: any) => {
+      this.emit('sound_stopped', data);
+    });
+
     this.socket.on('error', (error: any) => {
       console.error('❌ LiveStream Socket error:', error);
       this.emit('error', error);
@@ -468,6 +476,35 @@ class LiveStreamSocketService {
     console.log('📤 Emitting highlight_item event to backend:', payload);
     this.socket?.emit('highlight_item', payload);
     console.log('✅ highlight_item event emitted successfully');
+  }
+
+  /**
+   * Broadcast a soundboard sound to all viewers (host only)
+   * soundId: sounds-table UUID or 'builtin:*' key
+   */
+  sendPlaySound(soundId: string, name?: string): void {
+    if (!this.currentStreamId) {
+      console.error('❌ Not in a stream - cannot emit play_sound');
+      return;
+    }
+
+    this.socket?.emit('play_sound', {
+      streamId: this.currentStreamId,
+      soundId,
+      name,
+    });
+  }
+
+  /**
+   * Stop a playing soundboard sound for all viewers (host only)
+   */
+  sendStopSound(soundId: string): void {
+    if (!this.currentStreamId) return;
+
+    this.socket?.emit('stop_sound', {
+      streamId: this.currentStreamId,
+      soundId,
+    });
   }
 
   /**

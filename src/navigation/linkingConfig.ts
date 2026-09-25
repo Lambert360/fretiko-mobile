@@ -8,6 +8,8 @@ export const linking: any = {
   prefixes: [
     Linking.createURL('/'),
     'fretiko://',
+    'https://www.fretiko.com',
+    'http://www.fretiko.com',
     'https://fretiko.com',
     'http://fretiko.com',
   ],
@@ -56,7 +58,7 @@ export const linking: any = {
       ShareStory: 'share-story',
       Workspace: 'workspace',
       Analytics: 'analytics',
-      VendorOrderDetails: {
+      OrderLinkHandler: {
         path: 'order/:orderId',
         parse: {
           orderId: (orderId: string) => orderId,

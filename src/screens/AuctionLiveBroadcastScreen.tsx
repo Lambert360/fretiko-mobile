@@ -15,6 +15,7 @@ import {
   KeyboardAvoidingView,
   Image,
   Animated,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
@@ -22,7 +23,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { auctionsAPI, auctionSocket, AuctionWithDetails, PublicBidHistoryItem, AuctionItem } from '../services/auctionsAPI';
-import { useAuctionSounds } from '../services/auctionSoundService';
+import { useAuctionSounds, playBidSound, playSoundboardSound, stopSoundboardSound, getPlayingSoundboardIds, prefetchSoundboardSounds, BUILTIN_SOUNDS } from '../services/auctionSoundService';
+import { soundsAPI } from '../services/soundsAPI';
+import { chatAPI, ChatConversation } from '../services/chatAPI';
+import SoundBoardModal, { SoundBoardEntry } from '../components/SoundBoardModal';
+import ShareModal from '../components/ShareModal';
+import GavelLottieEffect from '../components/GavelLottieEffect';
 import * as ImagePicker from 'expo-image-picker';
 
 // Import basic Agora SDK
@@ -49,8 +55,101 @@ const AuctionLiveBroadcastScreen = () => {
 
   const { auctionId } = route.params;
 
-  // Sound effects
-  const { playCheer, playClap, playLaugh, playTimer, startCrowd, stopCrowd, playGavel, playWinner } = useAuctionSounds();
+  // Sound effects (auction flow: timer, crowd, gavel, winner)
+  const { playTimer, startCrowd, stopCrowd, playGavel, playWinner } = useAuctionSounds();
+
+  // Soundboard — dynamic quick slots (defaults: built-in cheer/clap/laugh)
+  const [soundSlots, setSoundSlots] = useState<string[]>([
+    'builtin:cheer',
+    'builtin:clap',
+    'builtin:laugh',
+  ]);
+  const [soundMap, setSoundMap] = useState<Map<string, SoundBoardEntry>>(new Map());
+  const [showSoundBoard, setShowSoundBoard] = useState(false);
+  const [playingSoundIds, setPlayingSoundIds] = useState<Set<string>>(new Set());
+
+  // Track which soundboard sounds are actually playing so quick slots can
+  // toggle to "tap to stop" — polls lightly, re-renders only on change.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPlayingSoundIds((prev) => {
+        const next = new Set(getPlayingSoundboardIds());
+        if (next.size === prev.size && [...next].every((id) => prev.has(id))) {
+          return prev;
+        }
+        return next;
+      });
+    }, 400);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Load the host's soundboard library once — sounds persist across streams
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const lib = await soundsAPI.getLibrary();
+        if (cancelled) return;
+        const map = new Map<string, SoundBoardEntry>();
+        Object.entries(BUILTIN_SOUNDS).forEach(([id, meta]) =>
+          map.set(id, { id, name: meta.name, emoji: meta.emoji, isBuiltin: true }),
+        );
+        [...lib.platform, ...lib.mine].forEach((s) =>
+          map.set(s.id, { id: s.id, name: s.name, soundUrl: s.sound_url, isMine: !!s.owner_id }),
+        );
+        setSoundMap(map);
+        setSoundSlots(lib.primaries);
+        prefetchSoundboardSounds([...lib.platform, ...lib.mine]);
+      } catch (error) {
+        console.warn('Failed to load soundboard library:', error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * Quick-slot tap: play locally AND broadcast to viewers via socket.
+   * Tapping a slot that's already playing stops it for everyone.
+   * The backend re-validates the sound and emits 'sound_played' to the room.
+   */
+  const handleQuickSound = useCallback(
+    (slotId: string) => {
+      const entry = soundMap.get(slotId);
+      if (playingSoundIds.has(slotId)) {
+        stopSoundboardSound(slotId);
+        auctionSocket.sendStopSound(auctionId, slotId);
+        return;
+      }
+      playSoundboardSound(slotId, entry?.soundUrl);
+      auctionSocket.sendPlaySound(auctionId, slotId, entry?.name);
+    },
+    [soundMap, playingSoundIds, auctionId],
+  );
+
+  const handleSoundBoardPlay = useCallback(
+    (entry: SoundBoardEntry) => {
+      auctionSocket.sendPlaySound(auctionId, entry.id, entry.name);
+    },
+    [auctionId],
+  );
+
+  const handleSoundBoardStop = useCallback(
+    (entry: SoundBoardEntry) => {
+      auctionSocket.sendStopSound(auctionId, entry.id);
+    },
+    [auctionId],
+  );
+
+  const handleLibraryChange = useCallback((entries: SoundBoardEntry[]) => {
+    const map = new Map<string, SoundBoardEntry>();
+    Object.entries(BUILTIN_SOUNDS).forEach(([id, meta]) =>
+      map.set(id, { id, name: meta.name, emoji: meta.emoji, isBuiltin: true }),
+    );
+    entries.forEach((e) => map.set(e.id, e));
+    setSoundMap(map);
+  }, []);
 
   // Auction phase state machine
   type AuctionPhase = 'idle' | 'timer_playing' | 'bidding_active' | 'gavel_playing' | 'winner_playing' | 'complete';
@@ -68,13 +167,26 @@ const AuctionLiveBroadcastScreen = () => {
   const [isAgoraInitialized, setIsAgoraInitialized] = useState(false);
   const [isVideoViewReady, setIsVideoViewReady] = useState(false);
   const agoraEngineRef = useRef<IRtcEngine | null>(null);
+  // Set synchronously the moment teardown begins so no async path can
+  // re-initialize Agora or re-publish after the stream/auction has ended.
+  const isCleaningUpRef = useRef(false);
 
   // Auction state
   const [auction, setAuction] = useState<AuctionWithDetails | null>(null);
   const [viewerCount, setViewerCount] = useState(0);
   const [bidHistory, setBidHistory] = useState<PublicBidHistoryItem[]>([]);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
-  
+
+  // Gavel lottie overlay (host side; viewers get it via 'gavel_played')
+  const [showGavelLottie, setShowGavelLottie] = useState(false);
+
+  // Share modal state
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
+  const [isSharing, setIsSharing] = useState(false);
+
   // Reactions state
   const [reactions, setReactions] = useState<Array<{ id: string; reaction_type: string; user_id: string; timestamp: string }>>([]);
   const [reactionCounts, setReactionCounts] = useState<{ [key: string]: number }>({
@@ -125,6 +237,7 @@ const AuctionLiveBroadcastScreen = () => {
   // Audio/Video controls
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [isFrontCamera, setIsFrontCamera] = useState(true);
 
   // Camera and microphone permissions
@@ -209,6 +322,12 @@ const AuctionLiveBroadcastScreen = () => {
   const itemEventHandlerRef = useRef<((data: any) => void) | null>(null);
   const reactionHandlerRef = useRef<((data: any) => void) | null>(null);
 
+  // Mirror of currentItem for socket handlers (avoids stale closures)
+  const currentItemRef = useRef<AuctionItem | null>(null);
+  useEffect(() => {
+    currentItemRef.current = currentItem;
+  }, [currentItem]);
+
   // Debug: Log reaction animations changes
   useEffect(() => {
     console.log('🎨 Host screen rendering reactions:', reactionAnimations.length, 'animations');
@@ -238,7 +357,7 @@ const AuctionLiveBroadcastScreen = () => {
 
   // Initialize Agora engine when config is ready
   useEffect(() => {
-    if (!agoraEngine && agoraConfig && !loading && !isAgoraInitialized && agoraEngineRef.current === null) {
+    if (!agoraEngine && agoraConfig && !loading && !isAgoraInitialized && agoraEngineRef.current === null && !isCleaningUpRef.current) {
       console.log('🔄 Triggering Agora initialization...');
       initializeAgoraEngine();
     }
@@ -436,11 +555,10 @@ const AuctionLiveBroadcastScreen = () => {
   const handleSelectItem = async (item: AuctionItem) => {
     // Close modal immediately for better UX
     setShowItemQueue(false);
-    
+
     try {
-      // Use loadNextItem which will load the selected item if it's the next waiting item
-      // Or we can call the backend to set current_item_id directly
-      await auctionsAPI.loadNextItem(auctionId);
+      // Load the tapped item — not just the lowest-order waiting one
+      await auctionsAPI.selectItem(auctionId, item.id);
       // Item will be loaded via WebSocket item_ready event
     } catch (error: any) {
       console.error('Error loading item:', error);
@@ -489,6 +607,14 @@ const AuctionLiveBroadcastScreen = () => {
         return;
       }
 
+      // Never start broadcasting on an auction that has already ended
+      if (['ended', 'sold', 'cancelled'].includes(auctionData.status)) {
+        setLoading(false);
+        Alert.alert('Auction Ended', 'This auction has already ended');
+        navigation.goBack();
+        return;
+      }
+
       if (auctionData.seller_id !== user?.id) {
         setLoading(false);
         Alert.alert('Unauthorized', 'Only the auction seller can broadcast');
@@ -500,9 +626,11 @@ const AuctionLiveBroadcastScreen = () => {
       const bids = await auctionsAPI.getBidHistory(auctionId, 50);
       setBidHistory(bids);
 
-      // Load current auction item
+      // Load current auction item — the backend leaves current_item_id
+      // pointing at the last item even after it sold/passed, so ignore
+      // terminal statuses or the controls get stuck on a dead item.
       const currentItemData = await auctionsAPI.getCurrentItem(auctionId);
-      if (currentItemData) {
+      if (currentItemData && currentItemData.bidding_status !== 'sold' && currentItemData.bidding_status !== 'passed') {
         setCurrentItem(currentItemData);
         setItemBiddingStatus(currentItemData.bidding_status);
         if (currentItemData.bidding_status === 'active' && currentItemData.bidding_started_at) {
@@ -555,11 +683,23 @@ const AuctionLiveBroadcastScreen = () => {
     // Handle new bids
     const handleNewBid = (data: any) => {
       if (data.auction_id === auctionId) {
+        playBidSound();
+
+        // Item-scoped filter: a bid tagged for a different item must not mark
+        // the current item as having bids or update its bid display
+        const activeItemId = currentItemRef.current?.id;
+        const isCurrentItemBid = !data.item_id || !activeItemId || data.item_id === activeItemId;
+
         setAuction(prev => prev ? {
           ...prev,
           current_bid: data.amount,
           total_bids: (prev.total_bids || 0) + 1
         } : null);
+
+        if (!isCurrentItemBid) {
+          console.log('💰 Bid received for different item:', data.item_id, '— current item:', activeItemId);
+          return;
+        }
 
         // Update current item bid if this is a multi-item auction
         setCurrentItem(prev => prev ? {
@@ -575,7 +715,7 @@ const AuctionLiveBroadcastScreen = () => {
           is_winning: true,
           created_at: new Date().toISOString(),
           bid_type: 'manual',
-          item_id: currentItem?.id, // Include item_id for accurate tracking (undefined if no current item)
+          item_id: data.item_id || activeItemId, // Include item_id for accurate tracking
         }, ...prev.slice(0, 49)]);
 
         // Mark that bids have been received - this will stop the countdown timer
@@ -630,10 +770,9 @@ const AuctionLiveBroadcastScreen = () => {
     // Handle status changes
     const handleStatusChanged = (data: any) => {
       if (data.auction_id === auctionId) {
-        if (data.new_status === 'sold' || data.new_status === 'ended') {
+        if (data.status === 'sold' || data.status === 'ended') {
           setWinnerData({
-            winner_id: data.winner_id,
-            winning_bid: data.winning_bid,
+            winning_bid: data.winning_bid || data.final_bid,
             bidder_display_id: data.bidder_display_id,
           });
           
@@ -641,7 +780,7 @@ const AuctionLiveBroadcastScreen = () => {
           setShowWinnerModal(true);
           
           // Play winner sound when modal shows (synchronized)
-          if (data.new_status === 'sold' && data.winning_bid > 0) {
+          if (data.status === 'sold' && data.winning_bid > 0) {
             playWinner(data.winning_bid, async () => {
               console.log('✅ Winner sound completed');
               
@@ -663,7 +802,7 @@ const AuctionLiveBroadcastScreen = () => {
 
           // When auction ends, clear current item to show SELECT ITEM and LOAD NEXT buttons
           // Only clear current item for timed auctions or when live stream actually ends
-          if (data.new_status === 'ended') {
+          if (data.status === 'ended') {
             // For live auctions, only clear current item if the auction itself ended (not just an item)
             // For timed auctions, keep existing behavior
             if (auction?.auction_type === 'timed' || data.auction_ended === true) {
@@ -783,6 +922,8 @@ const AuctionLiveBroadcastScreen = () => {
             const itemData: any = {
               ...data,
               id: itemId, // Ensure id field is set
+              title: data.item_title || data.title,
+              order_in_auction: data.order_in_auction ?? data.item_number,
             };
             setCurrentItem(itemData as AuctionItem);
             setItemBiddingStatus('waiting');
@@ -808,25 +949,45 @@ const AuctionLiveBroadcastScreen = () => {
             setHasBids(false); // Reset bid tracking when bidding opens
             break;
           
-          case 'bidding_ended':
+          case 'bidding_ended': {
             setItemBiddingStatus('ended');
             setBiddingTimeLeft(null);
             if (data.winner) {
               setWinnerData({
-                winner_id: data.winner.bidder_id,
                 winning_bid: data.winner.amount,
                 bidder_display_id: data.winner.bidder_display_id,
               });
               // Show winner modal on host screen
               setShowWinnerModal(true);
             }
+            // A passed/unsold item is terminal. If the backend auto-advanced
+            // to the next lot, item_ready arrives right after and repopulates
+            // currentItem; otherwise clear it so SELECT ITEM/LOAD NEXT return.
+            if (data.item_sold === false) {
+              const endedItemId = data.item_id || data.id;
+              setCurrentItem(prev => (prev?.id === endedItemId ? null : prev));
+              setItemBiddingStatus('waiting');
+              loadItemQueue().catch(err => console.error('Error reloading queue:', err));
+            }
             break;
-          
-          case 'item_sold':
+          }
+
+          case 'item_sold': {
             setItemBiddingStatus('sold');
             // Reset phase to prepare for next item (cancel button will be hidden)
             setAuctionPhase('idle');
+            // The sold item is terminal. If the RPC auto-queued the next lot,
+            // the backend emits item_ready immediately after this event and
+            // repopulates currentItem; when this was the last item nothing
+            // arrives, so clear it — otherwise the SELECT ITEM/LOAD NEXT
+            // buttons never come back, even for items added mid-stream.
+            const soldItemId = data.item_id || data.id;
+            setCurrentItem(prev => (prev?.id === soldItemId ? null : prev));
+            setBiddingTimeLeft(null);
+            setCountdownTimer(null);
+            loadItemQueue().catch(err => console.error('Error reloading queue:', err));
             break;
+          }
         }
       }
     };
@@ -834,7 +995,6 @@ const AuctionLiveBroadcastScreen = () => {
 
     // Register listeners
     auctionSocket.on('new_bid', handleNewBid);
-    auctionSocket.on('bid_placed', handleNewBid);
     auctionSocket.on('auction_status_changed', handleStatusChanged);
     auctionSocket.on('view_count_updated', handleViewCountUpdate); // Fixed event name
     auctionSocket.on('item_event', handleItemEvent);
@@ -843,6 +1003,10 @@ const AuctionLiveBroadcastScreen = () => {
 
 
   const cleanupStream = async () => {
+    // Block any pending/in-flight re-initialization immediately. React state
+    // updates in async continuations are not reliably batched, so the init
+    // effect could otherwise fire mid-cleanup and resurrect the stream.
+    isCleaningUpRef.current = true;
     try {
       console.log('🧹 Starting cleanup...');
       
@@ -858,7 +1022,6 @@ const AuctionLiveBroadcastScreen = () => {
       // Remove WebSocket listeners using stored refs
       if (bidHandlerRef.current) {
         auctionSocket.off('new_bid', bidHandlerRef.current);
-        auctionSocket.off('bid_placed', bidHandlerRef.current);
         bidHandlerRef.current = null;
       }
       if (statusHandlerRef.current) {
@@ -896,12 +1059,15 @@ const AuctionLiveBroadcastScreen = () => {
         } catch (cleanupError) {
           console.warn('⚠️ Agora cleanup warning:', cleanupError);
         } finally {
+          // Clear agoraConfig FIRST: if state updates flush in separate
+          // renders, the init effect must never see isAgoraInitialized=false
+          // together with a still-valid config.
+          setAgoraConfig(null);
           setAgoraEngine(null);
           agoraEngineRef.current = null;
           setIsJoined(false);
           setIsPreviewStarted(false);
           setIsAgoraInitialized(false);
-          setAgoraConfig(null);
         }
       }
 
@@ -927,6 +1093,11 @@ const AuctionLiveBroadcastScreen = () => {
   };
 
   const initializeAgoraEngine = async () => {
+    if (isCleaningUpRef.current) {
+      console.log('🧹 Cleanup in progress - skipping Agora initialization');
+      return;
+    }
+
     if (isAgoraInitialized || agoraEngineRef.current) {
       console.log('🔄 Agora engine already initialized, skipping');
       return;
@@ -970,6 +1141,15 @@ const AuctionLiveBroadcastScreen = () => {
       // Setup event listeners
       engine.addListener('onJoinChannelSuccess', async (connection: any, elapsed: number) => {
         console.log('🎉 Agora onJoinChannelSuccess:', { connection, elapsed });
+
+        // A stale engine may join after teardown began (e.g. re-init fired
+        // mid-cleanup). Leave the channel instead of resurrecting the stream.
+        if (isCleaningUpRef.current) {
+          console.log('🧹 Cleanup in progress - leaving channel instead of starting broadcast');
+          try { await engine.leaveChannel(); } catch (e) { /* best effort */ }
+          return;
+        }
+
         setIsJoined(true);
         
         // Notify backend that broadcast has started
@@ -1106,40 +1286,39 @@ const AuctionLiveBroadcastScreen = () => {
 
     // Capture values in closure to avoid stale references
     const itemId = currentItem.id;
-    const currentBid = auction?.current_bid || 0;
-    const totalBids = auction?.total_bids || 0;
 
-    console.log('🔨 Ending bidding for item:', itemId, 'Total bids:', totalBids);
+    console.log('🔨 Ending bidding for item:', itemId);
 
     try {
       setAuctionPhase('gavel_playing');
       stopCrowd(); // Stop crowd sound immediately
 
-      // Play gavel sound - when it completes, check if there were bids
+      // Show the gavel lottie on the host and broadcast it to all viewers
+      setShowGavelLottie(true);
+      auctionSocket.sendPlayGavel(auctionId, itemId);
+
+      // Play gavel sound - when it completes, settle the item on the server's
+      // item-scoped truth (never auction-wide bid counters)
       await playGavel(async () => {
         console.log('✅ Gavel sound completed for item:', itemId);
-        
-        // Only play winner sound and mark as sold if there were actual bids
-        if (totalBids > 0) {
-          console.log('✅ Bids received - ending bidding first, then marking as sold');
-          setAuctionPhase('winner_playing');
 
-          // Step 1: End bidding first (sets status to 'ended' and broadcasts bidding_ended event)
-          // This is required before marking as sold
-          try {
-            await auctionsAPI.endItemBidding(auctionId, itemId);
-            console.log('✅ Bidding ended - winner modal should now be visible');
-            // Winner modal will be shown via bidding_ended event handler (line 398-410)
-            // bidding_ended event also adds item to winner's cart on viewer side
-          } catch (error: any) {
-            console.error('Error ending bidding:', error);
-            Alert.alert('Error', error.message || 'Failed to end bidding');
-            setAuctionPhase('idle');
-            return;
-          }
+        // Step 1: End bidding (closes the item and returns whether it has a
+        // valid winner — a bid landing during the gavel still counts)
+        let outcome: Awaited<ReturnType<typeof auctionsAPI.endItemBidding>>;
+        try {
+          outcome = await auctionsAPI.endItemBidding(auctionId, itemId);
+          console.log('✅ Bidding ended - outcome:', outcome);
+        } catch (error: any) {
+          console.error('Error ending bidding:', error);
+          Alert.alert('Error', error.message || 'Failed to end bidding');
+          setAuctionPhase('idle');
+          return;
+        }
 
+        if (outcome?.has_valid_bid) {
           // Step 2: Mark item as sold (requires status to be 'ended')
           // This broadcasts item_sold event and loads next item
+          setAuctionPhase('winner_playing');
           try {
             await auctionsAPI.markItemSold(auctionId, itemId);
             console.log('✅ Item marked as sold - next item should load automatically');
@@ -1150,18 +1329,15 @@ const AuctionLiveBroadcastScreen = () => {
             return;
           }
         } else {
-          // No bids received - skip winner sound and just end the item
-          console.log('⚠️ No bids received - skipping winner sound for item:', itemId);
+          // No valid bids - mark item as passed (idempotent: skipItem also
+          // advances the queue pointer the failed mark-sold path used to lose)
+          console.log('⚠️ No valid bids - marking item as unsold:', itemId);
           Alert.alert('No Bids', 'No bids were placed on this item. It will be marked as unsold.');
-          
-          // Mark item as passed/unsold
           try {
             await auctionsAPI.skipItem(auctionId, itemId);
           } catch (error: any) {
             console.error('Error skipping item:', error);
           }
-          
-          // Reset to idle
           setAuctionPhase('idle');
         }
       });
@@ -1175,17 +1351,6 @@ const AuctionLiveBroadcastScreen = () => {
   // Gavel button now uses the same unified function
   const handleGavel = () => {
     handleEndBiddingNow();
-  };
-
-  const handleMarkItemSold = async () => {
-    if (!currentItem) return;
-
-    try {
-      await auctionsAPI.markItemSold(auctionId, currentItem.id);
-      setShowWinnerModal(true);
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to mark item as sold');
-    }
   };
 
   // Handle skipping an item temporarily (before bidding starts) - keeps item in queue for later
@@ -1202,9 +1367,10 @@ const AuctionLiveBroadcastScreen = () => {
           text: 'Skip',
           onPress: async () => {
             try {
-              // Just load the next item - this keeps current item in queue with 'waiting' status
-              await auctionsAPI.loadNextItem(auctionId);
-              
+              // Defer sends the item to the back of the waiting queue, then
+              // loads the next item — the deferred item really can come back
+              await auctionsAPI.deferItem(auctionId, currentItem.id);
+
               // Reset phase and clear current item (will be reloaded via WebSocket or next item)
               setAuctionPhase('idle');
               setCurrentItem(null);
@@ -1223,10 +1389,19 @@ const AuctionLiveBroadcastScreen = () => {
   const handleCancelItem = async () => {
     if (!currentItem) return;
 
-    // Check if any bids have been placed
-    const totalBids = auction?.total_bids || 0;
-    
-    if (totalBids > 0) {
+    // Check the item's own winner state — not the auction-wide bid counter,
+    // which stays > 0 for every later item once the first lot got bids
+    let itemHasWinner = false;
+    try {
+      const items = await auctionsAPI.getAuctionItems(auctionId);
+      const freshItem = items?.find((i: any) => i.id === currentItem.id);
+      itemHasWinner = !!freshItem?.winner_id;
+    } catch (error) {
+      console.error('Error checking item winner state:', error);
+      itemHasWinner = hasBids; // fall back to the item-scoped bid flag
+    }
+
+    if (itemHasWinner) {
       Alert.alert('Cannot Cancel', 'Cannot cancel an item that has received bids. You must complete the auction for this item.');
       return;
     }
@@ -1272,6 +1447,73 @@ const AuctionLiveBroadcastScreen = () => {
     );
   };
 
+  const handleShare = async () => {
+    if (!auction) return;
+
+    setShowShareModal(true);
+    setSelectedConversations([]);
+    setChatConversationsLoading(true);
+
+    try {
+      const { conversations } = await chatAPI.getConversations(1, 50);
+      setChatConversations(conversations);
+    } catch (error) {
+      console.error('Error loading chat conversations:', error);
+      Alert.alert('Error', 'Failed to load conversations for sharing');
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  };
+
+  const handleShareToChats = async () => {
+    if (!auction || selectedConversations.length === 0) return;
+
+    setIsSharing(true);
+
+    try {
+      const auctionData = {
+        id: auction.id,
+        title: auction.title,
+        currentBid: auction.current_bid || 0,
+        image: auction.images?.[0] || auction.thumbnail_url || '',
+      };
+
+      await Promise.all(
+        selectedConversations.map((conversation) =>
+          chatAPI.sendMessage({
+            conversationId: conversation.id,
+            messageType: 'text',
+            content: auction.title,
+            metadata: { auctionData },
+          })
+        )
+      );
+
+      Alert.alert('Shared', `Auction shared to ${selectedConversations.length} chat${selectedConversations.length === 1 ? '' : 's'}.`);
+      setShowShareModal(false);
+      setSelectedConversations([]);
+    } catch (error) {
+      console.error('Error sharing auction to chats:', error);
+      Alert.alert('Error', 'Failed to share auction to chats');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleShareExternal = async () => {
+    if (!auction) return;
+
+    try {
+      const shareUrl = `https://www.fretiko.com/auction/${auction.id}`;
+      await Share.share({
+        message: `Check out this live auction: ${auction.title} - Current bid: ₣${(auction.current_bid || 0).toFixed(2)} on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
+        url: shareUrl,
+      });
+    } catch (error) {
+      console.error('Error sharing auction:', error);
+    }
+  };
+
   const handleEndAuction = () => {
     Alert.alert(
       'End Auction',
@@ -1288,10 +1530,18 @@ const AuctionLiveBroadcastScreen = () => {
   };
 
   const handleEndAuctionConfirmed = async () => {
+    // Mark teardown immediately so nothing can re-initialize the stream
+    // while the end request and cleanup are in flight.
+    isCleaningUpRef.current = true;
     try {
+      // Tell the backend the live auction is over before tearing down local stream.
+      await auctionsAPI.endLiveAuction(auctionId);
+      console.log('✅ Live auction ended on backend');
       await cleanupStream();
-      navigation.replace('AuctionDetails', { auctionId });
+      navigation.replace('LiveAuctionDetails', { auctionId });
     } catch (error: any) {
+      // End failed - allow the still-running broadcast to continue/retry.
+      isCleaningUpRef.current = false;
       console.error('Error ending auction:', error);
       Alert.alert('Error', 'Failed to end auction: ' + error.message);
     }
@@ -1303,32 +1553,30 @@ const AuctionLiveBroadcastScreen = () => {
 
     // Capture values in closure to avoid stale references
     const itemId = currentItem.id;
-    const totalBids = auction?.total_bids || 0;
 
-    console.log('🔕 Ending bidding without sound for item:', itemId, 'Total bids:', totalBids);
+    console.log('🔕 Ending bidding without sound for item:', itemId);
 
     try {
       // Stop crowd sound if playing
       stopCrowd();
 
-      // End bidding (sets status to 'ended' and broadcasts bidding_ended event)
-      await auctionsAPI.endItemBidding(auctionId, itemId);
-      
-      console.log('✅ Bidding ended without gavel sound');
-      
-      // After ending bidding, either mark as sold (if bids) or skip item (if no bids)
-      // This ensures the next item loads automatically, same as gavel button behavior
-      if (totalBids > 0) {
-        console.log('✅ Bids received - marking item as sold');
+      // End bidding and let the server's item-scoped outcome decide sold vs
+      // passed (auction-wide total_bids counts earlier items' bids too)
+      const outcome = await auctionsAPI.endItemBidding(auctionId, itemId);
+
+      console.log('✅ Bidding ended without gavel sound - outcome:', outcome);
+
+      if (outcome?.has_valid_bid) {
+        console.log('✅ Valid winning bid - marking item as sold');
         await auctionsAPI.markItemSold(auctionId, itemId);
       } else {
-        console.log('⚠️ No bids received - skipping item');
+        console.log('⚠️ No valid bids - marking item as passed');
         await auctionsAPI.skipItem(auctionId, itemId);
       }
-      
+
       // Reset phase to idle to prepare for next item
       setAuctionPhase('idle');
-      
+
       console.log('✅ Next item should load automatically via backend');
     } catch (error: any) {
       console.error('Error ending bidding without sound:', error);
@@ -1338,52 +1586,39 @@ const AuctionLiveBroadcastScreen = () => {
   };
 
   // Add Item handlers
-  const handleAddMedia = async () => {
-    const totalMedia = newItemImages.length + newItemVideos.length;
-    if (totalMedia >= 10) {
+  const handleAddImage = async () => {
+    if (newItemImages.length + newItemVideos.length >= 10) {
       Alert.alert('Maximum Media', 'You can upload up to 10 images and videos per item.');
       return;
     }
 
-    Alert.alert(
-      'Add Media',
-      'What would you like to add?',
-      [
-        {
-          text: 'Image',
-          onPress: async () => {
-            const result = await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              allowsEditing: true,
-              aspect: [4, 3],
-              quality: 0.8,
-            });
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+    });
 
-            if (!result.canceled && result.assets[0]) {
-              setNewItemImages(prev => [...prev, result.assets[0].uri]);
-            }
-          },
-        },
-        {
-          text: 'Video',
-          onPress: async () => {
-            const result = await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-              allowsEditing: true,
-              quality: 0.8,
-            });
+    if (!result.canceled && result.assets[0]) {
+      setNewItemImages(prev => [...prev, result.assets[0].uri]);
+    }
+  };
 
-            if (!result.canceled && result.assets[0]) {
-              setNewItemVideos(prev => [...prev, result.assets[0].uri]);
-            }
-          },
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-      ]
-    );
+  const handleAddVideo = async () => {
+    if (newItemImages.length + newItemVideos.length >= 10) {
+      Alert.alert('Maximum Media', 'You can upload up to 10 images and videos per item.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setNewItemVideos(prev => [...prev, result.assets[0].uri]);
+    }
   };
 
   const handleRemoveImage = (index: number) => {
@@ -1510,6 +1745,62 @@ const AuctionLiveBroadcastScreen = () => {
     } catch (error: any) {
       console.error('❌ Error toggling video:', error);
       Alert.alert('Error', `Failed to ${isVideoMuted ? 'enable' : 'disable'} video`);
+    }
+  };
+
+  const handlePauseResume = async () => {
+    const willPause = !isPaused;
+    const action = willPause ? 'pause' : 'resume';
+    const newStatus = willPause ? 'paused' : 'live';
+
+    try {
+      console.log(`⏸️ ${action.charAt(0).toUpperCase() + action.slice(1)}ing broadcast...`);
+
+      // 1) Apply pause/resume LOCALLY first (so it works even if backend call fails)
+      // Preserve the user's explicit mic/video toggle states when resuming.
+      setIsPaused(willPause);
+
+      if (agoraEngine) {
+        try {
+          const engineAny = agoraEngine as any;
+          const canUpdateMediaOptions = typeof engineAny.updateChannelMediaOptions === 'function';
+
+          if (canUpdateMediaOptions) {
+            // Stop publishing tracks on pause. On resume, publish based on the current mute toggles.
+            await engineAny.updateChannelMediaOptions({
+              publishCameraTrack: !willPause && !isVideoMuted,
+              publishMicrophoneTrack: !willPause && !isAudioMuted,
+            });
+          } else {
+            // Fallback for older SDK surface
+            await agoraEngine.muteLocalAudioStream(willPause || isAudioMuted);
+            await agoraEngine.muteLocalVideoStream(willPause || isVideoMuted);
+          }
+
+          // Optional: stop local preview while paused (prevents host camera from "moving" locally)
+          if (willPause && typeof engineAny.stopPreview === 'function') {
+            await engineAny.stopPreview();
+          }
+          if (!willPause && typeof engineAny.startPreview === 'function') {
+            await engineAny.startPreview();
+          }
+
+          console.log(`✅ Local stream ${action} applied`);
+        } catch (localError: any) {
+          console.error(`❌ Failed to ${action} locally:`, localError);
+        }
+      }
+
+      // 2) Best-effort backend update (do not block pause/resume)
+      try {
+        await auctionsAPI.updateBroadcastStatus(auctionId, newStatus);
+        console.log(`✅ Broadcast ${action}d on backend`);
+      } catch (backendError: any) {
+        console.warn(`⚠️ Backend broadcast ${action} update failed (continuing locally):`, backendError?.message);
+      }
+    } catch (error: any) {
+      console.error(`❌ Error ${action}ing broadcast:`, error);
+      Alert.alert('Error', `Failed to ${action} broadcast: ` + error.message);
     }
   };
 
@@ -1644,6 +1935,37 @@ const AuctionLiveBroadcastScreen = () => {
         </View>
       )}
 
+      {/* Host pause overlay */}
+      {isPaused && (
+        <View style={styles.hostPauseOverlay} pointerEvents="none">
+          <View style={styles.hostPauseContent}>
+            <Ionicons name="pause-circle" size={80} color="rgba(255, 255, 255, 0.95)" />
+            <Text style={styles.hostPauseTitle}>Paused</Text>
+            <Text style={styles.hostPauseSubtitle}>Your live stream is paused</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Host mute overlay */}
+      {(isVideoMuted || isAudioMuted) && !isPaused && (
+        <View style={styles.hostMuteOverlay} pointerEvents="none">
+          <View style={styles.hostMuteContent}>
+            {isVideoMuted && (
+              <View style={styles.hostMuteRow}>
+                <Ionicons name="videocam-off" size={22} color="rgba(255, 255, 255, 0.95)" />
+                <Text style={styles.hostMuteText}>Video off</Text>
+              </View>
+            )}
+            {isAudioMuted && (
+              <View style={styles.hostMuteRow}>
+                <Ionicons name="mic-off" size={22} color="rgba(255, 255, 255, 0.95)" />
+                <Text style={styles.hostMuteText}>Audio muted</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+
       {/* Top Controls */}
       <View style={[styles.topControls, { paddingTop: insets.top + 10 }]}>
         <TouchableOpacity style={styles.closeButton} onPress={handleEndAuction}>
@@ -1651,14 +1973,19 @@ const AuctionLiveBroadcastScreen = () => {
         </TouchableOpacity>
 
         <View style={styles.topRightContainer}>
-          <View style={styles.liveIndicator}>
-            <View style={styles.liveDot} />
-            <Text style={styles.liveText}>LIVE</Text>
+          <View style={[styles.liveIndicator, isPaused && styles.pausedIndicator]}>
+            <View style={[styles.liveDot, isPaused && styles.pausedDot]} />
+            <Text style={[styles.liveText, isPaused && styles.pausedText]}>
+              {isPaused ? "PAUSED" : "LIVE"}
+            </Text>
           </View>
           <View style={styles.viewerCount}>
             <Ionicons name="eye" size={16} color="white" />
             <Text style={styles.viewerText}>{viewerCount}</Text>
           </View>
+          <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
+            <Ionicons name="share-outline" size={20} color="white" />
+          </TouchableOpacity>
         </View>
 
         {/* Reactions Display */}
@@ -1769,7 +2096,7 @@ const AuctionLiveBroadcastScreen = () => {
               <Text style={styles.currentBidLabel}>Current Bid:</Text>
               <Text style={styles.currentBidAmount}>₣{auction.current_bid.toFixed(2)}</Text>
             </View>
-            {timeRemaining && (
+            {timeRemaining !== null && (
               <View style={styles.timeRow}>
                 <Ionicons name="time-outline" size={14} color="#FFA500" />
                 <Text style={styles.timeRemaining}>{formatTime(timeRemaining)}</Text>
@@ -2245,60 +2572,63 @@ const AuctionLiveBroadcastScreen = () => {
 
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Media ({newItemImages.length + newItemVideos.length}/10)</Text>
-                
-                {/* Images Section */}
-                {newItemImages.length > 0 && (
-                  <View style={styles.mediaSection}>
-                    <Text style={styles.mediaSectionTitle}>Images ({newItemImages.length})</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagesContainer}>
-                      {newItemImages.map((uri, index) => (
-                        <View key={`img-${index}`} style={styles.imagePreview}>
-                          <Image source={{ uri }} style={styles.previewImage} />
-                          <TouchableOpacity
-                            style={styles.removeImageButton}
-                            onPress={() => handleRemoveImage(index)}
-                          >
-                            <Ionicons name="close-circle" size={24} color="#E74C3C" />
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                    </ScrollView>
-                  </View>
-                )}
 
-                {/* Videos Section */}
-                {newItemVideos.length > 0 && (
-                  <View style={styles.mediaSection}>
-                    <Text style={styles.mediaSectionTitle}>Videos ({newItemVideos.length})</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.videosContainer}>
-                      {newItemVideos.map((uri, index) => (
-                        <View key={`vid-${index}`} style={styles.videoPreview}>
-                          <View style={styles.videoThumbnail}>
-                            <Ionicons name="videocam" size={32} color="#3498DB" />
-                            <Text style={styles.videoDurationText}>Video</Text>
-                          </View>
-                          <TouchableOpacity
-                            style={styles.removeVideoButton}
-                            onPress={() => handleRemoveVideo(index)}
-                          >
-                            <Ionicons name="close-circle" size={24} color="#E74C3C" />
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                    </ScrollView>
-                  </View>
-                )}
+                {/* Images — input card on the left, newest media right next to it */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagesContainer}>
+                  {(newItemImages.length + newItemVideos.length) < 10 && (
+                    <TouchableOpacity
+                      style={styles.addMediaButton}
+                      onPress={handleAddImage}
+                    >
+                      <Ionicons name="camera" size={24} color="#3498DB" />
+                      <Text style={styles.addMediaText}>Add Photo</Text>
+                    </TouchableOpacity>
+                  )}
+                  {[...newItemImages].reverse().map((uri, reversedIndex) => {
+                    const index = newItemImages.length - 1 - reversedIndex;
+                    return (
+                      <View key={`img-${index}`} style={styles.imagePreview}>
+                        <Image source={{ uri }} style={styles.previewImage} />
+                        <TouchableOpacity
+                          style={styles.removeImageButton}
+                          onPress={() => handleRemoveImage(index)}
+                        >
+                          <Ionicons name="close-circle" size={24} color="#E74C3C" />
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
 
-                {/* Add Media Button */}
-                {(newItemImages.length + newItemVideos.length) < 10 && (
-                  <TouchableOpacity
-                    style={styles.addMediaButton}
-                    onPress={handleAddMedia}
-                  >
-                    <Ionicons name="add-circle" size={32} color="#3498DB" />
-                    <Text style={styles.addMediaText}>Add Image or Video</Text>
-                  </TouchableOpacity>
-                )}
+                {/* Videos — input card on the left, newest media right next to it */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.videosContainer}>
+                  {(newItemImages.length + newItemVideos.length) < 10 && (
+                    <TouchableOpacity
+                      style={styles.addMediaButton}
+                      onPress={handleAddVideo}
+                    >
+                      <Ionicons name="videocam" size={24} color="#3498DB" />
+                      <Text style={styles.addMediaText}>Add Video</Text>
+                    </TouchableOpacity>
+                  )}
+                  {[...newItemVideos].reverse().map((uri, reversedIndex) => {
+                    const index = newItemVideos.length - 1 - reversedIndex;
+                    return (
+                      <View key={`vid-${index}`} style={styles.videoPreview}>
+                        <View style={styles.videoThumbnail}>
+                          <Ionicons name="videocam" size={32} color="#3498DB" />
+                          <Text style={styles.videoDurationText}>Video</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.removeVideoButton}
+                          onPress={() => handleRemoveVideo(index)}
+                        >
+                          <Ionicons name="close-circle" size={24} color="#E74C3C" />
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
               </View>
 
               <TouchableOpacity
@@ -2319,33 +2649,39 @@ const AuctionLiveBroadcastScreen = () => {
 
       {/* Bottom Controls */}
       <View style={[styles.bottomControls, { paddingBottom: insets.bottom + 20 }]}>
-        {/* TikTok-style Sound Effect Buttons */}
+        {/* Soundboard — 3 pinned quick slots + library button */}
         <View style={styles.soundButtonsContainer}>
-          <TouchableOpacity 
-            style={styles.soundButton} 
-            onPress={playCheer}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.soundButtonEmoji}>🎉</Text>
-            <Text style={styles.soundButtonLabel}>Cheer</Text>
-          </TouchableOpacity>
+          {soundSlots.map((slotId, index) => {
+            const entry = soundMap.get(slotId);
+            const isPlaying = playingSoundIds.has(slotId);
+            return (
+              <TouchableOpacity
+                key={`${slotId}-${index}`}
+                style={[styles.soundButton, isPlaying && styles.soundButtonPlaying]}
+                onPress={() => handleQuickSound(slotId)}
+                activeOpacity={0.7}
+              >
+                {isPlaying ? (
+                  <Ionicons name="stop" size={24} color="white" />
+                ) : (
+                  <Text style={styles.soundButtonEmoji}>
+                    {entry?.emoji ?? BUILTIN_SOUNDS[slotId]?.emoji ?? '🔊'}
+                  </Text>
+                )}
+                <Text style={styles.soundButtonLabel} numberOfLines={1}>
+                  {entry?.name ?? BUILTIN_SOUNDS[slotId]?.name ?? 'Sound'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
 
-          <TouchableOpacity 
-            style={styles.soundButton} 
-            onPress={playClap}
+          <TouchableOpacity
+            style={styles.soundButton}
+            onPress={() => setShowSoundBoard(true)}
             activeOpacity={0.7}
           >
-            <Ionicons name="hand-right" size={24} color="white" />
-            <Text style={styles.soundButtonLabel}>Clap</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.soundButton} 
-            onPress={playLaugh}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="happy" size={24} color="white" />
-            <Text style={styles.soundButtonLabel}>Laugh</Text>
+            <Ionicons name="add" size={26} color="white" />
+            <Text style={styles.soundButtonLabel}>Sounds</Text>
           </TouchableOpacity>
         </View>
 
@@ -2368,6 +2704,15 @@ const AuctionLiveBroadcastScreen = () => {
               name={isVideoMuted ? "videocam-off" : "videocam"} 
               size={24} 
               color={isVideoMuted ? "#E74C3C" : "white"} 
+            />
+          </TouchableOpacity>
+
+          {/* Pause/Resume Broadcast Button */}
+          <TouchableOpacity style={styles.controlIconButton} onPress={handlePauseResume}>
+            <Ionicons
+              name={isPaused ? "play-circle" : "pause-circle"}
+              size={24}
+              color={isPaused ? "#FFA500" : "white"}
             />
           </TouchableOpacity>
 
@@ -2481,7 +2826,7 @@ const AuctionLiveBroadcastScreen = () => {
               </TouchableOpacity>
             )}
           </View>
-        ) : itemQueue.length > 0 ? (
+        ) : itemQueue.some(item => item.bidding_status === 'waiting') ? (
           <View style={styles.auctionControlsContainer}>
             <TouchableOpacity 
               style={[styles.auctionButton, styles.selectItemButton]} 
@@ -2584,6 +2929,34 @@ const AuctionLiveBroadcastScreen = () => {
           </View>
         </Modal>
       )}
+
+      {showGavelLottie && (
+        <GavelLottieEffect onComplete={() => setShowGavelLottie(false)} />
+      )}
+
+      <SoundBoardModal
+        visible={showSoundBoard}
+        onClose={() => setShowSoundBoard(false)}
+        onPlay={handleSoundBoardPlay}
+        onStop={handleSoundBoardStop}
+        primaries={soundSlots}
+        onPrimariesChange={setSoundSlots}
+        onLibraryChange={handleLibraryChange}
+      />
+
+      <ShareModal
+        visible={showShareModal}
+        title="Share Auction"
+        onClose={() => setShowShareModal(false)}
+        conversations={chatConversations}
+        conversationsLoading={chatConversationsLoading}
+        selectedConversations={selectedConversations}
+        onSelect={setSelectedConversations}
+        onShare={handleShareToChats}
+        onShareExternal={handleShareExternal}
+        isSharing={isSharing}
+        insetsBottom={insets.bottom}
+      />
     </View>
   );
 };
@@ -2660,6 +3033,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  shareButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   liveIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2679,6 +3060,75 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 12,
     fontWeight: 'bold',
+  },
+  pausedIndicator: {
+    backgroundColor: 'rgba(255, 252, 0, 0.9)',
+  },
+  pausedDot: {
+    backgroundColor: '#FFFC00',
+  },
+  pausedText: {
+    color: '#FFFC00',
+  },
+  // Host pause overlay
+  hostPauseOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  hostPauseContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hostPauseTitle: {
+    color: 'white',
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginTop: 16,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  hostPauseSubtitle: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  // Host mute overlay
+  hostMuteOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  hostMuteContent: {
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    minWidth: 200,
+  },
+  hostMuteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  hostMuteText: {
+    color: 'rgba(255, 255, 255, 0.95)',
+    fontSize: 16,
+    fontWeight: '600',
   },
   viewerCount: {
     flexDirection: 'row',
@@ -2847,6 +3297,10 @@ const styles = StyleSheet.create({
     minWidth: 70,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  soundButtonPlaying: {
+    borderColor: '#FF0050',
+    backgroundColor: 'rgba(255, 0, 80, 0.35)',
   },
   soundButtonEmoji: {
     fontSize: 24,
@@ -3153,6 +3607,7 @@ const styles = StyleSheet.create({
   },
   videosContainer: {
     flexDirection: 'row',
+    marginTop: 12,
   },
   videoPreview: {
     width: 80,
@@ -3190,6 +3645,7 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 12,
   },
   addMediaText: {
     color: '#3498DB',

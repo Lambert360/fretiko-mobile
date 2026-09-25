@@ -569,14 +569,14 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation, route })
                     I agree to the{' '}
                     <Text
                       style={styles.termsLink}
-                      onPress={() => Linking.openURL('https://fretiko.com/terms')}
+                      onPress={() => Linking.openURL('https://www.fretiko.com/terms')}
                     >
                       Terms & Conditions
                     </Text>
                     {' '}and{' '}
                     <Text
                       style={styles.termsLink}
-                      onPress={() => Linking.openURL('https://fretiko.com/privacy')}
+                      onPress={() => Linking.openURL('https://www.fretiko.com/privacy')}
                     >
                       Privacy Policy
                     </Text>

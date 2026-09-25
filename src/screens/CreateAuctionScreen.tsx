@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { auctionsAPI, AuctionCategory, CreateAuctionData } from '../services/auctionsAPI';
 import { userAPI, UserProfile } from '../services/userAPI';
@@ -26,6 +27,21 @@ import { fileUploadService } from '../services/fileUploadService';
 import { useAuth } from '../contexts/AuthContext';
 
 const { width: screenWidth } = Dimensions.get('window');
+
+// Backend storage cannot serve HEIC/HEIF; convert to JPEG before upload.
+const ensureJpegImageUri = async (uri: string): Promise<string> => {
+  if (!/\.(heic|heif)(\?.*)?$/i.test(uri)) return uri;
+  try {
+    const converted = await manipulateAsync(uri, [], {
+      compress: 0.9,
+      format: SaveFormat.JPEG,
+    });
+    return converted.uri;
+  } catch (error) {
+    console.warn('⚠️ HEIC conversion failed, uploading as-is:', error);
+    return uri;
+  }
+};
 
 /**
  * Create Auction Screen
@@ -306,6 +322,8 @@ const CreateAuctionScreen: React.FC = () => {
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [showEndTimePickerOnly, setShowEndTimePickerOnly] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Staged submit label shown on the create button (e.g. "Uploading media...")
+  const [submitStep, setSubmitStep] = useState('');
   const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   
@@ -772,12 +790,18 @@ const CreateAuctionScreen: React.FC = () => {
 
       setLoading(true);
 
+      // Total media files across the primary lot and all live-auction items
+      const totalMediaFiles = images.length + videos.length +
+        liveAuctionItems.reduce((n, item) => n + item.images.length + (item.videos?.length || 0), 0);
+      setSubmitStep(totalMediaFiles > 0 ? 'Preparing media...' : '');
+
       // Determine action based on mode
       let successAuction: any;
 
       if (isEditMode && auctionId) {
         // UPDATE existing auction
         console.log('✏️ Updating auction:', auctionId);
+        setSubmitStep('Updating lot...');
 
         const updateData: Partial<CreateAuctionData> = {
           title: title.trim(),
@@ -820,6 +844,12 @@ const CreateAuctionScreen: React.FC = () => {
         formData.append('auctioneer_enabled', (auctionType === 'live' ? auctioneerEnabled : false).toString());
         formData.append('crowd_sounds_enabled', (auctionType === 'live' ? crowdSoundsEnabled : false).toString());
 
+        // Convert any HEIC/HEIF picks to JPEG — backend storage rejects those mime types
+        const preparedImages = await Promise.all(images.map(ensureJpegImageUri));
+        const preparedItemImages = await Promise.all(
+          liveAuctionItems.map(item => Promise.all(item.images.map(ensureJpegImageUri)))
+        );
+
         // Add files under 'files' field (backend interceptor expects this)
         // For live auctions, associate images with specific items using filename prefixes
         let allItems = [];
@@ -842,7 +872,7 @@ const CreateAuctionScreen: React.FC = () => {
           console.log('🔍 Debug - Primary item created:', JSON.stringify(primaryItem, null, 2));
 
           // Add primary item images with item-0 prefix in filename
-          images.forEach((uri, index) => {
+          preparedImages.forEach((uri, index) => {
             const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
             const fileName = `item-0-image-${index}.jpg`;
             
@@ -890,7 +920,7 @@ const CreateAuctionScreen: React.FC = () => {
             allItems.push(additionalItem);
 
             // Add additional item images with proper indexing in filename
-            item.images.forEach((uri, imgIndex) => {
+            preparedItemImages[itemIndex].forEach((uri, imgIndex) => {
               const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
               const fileName = `item-${itemIndex + 1}-image-${imgIndex}.jpg`;
               
@@ -941,7 +971,7 @@ const CreateAuctionScreen: React.FC = () => {
 
         } else {
           // Timed auctions - use simple naming
-          images.forEach((uri, index) => {
+          preparedImages.forEach((uri, index) => {
             const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
             const fileName = `image-${index}.jpg`;
             
@@ -972,6 +1002,12 @@ const CreateAuctionScreen: React.FC = () => {
         const action = isRelistMode ? 'Relisting' : 'Creating';
         console.log(`🔨 ${action} auction with`, images.length, 'images', videos.length, 'videos', liveAuctionItems.length, 'additional items');
 
+        setSubmitStep(
+          totalMediaFiles > 0
+            ? 'Uploading media...'
+            : `${action} lot...`
+        );
+
         successAuction = await auctionsAPI.createAuctionWithImages(formData);
 
         console.log(`✅ Auction ${isRelistMode ? 'relisted' : 'created'} successfully:`, successAuction);
@@ -992,16 +1028,15 @@ const CreateAuctionScreen: React.FC = () => {
             {
               text: 'Go Live Now',
               onPress: () => {
-                (navigation as any).replace('LiveStreamHost', {
+                (navigation as any).replace('AuctionLiveBroadcast', {
                   auctionId: createdAuction.id,
-                  auction: createdAuction
                 });
               },
             },
             {
               text: 'View Details',
               onPress: () => {
-                (navigation as any).navigate('AuctionDetails', { auctionId: createdAuction.id });
+                (navigation as any).navigate('LiveAuctionDetails', { auctionId: createdAuction.id });
               },
             },
             {
@@ -1052,17 +1087,8 @@ const CreateAuctionScreen: React.FC = () => {
       Alert.alert('Error', errorMessage);
     } finally {
       setLoading(false);
+      setSubmitStep('');
     }
-  };
-
-  const calculateListingFee = () => {
-    const price = parseFloat(startingPrice) || 0;
-    return price * 0.02; // 2% listing fee
-  };
-
-  const calculateCommission = () => {
-    const price = parseFloat(startingPrice) || 0;
-    return price * 0.10; // 10% commission on sale
   };
 
   return (
@@ -1310,25 +1336,21 @@ const CreateAuctionScreen: React.FC = () => {
                 </View>
               </View>
 
-              {/* Fee Preview */}
-              {startingPrice && parseFloat(startingPrice) > 0 && (
-                <View style={styles.feePreview}>
-                  <View style={styles.feeRow}>
-                    <Text style={styles.feeLabel}>Listing Fee (2%)</Text>
-                    <Text style={styles.feeValue}>₣{calculateListingFee().toFixed(2)}</Text>
-                  </View>
-                  <View style={styles.feeRow}>
-                    <Text style={styles.feeLabel}>Commission on Sale (10%)</Text>
-                    <Text style={styles.feeValue}>₣{calculateCommission().toFixed(2)}</Text>
-                  </View>
-                  <View style={[styles.feeRow, styles.feeRowTotal]}>
-                    <Text style={styles.feeLabelTotal}>Total Fees</Text>
-                    <Text style={styles.feeValueTotal}>
-                      ₣{(calculateListingFee() + calculateCommission()).toFixed(2)}
-                    </Text>
-                  </View>
+              {/* Fee Preview - matches backend: listing is free, commission is
+                  charged on the final winning bid, not the starting price */}
+              <View style={styles.feePreview}>
+                <View style={styles.feeRow}>
+                  <Text style={styles.feeLabel}>Listing Fee</Text>
+                  <Text style={[styles.feeValue, styles.feeFree]}>Free</Text>
                 </View>
-              )}
+                <View style={styles.feeRow}>
+                  <Text style={styles.feeLabel}>Commission on Sale</Text>
+                  <Text style={styles.feeValue}>10% of final price</Text>
+                </View>
+                <Text style={styles.feeNote}>
+                  Commission is only charged when your item sells — 10% of the final winning bid, not the starting price.
+                </Text>
+              </View>
             </>
           ) : (
             // Live Auction - Primary Item + Multiple Additional Items
@@ -1344,47 +1366,61 @@ const CreateAuctionScreen: React.FC = () => {
                   This will be the main item displayed on the auction card and details screen.
                 </Text>
 
-                {/* Primary Item Images */}
+                {/* Primary Item Images - same layout as the item modal:
+                    input card fixed on the left, newest media right next to it */}
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Photos & Videos</Text>
-                  
+
+                  {/* Images */}
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-                    {images.map((uri, index) => (
-                      <View key={`img-${index}`} style={styles.imagePreview}>
-                        <Image source={{ uri }} style={styles.previewImage} />
-                        <TouchableOpacity
-                          style={styles.removeImageButton}
-                          onPress={() => removeImage(index)}
-                        >
-                          <Ionicons name="close-circle" size={16} color="#E74C3C" />
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                    
+                    {images.length < 10 && (
+                      <TouchableOpacity
+                        style={styles.modalAddMediaButton}
+                        onPress={pickImages}
+                      >
+                        <Ionicons name="camera" size={20} color="#8E44AD" />
+                        <Text style={styles.modalAddMediaText}>Add Photo</Text>
+                      </TouchableOpacity>
+                    )}
+                    {[...images].reverse().map((uri, reversedIndex) => {
+                      const index = images.length - 1 - reversedIndex;
+                      return (
+                        <View key={`img-${index}`} style={styles.modalImagePreview}>
+                          <Image source={{ uri }} style={styles.modalItemImage} />
+                          <TouchableOpacity
+                            style={styles.modalRemoveMediaButton}
+                            onPress={() => removeImage(index)}
+                          >
+                            <Ionicons name="close-circle" size={16} color="#E74C3C" />
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+
+                  {/* Videos */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <TouchableOpacity
+                      style={styles.modalAddMediaButton}
+                      onPress={pickVideo}
+                    >
+                      <Ionicons name="videocam" size={16} color="#3498DB" />
+                      <Text style={styles.modalAddMediaText}>Add Video</Text>
+                    </TouchableOpacity>
                     {videos.map((uri, index) => (
-                      <View key={`vid-${index}`} style={styles.imagePreview}>
-                        <View style={styles.videoPreview}>
-                          <Ionicons name="play-circle" size={32} color="#8E44AD" />
-                          <Text style={styles.videoText}>Video</Text>
+                      <View key={`vid-${index}`} style={styles.modalVideoPreview}>
+                        <View style={styles.modalVideoThumbnail}>
+                          <Ionicons name="videocam" size={16} color="#3498DB" />
+                          <Text style={styles.modalVideoText}>Video</Text>
                         </View>
                         <TouchableOpacity
-                          style={styles.removeImageButton}
+                          style={styles.modalRemoveMediaButton}
                           onPress={() => removeVideo(index)}
                         >
                           <Ionicons name="close-circle" size={16} color="#E74C3C" />
                         </TouchableOpacity>
                       </View>
                     ))}
-                    
-                    <TouchableOpacity style={styles.addMediaButton} onPress={pickImages}>
-                      <Ionicons name="camera" size={20} color="#8E44AD" />
-                      <Text style={styles.addMediaText}>Add Photo</Text>
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity style={styles.addMediaButton} onPress={pickVideo}>
-                      <Ionicons name="videocam" size={20} color="#8E44AD" />
-                      <Text style={styles.addMediaText}>Add Video</Text>
-                    </TouchableOpacity>
                   </ScrollView>
                 </View>
 
@@ -1582,6 +1618,8 @@ const CreateAuctionScreen: React.FC = () => {
               value={startTime}
               mode="datetime"
               display="default"
+              themeVariant="dark"
+              textColor="#FFFFFF"
               onChange={(event, selectedDate) => {
                 if (event.type === 'set' && selectedDate) {
                   setStartTime(selectedDate);
@@ -1665,6 +1703,8 @@ const CreateAuctionScreen: React.FC = () => {
               value={endTime}
               mode="datetime"
               display="default"
+              themeVariant="dark"
+              textColor="#FFFFFF"
               onChange={(event, selectedDate) => {
                 if (event.type === 'set' && selectedDate) {
                   setEndTime(selectedDate);
@@ -1801,19 +1841,18 @@ const CreateAuctionScreen: React.FC = () => {
           {/* Live Auction Features */}
           {auctionType === 'live' && (
             <>
-              <View style={styles.settingRow}>
+              {/* AI Auctioneer is not implemented yet - show as coming soon,
+                  not an activatable toggle */}
+              <View style={[styles.settingRow, { opacity: 0.6 }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.settingLabel}>AI Auctioneer 🤖</Text>
                   <Text style={styles.settingDescription}>
                     Gemini AI provides live commentary during bidding
                   </Text>
                 </View>
-                <Switch
-                  value={auctioneerEnabled}
-                  onValueChange={setAuctioneerEnabled}
-                  trackColor={{ false: '#333', true: '#8E44AD80' }}
-                  thumbColor={auctioneerEnabled ? '#8E44AD' : '#888'}
-                />
+                <View style={styles.comingSoonBadge}>
+                  <Text style={styles.comingSoonText}>Coming Soon</Text>
+                </View>
               </View>
 
               <View style={styles.settingRow}>
@@ -1846,7 +1885,10 @@ const CreateAuctionScreen: React.FC = () => {
           disabled={loading}
         >
           {loading ? (
-            <ActivityIndicator color="#FFF" />
+            <>
+              <ActivityIndicator size="small" color="#FFF" />
+              <Text style={styles.createButtonText}>{submitStep || 'Working...'}</Text>
+            </>
           ) : (
             <>
               <Ionicons name="hammer" size={20} color="#FFF" />
@@ -2088,6 +2130,15 @@ const styles = StyleSheet.create({
     color: '#AAA',
     fontSize: 14,
     fontWeight: '600',
+  },
+  feeFree: {
+    color: '#27AE60',
+  },
+  feeNote: {
+    color: '#777',
+    fontSize: 12,
+    marginTop: 8,
+    lineHeight: 17,
   },
   feeLabelTotal: {
     color: '#8E44AD',
@@ -2391,6 +2442,19 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 13,
     lineHeight: 18,
+  },
+  comingSoonBadge: {
+    backgroundColor: '#8E44AD20',
+    borderWidth: 1,
+    borderColor: '#8E44AD60',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  comingSoonText: {
+    color: '#8E44AD',
+    fontSize: 11,
+    fontWeight: '700',
   },
   footer: {
     padding: 16,

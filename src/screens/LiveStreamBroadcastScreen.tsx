@@ -28,7 +28,9 @@ import { liveSalesAPI, LiveStreamProduct, LiveStreamService, LivePortfolioServic
 import { liveStreamSocket, LiveComment, LiveReaction, LiveGift } from '../services/liveStreamSocket';
 import { productsAPI, Product } from '../services/productsAPI';
 import { workspaceAPI, WorkspaceOrder } from '../services/workspaceAPI';
-import { useAuctionSounds } from '../services/auctionSoundService';
+import { playSoundboardSound, stopSoundboardSound, getPlayingSoundboardIds, prefetchSoundboardSounds, BUILTIN_SOUNDS } from '../services/auctionSoundService';
+import { soundsAPI } from '../services/soundsAPI';
+import SoundBoardModal, { SoundBoardEntry } from '../components/SoundBoardModal';
 import { chatAPI, ChatConversation } from '../services/chatAPI';
 import * as ImagePicker from 'expo-image-picker';
 import LottieGiftEffect from '../components/LottieGiftEffect';
@@ -60,8 +62,92 @@ const LiveStreamBroadcastScreen = () => {
   const { stream: initialStream } = route.params;
   const [stream, setStream] = useState(initialStream);
 
-  // Sound effects
-  const { playCheer, playClap, playLaugh } = useAuctionSounds();
+  // Soundboard — dynamic quick slots (defaults: built-in cheer/clap/laugh)
+  const [soundSlots, setSoundSlots] = useState<string[]>([
+    'builtin:cheer',
+    'builtin:clap',
+    'builtin:laugh',
+  ]);
+  const [soundMap, setSoundMap] = useState<Map<string, SoundBoardEntry>>(new Map());
+  const [showSoundBoard, setShowSoundBoard] = useState(false);
+  const [playingSoundIds, setPlayingSoundIds] = useState<Set<string>>(new Set());
+
+  // Track which soundboard sounds are actually playing so quick slots can
+  // toggle to "tap to stop" — polls lightly, re-renders only on change.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPlayingSoundIds((prev) => {
+        const next = new Set(getPlayingSoundboardIds());
+        if (next.size === prev.size && [...next].every((id) => prev.has(id))) {
+          return prev;
+        }
+        return next;
+      });
+    }, 400);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Load the host's soundboard library once — sounds persist across streams
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const lib = await soundsAPI.getLibrary();
+        if (cancelled) return;
+        const map = new Map<string, SoundBoardEntry>();
+        Object.entries(BUILTIN_SOUNDS).forEach(([id, meta]) =>
+          map.set(id, { id, name: meta.name, emoji: meta.emoji, isBuiltin: true }),
+        );
+        [...lib.platform, ...lib.mine].forEach((s) =>
+          map.set(s.id, { id: s.id, name: s.name, soundUrl: s.sound_url, isMine: !!s.owner_id }),
+        );
+        setSoundMap(map);
+        setSoundSlots(lib.primaries);
+        prefetchSoundboardSounds([...lib.platform, ...lib.mine]);
+      } catch (error) {
+        console.warn('Failed to load soundboard library:', error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * Quick-slot tap: play locally AND broadcast to viewers via socket.
+   * Tapping a slot that's already playing stops it for everyone.
+   * The backend re-validates the sound and emits 'sound_played' to the room.
+   */
+  const handleQuickSound = useCallback(
+    (slotId: string) => {
+      const entry = soundMap.get(slotId);
+      if (playingSoundIds.has(slotId)) {
+        stopSoundboardSound(slotId);
+        liveStreamSocket.sendStopSound(slotId);
+        return;
+      }
+      playSoundboardSound(slotId, entry?.soundUrl);
+      liveStreamSocket.sendPlaySound(slotId, entry?.name);
+    },
+    [soundMap, playingSoundIds],
+  );
+
+  const handleSoundBoardPlay = useCallback((entry: SoundBoardEntry) => {
+    liveStreamSocket.sendPlaySound(entry.id, entry.name);
+  }, []);
+
+  const handleSoundBoardStop = useCallback((entry: SoundBoardEntry) => {
+    liveStreamSocket.sendStopSound(entry.id);
+  }, []);
+
+  const handleLibraryChange = useCallback((entries: SoundBoardEntry[]) => {
+    const map = new Map<string, SoundBoardEntry>();
+    Object.entries(BUILTIN_SOUNDS).forEach(([id, meta]) =>
+      map.set(id, { id, name: meta.name, emoji: meta.emoji, isBuiltin: true }),
+    );
+    entries.forEach((e) => map.set(e.id, e));
+    setSoundMap(map);
+  }, []);
 
   // Agora state - Industry Standard Implementation
   const [agoraConfig, setAgoraConfig] = useState<any>(null);
@@ -187,6 +273,9 @@ const LiveStreamBroadcastScreen = () => {
   // Initialize Agora configuration
   useEffect(() => {
     initializeStream();
+    // Refresh stream data — initialStream from route params may predate
+    // services being returned by getStreamById
+    liveSalesAPI.getStreamById(initialStream.id).then(setStream).catch(() => {});
     return () => {
       // Cleanup on component unmount
       console.log('🏁 Component unmounting - cleaning up stream...');
@@ -1320,7 +1409,7 @@ const LiveStreamBroadcastScreen = () => {
 
   const handleShareExternal = async () => {
     try {
-      const shareUrl = `https://fretiko.com/live/${stream.id}`;
+      const shareUrl = `https://www.fretiko.com/live/${stream.id}`;
       await Share.share({
         message: `Join my live stream on Fretiko: ${stream.title}\n\n${shareUrl}`,
         url: shareUrl,
@@ -1555,7 +1644,7 @@ const LiveStreamBroadcastScreen = () => {
       </GiftEffectStage>
 
       {/* Stream Title Overlay */}
-      <View style={styles.streamTitleOuter}>
+      <View style={[styles.streamTitleOuter, { top: insets.top + 75 }]}>
         <View style={styles.streamTitleOverlay}>
           <Text style={styles.streamTitle} numberOfLines={1} ellipsizeMode="tail">
             {stream.vendor?.username || 'Host'} : {stream.title}
@@ -1711,9 +1800,16 @@ const LiveStreamBroadcastScreen = () => {
                 <View
                   style={styles.controlItem}
                 >
-                  <View style={styles.serviceIcon}>
-                    <Ionicons name="briefcase" size={24} color="#3498DB" />
-                  </View>
+                  {service.service?.images?.[0] || (service.service?.media_type === 'image' && service.service?.primary_media_url) ? (
+                    <Image
+                      source={{ uri: service.service.images?.[0] || service.service.primary_media_url }}
+                      style={styles.controlItemImage}
+                    />
+                  ) : (
+                    <View style={styles.serviceIcon}>
+                      <Ionicons name="briefcase" size={24} color="#3498DB" />
+                    </View>
+                  )}
                   <Text style={styles.controlItemText} numberOfLines={1}>
                     {service.service.name}
                   </Text>
@@ -1780,33 +1876,39 @@ const LiveStreamBroadcastScreen = () => {
 
       {/* Bottom Controls - TikTok Style */}
       <View style={[styles.bottomControls, { paddingBottom: insets.bottom + 20 }]}>
-        {/* TikTok-style Sound Effect Buttons */}
+        {/* Soundboard — 3 pinned quick slots + library button */}
         <View style={styles.soundButtonsContainer}>
-          <TouchableOpacity 
-            style={styles.soundButton} 
-            onPress={playCheer}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.soundButtonEmoji}>🎉</Text>
-            <Text style={styles.soundButtonLabel}>Cheer</Text>
-          </TouchableOpacity>
+          {soundSlots.map((slotId, index) => {
+            const entry = soundMap.get(slotId);
+            const isPlaying = playingSoundIds.has(slotId);
+            return (
+              <TouchableOpacity
+                key={`${slotId}-${index}`}
+                style={[styles.soundButton, isPlaying && styles.soundButtonPlaying]}
+                onPress={() => handleQuickSound(slotId)}
+                activeOpacity={0.7}
+              >
+                {isPlaying ? (
+                  <Ionicons name="stop" size={24} color="white" />
+                ) : (
+                  <Text style={styles.soundButtonEmoji}>
+                    {entry?.emoji ?? BUILTIN_SOUNDS[slotId]?.emoji ?? '🔊'}
+                  </Text>
+                )}
+                <Text style={styles.soundButtonLabel} numberOfLines={1}>
+                  {entry?.name ?? BUILTIN_SOUNDS[slotId]?.name ?? 'Sound'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
 
-          <TouchableOpacity 
-            style={styles.soundButton} 
-            onPress={playClap}
+          <TouchableOpacity
+            style={styles.soundButton}
+            onPress={() => setShowSoundBoard(true)}
             activeOpacity={0.7}
           >
-            <Ionicons name="hand-right" size={24} color="white" />
-            <Text style={styles.soundButtonLabel}>Clap</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.soundButton} 
-            onPress={playLaugh}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="happy" size={24} color="white" />
-            <Text style={styles.soundButtonLabel}>Laugh</Text>
+            <Ionicons name="add" size={26} color="white" />
+            <Text style={styles.soundButtonLabel}>Sounds</Text>
           </TouchableOpacity>
         </View>
 
@@ -2102,7 +2204,7 @@ const LiveStreamBroadcastScreen = () => {
               </TouchableOpacity>
             </View>
 
-          <View style={styles.analyticsContent}>
+          <ScrollView style={styles.analyticsContent} showsVerticalScrollIndicator={false}>
             <View style={styles.analyticsGrid}>
               <View style={styles.analyticsCard}>
                 <Ionicons name="eye" size={24} color="#FF0050" />
@@ -2184,7 +2286,7 @@ const LiveStreamBroadcastScreen = () => {
                 </ScrollView>
               </View>
             )}
-          </View>
+          </ScrollView>
           </View>
         </View>
       </Modal>
@@ -2482,6 +2584,16 @@ const LiveStreamBroadcastScreen = () => {
         </View>
       </Modal>
 
+      <SoundBoardModal
+        visible={showSoundBoard}
+        onClose={() => setShowSoundBoard(false)}
+        onPlay={handleSoundBoardPlay}
+        onStop={handleSoundBoardStop}
+        primaries={soundSlots}
+        onPrimariesChange={setSoundSlots}
+        onLibraryChange={handleLibraryChange}
+      />
+
       <ShareModal
         visible={showShareModal}
         title="Share Live Stream"
@@ -2712,6 +2824,10 @@ const styles = StyleSheet.create({
     minWidth: 70,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  soundButtonPlaying: {
+    borderColor: '#FF0050',
+    backgroundColor: 'rgba(255, 0, 80, 0.35)',
   },
   soundButtonEmoji: {
     fontSize: 24,

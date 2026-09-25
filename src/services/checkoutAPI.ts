@@ -10,6 +10,10 @@ export interface DeliveryAddress {
   country?: string;
   postalCode: string;
   isDefault: boolean;
+  /** Resolved coords (geocoded or city centroid) — used for route-distance
+   *  pricing + live tracking; absent for addresses never geocoded. */
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface PaymentMethod {
@@ -39,12 +43,16 @@ export interface OrderSummary {
     itemType?: string;
     isOutOfState?: boolean;
     isOutOfCountry?: boolean;
+    weightKg?: number; // per-unit chargeable weight, server-computed
+    /** ITEM pickup coords (products/services.location_lat/lng) — server-set */
+    locationCoords?: { latitude?: number; longitude?: number };
   }>;
   subtotal: number;
   shipping: number;
   tax: number;
   escrowFee: number;
   total: number;
+  totalWeightKg?: number; // server-computed order chargeable weight
   hasOutOfStateItems?: boolean;
   hasOutOfCountryItems?: boolean;
 }
@@ -58,6 +66,11 @@ export interface InterstateCompanyOption {
   estimatedDeliveryDaysMin: number;
   estimatedDeliveryDaysMax: number;
   isInternational: boolean;
+  perKgRate?: number;
+  internationalPerKgRate?: number;
+  includedWeightKg?: number;
+  maxWeightKg?: number;
+  quotedPrice?: number; // server-computed fee for the order's weight
 }
 
 export interface CreateOrderRequest {
@@ -71,6 +84,7 @@ export interface CreateOrderRequest {
   };
   auctionCheckout?: {
     auctionId: string;
+    itemId?: string;
   };
   serviceBooking?: {
     serviceId: string;
@@ -84,6 +98,7 @@ export interface CreateOrderRequest {
     vehicleType: 'wheelbarrow' | 'bike' | 'car' | 'pickup';
     deliveryPrice: number;
     estimatedArrival: number;
+    distance?: number; // km from the rider quote — server needs it to recompute per-km fees
   };
   // Interstate/international delivery via a logistics partner company
   interstateCompany?: {
@@ -145,10 +160,14 @@ class CheckoutAPI {
   }
 
   // Get checkout summary for auction winner
-  async getAuctionCheckoutSummary(auctionId: string): Promise<OrderSummary> {
+  async getAuctionCheckoutSummary(auctionId: string, itemId?: string | null): Promise<OrderSummary> {
     try {
+      const params: any = { auctionId };
+      if (itemId) {
+        params.itemId = itemId;
+      }
       const response = await api.get(`/checkout/summary/auction`, {
-        params: { auctionId }
+        params
       });
       return response.data;
     } catch (error) {

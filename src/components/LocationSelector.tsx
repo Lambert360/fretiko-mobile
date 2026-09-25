@@ -28,6 +28,11 @@ interface Location {
 type CountryType = typeof Country;
 type StateType = typeof State;
 
+export interface ResolvedLocationCoords {
+  latitude: number;
+  longitude: number;
+}
+
 interface LocationSelectorProps {
   visible: boolean;
   selectedLocation: string;
@@ -35,6 +40,9 @@ interface LocationSelectorProps {
   onClose: () => void;
   /** Optional: called with state and country as separate strings (useful for address forms) */
   onLocationSelectDetailed?: (state: string, country: string) => void;
+  /** Optional: called with the resolved GPS/state-centroid coordinates
+   * (used by upload/checkout flows that price delivery by distance) */
+  onLocationResolved?: (location: string, coords: ResolvedLocationCoords | null) => void;
 }
 
 // Function to get location name from coordinates
@@ -111,6 +119,7 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
   onLocationSelect,
   onClose,
   onLocationSelectDetailed,
+  onLocationResolved,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredCountries, setFilteredCountries] = useState<any[]>(allCountries);
@@ -191,6 +200,13 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
     if (onLocationSelectDetailed) {
       onLocationSelectDetailed(state.name, selectedCountry.name);
     }
+    // country-state-city state objects carry centroid lat/lng (as strings)
+    const lat = parseFloat(state.latitude);
+    const lng = parseFloat(state.longitude);
+    onLocationResolved?.(
+      locationString,
+      Number.isFinite(lat) && Number.isFinite(lng) ? { latitude: lat, longitude: lng } : null,
+    );
     onClose();
   };
 
@@ -241,8 +257,10 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
       // Get location name from coordinates
       const locationName = await getLocationName(latitude, longitude);
       
-      // Update the selected location
+      // Update the selected location — keep the real GPS coords for
+      // consumers that price/filter by distance
       onLocationSelect(locationName);
+      onLocationResolved?.(locationName, { latitude, longitude });
       onClose();
       
     } catch (error) {

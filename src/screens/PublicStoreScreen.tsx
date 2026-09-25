@@ -39,6 +39,8 @@ interface UserProfile {
   dateOfBirth?: string;
   isSeller: boolean;
   isRider?: boolean;
+  catalogHidden?: boolean;
+  isAdultContent?: boolean;
   bgPicUrl?: string; // Use bgPicUrl to match API response
   backgroundImageUrl?: string; // Keep for backward compatibility
   createdAt: string;
@@ -686,6 +688,28 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
           </TouchableOpacity>
         </View>
 
+        {/* Catalog visibility notices */}
+        {profile?.catalogHidden && (
+          <View style={styles.visibilityNotice}>
+            <Ionicons name="eye-off-outline" size={16} color="#E67E22" />
+            <Text style={styles.visibilityNoticeText}>
+              {isOwnStore
+                ? 'Your catalog is unlisted — buyers can only reach your items via direct links.'
+                : 'This catalog is unlisted — items are only available via direct links.'}
+            </Text>
+          </View>
+        )}
+        {profile?.isAdultContent && (
+          <View style={styles.visibilityNotice}>
+            <Ionicons name="alert-circle-outline" size={16} color="#E67E22" />
+            <Text style={styles.visibilityNoticeText}>
+              {isOwnStore
+                ? 'Your catalog is marked 18+ — only adult users can view your listings.'
+                : 'This catalog contains adult content and is only visible to users 18+.'}
+            </Text>
+          </View>
+        )}
+
         {/* Content Area */}
         <View style={styles.contentArea}>
           {activeTab === 'products' ? (
@@ -709,11 +733,22 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
               </View>
             ) : (
               <View style={styles.emptyContentContainer}>
-                <Text style={styles.emptyContentIcon}>📦</Text>
-                <Text style={styles.emptyContentTitle}>No Products Yet</Text>
+                <Text style={styles.emptyContentIcon}>
+                  {profile?.catalogHidden || profile?.isAdultContent ? '🔒' : '📦'}
+                </Text>
+                <Text style={styles.emptyContentTitle}>
+                  {profile?.catalogHidden || profile?.isAdultContent
+                    ? 'Catalog Not Visible'
+                    : 'No Products Yet'}
+                </Text>
                 <Text style={styles.emptyContentText}>
-                  {isOwnStore ? 'Start adding your products to reach more customers' :
-                   `${profile?.username || 'This store'} hasn't added any products yet`}
+                  {profile?.catalogHidden || profile?.isAdultContent
+                    ? isOwnStore
+                      ? 'Your visibility settings hide your items from public view. Update them in Manage Store.'
+                      : `${profile?.username || 'This store'}'s catalog isn't publicly visible right now.`
+                    : isOwnStore
+                      ? 'Start adding your products to reach more customers'
+                      : `${profile?.username || 'This store'} hasn't added any products yet`}
                 </Text>
               </View>
             )
@@ -739,16 +774,24 @@ export const PublicStoreScreen: React.FC<PublicStoreScreenProps> = ({ navigation
             ) : (
               <View style={styles.emptyContentContainer}>
                 <Text style={styles.emptyContentIcon}>
-                  {profile?.isRider ? '🎥' : '🛠️'}
+                  {profile?.catalogHidden || profile?.isAdultContent
+                    ? '🔒'
+                    : profile?.isRider ? '🎥' : '🛠️'}
                 </Text>
                 <Text style={styles.emptyContentTitle}>
-                  {profile?.isRider ? 'No Videos Yet' : 'No Services Yet'}
+                  {profile?.catalogHidden || profile?.isAdultContent
+                    ? 'Catalog Not Visible'
+                    : profile?.isRider ? 'No Videos Yet' : 'No Services Yet'}
                 </Text>
                 <Text style={styles.emptyContentText}>
-                  {isOwnStore ? 
-                    (profile?.isRider ? 'Share videos of your services to attract more clients' :
-                     'Showcase your services to grow your business') :
-                    `${profile?.username || 'This store'} hasn't added any ${activeTab} yet`}
+                  {profile?.catalogHidden || profile?.isAdultContent
+                    ? isOwnStore
+                      ? 'Your visibility settings hide your items from public view. Update them in Manage Store.'
+                      : `${profile?.username || 'This store'}'s catalog isn't publicly visible right now.`
+                    : isOwnStore
+                      ? (profile?.isRider ? 'Share videos of your services to attract more clients' :
+                         'Showcase your services to grow your business')
+                      : `${profile?.username || 'This store'} hasn't added any ${activeTab} yet`}
                 </Text>
               </View>
             )
@@ -1263,6 +1306,25 @@ const styles = StyleSheet.create({
     color: '#B0B0B0',
     textAlign: 'center',
     lineHeight: 24,
+  },
+  visibilityNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 20,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(230, 126, 34, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(230, 126, 34, 0.3)',
+  },
+  visibilityNoticeText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#E67E22',
+    lineHeight: 18,
   },
   avatarWrapper: {
     position: 'relative',

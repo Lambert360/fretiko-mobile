@@ -18,10 +18,12 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { searchAPI, SearchType, UserResult, RiderResult } from '../services/searchAPI';
+import { searchAPI, SearchType, UserResult, RiderResult, SearchQuery } from '../services/searchAPI';
 import { userAPI } from '../services/userAPI';
 import { api } from '../services/api';
 import { tagsAPI, type TagContentItem } from '../services/tagsAPI';
+import { wishlistAPI } from '../services/wishlistAPI';
+import { servicesAPI } from '../services/servicesAPI';
 import { useSearch, useDiscoverContent, useSearchSuggestions } from '../hooks/useSearch';
 import {
   PersonCard,
@@ -57,9 +59,16 @@ const SearchScreen = () => {
     showTopRated: false,
     showFreeShipping: false,
     showVerifiedOnly: false,
+    showAvailableNow: false,
     priceRange: 'all', // 'all', 'under50', '50to200', 'over200'
     sortBy: 'relevance', // 'relevance', 'price_low', 'price_high', 'newest', 'rating'
   });
+  const [searchPage, setSearchPage] = useState(1);
+  const [hasMoreResults, setHasMoreResults] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  // Always read the latest filters inside async search calls
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
   const [trendingTags, setTrendingTags] = useState<Array<{ id: string; name: string; display_name: string; usage_count: number }>>([]);
   const [tagContent, setTagContent] = useState<TagContentItem[] | null>(null);
   const [tagContentLoading, setTagContentLoading] = useState(false);
@@ -85,56 +94,59 @@ const SearchScreen = () => {
 
   // Map API data to card format using useMemo to prevent re-renders
   const featuredContent = useMemo(() => {
-    const raw = discoverContent?.featured || { products: [], services: [], people: [], providers: [] };
+    const raw = discoverContent?.featured || { products: [], services: [], people: [], providers: [], vendors: [] };
     return {
       products: mapProductsArray(raw.products || []),
       services: mapServicesArray(raw.services || []),
       people: mapPeopleArray(raw.people || []),
       providers: mapProvidersArray(raw.providers || []),
+      vendors: mapPeopleArray(raw.vendors || []),
     };
   }, [discoverContent]);
 
   const recommendations = useMemo(() => {
-    const raw = discoverContent?.recommendations || { products: [], services: [], people: [], providers: [] };
+    const raw = discoverContent?.recommendations || { products: [], services: [], people: [], providers: [], vendors: [] };
     return {
       products: mapProductsArray(raw.products || []),
       services: mapServicesArray(raw.services || []),
       people: mapPeopleArray(raw.people || []),
       providers: mapProvidersArray(raw.providers || []),
+      vendors: mapPeopleArray(raw.vendors || []),
     };
   }, [discoverContent]);
 
-  // Get recent searches from search history
+  // Recent searches — persisted via AsyncStorage in useSearch
   const recentSearches = searchHistory;
 
-  // Quick filters
+  // Quick filters — only chips backed by real backend filters are enabled.
+  // Commented entries have no supporting query param yet.
   const quickFilters = [
-    { id: '1', name: 'On Sale', icon: 'pricetag', color: '#E74C3C' },
-    { id: '2', name: 'New Arrivals', icon: 'flash', color: '#F39C12' },
-    { id: '3', name: 'Live Now', icon: 'radio', color: '#E91E63' },
-    { id: '4', name: 'Near Me', icon: 'location', color: '#2196F3' },
-    { id: '5', name: 'Top Rated', icon: 'star', color: '#FF9800' },
-    { id: '6', name: 'Free Shipping', icon: 'car', color: '#4CAF50' },
+    // { id: '1', name: 'On Sale', icon: 'pricetag', color: '#E74C3C' },
+    { id: '2', name: 'New Arrivals', icon: 'flash', color: '#F39C12', filterKey: 'showNewArrivals' },
+    // { id: '3', name: 'Live Now', icon: 'radio', color: '#E91E63' },
+    // { id: '4', name: 'Near Me', icon: 'location', color: '#2196F3' },
+    { id: '5', name: 'Top Rated', icon: 'star', color: '#FF9800', filterKey: 'showTopRated' },
+    // { id: '6', name: 'Free Shipping', icon: 'car', color: '#4CAF50' },
   ];
 
   // People tab filters
   const peopleFilters = [
-    { id: '1', name: 'Near Me', icon: 'location', color: '#2196F3' },
-    { id: '2', name: 'Verified', icon: 'shield-checkmark', color: '#27AE60' },
-    { id: '3', name: 'Top Rated', icon: 'star', color: '#FF9800' },
-    { id: '4', name: 'Online Now', icon: 'radio', color: '#E91E63' },
-    { id: '5', name: 'New Members', icon: 'flash', color: '#F39C12' },
-    { id: '6', name: 'Mutual Friends', icon: 'people', color: '#9C27B0' },
+    // { id: '1', name: 'Near Me', icon: 'location', color: '#2196F3' },
+    { id: '2', name: 'Verified', icon: 'shield-checkmark', color: '#27AE60', filterKey: 'showVerifiedOnly' },
+    // { id: '3', name: 'Top Rated', icon: 'star', color: '#FF9800' },
+    // { id: '4', name: 'Online Now', icon: 'radio', color: '#E91E63' },
+    // { id: '5', name: 'New Members', icon: 'flash', color: '#F39C12' },
+    // { id: '6', name: 'Mutual Friends', icon: 'people', color: '#9C27B0' },
   ];
 
   // Riders tab filters
   const riderFilters = [
-    { id: '1', name: 'Available Now', icon: 'checkmark-circle', color: '#27AE60' },
-    { id: '2', name: 'Near Me', icon: 'location', color: '#2196F3' },
-    { id: '3', name: 'Fast Delivery', icon: 'flash', color: '#F39C12' },
-    { id: '4', name: 'Top Rated', icon: 'star', color: '#FF9800' },
-    { id: '5', name: 'Eco-Friendly', icon: 'leaf', color: '#4CAF50' },
-    { id: '6', name: 'Bulk Orders', icon: 'car', color: '#673AB7' },
+    { id: '1', name: 'Available Now', icon: 'checkmark-circle', color: '#27AE60', filterKey: 'showAvailableNow' },
+    // { id: '2', name: 'Near Me', icon: 'location', color: '#2196F3' },
+    // { id: '3', name: 'Fast Delivery', icon: 'flash', color: '#F39C12' },
+    // { id: '4', name: 'Top Rated', icon: 'star', color: '#FF9800' },
+    // { id: '5', name: 'Eco-Friendly', icon: 'leaf', color: '#4CAF50' },
+    // { id: '6', name: 'Bulk Orders', icon: 'car', color: '#673AB7' },
   ];
 
   // Cleanup debounce timer on unmount
@@ -191,8 +203,9 @@ const SearchScreen = () => {
     }
   }, [isSearchFocused]);
 
-  // Debounced search function
-  const performSearch = useCallback(async (query: string) => {
+  // Debounced search function. filtersOverride lets callers pass the filters
+  // being applied in the same tick (setState hasn't committed yet).
+  const performSearch = useCallback(async (query: string, page: number = 1, filtersOverride?: typeof filters) => {
     // Validate query length
     if (query.trim().length < 2) {
       return; // Too short, wait for more input
@@ -233,29 +246,58 @@ const SearchScreen = () => {
           searchType = SearchType.PEOPLE;
           break;
         case 'Riders':
-        case 'Vendors':
           searchType = SearchType.PROVIDERS;
+          break;
+        case 'Vendors':
+          searchType = SearchType.VENDORS;
           break;
         default:
           searchType = SearchType.ALL;
       }
 
-      // Perform search using our hook
-      await search({
+      const limit = 20;
+      const params: SearchQuery = {
         query: query.trim(),
         type: searchType,
-        limit: 20,
-        page: 1,
-      });
+        limit,
+        page,
+      };
+
+      // Wire the filter modal state into real search params
+      const f = filtersOverride || filtersRef.current;
+      if (f.priceRange === 'under50') params.maxPrice = 50;
+      else if (f.priceRange === '50to200') { params.minPrice = 50; params.maxPrice = 200; }
+      else if (f.priceRange === 'over200') params.minPrice = 200;
+      if (f.showTopRated) params.minRating = 4;
+      if (f.showVerifiedOnly) params.verifiedOnly = true;
+      const sortBy = f.showNewArrivals && f.sortBy === 'relevance' ? 'newest' : f.sortBy;
+      params.sortBy = sortBy === 'price_low' ? 'price_asc'
+        : sortBy === 'price_high' ? 'price_desc'
+        : (sortBy as SearchQuery['sortBy']);
+
+      const results = await search(params, page > 1);
+
+      // More pages likely exist if any section came back full
+      const pageFull = results
+        ? ['products', 'services', 'people', 'providers', 'vendors'].some(
+            (key) => ((results.results as any)[key]?.length || 0) >= limit
+          )
+        : false;
+      setHasMoreResults(pageFull);
+      setSearchPage(page);
     } catch (error) {
       console.error('Search handling error:', error);
       // Error is already handled by the useSearch hook
+    } finally {
+      setIsLoadingMore(false);
     }
-  }, [activeTab, search]);
+  }, [activeTab, filters, search]);
 
   const handleSearch = useCallback((query: string) => {
     setSearchQuery(query);
-    
+    setSearchPage(1);
+    setHasMoreResults(false);
+
     // Clear search if query is empty
     if (query.trim().length === 0) {
       clearSearch();
@@ -274,9 +316,39 @@ const SearchScreen = () => {
 
     // Set new timer - 500ms debounce
     debounceTimer.current = setTimeout(() => {
-      performSearch(query);
+      performSearch(query, 1);
     }, 500);
   }, [clearSearch, performSearch]);
+
+  // Re-run the active search when the tab changes (type switches)
+  useEffect(() => {
+    if (searchQuery.trim().length >= 2 && !searchQuery.trim().startsWith('#')) {
+      performSearch(searchQuery, 1);
+    }
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load the next page of results (infinite scroll)
+  const loadMoreResults = useCallback(() => {
+    if (isLoadingMore || isSearching || !hasMoreResults) return;
+    if (searchQuery.trim().length < 2) return;
+    setIsLoadingMore(true);
+    performSearch(searchQuery, searchPage + 1);
+  }, [isLoadingMore, isSearching, hasMoreResults, searchQuery, searchPage, performSearch]);
+
+  const handleResultsScroll = useCallback(({ nativeEvent }: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
+    if (layoutMeasurement.height + contentOffset.y >= contentSize.height - 200) {
+      loadMoreResults();
+    }
+  }, [loadMoreResults]);
+
+  const toggleChipFilter = useCallback((filterKey: string) => {
+    const next = { ...filtersRef.current, [filterKey]: !(filtersRef.current as any)[filterKey] };
+    setFilters(next);
+    if (searchQuery.trim().length >= 2) {
+      performSearch(searchQuery, 1, next);
+    }
+  }, [searchQuery, performSearch]);
 
   const lastProcessedInitialQuery = useRef<string | null>(null);
   const initialQueryParam = (route as any)?.params?.initialQuery;
@@ -301,6 +373,32 @@ const SearchScreen = () => {
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to send plug');
       throw error;
+    }
+  };
+
+  // Product save/like → wishlist (products have no separate "like" endpoint;
+  // wishlist is the save mechanism wired to save_count).
+  const handleSaveProduct = async (product: any) => {
+    if (!product?.id) return;
+    try {
+      await wishlistAPI.addToWishlist({
+        productId: product.id,
+        productName: product.title || product.name || 'Product',
+        productImage: product.image || product.mediaUrl || '',
+        price: product.price || 0,
+      });
+      Alert.alert('Saved', 'Added to your wishlist');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not save item');
+    }
+  };
+
+  const handleLikeService = async (service: any) => {
+    if (!service?.id) return;
+    try {
+      await servicesAPI.toggleLike(service.id);
+    } catch (e) {
+      console.warn('Service like failed', e);
     }
   };
 
@@ -348,7 +446,7 @@ const SearchScreen = () => {
           onPress={() => setIsFilterModalVisible(true)}
         >
           <Ionicons name="options-outline" size={22} color="#FFFFFF" />
-          {(filters.showOnSale || filters.showNearMe || filters.showTopRated || filters.showVerifiedOnly) && (
+          {(filters.showNewArrivals || filters.showTopRated || filters.showVerifiedOnly || filters.priceRange !== 'all' || filters.sortBy !== 'relevance') && (
             <View style={styles.filterActiveBadge} />
           )}
         </TouchableOpacity>
@@ -405,18 +503,22 @@ const SearchScreen = () => {
             </>
           ) : (
             <>
-              <Text style={styles.suggestionsTitle}>Recent Searches</Text>
-              {recentSearches.map((search, index) => (
-                <TouchableOpacity
-                  key={`recent-${index}`}
-                  style={styles.suggestionItem}
-                  onPress={() => handleSearch(search)}
-                >
-                  <Ionicons name="time-outline" size={16} color="rgba(255,255,255,0.6)" />
-                  <Text style={styles.suggestionText}>{search}</Text>
-                  <Ionicons name="arrow-up-outline" size={16} color="rgba(255,255,255,0.4)" />
-                </TouchableOpacity>
-              ))}
+              {recentSearches.length > 0 && (
+                <>
+                  <Text style={styles.suggestionsTitle}>Recent Searches</Text>
+                  {recentSearches.slice(0, 3).map((search, index) => (
+                    <TouchableOpacity
+                      key={`recent-${index}`}
+                      style={styles.suggestionItem}
+                      onPress={() => handleSearch(search)}
+                    >
+                      <Ionicons name="time-outline" size={16} color="rgba(255,255,255,0.6)" />
+                      <Text style={styles.suggestionText}>{search}</Text>
+                      <Ionicons name="arrow-up-outline" size={16} color="rgba(255,255,255,0.4)" />
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )}
             </>
           )}
         </Animated.View>
@@ -443,22 +545,37 @@ const SearchScreen = () => {
 
   const renderQuickFilters = () => {
     let currentFilters = quickFilters;
-    
+
     if (activeTab === 'People') {
       currentFilters = peopleFilters;
     } else if (activeTab === 'Riders') {
       currentFilters = riderFilters;
+    } else if (activeTab === 'Vendors') {
+      currentFilters = []; // vendors are verified-only server-side already
     }
+
+    if (currentFilters.length === 0) return null;
 
     return (
       <View style={styles.quickFiltersContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickFiltersContent}>
-          {currentFilters.map((filter) => (
-            <TouchableOpacity key={filter.id} style={[styles.filterChip, { borderColor: filter.color }]}>
-              <Ionicons name={filter.icon as any} size={16} color={filter.color} />
-              <Text style={[styles.filterText, { color: filter.color }]}>{filter.name}</Text>
-            </TouchableOpacity>
-          ))}
+          {currentFilters.map((filter) => {
+            const isActive = !!(filters as any)[filter.filterKey];
+            return (
+              <TouchableOpacity
+                key={filter.id}
+                style={[
+                  styles.filterChip,
+                  { borderColor: filter.color },
+                  isActive && { backgroundColor: `${filter.color}26` },
+                ]}
+                onPress={() => toggleChipFilter(filter.filterKey)}
+              >
+                <Ionicons name={filter.icon as any} size={16} color={filter.color} />
+                <Text style={[styles.filterText, { color: filter.color }]}>{filter.name}</Text>
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
     );
@@ -523,7 +640,7 @@ const SearchScreen = () => {
       rider={item}
       variant="featured"
       onPress={(rider) => navigation.navigate('PublicProfile', { userId: rider.id })}
-      onSelect={(rider) => console.log('Select provider:', rider.name)}
+      onSelect={(rider) => navigation.navigate('PublicProfile', { userId: rider.id })}
     />
   );
 
@@ -532,8 +649,8 @@ const SearchScreen = () => {
       product={item}
       variant="featured"
       onPress={(product) => navigation.navigate('ProductDetails', { productId: product.id })}
-      onLike={(product) => console.log('Like product:', product.title)}
-      onBookmark={(product) => console.log('Bookmark product:', product.title)}
+      onLike={handleSaveProduct}
+      onBookmark={handleSaveProduct}
       onVendorPress={(vendorId) => navigation.navigate('PublicProfile', { userId: vendorId })}
     />
   );
@@ -543,10 +660,9 @@ const SearchScreen = () => {
       service={item}
       variant="featured"
       onPress={(service) => navigation.navigate('ServiceDetails', { serviceId: service.id })}
-      onLike={(service) => console.log('Like service:', service.title)}
-      onBookmark={(service) => console.log('Bookmark service:', service.title)}
+      onLike={handleLikeService}
       onProviderPress={(providerId) => navigation.navigate('PublicProfile', { userId: providerId })}
-      onBookNow={(service) => console.log('Book service:', service.title)}
+      onBookNow={(service) => navigation.navigate('ServiceDetails', { serviceId: service.id })}
     />
   );
 
@@ -591,7 +707,7 @@ const SearchScreen = () => {
       rider={item}
       variant="selection"
       onPress={(rider) => navigation.navigate('PublicProfile', { userId: rider.id })}
-      onSelect={(rider) => console.log('Select provider for order:', rider.name)}
+      onSelect={(rider) => navigation.navigate('PublicProfile', { userId: rider.id })}
     />
   );
 
@@ -676,7 +792,12 @@ const SearchScreen = () => {
       return renderTagContent();
     } else if (searchQuery.length > 0) {
       return (
-        <ScrollView style={styles.searchResults} contentContainerStyle={styles.contentContainer}>
+        <ScrollView
+          style={styles.searchResults}
+          contentContainerStyle={styles.contentContainer}
+          onScroll={handleResultsScroll}
+          scrollEventThrottle={200}
+        >
           <Text style={styles.searchResultsTitle}>Search Results for "{searchQuery}"</Text>
           
           {isSearching && (
@@ -714,12 +835,15 @@ const SearchScreen = () => {
                 </View>
               )}
               
-              {/* Providers Results */}
-              {(searchResults?.results?.providers?.length || 0) > 0 && (
+              {/* Providers Results — "Available Now" chip filters client-side */}
+              {(() => {
+                const providers = (searchResults?.results?.providers || [])
+                  .filter((p: any) => !filters.showAvailableNow || p.isAvailable);
+                return providers.length > 0 && (
                 <View style={styles.resultSection}>
-                  <Text style={styles.resultSectionTitle}>Providers ({searchResults?.results?.providers?.length || 0})</Text>
+                  <Text style={styles.resultSectionTitle}>Providers ({providers.length})</Text>
                   <FlatList
-                    data={searchResults?.results?.providers || []}
+                    data={providers}
                     renderItem={({ item }) => (
                       <ProviderCard
                         rider={item}
@@ -731,8 +855,9 @@ const SearchScreen = () => {
                     scrollEnabled={false}
                   />
                 </View>
-              )}
-              
+                );
+              })()}
+
               {/* Products Results */}
               {(searchResults?.results?.products?.length || 0) > 0 && (
                 <View style={styles.resultSection}>
@@ -770,6 +895,32 @@ const SearchScreen = () => {
                   />
                 </View>
               )}
+
+              {/* Vendors Results */}
+              {(searchResults?.results?.vendors?.length || 0) > 0 && (
+                <View style={styles.resultSection}>
+                  <Text style={styles.resultSectionTitle}>Vendors ({searchResults?.results?.vendors?.length || 0})</Text>
+                  <FlatList
+                    data={searchResults?.results?.vendors || []}
+                    renderItem={({ item }) => (
+                      <PersonCard
+                        person={{
+                          id: item?.id || '',
+                          username: item?.username || 'Unknown',
+                          firstName: item?.firstName || '',
+                          lastName: item?.lastName || '',
+                          avatar: item?.avatarUrl,
+                          location: item?.location || 'Unknown',
+                        }}
+                        variant="compact"
+                        onPress={() => navigation.navigate('PublicProfile', { userId: item.id })}
+                      />
+                    )}
+                    keyExtractor={(item) => item.id}
+                    scrollEnabled={false}
+                  />
+                </View>
+              )}
             </>
           )}
           
@@ -779,6 +930,12 @@ const SearchScreen = () => {
               <Ionicons name="search-outline" size={48} color="rgba(255,255,255,0.3)" />
               <Text style={styles.noResultsText}>No results found</Text>
               <Text style={styles.noResultsSubtext}>Try searching with different keywords</Text>
+            </View>
+          )}
+
+          {isLoadingMore && (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color="#3498DB" />
             </View>
           )}
         </ScrollView>
@@ -828,8 +985,8 @@ const SearchScreen = () => {
                       product={item}
                       variant="featured"
                       onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
-                      onLike={() => console.log('Product liked:', item.id)}
-                      onBookmark={() => console.log('Product bookmarked:', item.id)}
+                      onLike={() => handleSaveProduct(item)}
+                      onBookmark={() => handleSaveProduct(item)}
                     />
                   )}
                   keyExtractor={(item) => item.id}
@@ -877,8 +1034,8 @@ const SearchScreen = () => {
                       service={item}
                       variant="featured"
                       onPress={() => navigation.navigate('ServiceDetails', { serviceId: item.id })}
-                      onBookNow={() => console.log('Service booked:', item.id)}
-                      onAddToCart={() => console.log('Service added to cart:', item.id)}
+                      onLike={() => handleLikeService(item)}
+                      onBookNow={() => navigation.navigate('ServiceDetails', { serviceId: item.id })}
                     />
                   )}
                   keyExtractor={(item) => item.id}
@@ -919,9 +1076,11 @@ const SearchScreen = () => {
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>Trending</Text>
+                  {/* See all — no destination screen yet; restore when one exists
                   <TouchableOpacity>
                     <Text style={styles.seeAllText}>See all</Text>
                   </TouchableOpacity>
+                  */}
                 </View>
                 <FlatList
                   data={trendingData}
@@ -996,9 +1155,11 @@ const SearchScreen = () => {
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>Recommended People</Text>
+                  {/* See all — no destination screen yet; restore when one exists
                   <TouchableOpacity>
                     <Text style={styles.seeAllText}>See all</Text>
                   </TouchableOpacity>
+                  */}
                 </View>
                 <FlatList
                   data={recommendations.people}
@@ -1019,7 +1180,8 @@ const SearchScreen = () => {
           </ScrollView>
         );
 
-      case 'Riders':
+      case 'Riders': {
+        const hasRiders = featuredContent.providers.length > 0 || recommendations.providers.length > 0;
         return (
           <ScrollView
             style={styles.content}
@@ -1033,7 +1195,7 @@ const SearchScreen = () => {
               />
             }
           >
-            {renderQuickFilters()}
+            {hasRiders && renderQuickFilters()}
 
             {isLoadingDiscover && !discoverContent && (
               <View style={styles.loadingContainer}>
@@ -1067,9 +1229,11 @@ const SearchScreen = () => {
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>Top Performers</Text>
+                  {/* See all — no destination screen yet; restore when one exists
                   <TouchableOpacity>
                     <Text style={styles.seeAllText}>See all</Text>
                   </TouchableOpacity>
+                  */}
                 </View>
                 <FlatList
                   data={recommendations.providers.sort((a, b) => (b.rating || 0) - (a.rating || 0))}
@@ -1080,7 +1244,7 @@ const SearchScreen = () => {
               </View>
             )}
 
-            {featuredContent.providers.length === 0 && recommendations.providers.length === 0 && !isLoadingDiscover && (
+            {!hasRiders && !isLoadingDiscover && (
               <View style={styles.emptyState}>
                 <Ionicons name="bicycle-outline" size={64} color="rgba(255,255,255,0.3)" />
                 <Text style={styles.emptyStateText}>No riders found</Text>
@@ -1089,6 +1253,7 @@ const SearchScreen = () => {
             )}
           </ScrollView>
         );
+      }
 
       case 'Products':
         return (
@@ -1132,8 +1297,8 @@ const SearchScreen = () => {
                       product={item}
                       variant="list"
                       onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
-                      onLike={() => console.log('Product liked:', item.id)}
-                      onBookmark={() => console.log('Product bookmarked:', item.id)}
+                      onLike={() => handleSaveProduct(item)}
+                      onBookmark={() => handleSaveProduct(item)}
                     />
                   )}
                   keyExtractor={(item) => item.id}
@@ -1146,9 +1311,11 @@ const SearchScreen = () => {
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>Recommended Products</Text>
+                  {/* See all — no destination screen yet; restore when one exists
                   <TouchableOpacity>
                     <Text style={styles.seeAllText}>See all</Text>
                   </TouchableOpacity>
+                  */}
                 </View>
                 <FlatList
                   data={recommendations.products}
@@ -1218,8 +1385,8 @@ const SearchScreen = () => {
                       service={item}
                       variant="list"
                       onPress={() => navigation.navigate('ServiceDetails', { serviceId: item.id })}
-                      onBookNow={() => console.log('Service booked:', item.id)}
-                      onAddToCart={() => console.log('Service added to cart:', item.id)}
+                      onLike={() => handleLikeService(item)}
+                      onBookNow={() => navigation.navigate('ServiceDetails', { serviceId: item.id })}
                     />
                   )}
                   keyExtractor={(item) => item.id}
@@ -1232,9 +1399,11 @@ const SearchScreen = () => {
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>Recommended Services</Text>
+                  {/* See all — no destination screen yet; restore when one exists
                   <TouchableOpacity>
                     <Text style={styles.seeAllText}>See all</Text>
                   </TouchableOpacity>
+                  */}
                 </View>
                 <FlatList
                   data={recommendations.services}
@@ -1294,11 +1463,11 @@ const SearchScreen = () => {
               </View>
             )}
 
-            {featuredContent.people.length > 0 && (
+            {featuredContent.vendors.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Featured Vendors</Text>
                 <FlatList
-                  data={featuredContent.people}
+                  data={featuredContent.vendors}
                   renderItem={renderFeaturedPersonItem}
                   keyExtractor={(item) => item.id}
                   scrollEnabled={false}
@@ -1306,16 +1475,18 @@ const SearchScreen = () => {
               </View>
             )}
 
-            {recommendations.people.length > 0 && (
+            {recommendations.vendors.length > 0 && (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>Top Rated Vendors</Text>
+                  {/* See all — no destination screen yet; restore when one exists
                   <TouchableOpacity>
                     <Text style={styles.seeAllText}>See all</Text>
                   </TouchableOpacity>
+                  */}
                 </View>
                 <FlatList
-                  data={recommendations.people}
+                  data={recommendations.vendors}
                   renderItem={renderFeaturedPersonItem}
                   keyExtractor={(item) => item.id}
                   scrollEnabled={false}
@@ -1323,7 +1494,7 @@ const SearchScreen = () => {
               </View>
             )}
 
-            {featuredContent.people.length === 0 && recommendations.people.length === 0 && !isLoadingDiscover && (
+            {featuredContent.vendors.length === 0 && recommendations.vendors.length === 0 && !isLoadingDiscover && (
               <View style={styles.emptyState}>
                 <Ionicons name="storefront-outline" size={64} color="rgba(255,255,255,0.3)" />
                 <Text style={styles.emptyStateText}>No vendors found</Text>
@@ -1362,9 +1533,11 @@ const SearchScreen = () => {
           </View>
 
           <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-            {/* Quick Filters */}
+            {/* Quick Filters — only switches backed by real query params are shown.
+                On Sale / Live Now / Near Me / Free Shipping need backend support first. */}
             <Text style={styles.filterSectionTitle}>Quick Filters</Text>
             <View style={styles.filterOptions}>
+              {/*
               <View style={styles.filterRow}>
                 <Text style={styles.filterLabel}>On Sale</Text>
                 <Switch
@@ -1374,6 +1547,7 @@ const SearchScreen = () => {
                   thumbColor="#FFFFFF"
                 />
               </View>
+              */}
               <View style={styles.filterRow}>
                 <Text style={styles.filterLabel}>New Arrivals</Text>
                 <Switch
@@ -1383,6 +1557,7 @@ const SearchScreen = () => {
                   thumbColor="#FFFFFF"
                 />
               </View>
+              {/*
               <View style={styles.filterRow}>
                 <Text style={styles.filterLabel}>Live Now</Text>
                 <Switch
@@ -1401,6 +1576,7 @@ const SearchScreen = () => {
                   thumbColor="#FFFFFF"
                 />
               </View>
+              */}
               <View style={styles.filterRow}>
                 <Text style={styles.filterLabel}>Top Rated</Text>
                 <Switch
@@ -1410,6 +1586,7 @@ const SearchScreen = () => {
                   thumbColor="#FFFFFF"
                 />
               </View>
+              {/*
               <View style={styles.filterRow}>
                 <Text style={styles.filterLabel}>Free Shipping</Text>
                 <Switch
@@ -1419,6 +1596,7 @@ const SearchScreen = () => {
                   thumbColor="#FFFFFF"
                 />
               </View>
+              */}
               <View style={styles.filterRow}>
                 <Text style={styles.filterLabel}>Verified Only</Text>
                 <Switch
@@ -1486,6 +1664,7 @@ const SearchScreen = () => {
                 showTopRated: false,
                 showFreeShipping: false,
                 showVerifiedOnly: false,
+                showAvailableNow: false,
                 priceRange: 'all',
                 sortBy: 'relevance',
               })}
@@ -1498,7 +1677,7 @@ const SearchScreen = () => {
                 setIsFilterModalVisible(false);
                 // Re-trigger search with filters if search query exists
                 if (searchQuery.trim().length >= 2) {
-                  performSearch(searchQuery);
+                  performSearch(searchQuery, 1);
                 }
               }}
             >
@@ -1648,6 +1827,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
+    flexGrow: 1, // lets empty states (flex:1) center in the viewport
     paddingBottom: 100, // Add padding to prevent content from being hidden behind bottom nav
   },
   quickFiltersContainer: {

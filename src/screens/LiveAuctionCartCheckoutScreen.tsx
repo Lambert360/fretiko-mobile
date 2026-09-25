@@ -23,6 +23,9 @@ import { Rider } from './RiderSelectionScreen';
 import { riderSelectionBridge } from '../utils/riderSelectionBridge';
 import { addressSelectionBridge } from '../utils/addressSelectionBridge';
 import giftCardAPI from '../services/giftCardAPI';
+import { riderLocationAPI } from '../services/riderLocationAPI';
+import { resolveAddressCoords, cityCentroid } from '../utils/deliveryGeo';
+import LocationSelector from '../components/LocationSelector';
 
 interface DeliveryAddress {
   id?: string;
@@ -31,8 +34,11 @@ interface DeliveryAddress {
   address: string;
   city: string;
   state: string;
+  country?: string;
   postalCode: string;
   isDefault: boolean;
+  latitude?: number;
+  longitude?: number;
 }
 
 interface LiveAuctionCartCheckoutScreenProps {
@@ -40,7 +46,9 @@ interface LiveAuctionCartCheckoutScreenProps {
   route: {
     params: {
       wonItems: Array<{
+        id?: string;
         auctionId: string;
+        itemId?: string | null;
         title: string;
         winningBid: number;
         wonAt: string;
@@ -74,6 +82,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
     isDefault: false,
   });
   const [showAddressModal, setShowAddressModal] = useState(false);
+  const [showAddressLocationSelector, setShowAddressLocationSelector] = useState(false);
 
   // Gift card state - one shared gift card can be applied across all won items,
   // allocated sequentially as each item's order is created.
@@ -246,32 +255,40 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
     );
   };
 
-  const handleSelectRider = () => {
+  const handleSelectRider = async () => {
     if (!deliveryAddress.address) {
       Alert.alert('Address Required', 'Please set your delivery address first');
       return;
     }
 
-    // Navigate to rider selection screen
-    // Use delivery address state/city as the pickup location hint so the backend
-    // can filter riders to the correct area (auction seller location isn't in scope here).
+    // Real coords where resolvable — delivery via native geocoder,
+    // pickup hint via city centroid (auction seller location isn't in scope here).
+    const deliveryCoords = await resolveAddressCoords(deliveryAddress);
+    const pickupCoords = cityCentroid(deliveryAddress.city, deliveryAddress.state, deliveryAddress.country);
+    const routeKm = pickupCoords && deliveryCoords
+      ? Math.max(0.1, riderLocationAPI.calculateDistance(
+          pickupCoords.latitude, pickupCoords.longitude,
+          deliveryCoords.latitude, deliveryCoords.longitude,
+        ) * 1.3)
+      : 2.5;
+
     navigation.navigate('RiderSelection', {
       pickupLocation: {
-        latitude: 6.5244,
-        longitude: 3.3792,
+        latitude: pickupCoords?.latitude ?? 6.5244,
+        longitude: pickupCoords?.longitude ?? 3.3792,
         address: deliveryAddress.city ? `Vendor Location, ${deliveryAddress.city}` : 'Vendor Location',
         state: deliveryAddress.state || undefined,
         city: deliveryAddress.city || undefined,
       },
       deliveryLocation: {
-        latitude: 6.5244, // TODO: Geocode delivery address
-        longitude: 3.3792,
+        latitude: deliveryCoords?.latitude ?? 6.5244,
+        longitude: deliveryCoords?.longitude ?? 3.3792,
         address: `${deliveryAddress.address}, ${deliveryAddress.city}`
       },
       orderDetails: {
         weight: wonItems.length * 0.5, // Estimate 0.5kg per item
         itemCount: wonItems.length,
-        distance: 2.5, // Mock distance
+        distance: Math.round(routeKm * 100) / 100,
       },
       callbackKey: (() => {
         if (riderCallbackKeyRef.current) riderSelectionBridge.clear(riderCallbackKeyRef.current);
@@ -327,6 +344,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
             vehicleType: selectedRider.vehicleType as 'pickup' | 'wheelbarrow' | 'bike' | 'car',
             deliveryPrice: selectedRider.price,
             estimatedArrival: selectedRider.estimatedArrival,
+            distance: selectedRider.routeDistanceKm ?? selectedRider.distanceFromPickup,
           }
         : selectedRider === 'pickup'
           ? {
@@ -338,10 +356,15 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
             }
           : undefined;
 
-      // Prepare delivery address (only if not pickup)
+      // Prepare delivery address (only if not pickup) — resolve coords so the
+      // backend can recompute route distance server-side.
+      const deliveryCoords = selectedRider && selectedRider !== 'pickup' && deliveryAddress.address
+        ? await resolveAddressCoords(deliveryAddress)
+        : null;
       const orderDeliveryAddress = selectedRider && selectedRider !== 'pickup'
         ? {
             ...deliveryAddress,
+            ...(deliveryCoords ?? {}),
             isDefault: false, // Required by DeliveryAddress interface
           }
         : {
@@ -368,8 +391,11 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
         try {
           console.log(`🛒 Creating order for auction ${item.auctionId} (${i + 1}/${wonItems.length})`);
 
-          // Get checkout summary for this auction
-          const summary = await checkoutAPI.getAuctionCheckoutSummary(item.auctionId);
+          // Get checkout summary for this specific auction item
+          const summary = await checkoutAPI.getAuctionCheckoutSummary(
+            item.auctionId,
+            item.itemId || undefined,
+          );
 
           let giftCard: { cardNumber: string; pin: string; amount: number } | undefined;
           if (remainingGiftCard > 0 && summary?.total > 0) {
@@ -384,6 +410,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
           const orderData = {
             auctionCheckout: {
               auctionId: item.auctionId,
+              itemId: item.itemId || undefined,
             },
             deliveryAddress: orderDeliveryAddress,
             paymentMethodId: 'wallet', // Auctions use wallet payment
@@ -472,7 +499,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={0}
     >
       {/* Header */}
@@ -511,7 +538,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
             Won Items ({wonItems.length})
           </Text>
           {wonItems.map((item, index) => (
-            <View key={item.auctionId} style={[styles.itemCard, index > 0 && { marginTop: 12 }]}>
+            <View key={item.id || `${item.auctionId}-${item.itemId ?? index}`} style={[styles.itemCard, index > 0 && { marginTop: 12 }]}>
               <Image
                 source={{ uri: item.thumbnail_url || item.images?.[0] || 'https://via.placeholder.com/100' }}
                 style={styles.itemImage}
@@ -529,6 +556,77 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
               </View>
             </View>
           ))}
+        </View>
+
+        {/* Delivery Address */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Delivery Address</Text>
+          <Text style={styles.sectionSubtitle}>
+            Where should we deliver your items?
+          </Text>
+
+          {/* Selected Address Display */}
+          {deliveryAddress.address ? (
+            <View style={styles.selectedAddress}>
+              <View style={styles.addressIcon}>
+                <Ionicons name="location" size={24} color="#8E44AD" />
+              </View>
+              <View style={styles.addressInfo}>
+                <Text style={styles.addressName}>
+                  {deliveryAddress.fullName || 'No name'}
+                </Text>
+                <Text style={styles.addressText}>
+                  {deliveryAddress.address}, {deliveryAddress.city}, {deliveryAddress.state}
+                </Text>
+                <Text style={styles.addressPhone}>
+                  {deliveryAddress.phone || 'No phone'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.editButton}
+                onPress={() => setShowAddressModal(true)}
+              >
+                <Ionicons name="pencil" size={18} color="#3498DB" />
+                <Text style={styles.editButtonText}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.addAddressButton}
+              onPress={() => setShowAddressModal(true)}
+            >
+              <Ionicons name="add-circle" size={24} color="#8E44AD" />
+              <Text style={styles.addAddressText}>Add Delivery Address</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={styles.editAddressButton}
+            onPress={() => {
+              if (addressCallbackKeyRef.current) addressSelectionBridge.clear(addressCallbackKeyRef.current);
+              const callbackKey = `live_auction_address_${Date.now()}`;
+              addressCallbackKeyRef.current = callbackKey;
+              addressSelectionBridge.register(callbackKey, (address) => {
+                setDeliveryAddress({
+                  id: address.id,
+                  fullName: address.fullName || '',
+                  phone: address.phone || '',
+                  address: address.address || '',
+                  city: address.city || '',
+                  state: address.state || '',
+                  postalCode: address.postalCode || '',
+                  isDefault: address.isDefault || false,
+                });
+              });
+              navigation.navigate('AddressBook', {
+                selectMode: true,
+                callbackKey,
+              });
+            }}
+          >
+            <Ionicons name="location" size={18} color="#3498DB" />
+            <Text style={styles.editAddressText}>Select from Address Book</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Delivery Options */}
@@ -606,84 +704,11 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
                     Pick up directly from the vendor - Free
                   </Text>
                 </View>
-                <Ionicons name="checkmark-circle" size={20} color="#27AE60" />
+                <Ionicons name="chevron-forward" size={20} color="#666" />
               </TouchableOpacity>
             </View>
           )}
         </View>
-
-        {/* Delivery Address */}
-        {selectedRider && selectedRider !== 'pickup' && typeof selectedRider === 'object' && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Delivery Address</Text>
-            <Text style={styles.sectionSubtitle}>
-              Where should we deliver your items?
-            </Text>
-
-            {/* Selected Address Display */}
-            {deliveryAddress.address ? (
-              <View style={styles.selectedAddress}>
-                <View style={styles.addressIcon}>
-                  <Ionicons name="location" size={24} color="#8E44AD" />
-                </View>
-                <View style={styles.addressInfo}>
-                  <Text style={styles.addressName}>
-                    {deliveryAddress.fullName || 'No name'}
-                  </Text>
-                  <Text style={styles.addressText}>
-                    {deliveryAddress.address}, {deliveryAddress.city}, {deliveryAddress.state}
-                  </Text>
-                  <Text style={styles.addressPhone}>
-                    {deliveryAddress.phone || 'No phone'}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.editButton}
-                  onPress={() => setShowAddressModal(true)}
-                >
-                  <Ionicons name="pencil" size={18} color="#3498DB" />
-                  <Text style={styles.editButtonText}>Edit</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={styles.addAddressButton}
-                onPress={() => setShowAddressModal(true)}
-              >
-                <Ionicons name="add-circle" size={24} color="#8E44AD" />
-                <Text style={styles.addAddressText}>Add Delivery Address</Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              style={styles.editAddressButton}
-              onPress={() => {
-                if (addressCallbackKeyRef.current) addressSelectionBridge.clear(addressCallbackKeyRef.current);
-                const callbackKey = `live_auction_address_${Date.now()}`;
-                addressCallbackKeyRef.current = callbackKey;
-                addressSelectionBridge.register(callbackKey, (address) => {
-                  setDeliveryAddress({
-                    id: address.id,
-                    fullName: address.fullName || '',
-                    phone: address.phone || '',
-                    address: address.address || '',
-                    city: address.city || '',
-                    state: address.state || '',
-                    postalCode: address.postalCode || '',
-                    isDefault: address.isDefault || false,
-                  });
-                });
-                navigation.navigate('AddressBook', {
-                  selectMode: true,
-                  callbackKey,
-                });
-              }}
-            >
-              <Ionicons name="location" size={18} color="#3498DB" />
-              <Text style={styles.editAddressText}>Select from Address Book</Text>
-            </TouchableOpacity>
-          </View>
-        )}
 
         {/* Payment Summary */}
         <View style={styles.section}>
@@ -855,7 +880,7 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
         onRequestClose={() => setShowAddressModal(false)}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior="padding"
           style={styles.modalOverlay}
         >
           <View style={styles.addressModal}>
@@ -917,14 +942,17 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
                 </View>
                 
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>State *</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={deliveryAddress.state}
-                    onChangeText={(text) => handleAddressChange('state', text)}
-                    placeholder="State"
-                    placeholderTextColor="#666"
-                  />
+                  <Text style={styles.inputLabel}>State / Country *</Text>
+                  <TouchableOpacity
+                    style={[styles.textInput, { justifyContent: 'center' }]}
+                    onPress={() => setShowAddressLocationSelector(true)}
+                  >
+                    <Text style={{ color: deliveryAddress.state ? '#FFF' : '#666', fontSize: 14 }}>
+                      {deliveryAddress.state
+                        ? `${deliveryAddress.state}${deliveryAddress.country ? `, ${deliveryAddress.country}` : ''}`
+                        : 'Select state...'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </View>
               
@@ -957,6 +985,17 @@ const LiveAuctionCartCheckoutScreen: React.FC<LiveAuctionCartCheckoutScreenProps
             </View>
           </View>
         </KeyboardAvoidingView>
+
+        <LocationSelector
+          visible={showAddressLocationSelector}
+          selectedLocation={deliveryAddress.state && deliveryAddress.country ? `${deliveryAddress.state}, ${deliveryAddress.country}` : ''}
+          onLocationSelect={() => {}}
+          onLocationSelectDetailed={(state, country) => {
+            handleAddressChange('state', state);
+            handleAddressChange('country', country);
+          }}
+          onClose={() => setShowAddressLocationSelector(false)}
+        />
       </Modal>
     </KeyboardAvoidingView>
   );

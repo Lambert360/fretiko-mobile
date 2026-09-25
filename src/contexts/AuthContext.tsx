@@ -39,7 +39,9 @@ export interface User {
   is_verified?: boolean;
   username?: string;
   avatar_url?: string;
+  citizen_number?: number;
   hasAcceptedTerms?: boolean;
+  dateOfBirth?: string;
   token?: string; // Add token property for PIN reset screens
 }
 
@@ -207,8 +209,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                     is_seller: profileData.isSeller,
                     is_rider: profileData.isRider,
                     is_verified: profileData.is_verified,
+                    dateOfBirth: profileData.dateOfBirth,
                   };
-                  
+
                   setAuthState({
                     user: enrichedUserData,
                     accessToken,
@@ -417,6 +420,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 is_seller: profileData.isSeller,
                 is_rider: profileData.isRider,
                 is_verified: profileData.is_verified,
+                dateOfBirth: profileData.dateOfBirth,
               };
               
               // Merge instead of replacing wholesale so we don't clobber

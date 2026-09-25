@@ -336,7 +336,7 @@ const WishlistScreen: React.FC<WishlistScreenProps> = ({ navigation }) => {
       // NOTE: the website needs a /wishlist/:userId route that handles app-redirect / install.
       const username = (user as any)?.username || user?.email?.split('@')[0] || 'user';
       const encodedUsername = encodeURIComponent(username);
-      const wishlistUrl = `https://fretiko.com/wishlist/${user?.id}/${encodedUsername}`;
+      const wishlistUrl = `https://www.fretiko.com/wishlist/${user?.id}/${encodedUsername}`;
 
       await Share.share({
         message: `Check out my wishlist on Fretiko! I have ${wishlistItems.length} amazing items saved.\n\n${wishlistUrl}`,

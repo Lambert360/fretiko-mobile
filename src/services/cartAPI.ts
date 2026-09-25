@@ -22,6 +22,7 @@ export interface CartItem {
   sellerLocation?: { state?: string; country?: string; city?: string } | null;
   isOutOfState?: boolean;
   isOutOfCountry?: boolean;
+  isAvailable?: boolean;
   createdAt: string;
 }
 

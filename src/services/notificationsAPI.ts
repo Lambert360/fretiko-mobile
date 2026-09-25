@@ -54,6 +54,14 @@ export interface NotificationSettings {
   push_enabled: boolean;
   email_enabled: boolean;
   in_app_enabled: boolean;
+  email_auction_notifications?: boolean;
+  email_order_notifications?: boolean;
+  email_payment_notifications?: boolean;
+  email_delivery_notifications?: boolean;
+  email_promotion_notifications?: boolean;
+  email_live_notifications?: boolean;
+  email_social_notifications?: boolean;
+  email_system_notifications?: boolean;
   order_notifications: boolean;
   social_notifications: boolean;
   promotion_notifications: boolean;
@@ -391,6 +399,56 @@ class NotificationsAPIService {
       console.error('Error updating notification settings:', error);
       throw error;
     }
+  }
+
+  /**
+   * Screen-friendly preference keys ↔ notification_settings columns.
+   * NotificationSettingsScreen uses short keys (orders, messages, ...);
+   * these adapt them to the backend settings payload.
+   */
+  async getPreferences(token: string): Promise<Record<string, boolean>> {
+    const s = await this.getNotificationSettings(token);
+    return {
+      orders: s.order_notifications,
+      messages: s.chat_notifications,
+      delivery: s.delivery_notifications,
+      payments: s.payment_notifications,
+      social: s.social_notifications,
+      live_events: s.live_notifications,
+      system: s.system_notifications,
+      marketing: s.promotion_notifications,
+      email_enabled: s.email_enabled,
+      email_auctions: s.email_auction_notifications ?? true,
+      email_orders: s.email_order_notifications ?? true,
+      email_payments: s.email_payment_notifications ?? true,
+      email_delivery: s.email_delivery_notifications ?? true,
+      email_promotions: s.email_promotion_notifications ?? true,
+      email_live: s.email_live_notifications ?? true,
+      email_social: s.email_social_notifications ?? true,
+      email_system: s.email_system_notifications ?? true,
+    };
+  }
+
+  async updatePreferences(token: string, prefs: Record<string, boolean>): Promise<NotificationSettings> {
+    const payload: Partial<NotificationSettings> = {};
+    if ('orders' in prefs) payload.order_notifications = prefs.orders;
+    if ('messages' in prefs) payload.chat_notifications = prefs.messages;
+    if ('delivery' in prefs) payload.delivery_notifications = prefs.delivery;
+    if ('payments' in prefs) payload.payment_notifications = prefs.payments;
+    if ('social' in prefs) payload.social_notifications = prefs.social;
+    if ('live_events' in prefs) payload.live_notifications = prefs.live_events;
+    if ('system' in prefs) payload.system_notifications = prefs.system;
+    if ('marketing' in prefs) payload.promotion_notifications = prefs.marketing;
+    if ('email_enabled' in prefs) payload.email_enabled = prefs.email_enabled;
+    if ('email_auctions' in prefs) payload.email_auction_notifications = prefs.email_auctions;
+    if ('email_orders' in prefs) payload.email_order_notifications = prefs.email_orders;
+    if ('email_payments' in prefs) payload.email_payment_notifications = prefs.email_payments;
+    if ('email_delivery' in prefs) payload.email_delivery_notifications = prefs.email_delivery;
+    if ('email_promotions' in prefs) payload.email_promotion_notifications = prefs.email_promotions;
+    if ('email_live' in prefs) payload.email_live_notifications = prefs.email_live;
+    if ('email_social' in prefs) payload.email_social_notifications = prefs.email_social;
+    if ('email_system' in prefs) payload.email_system_notifications = prefs.email_system;
+    return this.updateNotificationSettings(token, payload);
   }
 
   /**

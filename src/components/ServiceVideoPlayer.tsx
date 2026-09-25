@@ -48,6 +48,10 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
   const progressIntervalRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const lastProgressRef = React.useRef(0);
 
+  // Once the video has loaded once, keep showing the last frame instead of the
+  // buffering overlay on re-buffer/resume — TikTok-style always-on content.
+  const hasLoadedOnceRef = React.useRef(false);
+
   // Guards against operating on the player/state after this instance starts unmounting
   // (avoids races with expo-video releasing the native player during fast feed swaps)
   const isMountedRef = React.useRef(true);
@@ -88,6 +92,7 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
       const statusAny = status as any;
       
       if (statusAny.status === 'loaded' || statusAny.isLoaded) {
+        hasLoadedOnceRef.current = true;
         setIsLoading(false);
         setHasError(false);
         setErrorMessage(null);
@@ -102,11 +107,13 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
         const errorInfo = handleError(statusAny.error || new Error('Failed to load video'));
         setErrorMessage(errorInfo.userMessage);
       } else if (statusAny.status === 'loading' || statusAny.isLoading) {
-        setIsLoading(true);
+        // Don't blank a previously-loaded video on re-buffer — keep the frame
+        if (!hasLoadedOnceRef.current) setIsLoading(true);
         setIsBuffering(true);
         setHasError(false);
       } else if (statusAny.status === 'playing' || statusAny.isPlaying || statusAny.status === 'readyToPlay' || statusAny.isReadyToPlay) {
         // Video is playing, ensure loading state is cleared
+        hasLoadedOnceRef.current = true;
         setIsLoading(false);
         setIsBuffering(false);
         setHasError(false);
@@ -123,6 +130,7 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
       
       if (onPlaybackStatusUpdate && duration > 0) {
         lastProgressRef.current = currentTime / duration;
+        hasLoadedOnceRef.current = true;
         if (isLoading) {
           setIsLoading(false);
           setIsBuffering(false);
@@ -218,6 +226,7 @@ const ServiceVideoPlayer: React.FC<ServiceVideoPlayerProps> = React.memo(({
           style={styles.retryButton}
           onPress={() => {
             if (!isMountedRef.current) return;
+            hasLoadedOnceRef.current = false;
             setHasError(false);
             setIsLoading(true);
             try {

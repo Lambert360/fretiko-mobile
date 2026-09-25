@@ -9,10 +9,11 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { workspaceAPI, WorkspaceLiveStreamAnalytics } from '../services/workspaceAPI';
 import LiveStreamLineChart from './LiveStreamLineChart';
 
-const { width: screenWidth } = Dimensions.get('window');
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 interface WorkspaceLiveStreamAnalyticsProps {
   isVisible: boolean;
@@ -33,6 +34,7 @@ const WorkspaceLiveStreamAnalyticsComponent: React.FC<WorkspaceLiveStreamAnalyti
   isVisible,
   onClose,
 }) => {
+  const insets = useSafeAreaInsets();
   const [selectedPeriod, setSelectedPeriod] = useState<'today' | 'week' | 'month'>('today');
   const [liveStreamAnalytics, setLiveStreamAnalytics] = useState<WorkspaceLiveStreamAnalytics | null>(null);
   const [sourceAnalytics, setSourceAnalytics] = useState<any>(null);
@@ -100,6 +102,8 @@ const WorkspaceLiveStreamAnalyticsComponent: React.FC<WorkspaceLiveStreamAnalyti
       case 'live_stream': return '#FF2D92';
       case 'auction': return '#FF9500';
       case 'service_booking': return '#34C759';
+      case 'invoice': return '#5856D6';
+      case 'wishlist': return '#FF2D55';
       default: return '#8E8E93';
     }
   };
@@ -110,6 +114,8 @@ const WorkspaceLiveStreamAnalyticsComponent: React.FC<WorkspaceLiveStreamAnalyti
       case 'live_stream': return 'videocam-outline';
       case 'auction': return 'hammer-outline';
       case 'service_booking': return 'construct-outline';
+      case 'invoice': return 'chatbubble-ellipses-outline';
+      case 'wishlist': return 'gift-outline';
       default: return 'cube-outline';
     }
   };
@@ -346,32 +352,44 @@ const WorkspaceLiveStreamAnalyticsComponent: React.FC<WorkspaceLiveStreamAnalyti
 
   if (!isVisible) return null;
 
+  const renderSheet = (children: React.ReactNode) => (
+    <View style={styles.modalOverlay}>
+      <TouchableOpacity
+        style={styles.backdrop}
+        activeOpacity={1}
+        onPress={onClose}
+      />
+      <View style={styles.modalSheet}>
+        {children}
+      </View>
+    </View>
+  );
+
+  const renderSheetHeader = () => (
+    <View style={styles.header}>
+      <Text style={styles.title}>Workspace Analytics</Text>
+      <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+        <Ionicons name="close" size={24} color="white" />
+      </TouchableOpacity>
+    </View>
+  );
+
   if (loading) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Workspace Analytics</Text>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <Ionicons name="close" size={24} color="white" />
-          </TouchableOpacity>
-        </View>
+    return renderSheet(
+      <>
+        {renderSheetHeader()}
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
           <Text style={styles.loadingText}>Loading analytics...</Text>
         </View>
-      </View>
+      </>
     );
   }
 
   if (error) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Workspace Analytics</Text>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <Ionicons name="close" size={24} color="white" />
-          </TouchableOpacity>
-        </View>
+    return renderSheet(
+      <>
+        {renderSheetHeader()}
         <View style={styles.errorContainer}>
           <Ionicons name="alert-circle" size={64} color="#FF3B30" />
           <Text style={styles.errorText}>{error}</Text>
@@ -379,31 +397,52 @@ const WorkspaceLiveStreamAnalyticsComponent: React.FC<WorkspaceLiveStreamAnalyti
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </>
     );
   }
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Workspace Analytics</Text>
-        <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-          <Ionicons name="close" size={24} color="white" />
-        </TouchableOpacity>
-      </View>
-
+  return renderSheet(
+    <>
+      {renderSheetHeader()}
       {renderPeriodSelector()}
-
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={{ paddingBottom: 20 + insets.bottom }}
+        showsVerticalScrollIndicator={false}
+      >
         {renderRealTimeMetrics()}
         {renderSourceBreakdown()}
         {renderLiveStreamPerformance()}
       </ScrollView>
-    </View>
+    </>
   );
 };
 
 const styles = StyleSheet.create({
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'flex-end',
+    zIndex: 1000,
+    elevation: 1000,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  },
+  modalSheet: {
+    height: screenHeight * 0.75,
+    backgroundColor: '#000',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    borderColor: '#333',
+    borderBottomWidth: 0,
+    overflow: 'hidden',
+  },
   container: {
     flex: 1,
     backgroundColor: '#000',

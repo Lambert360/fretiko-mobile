@@ -5,7 +5,7 @@ import { API_BASE_URL } from '../config/api';
 export interface WorkspaceOrder {
   id: string;
   orderNumber: string;
-  status: 'pending' | 'processing' | 'ready_for_pickup' | 'out_for_delivery' | 'delivered' | 'cancelled' | 'completed' | 'paid';
+  status: 'created' | 'pending' | 'paid' | 'accepted' | 'processing' | 'ready_for_pickup' | 'out_for_delivery' | 'delivered' | 'cancelled' | 'completed';
   customerName: string;
   customerId: string;
   customerPhone?: string;
@@ -13,7 +13,7 @@ export interface WorkspaceOrder {
   total: number;
   deliveryAddress: string;
   deliveryFee: number;
-  deliveryType?: 'pickup' | 'delivery'; // ✅ Add deliveryType
+  deliveryType?: 'pickup' | 'self_pickup' | 'delivery'; // ✅ Add deliveryType
   deliveryInstructions?: string; // Optional buyer instructions (when provided)
   riderId?: string | null; // ✅ Add riderId
   createdAt: string;
@@ -21,7 +21,8 @@ export interface WorkspaceOrder {
   estimatedPreparationTime?: number; // in minutes
   items: WorkspaceOrderItem[];
   notes?: string;
-  source?: 'regular' | 'live_stream' | 'auction' | 'service_booking'; // Order source
+  source?: 'regular' | 'live_stream' | 'auction' | 'service_booking' | 'invoice' | 'wishlist'; // Order source
+  bookingType?: 'service' | 'portfolio' | string | null; // metadata.booking_type — service orders complete via complete-service, not pickup
   metadata?: {
     [key: string]: any;
     serviceBooking?: {
@@ -74,12 +75,16 @@ export interface WorkspaceStats {
     live_stream: number;
     auction: number;
     service_booking: number;
+    invoice: number;
+    wishlist: number;
   };
   revenueBySource: {
     regular: number;
     live_stream: number;
     auction: number;
     service_booking: number;
+    invoice: number;
+    wishlist: number;
   };
   // Escrow metrics (pending earnings)
   escrowMetrics?: {
@@ -135,6 +140,22 @@ const getAuthHeaders = async () => {
   }
 };
 
+// Extract a readable message from a NestJS error response body instead of
+// surfacing raw `{"statusCode":...,"message":...}` JSON to the user
+const parseApiError = async (response: Response, fallback: string): Promise<Error> => {
+  try {
+    const text = await response.text();
+    const parsed = JSON.parse(text);
+    const message = parsed?.message || parsed?.error;
+    if (message) {
+      return new Error(Array.isArray(message) ? message.join(', ') : String(message));
+    }
+    return new Error(`${fallback} (${response.status})`);
+  } catch {
+    return new Error(`${fallback} (${response.status})`);
+  }
+};
+
 class WorkspaceAPI {
   /**
    * Get active orders for vendor/rider workspace
@@ -149,8 +170,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to fetch active orders: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to fetch active orders");
       }
 
       return await response.json();
@@ -177,8 +197,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to fetch completed orders: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to fetch completed orders");
       }
 
       return await response.json();
@@ -201,8 +220,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to fetch workspace stats: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to fetch workspace stats");
       }
 
       return await response.json();
@@ -225,8 +243,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to accept order: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to accept order");
       }
 
       return await response.json();
@@ -250,8 +267,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to decline order: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to decline order");
       }
 
       return await response.json();
@@ -274,8 +290,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to mark order ready: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to mark order ready");
       }
 
       return await response.json();
@@ -298,8 +313,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to mark order ready for pickup: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to mark order ready for pickup");
       }
 
       return await response.json();
@@ -320,8 +334,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to confirm pickup: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to confirm pickup");
       }
 
       return await response.json();
@@ -342,8 +355,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to confirm self-pickup: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to confirm self-pickup");
       }
 
       return await response.json();
@@ -366,13 +378,37 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to confirm pickup: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to confirm pickup");
       }
 
       return await response.json();
     } catch (error) {
       console.error('Confirm pickup error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Mark a service booking as completed (vendor action)
+   * Order moves to 'delivered'; buyer confirms before escrow release
+   */
+  async completeServiceBooking(orderId: string, completionNotes?: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const headers = await getAuthHeaders();
+
+      const response = await fetch(`${API_BASE_URL}/workspace/orders/${orderId}/complete-service`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ completionNotes }),
+      });
+
+      if (!response.ok) {
+        throw await parseApiError(response, "Failed to complete service");
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Complete service booking error:', error);
       throw error;
     }
   }
@@ -391,8 +427,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to mark delivered: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to mark delivered");
       }
 
       return await response.json();
@@ -454,8 +489,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to fetch order details: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to fetch order details");
       }
 
       return await response.json();
@@ -479,8 +513,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to update preparation time: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to update preparation time");
       }
 
       return await response.json();
@@ -504,8 +537,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to add order notes: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to add order notes");
       }
 
       return await response.json();
@@ -528,8 +560,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to fetch orders by status: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to fetch orders by status");
       }
 
       return await response.json();
@@ -542,7 +573,7 @@ class WorkspaceAPI {
   /**
    * Get orders by source (regular, live_stream, auction, service_booking)
    */
-  async getOrdersBySource(source: 'regular' | 'live_stream' | 'auction' | 'service_booking'): Promise<WorkspaceOrder[]> {
+  async getOrdersBySource(source: 'regular' | 'live_stream' | 'auction' | 'service_booking' | 'invoice' | 'wishlist'): Promise<WorkspaceOrder[]> {
     try {
       const headers = await getAuthHeaders();
 
@@ -552,8 +583,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to fetch orders by source: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to fetch orders by source");
       }
 
       return await response.json();
@@ -576,8 +606,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to fetch live stream analytics: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to fetch live stream analytics");
       }
 
       return await response.json();
@@ -617,8 +646,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to fetch orders analytics by source: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to fetch orders analytics by source");
       }
 
       return await response.json();
@@ -651,8 +679,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to fetch real-time workspace metrics: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to fetch real-time workspace metrics");
       }
 
       return await response.json();
@@ -680,8 +707,7 @@ class WorkspaceAPI {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Failed to request escrow release: ${response.status} ${errorData}`);
+        throw await parseApiError(response, "Failed to request escrow release");
       }
 
       return await response.json();

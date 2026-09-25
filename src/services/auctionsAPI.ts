@@ -2,6 +2,7 @@ import { api } from './api';
 import * as SecureStore from 'expo-secure-store';
 import { Alert } from 'react-native';
 import io, { Socket } from 'socket.io-client';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { API_CONFIG } from '../config/api';
 
 const API_URL = API_CONFIG.BASE_URL || process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
@@ -171,6 +172,7 @@ export interface CreateAuctionData {
 export interface PlaceBidData {
   auction_id: string;
   amount: number;
+  item_id?: string | null;
   bid_type?: 'manual' | 'proxy';
   max_bid_amount?: number;
 }
@@ -685,6 +687,44 @@ export const auctionsAPI = {
   },
 
   /**
+   * End a live auction and stop its broadcast
+   */
+  async endLiveAuction(auctionId: string): Promise<any> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      const response = await api.post(`/auctions/${auctionId}/end-live`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Error ending live auction:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Pause or resume the live broadcast for an auction
+   */
+  async updateBroadcastStatus(auctionId: string, status: 'paused' | 'live'): Promise<any> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      const response = await api.post(`/auctions/${auctionId}/broadcast-status`, { status }, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Error updating broadcast status:', error);
+      throw error;
+    }
+  },
+
+  /**
    * Generate Agora token for auction live streaming
    */
   async generateAgoraToken(auctionId: string, role: 'host' | 'audience' = 'host'): Promise<{
@@ -804,15 +844,24 @@ export const auctionsAPI = {
   },
 
   /**
-   * End bidding for auction item (manual)
+   * End bidding for auction item (manual).
+   * Returns the settled outcome so the host can decide sold-vs-pass on the
+   * server's item-scoped truth rather than auction-wide bid counters.
    */
-  async endItemBidding(auctionId: string, itemId: string): Promise<void> {
+  async endItemBidding(auctionId: string, itemId: string): Promise<{
+    item_id: string;
+    bidding_status: string;
+    has_valid_bid: boolean;
+    winner_id: string | null;
+    winning_bid: number | null;
+  }> {
     try {
       const token = await SecureStore.getItemAsync('accessToken');
       if (!token) {
         throw new Error('Authentication required');
       }
-      await api.post(`/auctions/${auctionId}/items/${itemId}/end-bidding`);
+      const response = await api.post(`/auctions/${auctionId}/items/${itemId}/end-bidding`);
+      return response.data;
     } catch (error) {
       console.error('Error ending item bidding:', error);
       throw error;
@@ -847,6 +896,38 @@ export const auctionsAPI = {
       await api.post(`/auctions/${auctionId}/items/${itemId}/skip`);
     } catch (error) {
       console.error('Error skipping item:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Defer a waiting item to the back of the queue (item stays 'waiting')
+   */
+  async deferItem(auctionId: string, itemId: string): Promise<void> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      await api.post(`/auctions/${auctionId}/items/${itemId}/defer`);
+    } catch (error) {
+      console.error('Error deferring item:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Load a specific waiting item as the current item
+   */
+  async selectItem(auctionId: string, itemId: string): Promise<void> {
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+      await api.post(`/auctions/${auctionId}/items/${itemId}/select`);
+    } catch (error) {
+      console.error('Error selecting item:', error);
       throw error;
     }
   },
@@ -916,9 +997,23 @@ export const auctionsAPI = {
       if (imageUris && imageUris.length > 0) {
         console.log('📸 Adding images to FormData:', imageUris.length, 'images');
         for (let i = 0; i < imageUris.length; i++) {
-          const uri = imageUris[i];
+          let uri = imageUris[i];
+
+          // Backend storage cannot serve HEIC/HEIF; convert to JPEG before upload.
+          if (/\.(heic|heif)(\?.*)?$/i.test(uri)) {
+            try {
+              const converted = await manipulateAsync(uri, [], {
+                compress: 0.9,
+                format: SaveFormat.JPEG,
+              });
+              uri = converted.uri;
+            } catch (convertError) {
+              console.warn('⚠️ HEIC conversion failed, attempting upload as-is:', convertError);
+            }
+          }
+
           const filename = `image-${i}.jpg`;
-          
+
           // React Native file upload format
           const file = {
             uri: uri.startsWith('file://') ? uri : `file://${uri}`,
@@ -1139,12 +1234,6 @@ class AuctionSocketManager {
       this.emit('new_bid', data);
     });
 
-    // Keep bid_placed for backwards compatibility if needed
-    this.socket.on('bid_placed', (data: any) => {
-      console.log('New bid placed:', data);
-      this.emit('bid_placed', data);
-    });
-
     this.socket.on('bid_confirmed', (data: any) => {
       console.log('Bid confirmed:', data);
       this.emit('bid_confirmed', data);
@@ -1203,6 +1292,12 @@ class AuctionSocketManager {
       this.emit('broadcast_started', data);
     });
 
+    // Broadcast pause/resume status (when host pauses the live stream)
+    this.socket.on('broadcast_status', (data: any) => {
+      console.log('📡 Broadcast status changed:', data);
+      this.emit('broadcast_status', data);
+    });
+
     // User notifications
     this.socket.on('user_notification', (data: any) => {
       console.log('User notification:', data);
@@ -1244,13 +1339,35 @@ class AuctionSocketManager {
       console.log('Auction won:', data);
       this.emit('auction_won', data);
     });
+
+    // Host soundboard sounds
+    this.socket.on('sound_played', (data: any) => {
+      this.emit('sound_played', data);
+    });
+
+    this.socket.on('sound_stopped', (data: any) => {
+      this.emit('sound_stopped', data);
+    });
+
+    // Host gavel tap → viewers show the gavel lottie animation
+    this.socket.on('gavel_played', (data: any) => {
+      this.emit('gavel_played', data);
+    });
   }
 
   /**
-   * Join an auction room
+   * Join an auction room.
+   * context tells the backend which presence bucket to count this socket in:
+   *  - 'stream'   → user is watching the live video (stream watcher count)
+   *  - 'details'  → user is on a details/lobby screen (details viewer count)
+   *  - undefined  → room membership only (e.g. host broadcast screen)
    */
-  async joinAuction(auctionId: string, userId?: string): Promise<void> {
-    console.log('🚪 Joining auction:', auctionId, 'user:', userId);
+  async joinAuction(
+    auctionId: string,
+    userId?: string,
+    context?: 'stream' | 'details',
+  ): Promise<void> {
+    console.log('🚪 Joining auction:', auctionId, 'user:', userId, 'context:', context);
     if (!this.socket?.connected) {
       console.log('🔌 Socket not connected, connecting first...');
       await this.connect();
@@ -1258,10 +1375,11 @@ class AuctionSocketManager {
 
     this.currentAuctionId = auctionId;
 
-    console.log('📤 Emitting join_auction event:', { auction_id: auctionId, user_id: userId });
+    console.log('📤 Emitting join_auction event:', { auction_id: auctionId, user_id: userId, context });
     this.socket?.emit('join_auction', {
       auction_id: auctionId,
       user_id: userId,
+      context,
     });
     console.log('✅ join_auction event sent');
   }
@@ -1290,7 +1408,7 @@ class AuctionSocketManager {
   /**
    * Place a bid via WebSocket (real-time)
    */
-  placeBid(auctionId: string, amount: number, bidType: 'manual' | 'proxy' = 'manual'): void {
+  placeBid(auctionId: string, amount: number, bidType: 'manual' | 'proxy' = 'manual', itemId?: string): void {
     if (!this.socket?.connected) {
       console.error('Not connected to auction WebSocket');
       Alert.alert('Connection Error', 'Not connected to auction server. Please refresh.');
@@ -1299,6 +1417,7 @@ class AuctionSocketManager {
 
     this.socket.emit('place_bid', {
       auction_id: auctionId,
+      item_id: itemId,
       amount,
       bid_type: bidType,
     });
@@ -1336,6 +1455,48 @@ class AuctionSocketManager {
     this.socket.emit('send_reaction', {
       auction_id: auctionId,
       reaction_type: reactionType,
+    });
+  }
+
+  /**
+   * Broadcast a soundboard sound to all viewers (host only)
+   * soundId: sounds-table UUID or 'builtin:*' key
+   */
+  sendPlaySound(auctionId: string, soundId: string, name?: string): void {
+    if (!this.socket?.connected) {
+      console.error('Not connected to auction WebSocket');
+      return;
+    }
+
+    this.socket.emit('play_sound', {
+      auction_id: auctionId,
+      soundId,
+      name,
+    });
+  }
+
+  /**
+   * Broadcast the gavel animation trigger to all viewers (host only).
+   * The server emits 'gavel_played' to the room.
+   */
+  sendPlayGavel(auctionId: string, itemId?: string): void {
+    if (!this.socket?.connected) return;
+
+    this.socket.emit('play_gavel', {
+      auction_id: auctionId,
+      item_id: itemId,
+    });
+  }
+
+  /**
+   * Stop a playing soundboard sound for all viewers (host only)
+   */
+  sendStopSound(auctionId: string, soundId: string): void {
+    if (!this.socket?.connected) return;
+
+    this.socket.emit('stop_sound', {
+      auction_id: auctionId,
+      soundId,
     });
   }
 

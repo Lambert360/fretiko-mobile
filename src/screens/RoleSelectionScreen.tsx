@@ -111,7 +111,7 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
         console.log('✅ User created successfully with role:', createUserResult.user);
         
         // Navigate to welcome screen - user will signin when they tap "Explore"
-        navigation.navigate('Welcome');
+        navigation.navigate('Welcome', { citizenNumber: createUserResult.user?.citizen_number });
       } else {
         Alert.alert('Error', createUserResult.message || 'Account creation failed');
       }
@@ -186,7 +186,7 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
         console.log('✅ User created successfully with citizen role:', createUserResult.user);
         
         // Navigate to welcome screen - user will signin when they tap "Explore"
-        navigation.navigate('Welcome');
+        navigation.navigate('Welcome', { citizenNumber: createUserResult.user?.citizen_number });
       } else {
         Alert.alert('Error', createUserResult.message || 'Account creation failed');
       }

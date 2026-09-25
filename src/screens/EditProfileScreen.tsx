@@ -14,6 +14,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { userAPI, UpdateProfileData } from '../services/userAPI';
 import { AvatarUpload } from '../components/AvatarUpload';
 import { BackgroundUpload } from '../components/BackgroundUpload';
@@ -38,6 +39,7 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
 }) => {
   const { profile: initialProfile, focusAvatar, becomeSeller } = route.params;
   const { refreshUserProfile } = useAuth();
+  const insets = useSafeAreaInsets();
   
   const [formData, setFormData] = useState({
     username: initialProfile?.username || '',
@@ -268,7 +270,7 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { paddingTop: Platform.OS === 'android' ? insets.top : 0 }]}>
       <KeyboardAvoidingView 
         style={styles.keyboardView} 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -292,7 +294,11 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
           </TouchableOpacity>
         </View>
 
-        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 24 + Math.max(insets.bottom, 24) }}
+        >
           {/* Avatar Upload */}
           <View style={styles.avatarSection}>
             <Text style={styles.sectionTitle}>Profile Picture</Text>

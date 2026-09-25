@@ -14,6 +14,7 @@ import {
   TextInput,
   Modal,
   Linking,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
@@ -27,6 +28,7 @@ import { chatAPI } from '../services/chatAPI';
 import * as Location from 'expo-location';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AdaptiveText from '../components/AdaptiveText';
+import PINInputModal from '../components/PINInputModal';
 
 interface VendorOrderDetailsParams {
   orderId: string;
@@ -103,6 +105,13 @@ const VendorOrderDetailsScreen: React.FC = () => {
   const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const locationSubscriptionRef = useRef<Location.LocationSubscription | null>(null);
   const [showFullInstructions, setShowFullInstructions] = useState(false);
+  // PIN modal for pickup/delivery handoff verification
+  const [pinModalVisible, setPinModalVisible] = useState(false);
+  const [pinModalConfig, setPinModalConfig] = useState<{
+    action: 'pickup' | 'confirm_pickup' | 'delivered';
+    title: string;
+    description: string;
+  } | null>(null);
 
   useEffect(() => {
     loadOrderDetails();
@@ -268,16 +277,28 @@ const VendorOrderDetailsScreen: React.FC = () => {
     }
   };
 
-  // ✅ Open directions to buyer location
+  // ✅ Open directions to buyer location — coords preferred, address
+  // fallback, friendly explanation when neither exists.
   const openDirections = () => {
-    if (!orderDetails?.deliveryDetails?.coordinates) {
-      Alert.alert('Error', 'Delivery location coordinates not available');
+    const coords = orderDetails?.deliveryDetails?.coordinates;
+    const dest = coords?.latitude && coords?.longitude
+      ? `${coords.latitude},${coords.longitude}`
+      : orderDetails?.deliveryDetails?.address || orderDetails?.deliveryAddress;
+
+    if (!dest) {
+      Alert.alert(
+        'Directions Unavailable',
+        "This order doesn't have a delivery location saved yet, so we can't show directions. Please contact the buyer to confirm the address."
+      );
       return;
     }
 
-    const { latitude, longitude } = orderDetails.deliveryDetails.coordinates;
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
-    
+    // iOS → Apple Maps app; Android → Google Maps (turn-by-turn, which
+    // Apple Maps web lacks)
+    const url = Platform.OS === 'ios'
+      ? `https://maps.apple.com/?daddr=${encodeURIComponent(dest)}&dirflg=d`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+
     Linking.openURL(url).catch(() => {
       Alert.alert('Error', 'Could not open maps app');
     });
@@ -285,17 +306,45 @@ const VendorOrderDetailsScreen: React.FC = () => {
 
   // ✅ Open directions to vendor location (for riders)
   const openDirectionsToVendor = () => {
-    if (!orderDetails?.vendorLocation?.coordinates) {
-      Alert.alert('Error', 'Vendor location coordinates not available');
+    const coords = orderDetails?.vendorLocation?.coordinates;
+    const dest = coords?.latitude && coords?.longitude
+      ? `${coords.latitude},${coords.longitude}`
+      : orderDetails?.vendorLocation?.address;
+
+    if (!dest) {
+      Alert.alert(
+        'Directions Unavailable',
+        "This vendor hasn't shared a pickup location yet, so we can't show directions. Please contact the vendor for the pickup address."
+      );
       return;
     }
 
-    const { latitude, longitude } = orderDetails.vendorLocation.coordinates;
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
-    
+    const url = Platform.OS === 'ios'
+      ? `https://maps.apple.com/?daddr=${encodeURIComponent(dest)}&dirflg=d`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+
     Linking.openURL(url).catch(() => {
       Alert.alert('Error', 'Could not open maps app');
     });
+  };
+
+  // Map preview needs real coordinates — can't render from an address
+  // string. Explain instead of hiding the button.
+  const handleOpenMapModal = () => {
+    const hasAnyCoords =
+      orderDetails?.deliveryDetails?.coordinates ||
+      orderDetails?.vendorLocation?.coordinates ||
+      orderDetails?.riderLocation ||
+      currentLocation;
+
+    if (!hasAnyCoords) {
+      Alert.alert(
+        'Map Unavailable',
+        "This order doesn't have location coordinates yet, so the map can't be displayed. You can still navigate using the address shown on this screen."
+      );
+      return;
+    }
+    setShowMapModal(true);
   };
 
   const checkExistingDispute = async () => {
@@ -364,18 +413,60 @@ const VendorOrderDetailsScreen: React.FC = () => {
           return;
         case 'ready':
           result = await workspaceAPI.markOrderReady(orderId);
-          Alert.alert('Success', 'Order marked as ready for pickup');
+          Alert.alert('Success', 'Order marked as ready for pickup. Waiting for rider to arrive.');
           break;
-        case 'pickup':
-          result = await workspaceAPI.confirmPickup(orderId);
-          Alert.alert('Success', 'Pickup confirmed');
+        case 'ready_pickup':
+          result = await workspaceAPI.markOrderReadyForPickup(orderId);
+          Alert.alert('Success', 'Order is ready! Buyer will be notified to collect it.');
           break;
-        case 'delivered':
+        case 'complete_service':
           Alert.alert(
-            'PIN Required',
-            'Please ask the buyer for their delivery PIN and confirm delivery from the Workspace orders list.',
-            [{ text: 'OK' }]
+            'Complete Service',
+            'Mark this service as completed? The buyer will be asked to confirm before payment is released.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Complete',
+                onPress: async () => {
+                  try {
+                    setActionLoading('complete_service');
+                    await workspaceAPI.completeServiceBooking(orderId);
+                    Alert.alert('Success', 'Service marked as complete. Awaiting buyer confirmation.');
+                    loadOrderDetails(false);
+                  } catch (error) {
+                    console.error('Error completing service:', error);
+                    Alert.alert('Error', 'Failed to mark service as complete');
+                  } finally {
+                    setActionLoading(null);
+                  }
+                },
+              },
+            ]
           );
+          return;
+        case 'pickup':
+          setPinModalConfig({
+            action: 'pickup',
+            title: 'Confirm Customer Pickup',
+            description: 'Ask the customer for their pickup PIN and enter it below to confirm they collected the order.',
+          });
+          setPinModalVisible(true);
+          return;
+        case 'confirm_pickup':
+          setPinModalConfig({
+            action: 'confirm_pickup',
+            title: 'Confirm Rider Pickup',
+            description: 'Ask the rider for their pickup PIN and enter it below to confirm they collected the order.',
+          });
+          setPinModalVisible(true);
+          return;
+        case 'delivered':
+          setPinModalConfig({
+            action: 'delivered',
+            title: 'Confirm Delivery',
+            description: 'Ask the customer for their delivery PIN and enter it below to confirm delivery.',
+          });
+          setPinModalVisible(true);
           return;
       }
 
@@ -386,6 +477,40 @@ const VendorOrderDetailsScreen: React.FC = () => {
       Alert.alert('Error', `Failed to ${action} order`);
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const handlePinSubmit = async (pin: string) => {
+    if (!pinModalConfig) return;
+
+    const { action } = pinModalConfig;
+
+    try {
+      switch (action) {
+        case 'pickup':
+          // Vendor confirms self-pickup using the customer's delivery PIN
+          await workspaceAPI.confirmSelfPickupWithPin(orderId, pin);
+          Alert.alert('Success', 'Customer pickup confirmed');
+          break;
+        case 'confirm_pickup':
+          // Vendor confirms rider pickup using the rider's pickup PIN
+          await workspaceAPI.confirmPickupWithPin(orderId, pin);
+          Alert.alert('Success', 'Rider pickup confirmed — order is out for delivery');
+          break;
+        case 'delivered':
+          // Rider confirms delivery using the customer's delivery PIN
+          await workspaceAPI.markDelivered(orderId, pin);
+          Alert.alert('Success', 'Delivery confirmed');
+          break;
+      }
+      setPinModalVisible(false);
+      setPinModalConfig(null);
+      loadOrderDetails(false);
+    } catch (error: any) {
+      console.error(`Error performing ${action} with PIN:`, error);
+      // Re-throw so the PIN modal shows the real error and keeps the modal
+      // open for retry
+      throw new Error(error.message || 'Invalid PIN');
     }
   };
 
@@ -439,11 +564,15 @@ const VendorOrderDetailsScreen: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'created': return '#8E8E93';
       case 'pending': return '#FF9500';
+      case 'paid': return '#5856D6';
+      case 'accepted': return '#007AFF';
       case 'processing': return '#007AFF';
       case 'ready_for_pickup': return '#34C759';
       case 'out_for_delivery': return '#5856D6';
       case 'delivered': return '#30D158';
+      case 'completed': return '#30D158';
       case 'cancelled': return '#FF3B30';
       default: return '#8E8E93';
     }
@@ -455,44 +584,67 @@ const VendorOrderDetailsScreen: React.FC = () => {
       case 'live_stream': return { label: 'Live Stream Sale', icon: 'videocam-outline', color: '#FF2D92' };
       case 'auction': return { label: 'Auction Sale', icon: 'hammer-outline', color: '#FF9500' };
       case 'service_booking': return { label: 'Service Booking', icon: 'construct-outline', color: '#34C759' };
+      case 'invoice': return { label: 'Chat Invoice Sale', icon: 'chatbubble-ellipses-outline', color: '#5856D6' };
+      case 'wishlist': return { label: 'Wishlist Gift', icon: 'gift-outline', color: '#FF2D55' };
       default: return { label: 'Store Purchase', icon: 'storefront-outline', color: '#007AFF' };
     }
   };
 
-  const getServiceBookingInfo = () => {
-    if (!orderDetails) return null;
+  // Returns one entry per service item/booking so multi-service orders
+  // surface every schedule + notes pair, not just the first.
+  const getServiceBookingInfos = (): { name: string | null; scheduledDate?: string | null; scheduledTime?: string | null; buyerNotes?: string | null }[] => {
+    if (!orderDetails) return [];
 
-    // 1) Prefer order-level metadata (most reliable if backend provides it)
     const meta = (orderDetails as any).metadata;
-    
-    // Check for serviceBooking structure (regular service bookings)
-    const metaBooking = meta?.serviceBooking;
-    const metaDate = metaBooking?.scheduledDate || metaBooking?.serviceDate;
-    const metaTime = metaBooking?.scheduledTime || metaBooking?.serviceTime;
-    const metaNotes = metaBooking?.notes;
+    const bookingRows: any[] = (orderDetails as any).serviceBookings
+      || ((orderDetails as any).serviceBooking ? [(orderDetails as any).serviceBooking] : []);
+    const serviceItems: any[] = (orderDetails.items || []).filter((i: any) => i?.isService || i?.serviceId);
 
-    // Check for portfolio booking structure (portfolio service bookings)
-    // Portfolio bookings store: metadata.booking_date, metadata.booking_time, metadata.service_notes
-    const portfolioDate = meta?.booking_date;
-    const portfolioTime = meta?.booking_time;
-    const portfolioNotes = meta?.service_notes;
+    const infos: { name: string | null; scheduledDate?: string | null; scheduledTime?: string | null; buyerNotes?: string | null }[] = [];
 
-    // 2) Fallback: look at service item fields (some APIs attach to item)
-    const serviceItem: any = (orderDetails.items || []).find((i: any) => i?.isService) || null;
-    const itemDate = serviceItem?.scheduledDate || serviceItem?.serviceDate || serviceItem?.product_metadata?.booking_date;
-    const itemTime = serviceItem?.scheduledTime || serviceItem?.serviceTime || serviceItem?.product_metadata?.booking_time;
-    const itemNotes = serviceItem?.notes || serviceItem?.product_metadata?.service_notes;
+    // 1) One entry per service item, enriched by its matching service_bookings row
+    for (const item of serviceItems) {
+      const booking =
+        bookingRows.find((b) => b.serviceId && b.serviceId === item.serviceId) ||
+        bookingRows.find((b) => !b.serviceId);
+      infos.push({
+        name: item.name || null,
+        scheduledDate: item.scheduledDate || item.serviceDate || item.product_metadata?.booking_date || booking?.scheduledDate || null,
+        scheduledTime: item.scheduledTime || item.serviceTime || item.product_metadata?.booking_time || null,
+        buyerNotes: (item.notes || booking?.notes || item.product_metadata?.service_notes || '').toString().trim() || null,
+      });
+    }
 
-    // Combine all sources, prioritizing serviceBooking > portfolio > item fields
-    const scheduledDate = metaDate || portfolioDate || itemDate;
-    const scheduledTime = metaTime || portfolioTime || itemTime;
-    const buyerNotes = (metaNotes || portfolioNotes || itemNotes || '').toString().trim() || null;
+    // 2) Booking rows with no matching service item (edge case)
+    for (const b of bookingRows) {
+      const alreadyCovered = serviceItems.some((i: any) => i.serviceId && i.serviceId === b.serviceId);
+      if (alreadyCovered) continue;
+      infos.push({
+        name: null,
+        scheduledDate: b.scheduledDate || null,
+        scheduledTime: null,
+        buyerNotes: (b.notes || '').toString().trim() || null,
+      });
+    }
 
-    if (!scheduledDate && !scheduledTime && !buyerNotes) return null;
-    return { scheduledDate, scheduledTime, buyerNotes };
+    // 3) Order-level metadata (live-stream service + portfolio bookings)
+    // Only applies when no per-item/booking entries carry data — live
+    // service orders write both metadata AND items, so this must not duplicate.
+    let result = infos.filter((i) => i.scheduledDate || i.scheduledTime || i.buyerNotes);
+    if (result.length === 0) {
+      const metaBooking = meta?.serviceBooking;
+      const metaDate = metaBooking?.scheduledDate || metaBooking?.serviceDate || meta?.booking_date;
+      const metaTime = metaBooking?.scheduledTime || metaBooking?.serviceTime || meta?.booking_time;
+      const metaNotes = (metaBooking?.notes || meta?.service_notes || '').toString().trim() || null;
+      if (metaDate || metaTime || metaNotes) {
+        result = [{ name: meta?.service_name || meta?.portfolio_title || null, scheduledDate: metaDate, scheduledTime: metaTime, buyerNotes: metaNotes }];
+      }
+    }
+
+    return result;
   };
 
-  const formatServiceSchedule = (scheduledDate?: string, scheduledTime?: string): string | null => {
+  const formatServiceSchedule = (scheduledDate?: string | null, scheduledTime?: string | null): string | null => {
     if (!scheduledDate && !scheduledTime) return null;
     const d = (scheduledDate || '').trim();
     const t = (scheduledTime || '').trim();
@@ -505,11 +657,12 @@ const VendorOrderDetailsScreen: React.FC = () => {
       minute: '2-digit',
     };
 
+    const tryParse = (c: string) => {
+      const dt = new Date(c);
+      return !isNaN(dt.getTime()) ? dt.toLocaleString(undefined, opts) : null;
+    };
+
     if (d && t) {
-      const tryParse = (c: string) => {
-        const dt = new Date(c);
-        return !isNaN(dt.getTime()) ? dt.toLocaleString(undefined, opts) : null;
-      };
       const parsed =
         tryParse(`${d}T${t}`) ??
         tryParse(`${d}T${t}:00`) ??
@@ -517,7 +670,8 @@ const VendorOrderDetailsScreen: React.FC = () => {
       if (parsed) return parsed;
       return `${d} ${t}`;
     }
-    if (d) return d;
+    // service_bookings.requested_date is a full ISO timestamp — parse it
+    if (d) return tryParse(d) || d;
     return t || null;
   };
 
@@ -548,30 +702,45 @@ const VendorOrderDetailsScreen: React.FC = () => {
     }
   };
 
-  const handleCallBuyer = () => {
-    if (!orderDetails?.customer?.phone) return;
-    const phone = orderDetails.customer.phone.replace(/\s+/g, '');
-    Linking.openURL(`tel:${phone}`).catch(() => {
-      Alert.alert('Error', 'Could not open phone app');
-    });
+  // ✅ In-app call via CallScreen → CallContext (Agora). Finds/creates the
+  // conversation first so call signals route through the chat channel.
+  const handleInAppCall = async (target: { id?: string | null; name?: string | null; avatar?: string | null } | undefined) => {
+    if (!target?.id || !user) {
+      Alert.alert('Unavailable', 'Cannot start a call with this user.');
+      return;
+    }
+
+    try {
+      let chatType: 'friend' | 'vendor' | 'rider' = 'vendor';
+      if ((user as any).is_rider) chatType = 'rider';
+      else if ((user as any).is_seller) chatType = 'vendor';
+
+      const conversation = await chatAPI.findOrCreateConversation([target.id], chatType);
+
+      (navigation as any).navigate('CallScreen', {
+        chatId: conversation.id,
+        otherUserId: target.id,
+        callerName: target.name || 'User',
+        callerAvatar: target.avatar || null,
+        callType: 'audio',
+      });
+    } catch (error) {
+      console.error('Error starting in-app call:', error);
+      Alert.alert('Error', 'Unable to start call. Please try again.');
+    }
   };
+
+  const handleCallBuyer = () =>
+    handleInAppCall({
+      id: orderDetails?.customer?.id,
+      name: orderDetails?.customer?.name,
+      avatar: orderDetails?.customer?.avatar,
+    });
 
   // ✅ Navigate to a user's public profile (buyer, vendor, or rider)
   const handleViewProfile = (userId?: string | null) => {
     if (!userId) return;
     (navigation as any).navigate('PublicProfile', { userId });
-  };
-
-  // ✅ Generic phone dialer for any counterparty (vendor or rider)
-  const handleCallUser = (phone?: string | null) => {
-    if (!phone) {
-      Alert.alert('Unavailable', 'Phone number not available for this user.');
-      return;
-    }
-    const cleanPhone = phone.replace(/\s+/g, '');
-    Linking.openURL(`tel:${cleanPhone}`).catch(() => {
-      Alert.alert('Error', 'Could not open phone app');
-    });
   };
 
   // ✅ Generic chat starter for any counterparty (vendor or rider)
@@ -600,41 +769,72 @@ const VendorOrderDetailsScreen: React.FC = () => {
     }
   };
 
+  // Service/portfolio orders complete via the service-completion endpoint,
+  // not the pickup/delivery pipeline
+  const isServiceOrder = (() => {
+    if (!orderDetails) return false;
+    if ((orderDetails as any).serviceBooking) return true;
+    const bookingType = orderDetails.metadata?.booking_type;
+    if (bookingType === 'service' || bookingType === 'portfolio') return true;
+    return orderDetails.items?.some((i: any) => i.isService || i.serviceId) ?? false;
+  })();
+
   const getAvailableActions = () => {
     if (!orderDetails || !user) return [];
 
     const actions = [];
     const isVendorForThisOrder = orderDetails.vendor_id === user.id;
     const isRiderForThisOrder = orderDetails.rider_id === user.id;
+    const isSelfPickup = orderDetails.deliveryType === 'pickup' || orderDetails.deliveryType === 'self_pickup';
 
     // ✅ Vendor actions (only if user is the vendor for THIS order)
     if (isVendorForThisOrder) {
       switch (orderDetails.status) {
         case 'pending':
+        case 'paid':
           actions.push(
             { action: 'accept', label: 'Accept', icon: 'checkmark-outline', color: '#34C759' },
             { action: 'decline', label: 'Reject', icon: 'close-outline', color: '#FF3B30' }
           );
           break;
+        case 'accepted':
         case 'processing':
-          actions.push(
-            { action: 'ready', label: 'Ready for Pickup', icon: 'cube-outline', color: '#007AFF' }
-          );
+          if (isServiceOrder) {
+            actions.push(
+              { action: 'complete_service', label: 'Mark Service Complete', icon: 'construct-outline', color: '#34C759' }
+            );
+          } else if (isSelfPickup) {
+            actions.push(
+              { action: 'ready_pickup', label: 'Mark Ready for Pickup', icon: 'checkmark-circle-outline', color: '#007AFF' }
+            );
+          } else {
+            actions.push(
+              { action: 'ready', label: 'Ready for Pickup', icon: 'cube-outline', color: '#007AFF' }
+            );
+          }
+          break;
+        case 'ready_for_pickup':
+          if (isServiceOrder) break;
+          if (isSelfPickup) {
+            actions.push(
+              { action: 'pickup', label: 'Confirm Customer Pickup', icon: 'key-outline', color: '#34C759' }
+            );
+          } else {
+            actions.push(
+              { action: 'confirm_pickup', label: 'Confirm Rider Pickup', icon: 'key-outline', color: '#007AFF' }
+            );
+          }
           break;
       }
     }
 
     // ✅ Rider actions (only if user is the rider for THIS order)
+    // Vendor confirms pickup with the rider's PIN; rider confirms delivery with the buyer's PIN
     if (isRiderForThisOrder) {
       switch (orderDetails.status) {
-        case 'ready_for_pickup':
-          actions.push(
-            { action: 'pickup', label: 'Confirm Pickup', icon: 'bag-outline', color: '#007AFF' }
-          );
-          break;
         case 'out_for_delivery':
           actions.push(
-            { action: 'delivered', label: 'Mark Delivered', icon: 'checkmark-circle-outline', color: '#34C759' }
+            { action: 'delivered', label: 'Confirm Delivery', icon: 'key-outline', color: '#34C759' }
           );
           break;
       }
@@ -771,7 +971,7 @@ const VendorOrderDetailsScreen: React.FC = () => {
     const isRiderForThisOrder = orderDetails.rider_id === user?.id; // ✅ Check if user is rider for THIS order
 
     return (
-      <View style={[styles.mapModalContainer, { paddingTop: insets.top }]}>
+      <View style={[styles.mapModalContainer, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         {/* Modal Header */}
         <View style={styles.mapModalHeader}>
           <TouchableOpacity 
@@ -781,14 +981,12 @@ const VendorOrderDetailsScreen: React.FC = () => {
             <Ionicons name="arrow-back" size={24} color="white" />
           </TouchableOpacity>
           <Text style={styles.mapModalTitle}>Order Map</Text>
-          {buyerLocation && (
-            <TouchableOpacity 
-              style={styles.mapModalDirectionsButton}
-              onPress={openDirections}
-            >
-              <Ionicons name="navigate" size={24} color="#007AFF" />
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={styles.mapModalDirectionsButton}
+            onPress={openDirections}
+          >
+            <Ionicons name="navigate" size={24} color="#007AFF" />
+          </TouchableOpacity>
         </View>
 
         {/* Map Visualization */}
@@ -941,31 +1139,43 @@ const VendorOrderDetailsScreen: React.FC = () => {
           const isRiderForThisOrder = orderDetails.rider_id === user?.id;
           if (isRiderForThisOrder) return null;
 
-          const bookingInfo = getServiceBookingInfo();
-          if (!bookingInfo) return null;
-
-          const scheduleLabel = formatServiceSchedule(bookingInfo.scheduledDate, bookingInfo.scheduledTime);
-          const showSchedule = !!scheduleLabel;
-          const showBuyerNotes = !!bookingInfo.buyerNotes;
+          const bookingInfos = getServiceBookingInfos();
+          if (bookingInfos.length === 0) return null;
 
           return (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Service Booking</Text>
-              <View style={styles.serviceBookingCard}>
-                {showSchedule && (
-                  <View style={styles.bookingRow}>
-                    <Ionicons name="calendar-outline" size={18} color="#3498DB" />
-                    <Text style={styles.bookingText}>{scheduleLabel}</Text>
-                  </View>
-                )}
+              <Text style={styles.sectionTitle}>
+                {bookingInfos.length > 1 ? 'Service Bookings' : 'Service Booking'}
+              </Text>
+              {bookingInfos.map((bookingInfo, index) => {
+                const scheduleLabel = formatServiceSchedule(bookingInfo.scheduledDate, bookingInfo.scheduledTime);
+                const showSchedule = !!scheduleLabel;
+                const showBuyerNotes = !!bookingInfo.buyerNotes;
 
-                {showBuyerNotes && (
-                  <View style={[styles.bookingRow, { marginTop: showSchedule ? 10 : 0 }]}>
-                    <Ionicons name="chatbox-ellipses-outline" size={18} color="#888" />
-                    <Text style={styles.bookingNotesText}>{bookingInfo.buyerNotes}</Text>
+                return (
+                  <View key={index} style={[styles.serviceBookingCard, index > 0 && { marginTop: 10 }]}>
+                    {bookingInfo.name && (
+                      <View style={[styles.bookingRow, { marginBottom: showSchedule || showBuyerNotes ? 8 : 0 }]}>
+                        <Ionicons name="construct-outline" size={18} color="#34C759" />
+                        <Text style={styles.bookingText}>{bookingInfo.name}</Text>
+                      </View>
+                    )}
+                    {showSchedule && (
+                      <View style={styles.bookingRow}>
+                        <Ionicons name="calendar-outline" size={18} color="#3498DB" />
+                        <Text style={styles.bookingText}>{scheduleLabel}</Text>
+                      </View>
+                    )}
+
+                    {showBuyerNotes && (
+                      <View style={[styles.bookingRow, { marginTop: showSchedule ? 10 : 0 }]}>
+                        <Ionicons name="chatbox-ellipses-outline" size={18} color="#888" />
+                        <Text style={styles.bookingNotesText}>{bookingInfo.buyerNotes}</Text>
+                      </View>
+                    )}
                   </View>
-                )}
-              </View>
+                );
+              })}
             </View>
           );
         })()}
@@ -1057,15 +1267,13 @@ const VendorOrderDetailsScreen: React.FC = () => {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>📍 Pickup Location</Text>
-              {orderDetails.vendorLocation.coordinates && (
-                <TouchableOpacity 
-                  style={styles.mapButton}
-                  onPress={() => setShowMapModal(true)}
-                >
-                  <Ionicons name="map-outline" size={20} color="#007AFF" />
-                  <Text style={styles.mapButtonText}>Map</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                style={styles.mapButton}
+                onPress={handleOpenMapModal}
+              >
+                <Ionicons name="map-outline" size={20} color="#007AFF" />
+                <Text style={styles.mapButtonText}>Map</Text>
+              </TouchableOpacity>
             </View>
             <View style={styles.pickupCard}>
               {orderDetails.vendorInfo && (
@@ -1094,7 +1302,7 @@ const VendorOrderDetailsScreen: React.FC = () => {
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.actionIconButton}
-                      onPress={() => handleCallUser(orderDetails.vendorInfo?.phone)}
+                      onPress={() => handleInAppCall(orderDetails.vendorInfo)}
                     >
                       <Ionicons name="call-outline" size={20} color="#007AFF" />
                     </TouchableOpacity>
@@ -1105,15 +1313,13 @@ const VendorOrderDetailsScreen: React.FC = () => {
                 <Ionicons name="location-outline" size={20} color="#666" />
                 <Text style={styles.deliveryAddress}>{orderDetails.vendorLocation.address}</Text>
               </View>
-              {orderDetails.vendorLocation.coordinates && (
-                <TouchableOpacity 
-                  style={styles.directionsButton}
-                  onPress={openDirectionsToVendor}
-                >
-                  <Ionicons name="navigate" size={20} color="#007AFF" />
-                  <Text style={styles.directionsButtonText}>Get Directions to Vendor</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                style={styles.directionsButton}
+                onPress={openDirectionsToVendor}
+              >
+                <Ionicons name="navigate" size={20} color="#007AFF" />
+                <Text style={styles.directionsButtonText}>Get Directions to Vendor</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -1123,15 +1329,13 @@ const VendorOrderDetailsScreen: React.FC = () => {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>📍 Your Location</Text>
-              {orderDetails.vendorLocation.coordinates && (
-                <TouchableOpacity 
-                  style={styles.mapButton}
-                  onPress={() => setShowMapModal(true)}
-                >
-                  <Ionicons name="map-outline" size={20} color="#007AFF" />
-                  <Text style={styles.mapButtonText}>Map</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                style={styles.mapButton}
+                onPress={handleOpenMapModal}
+              >
+                <Ionicons name="map-outline" size={20} color="#007AFF" />
+                <Text style={styles.mapButtonText}>Map</Text>
+              </TouchableOpacity>
             </View>
             <View style={styles.pickupCard}>
               <View style={styles.addressRow}>
@@ -1171,7 +1375,7 @@ const VendorOrderDetailsScreen: React.FC = () => {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.actionIconButton}
-                  onPress={() => handleCallUser(orderDetails.riderInfo?.phone)}
+                  onPress={() => handleInAppCall(orderDetails.riderInfo)}
                 >
                   <Ionicons name="call-outline" size={20} color="#007AFF" />
                 </TouchableOpacity>
@@ -1185,15 +1389,13 @@ const VendorOrderDetailsScreen: React.FC = () => {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Delivery Information</Text>
-              {orderDetails.deliveryDetails.coordinates && (
-                <TouchableOpacity 
-                  style={styles.mapButton}
-                  onPress={() => setShowMapModal(true)}
-                >
-                  <Ionicons name="map-outline" size={20} color="#007AFF" />
-                  <Text style={styles.mapButtonText}>Map</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                style={styles.mapButton}
+                onPress={handleOpenMapModal}
+              >
+                <Ionicons name="map-outline" size={20} color="#007AFF" />
+                <Text style={styles.mapButtonText}>Map</Text>
+              </TouchableOpacity>
             </View>
             <View style={styles.deliveryCard}>
             <View style={styles.addressRow}>
@@ -1229,15 +1431,13 @@ const VendorOrderDetailsScreen: React.FC = () => {
                 </View>
               );
             })()}
-            {orderDetails.deliveryDetails.coordinates && (
-              <TouchableOpacity 
-                style={styles.directionsButton}
-                onPress={openDirections}
-              >
+            <TouchableOpacity
+              style={styles.directionsButton}
+              onPress={openDirections}
+            >
                 <Ionicons name="navigate" size={20} color="#007AFF" />
                 <Text style={styles.directionsButtonText}>Get Directions</Text>
               </TouchableOpacity>
-            )}
             <View style={styles.deliveryFeeRow}>
               <Text style={styles.deliveryFeeLabel}>Delivery Fee:</Text>
               <Text style={styles.deliveryFeeAmount}>{formatCurrency(orderDetails.deliveryFee)}</Text>
@@ -1441,6 +1641,18 @@ const VendorOrderDetailsScreen: React.FC = () => {
       >
         {renderMapModal()}
       </Modal>
+
+      {/* PIN Verification Modal */}
+      <PINInputModal
+        visible={pinModalVisible}
+        title={pinModalConfig?.title || ''}
+        description={pinModalConfig?.description || ''}
+        onSubmit={handlePinSubmit}
+        onCancel={() => {
+          setPinModalVisible(false);
+          setPinModalConfig(null);
+        }}
+      />
     </SafeAreaView>
   );
 };

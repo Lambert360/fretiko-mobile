@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,11 +10,14 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { ordersAPI, Order } from '../services/ordersAPI';
 import { walletAPI } from '../services/walletAPI';
+
+const PAGE_SIZE = 20;
 
 const OrdersScreen = () => {
   const navigation = useNavigation();
@@ -22,22 +25,79 @@ const OrdersScreen = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // Search state
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Order[] | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadOrders();
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
   }, []);
 
-  const loadOrders = async () => {
+  const loadOrders = async (append: boolean = false) => {
     try {
-      setLoading(true);
-      const ordersData = await ordersAPI.getMyOrders();
-      setOrders(ordersData);
+      if (append) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+      }
+      const pageOffset = append ? offset : 0;
+      const page = await ordersAPI.getMyOrders({ limit: PAGE_SIZE, offset: pageOffset });
+      setOrders(prev => (append ? [...prev, ...page.orders] : page.orders));
+      setOffset(pageOffset + page.orders.length);
+      setHasMore(pageOffset + page.orders.length < page.pagination.total);
     } catch (error) {
       console.error('Error loading orders:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
+  };
+
+  const loadMoreOrders = () => {
+    if (loading || loadingMore || !hasMore || searchResults !== null) return;
+    loadOrders(true);
+  };
+
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+    if (!query.trim()) {
+      setSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const results = await ordersAPI.searchOrders(query.trim());
+        setSearchResults(results);
+      } catch (error) {
+        console.error('Error searching orders:', error);
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 400);
+  }, []);
+
+  const closeSearch = () => {
+    setShowSearch(false);
+    setSearchQuery('');
+    setSearchResults(null);
+    setIsSearching(false);
   };
 
   const getStatusColor = (status: string) => {
@@ -61,6 +121,8 @@ const OrdersScreen = () => {
       case 'live_stream': return { label: 'Live', icon: 'videocam-outline', color: '#FF2D92' };
       case 'auction': return { label: 'Auction', icon: 'hammer-outline', color: '#FF9500' };
       case 'service_booking': return { label: 'Service', icon: 'construct-outline', color: '#34C759' };
+      case 'invoice': return { label: 'Chat', icon: 'chatbubble-ellipses-outline', color: '#5856D6' };
+      case 'wishlist': return { label: 'Gift', icon: 'gift-outline', color: '#FF2D55' };
       default: return { label: 'Store', icon: 'storefront-outline', color: '#007AFF' };
     }
   };
@@ -178,7 +240,7 @@ const OrdersScreen = () => {
         <View style={styles.orderHeader}>
           <View style={styles.orderInfo}>
             <View style={styles.orderInfoRow}>
-            <Text style={styles.orderNumber}>#{item.orderNumber}</Text>
+            <Text style={styles.orderNumber} numberOfLines={1}>#{item.orderNumber}</Text>
               {/* Order Source Badge */}
               {item.source && (() => {
                 const sourceInfo = getOrderSourceInfo(item.source);
@@ -334,9 +396,13 @@ const OrdersScreen = () => {
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
       <Ionicons name="bag-outline" size={80} color="#666" />
-      <Text style={styles.emptyTitle}>No Orders Yet</Text>
+      <Text style={styles.emptyTitle}>
+        {searchResults !== null ? 'No matching orders' : 'No Orders Yet'}
+      </Text>
       <Text style={styles.emptySubtitle}>
-        Your orders will appear here once you make a purchase
+        {searchResults !== null
+          ? `No orders match "${searchQuery}"`
+          : 'Your orders will appear here once you make a purchase'}
       </Text>
       <TouchableOpacity 
         style={styles.shopButton}
@@ -354,13 +420,33 @@ const OrdersScreen = () => {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
-        
+
         <Text style={styles.headerTitle}>My Orders</Text>
-        
-        <TouchableOpacity style={styles.searchButton}>
+
+        <TouchableOpacity style={styles.searchButton} onPress={() => setShowSearch(true)}>
           <Ionicons name="search-outline" size={24} color="white" />
         </TouchableOpacity>
       </View>
+
+      {/* Search bar */}
+      {showSearch && (
+        <View style={styles.searchBar}>
+          <Ionicons name="search-outline" size={18} color="#666" style={{ marginRight: 8 }} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search by order # or item name..."
+            placeholderTextColor="#666"
+            value={searchQuery}
+            onChangeText={handleSearch}
+            autoFocus
+            returnKeyType="search"
+          />
+          {isSearching && <ActivityIndicator size="small" color="#3498DB" style={{ marginRight: 8 }} />}
+          <TouchableOpacity onPress={closeSearch}>
+            <Ionicons name="close-circle" size={20} color="#666" />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Orders List */}
       {loading ? (
@@ -370,18 +456,28 @@ const OrdersScreen = () => {
         </View>
       ) : (
         <FlatList
-          data={orders}
+          data={searchResults ?? orders}
           renderItem={renderOrderItem}
           keyExtractor={(item) => item.id}
           style={styles.ordersList}
           contentContainerStyle={styles.ordersContent}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={renderEmptyState}
+          onEndReached={loadMoreOrders}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color="#3498DB" />
+              </View>
+            ) : null
+          }
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => {
                 setRefreshing(true);
+                closeSearch();
                 loadOrders();
               }}
               tintColor="#3498DB"
@@ -417,6 +513,24 @@ const styles = StyleSheet.create({
   },
   searchButton: {
     padding: 8,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  searchInput: {
+    flex: 1,
+    color: 'white',
+    fontSize: 15,
+    paddingVertical: 4,
   },
   loadingContainer: {
     flex: 1,
@@ -454,12 +568,15 @@ const styles = StyleSheet.create({
   orderInfoRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     marginBottom: 4,
   },
   orderNumber: {
     color: 'white',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
+    flexShrink: 1,
+    maxWidth: '100%',
   },
   sourceBadge: {
     flexDirection: 'row',

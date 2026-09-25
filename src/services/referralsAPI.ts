@@ -10,6 +10,7 @@ export interface ReferralStats {
 
 export interface ReferralData {
   code: string;
+  username?: string;
   url: string;
   stats: ReferralStats;
 }

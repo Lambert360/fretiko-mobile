@@ -26,6 +26,8 @@ import { InterstateCompanySelection } from './InterstateDeliveryScreen';
 import { riderSelectionBridge } from '../utils/riderSelectionBridge';
 import { addressSelectionBridge } from '../utils/addressSelectionBridge';
 import LocationSelector from '../components/LocationSelector';
+import { riderLocationAPI } from '../services/riderLocationAPI';
+import { resolveAddressCoords } from '../utils/deliveryGeo';
 
 interface CheckoutScreenProps {
   navigation: any;
@@ -38,6 +40,7 @@ interface CheckoutScreenProps {
       invoiceId?: string;
       auctionCheckout?: {
         auctionId: string;
+        itemId?: string;
       };
       items?: Array<{
         id: string;
@@ -73,6 +76,8 @@ interface DeliveryAddress {
   country?: string;
   postalCode: string;
   isDefault: boolean;
+  latitude?: number;
+  longitude?: number;
 }
 
 interface PaymentMethod {
@@ -96,12 +101,16 @@ interface OrderSummary {
     itemType?: string;
     isOutOfState?: boolean;
     isOutOfCountry?: boolean;
+    weightKg?: number; // per-unit chargeable weight, server-computed
+    /** ITEM pickup coords (products/services.location_lat/lng) — server-set */
+    locationCoords?: { latitude?: number; longitude?: number };
   }>;
   subtotal: number;
   shipping: number;
   tax: number;
   escrowFee: number;
   total: number;
+  totalWeightKg?: number; // server-computed order chargeable weight
   hasOutOfStateItems?: boolean;
   hasOutOfCountryItems?: boolean;
 }
@@ -266,7 +275,11 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       };
 
       const orderDetails = {
-        weight: orderSummary?.items.reduce((sum: number, item: any) => sum + (item.quantity * 0.5), 0) || 1, // Estimate 0.5kg per item
+        // Server-computed chargeable weight (product/variant weight × qty);
+        // falls back to a rough estimate for older backend responses.
+        weight: orderSummary?.totalWeightKg
+          ?? orderSummary?.items.reduce((sum: number, item: any) => sum + ((item.weightKg ?? 0.5) * item.quantity), 0)
+          ?? 1,
         itemCount: orderSummary?.items.length || 0,
       };
 
@@ -337,7 +350,10 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       if (source === 'auction' && auctionCheckout) {
         console.log('🔨 Loading auction checkout data for auction:', auctionCheckout.auctionId);
         try {
-          summary = await checkoutAPI.getAuctionCheckoutSummary(auctionCheckout.auctionId);
+          summary = await checkoutAPI.getAuctionCheckoutSummary(
+            auctionCheckout.auctionId,
+            auctionCheckout.itemId,
+          );
           setUseEscrow(true); // Auctions always use escrow
         } catch (error: any) {
           console.error('Error loading auction checkout summary:', error);
@@ -656,7 +672,10 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
         useRewards,
         rewardsAmount,
         directCheckout: directCheckout && productId && quantity ? { productId, quantity } : undefined,
-        auctionCheckout: auctionCheckout ? { auctionId: auctionCheckout.auctionId } : undefined,
+        auctionCheckout: auctionCheckout ? {
+          auctionId: auctionCheckout.auctionId,
+          itemId: auctionCheckout.itemId,
+        } : undefined,
         invoiceCheckout: source === 'invoice' && invoiceId && invoiceItems && vendorId ? {
           invoiceId,
           invoiceNumber: `INV-${invoiceId.substring(0, 8)}`, // Generate invoice number from ID
@@ -710,6 +729,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
             vehicleType: selectedRider.vehicleType,
             deliveryPrice: selectedRider.price,
             estimatedArrival: selectedRider.estimatedArrival,
+            distance: selectedRider.routeDistanceKm ?? selectedRider.distanceFromPickup,
           } : undefined,
           interstateCompany: (requiresInterstateDelivery && selectedRider !== 'pickup' && selectedInterstateCompany) ? {
             companyId: selectedInterstateCompany.companyId,
@@ -827,7 +847,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
     }
   };
 
-  const handleSelectRider = () => {
+  const handleSelectRider = async () => {
     if (!deliveryAddress.address) {
       Alert.alert('Address Required', 'Please set your delivery address first');
       return;
@@ -842,9 +862,23 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
     const vendorCountry = sellerLoc?.country || undefined;
     const vendorCity = sellerLoc?.city || deliveryAddress.city || undefined;
 
+    // Resolve the delivery address to coords (native geocoder → city centroid).
+    // Persisted onto deliveryAddress so the order payload carries them and
+    // the backend can recompute route distance server-side.
+    const deliveryCoords = await resolveAddressCoords(deliveryAddress);
+    if (deliveryCoords && deliveryAddress.latitude == null) {
+      setDeliveryAddress(prev => ({ ...prev, ...deliveryCoords }));
+    }
+
+    // Pickup = ITEM location coords (products/services.location_lat/lng),
+    // exposed via the checkout summary — not the vendor profile location.
+    const itemCoords = orderSummary?.items?.find(
+      i => i.locationCoords?.latitude != null && i.locationCoords?.longitude != null,
+    )?.locationCoords;
+
     const pickupLocation = {
-      latitude: 6.5244, // GPS coordinates are still mocked; state/country carry the real filter signal
-      longitude: 3.3792,
+      latitude: itemCoords?.latitude ?? 6.5244, // legacy Lagos fallback when the item has no coords
+      longitude: itemCoords?.longitude ?? 3.3792,
       address: vendorCity
         ? `Vendor Location, ${vendorCity}`
         : vendorState
@@ -855,11 +889,22 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       city: vendorCity,
     };
 
-    // Calculate order details
+    // Route distance (pickup→delivery, urban circuity 1.3) for the
+    // per-km quote; falls back to a neutral 2.5km when coords are missing.
+    const routeKm = itemCoords && deliveryCoords
+      ? Math.max(0.1, riderLocationAPI.calculateDistance(
+          itemCoords.latitude!, itemCoords.longitude!,
+          deliveryCoords.latitude, deliveryCoords.longitude,
+        ) * 1.3)
+      : 2.5;
+
+    // Calculate order details — prefer server-computed chargeable weight
     const orderDetails = {
-      weight: orderSummary ? orderSummary.items.reduce((total, item) => total + (item.quantity * 0.5), 0) : 1, // Assume 0.5kg per item
+      weight: orderSummary?.totalWeightKg
+        ?? orderSummary?.items.reduce((total, item) => total + ((item.weightKg ?? 0.5) * item.quantity), 0)
+        ?? 1,
       itemCount: orderSummary ? orderSummary.items.length : 1,
-      distance: 2.5, // Mock distance calculation
+      distance: Math.round(routeKm * 100) / 100,
     };
 
     // Derive item types from the checkout summary so the backend can filter
@@ -876,7 +921,14 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation, route }) =>
       riderSelectionBridge.register(callbackKey, (company: InterstateCompanySelection) => setSelectedInterstateCompany(company));
       navigation.navigate('InterstateDelivery', {
         pickupLocation: { state: vendorState, country: vendorCountry, city: vendorCity },
-        deliveryLocation: { state: deliveryAddress.state, country: deliveryAddress.country, city: deliveryAddress.city },
+        deliveryLocation: {
+          state: deliveryAddress.state,
+          country: deliveryAddress.country,
+          city: deliveryAddress.city,
+          latitude: deliveryCoords?.latitude,
+          longitude: deliveryCoords?.longitude,
+        },
+        weightKg: orderDetails.weight,
         callbackKey,
       });
       return;

@@ -24,6 +24,7 @@ import AdaptiveText from '../components/AdaptiveText';
 import ShareModal from '../components/ShareModal';
 import RichText from '../components/RichText';
 import ServiceBookingModal from '../components/ServiceBookingModal';
+import { AdultContentGate, isAdultContentError } from '../components/AdultContentGate';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -53,6 +54,7 @@ const ServiceDetailsScreen = () => {
   const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
   const [selectedConversations, setSelectedConversations] = useState<ChatConversation[]>([]);
   const [isSharing, setIsSharing] = useState(false);
+  const [adultRestricted, setAdultRestricted] = useState(false);
   const wasPlayingRef = useRef(true);
 
   const serviceId = route.params?.serviceId;
@@ -84,11 +86,20 @@ const ServiceDetailsScreen = () => {
   const loadServiceDetails = async () => {
     try {
       setLoading(true);
+      let adultDenied = false;
       const [videoFeed, fullService] = await Promise.all([
         servicesAPI.getVideoFeed(),
-        servicesAPI.getService(serviceId).catch(() => null),
+        servicesAPI.getService(serviceId).catch((e) => {
+          if (isAdultContentError(e)) adultDenied = true;
+          return null;
+        }),
       ]);
       const foundService = videoFeed.find(item => item.id === serviceId);
+
+      if (adultDenied) {
+        setAdultRestricted(true);
+        return;
+      }
 
       if (foundService) {
         setService(foundService);
@@ -207,7 +218,7 @@ const ServiceDetailsScreen = () => {
     if (!service) return;
 
     try {
-      const shareUrl = `https://fretiko.com/service/${service.id}`;
+      const shareUrl = `https://www.fretiko.com/service/${service.id}`;
       await Share.share({
         message: `Check out this amazing service: ${service.title} for ₣${(service.price || 0).toFixed(2)} on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
         url: shareUrl,
@@ -351,6 +362,10 @@ const ServiceDetailsScreen = () => {
         <Text style={styles.loadingText}>Loading service...</Text>
       </View>
     );
+  }
+
+  if (adultRestricted) {
+    return <AdultContentGate navigation={navigation} contentLabel="service" />;
   }
 
   if (!service) {

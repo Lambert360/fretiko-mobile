@@ -109,6 +109,7 @@ import { AI_ASSISTANT_UUID, AI_ASSISTANT_NAME, AI_ASSISTANT_AVATAR } from '../co
 import { useAuth } from '../contexts/AuthContext';
 import { useCallContext } from '../contexts/CallContext';
 import RichText from '../components/RichText';
+import { navigateToAuctionDetails } from '../utils/auctionNavigation';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -5420,7 +5421,7 @@ const IndividualChatScreen = () => {
               style={styles.auctionContainer}
               onPress={() => {
                 if (item.auctionData?.id) {
-                  (navigation as any).navigate('AuctionDetails', { auctionId: item.auctionData.id });
+                  navigateToAuctionDetails(navigation, item.auctionData);
                 } else {
                   Alert.alert('Auction', 'View auction details');
                 }

@@ -114,6 +114,7 @@ const LiveStreamSetupScreen = () => {
 
   // Selected items
   const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
+  const [selectedServices, setSelectedServices] = useState<{ service_id: string; service: Service; live_price: number }[]>([]);
 
   // Time slots for services
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
@@ -423,6 +424,17 @@ const LiveStreamSetupScreen = () => {
       return;
     }
 
+    if (streamType === 'services' && selectedServices.length === 0) {
+      Alert.alert('No Services', 'Please select at least one service to offer on your stream');
+      return;
+    }
+
+    const invalidService = selectedServices.find(s => !s.live_price || s.live_price <= 0);
+    if (invalidService) {
+      Alert.alert('Invalid Price', `Please enter a valid live price for "${invalidService.service.name}"`);
+      return;
+    }
+
     try {
       setCreating(true);
 
@@ -477,6 +489,10 @@ const LiveStreamSetupScreen = () => {
           end_time: slot.end_time,
           duration_minutes: slot.duration_minutes,
         })) : undefined,
+        services: streamType === 'services' ? selectedServices.map(s => ({
+          service_id: s.service_id,
+          live_price: s.live_price,
+        })) : undefined,
       };
 
       setGoLiveStep('Starting live...');
@@ -522,7 +538,7 @@ const LiveStreamSetupScreen = () => {
         <View style={styles.headerRight} />
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 120 + Math.max(insets.bottom, 28) }}>
         {/* Stream Type Selector */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Stream Type</Text>
@@ -654,6 +670,76 @@ const LiveStreamSetupScreen = () => {
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Services Section - Only for Services */}
+        {streamType === 'services' && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>
+                Services ({selectedServices.length})
+              </Text>
+            </View>
+
+            {availableServices.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="briefcase-outline" size={60} color="#444" />
+                <Text style={styles.emptyText}>No active services</Text>
+                <Text style={styles.emptySubtext}>Create a service first to offer it on live</Text>
+              </View>
+            ) : (
+              <View style={styles.slotsList}>
+                {availableServices.map((service) => {
+                  const selected = selectedServices.find(s => s.service_id === service.id);
+                  return (
+                    <View key={service.id} style={styles.slotCard}>
+                      <TouchableOpacity
+                        style={styles.slotInfo}
+                        onPress={() => {
+                          if (selected) {
+                            setSelectedServices(selectedServices.filter(s => s.service_id !== service.id));
+                          } else {
+                            setSelectedServices([...selectedServices, {
+                              service_id: service.id,
+                              service,
+                              live_price: service.base_price,
+                            }]);
+                          }
+                        }}
+                      >
+                        <View style={styles.slotRow}>
+                          <Ionicons
+                            name={selected ? 'checkbox' : 'square-outline'}
+                            size={20}
+                            color={selected ? '#3498DB' : '#666'}
+                          />
+                          <Text style={styles.slotDate}>{service.name}</Text>
+                        </View>
+                        <Text style={styles.slotDuration}>Base price: ₣{service.base_price}</Text>
+                      </TouchableOpacity>
+                      {selected && (
+                        <TextInput
+                          style={styles.servicePriceInput}
+                          value={selected.live_price.toString()}
+                          onChangeText={(text) => {
+                            const price = parseFloat(text);
+                            setSelectedServices(selectedServices.map(s =>
+                              s.service_id === service.id
+                                ? { ...s, live_price: isNaN(price) ? 0 : price }
+                                : s
+                            ));
+                          }}
+                          keyboardType="decimal-pad"
+                          placeholder="Live price"
+                          placeholderTextColor="#666"
+                        />
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Time Slots Section - Only for Services */}
         {streamType === 'services' && (
@@ -1075,7 +1161,7 @@ const LiveStreamSetupScreen = () => {
       </Modal>
 
       {/* Bottom Action Button */}
-      <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 10 }]}>
+      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 28) + 12 }]}>
         <TouchableOpacity
           style={[styles.goLiveButton, creating && styles.goLiveButtonDisabled]}
           onPress={handleGoLive}
@@ -1516,6 +1602,15 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 12,
     marginTop: 4,
+  },
+  servicePriceInput: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: 'white',
+    fontSize: 14,
+    minWidth: 90,
   },
   slotActions: {
     flexDirection: 'row',

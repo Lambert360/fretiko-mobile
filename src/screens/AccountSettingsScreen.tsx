@@ -14,6 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/userAPI';
+import { riderVerificationAPI } from '../services/riderVerificationAPI';
 import AccountDeletionModal from '../components/AccountDeletionModal';
 
 interface UserProfile {
@@ -45,12 +46,23 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
   const [loading, setLoading] = useState(!route?.params?.profile);
   const [refreshing, setRefreshing] = useState(false);
   const [isDeletionModalVisible, setIsDeletionModalVisible] = useState(false);
+  const [isVerifiedRider, setIsVerifiedRider] = useState(false);
 
   useEffect(() => {
     if (!profile) {
       loadProfile();
     }
   }, []);
+
+  useEffect(() => {
+    if (profile?.isRider) {
+      riderVerificationAPI.getMyRiderStatus()
+        .then(({ rider_status, request_status }) =>
+          setIsVerifiedRider(rider_status != null || request_status === 'verified')
+        )
+        .catch(() => setIsVerifiedRider(false));
+    }
+  }, [profile?.isRider]);
 
   const loadProfile = async () => {
     try {
@@ -278,7 +290,7 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
 
           <TouchableOpacity
             style={styles.settingItem}
-            onPress={() => Alert.alert('Coming Soon', 'Notification preferences will be available soon!')}
+            onPress={() => navigation.navigate('NotificationSettings')}
           >
             <View style={styles.settingInfo}>
               <Ionicons name="notifications-outline" size={20} color="#007AFF" />
@@ -309,7 +321,7 @@ export const AccountSettingsScreen: React.FC<AccountSettingsScreenProps> = ({ na
             <Ionicons name="chevron-forward" size={20} color="#B0B0B0" />
           </TouchableOpacity>
 
-          {profile?.isRider !== true && (
+          {profile?.isRider === true && !isVerifiedRider && (
             <TouchableOpacity
               style={styles.settingItem}
               onPress={() => navigation.navigate('RiderVerification')}

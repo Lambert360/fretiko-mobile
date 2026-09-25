@@ -1,5 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { searchAPI, SearchQuery, SearchResult, SearchType, DiscoverContent } from '../services/searchAPI';
+
+const SEARCH_HISTORY_KEY = 'fretiko_search_history';
+const SEARCH_HISTORY_LIMIT = 10;
+const RESULT_KEYS = ['products', 'services', 'people', 'providers', 'vendors'] as const;
 
 // Search hook for performing searches
 export const useSearch = () => {
@@ -7,12 +12,26 @@ export const useSearch = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
+  const searchResultsRef = useRef<SearchResult | null>(null);
+  searchResultsRef.current = searchResults;
 
-  const search = useCallback(async (query: SearchQuery) => {
+  // Restore persisted search history on mount
+  useEffect(() => {
+    AsyncStorage.getItem(SEARCH_HISTORY_KEY)
+      .then(raw => {
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) setSearchHistory(parsed.filter(s => typeof s === 'string'));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const search = useCallback(async (query: SearchQuery, append: boolean = false): Promise<SearchResult | null> => {
     // Validate input
     if (!query.query && query.type === SearchType.ALL) {
       setSearchError('Search query is required');
-      return;
+      return null;
     }
 
     setIsSearching(true);
@@ -31,21 +50,44 @@ export const useSearch = () => {
       };
 
       const results = await searchAPI.search(searchParams);
-      setSearchResults(results);
-      
-      // Add to search history if there's a query
-      if (sanitizedQuery && !searchHistory.includes(sanitizedQuery)) {
-        setSearchHistory(prev => [sanitizedQuery, ...prev.slice(0, 9)]); // Keep last 10 searches
+
+      if (append && searchResultsRef.current) {
+        // Merge page results into existing results, deduped by id
+        const merged: SearchResult = {
+          ...results,
+          results: { ...results.results },
+        };
+        for (const key of RESULT_KEYS) {
+          const prevItems = ((searchResultsRef.current.results as any)[key] || []) as any[];
+          const seen = new Set(prevItems.map(i => i.id));
+          const nextItems = (((results.results as any)[key] || []) as any[]).filter(i => !seen.has(i.id));
+          (merged.results as any)[key] = [...prevItems, ...nextItems];
+        }
+        setSearchResults(merged);
+      } else {
+        setSearchResults(results);
       }
+
+      // Add to persisted search history if there's a query
+      if (sanitizedQuery) {
+        setSearchHistory(prev => {
+          const next = [sanitizedQuery, ...prev.filter(s => s !== sanitizedQuery)].slice(0, SEARCH_HISTORY_LIMIT);
+          AsyncStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(next)).catch(() => {});
+          return next;
+        });
+      }
+
+      return results;
     } catch (error: any) {
       console.error('Search error:', error);
       const errorMessage = error.message || 'Search failed. Please try again.';
       setSearchError(errorMessage);
-      setSearchResults(null);
+      if (!append) setSearchResults(null);
+      return null;
     } finally {
       setIsSearching(false);
     }
-  }, [searchHistory]);
+  }, []);
 
   const clearSearch = useCallback(() => {
     setSearchResults(null);
@@ -54,6 +96,7 @@ export const useSearch = () => {
 
   const clearHistory = useCallback(() => {
     setSearchHistory([]);
+    AsyncStorage.removeItem(SEARCH_HISTORY_KEY).catch(() => {});
   }, []);
 
   return {

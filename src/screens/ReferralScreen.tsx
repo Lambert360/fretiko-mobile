@@ -64,7 +64,7 @@ const ReferralScreen: React.FC<Props> = ({ navigation }) => {
         result: 'tmpfile',
       });
 
-      const shareMessage = `Join me on Fretiko 🚀\n\nScan my referral card or use my code: ${referralData.code}\n\n${referralData.url}`;
+      const shareMessage = `Join me on Fretiko 🚀\n\nScan my referral card or use my code: ${referralData.username || referralData.code}\n\n${referralData.url}`;
 
       if (Platform.OS === 'ios') {
         // iOS share sheet supports attaching the image AND a text caption together
@@ -168,7 +168,7 @@ const ReferralScreen: React.FC<Props> = ({ navigation }) => {
           name={`${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.username || 'User'}
           username={user?.username || 'user'}
           email={user?.email || ''}
-          referralCode={referralData.code}
+          referralCode={referralData.username || referralData.code}
           referralUrl={referralData.url}
           stats={referralData.stats}
           theme={selectedTheme}
@@ -221,7 +221,7 @@ const ReferralScreen: React.FC<Props> = ({ navigation }) => {
       {/* Referral Code Display */}
       <View style={styles.codeDisplay}>
         <Text style={styles.codeLabel}>Your Referral Code</Text>
-        <Text style={styles.codeValue}>{referralData.code}</Text>
+        <Text style={styles.codeValue}>{referralData.username || referralData.code}</Text>
       </View>
     </ScrollView>
   );

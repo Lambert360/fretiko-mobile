@@ -9,6 +9,7 @@ export interface ProductVariant {
   media_url: string;
   media_type: 'image' | 'video';
   sort_order: number;
+  weight_kg?: number; // per-item weight for this variant (falls back to product weight)
 }
 
 export interface Product {
@@ -36,6 +37,10 @@ export interface Product {
     shipping: boolean;
   };
   tags: string[];
+  weight_kg?: number;   // per-unit weight, used for delivery pricing
+  length_cm?: number;   // optional package dims → volumetric weight
+  width_cm?: number;
+  height_cm?: number;
   status: string;
   is_featured: boolean;
   view_count: number;
@@ -74,6 +79,14 @@ export interface CreateProductRequest {
     shipping: boolean;
   };
   tags: string[];
+  weight_kg?: number;
+  length_cm?: number;
+  width_cm?: number;
+  height_cm?: number;
+}
+
+export interface UpdateProductRequest extends Partial<CreateProductRequest> {
+  status?: 'draft' | 'active' | 'sold' | 'inactive';
 }
 
 export interface ProductReview {
@@ -345,7 +358,7 @@ class ProductsAPI {
   }
 
   // Update product
-  async updateProduct(id: string, productData: Partial<CreateProductRequest>): Promise<Product> {
+  async updateProduct(id: string, productData: UpdateProductRequest): Promise<Product> {
     try {
       const response = await api.put(`/products/${id}`, productData);
       return response.data;
@@ -374,6 +387,13 @@ class ProductsAPI {
       console.error('Error fetching product reviews:', error);
       throw error;
     }
+  }
+
+  // Check whether the current user can review this product (must have a
+  // delivered/completed order containing it, and not already reviewed)
+  async getReviewEligibility(productId: string): Promise<{ canReview: boolean; hasPurchased: boolean; hasReviewed: boolean }> {
+    const response = await api.get(`/products/${productId}/review-eligibility`);
+    return response.data;
   }
 
   // Add product review

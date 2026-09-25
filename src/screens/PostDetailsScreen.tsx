@@ -392,7 +392,7 @@ const PostDetailsScreen: React.FC<PostDetailsScreenProps> = ({ navigation, route
     if (!post) return;
 
     try {
-      const shareUrl = `https://fretiko.com/post/${post.id}`;
+      const shareUrl = `https://www.fretiko.com/post/${post.id}`;
 
       await RNShare.share({
         message: `Check out this post on Fretiko!\n\nView on Fretiko: ${shareUrl}`,

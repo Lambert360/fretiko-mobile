@@ -13,18 +13,21 @@ import {
   Modal,
   Linking,
   Share,
+  Platform,
 } from 'react-native';
-// import MapView, { Marker, Polyline } from 'expo-maps'; // Temporarily disabled
+import { AppleMaps } from 'expo-maps'; // iOS only — rendered behind Platform.OS check
+import * as WebBrowser from 'expo-web-browser';
 import * as Location from 'expo-location';
 // import * as Battery from 'expo-battery'; // Uncomment if expo-battery is installed (may not work in Expo Go)
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { ordersAPI, OrderDetails } from '../services/ordersAPI';
+import { ordersAPI, OrderDetails, OrderItem } from '../services/ordersAPI';
 import { walletAPI } from '../services/walletAPI';
 import { riderLocationAPI } from '../services/riderLocationAPI';
 import { realtimeAPI } from '../services/realtimeAPI';
 import { disputesAPI } from '../services/disputesAPI';
 import AdaptiveText from '../components/AdaptiveText';
+import { MediaViewerModal } from '../components/MediaViewerModal';
 
 const { width, height } = Dimensions.get('window');
 
@@ -90,6 +93,60 @@ const OrderTrackingScreen: React.FC = () => {
   const [existingDisputeId, setExistingDisputeId] = useState<string | null>(null);
   const [showTracking, setShowTracking] = useState(false); // ✨ Track if user requested live tracking
   const [showTrackingModal, setShowTrackingModal] = useState(false); // ✨ Full-screen tracking modal
+  const [mediaViewer, setMediaViewer] = useState<{
+    visible: boolean;
+    type: 'image' | 'video';
+    uri: string;
+    uris?: string[];
+    index: number;
+  }>({ visible: false, type: 'image', uri: '', index: 0 });
+
+  // Tap a thumbnail → fullscreen image gallery (or video when the item has
+  // no image). The ▶ badge opens the video viewer when videos exist.
+  const openItemMedia = (item: OrderItem) => {
+    const images = item.images?.length ? item.images : (item.image ? [item.image] : []);
+    if (images.length) {
+      setMediaViewer({ visible: true, type: 'image', uri: images[0], uris: images, index: 0 });
+    } else if (item.videos?.length) {
+      setMediaViewer({ visible: true, type: 'video', uri: item.videos[0], index: 0 });
+    }
+  };
+
+  const openItemVideo = (item: OrderItem) => {
+    if (item.videos?.length) {
+      setMediaViewer({ visible: true, type: 'video', uri: item.videos[0], index: 0 });
+    }
+  };
+
+  const renderItemMedia = (item: OrderItem) => {
+    const hasMedia = !!(item.image || item.images?.length || item.videos?.length);
+    return (
+      <View>
+        <TouchableOpacity
+          onPress={() => openItemMedia(item)}
+          activeOpacity={0.8}
+          disabled={!hasMedia}
+        >
+          {item.image ? (
+            <Image source={{ uri: item.image }} style={styles.itemImage} />
+          ) : (
+            <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+              <Ionicons name={item.videos?.length ? 'videocam-outline' : 'cube-outline'} size={24} color="#666" />
+            </View>
+          )}
+        </TouchableOpacity>
+        {!!item.videos?.length && (
+          <TouchableOpacity
+            style={styles.itemVideoBadge}
+            onPress={() => openItemVideo(item)}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <Ionicons name="play" size={9} color="#fff" />
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
 
   // Real-time updates
   useEffect(() => {
@@ -713,11 +770,34 @@ const OrderTrackingScreen: React.FC = () => {
     });
   };
 
+  // Open turn-by-turn directions to the vendor/pickup location.
+  // iOS: Apple Maps app. Android: Google Maps (Apple Maps web has no nav).
+  const handleDirectionsToVendor = () => {
+    const loc = order?.vendorLocation;
+    const dest = loc?.latitude && loc?.longitude
+      ? `${loc.latitude},${loc.longitude}`
+      : loc?.address;
+
+    if (!dest) {
+      Alert.alert('Unavailable', 'Pickup location is not available for this order.');
+      return;
+    }
+
+    const url = Platform.OS === 'ios'
+      ? `https://maps.apple.com/?daddr=${encodeURIComponent(dest)}&dirflg=d`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+
+    Linking.openURL(url).catch(() => {
+      Alert.alert('Error', 'Could not open maps.');
+    });
+  };
+
   const handleShareOrder = async () => {
     if (!order) return;
     try {
+      const shareUrl = `https://www.fretiko.com/order/${order.id}`;
       await Share.share({
-        message: `Track my Fretiko order #${order.orderNumber} - Status: ${getStatusText(order.status)}`,
+        message: `Track my Fretiko order #${order.orderNumber} - Status: ${getStatusText(order.status)}\n\n${shareUrl}`,
       });
     } catch (error) {
       console.error('Error sharing order:', error);
@@ -745,7 +825,7 @@ const OrderTrackingScreen: React.FC = () => {
     const progress = calculateRouteProgress();
 
     return (
-      <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
+      <View style={[styles.modalContainer, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         {/* Modal Header */}
         <View style={styles.modalHeader}>
           <TouchableOpacity 
@@ -969,7 +1049,65 @@ const OrderTrackingScreen: React.FC = () => {
     }
 
     const { riderLocation, vendorLocation, buyerLocation } = order || {};
-    
+
+    // iOS: native Apple Maps — free, no API key (expo-maps already configured)
+    if (Platform.OS === 'ios') {
+      const center = riderLocation ?? buyerLocation ?? vendorLocation;
+      return (
+        <View style={styles.map}>
+          <AppleMaps.View
+            style={{ flex: 1 }}
+            cameraPosition={{
+              coordinates: { latitude: center!.latitude, longitude: center!.longitude },
+              zoom: 13,
+            }}
+            markers={[
+              riderLocation && {
+                id: 'rider',
+                coordinates: { latitude: riderLocation.latitude, longitude: riderLocation.longitude },
+                title: 'Rider',
+                tintColor: '#3498DB',
+              },
+              vendorLocation && {
+                id: 'vendor',
+                coordinates: { latitude: vendorLocation.latitude, longitude: vendorLocation.longitude },
+                title: 'Pickup',
+                tintColor: '#F39C12',
+              },
+              buyerLocation && {
+                id: 'buyer',
+                coordinates: { latitude: buyerLocation.latitude, longitude: buyerLocation.longitude },
+                title: 'Drop-off',
+                tintColor: '#27AE60',
+              },
+            ].filter(Boolean) as any[]}
+            polylines={vendorLocation && buyerLocation ? [{
+              id: 'route',
+              coordinates: [
+                { latitude: vendorLocation.latitude, longitude: vendorLocation.longitude },
+                ...(riderLocation
+                  ? [{ latitude: riderLocation.latitude, longitude: riderLocation.longitude }]
+                  : []),
+                { latitude: buyerLocation.latitude, longitude: buyerLocation.longitude },
+              ],
+              color: '#3498DB',
+              width: 4,
+            }] : []}
+          />
+        </View>
+      );
+    }
+
+    const openRouteInMaps = () => {
+      const origin = riderLocation ?? vendorLocation;
+      const dest = buyerLocation ?? vendorLocation;
+      if (!origin || !dest) return;
+      const url = `https://maps.apple.com/?saddr=${origin.latitude},${origin.longitude}&daddr=${dest.latitude},${dest.longitude}&dirflg=d`;
+      WebBrowser.openBrowserAsync(url).catch(() =>
+        Alert.alert('Error', 'Could not open maps'),
+      );
+    };
+
     return (
       <View style={styles.map}>
         {/* Enhanced Map Placeholder with Real Tracking Data */}
@@ -1028,6 +1166,12 @@ const OrderTrackingScreen: React.FC = () => {
               </Text>
             </View>
           </View>
+
+          {/* Open the route in Apple Maps (web app on Android — in-app browser) */}
+          <TouchableOpacity style={styles.openMapsButton} onPress={openRouteInMaps}>
+            <Ionicons name="map" size={16} color="#FFF" />
+            <Text style={styles.openMapsButtonText}>Open Route in Maps</Text>
+          </TouchableOpacity>
 
           {/* Battery Level if available */}
           {order.riderLocation && order.riderInfo?.riderId && (
@@ -1532,14 +1676,15 @@ const OrderTrackingScreen: React.FC = () => {
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="white" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Order #{order.orderNumber}</Text>
-          <TouchableOpacity style={styles.shareButton} onPress={handleShareOrder}>
+          <Text style={styles.headerTitle} numberOfLines={1}>Order #{order.orderNumber}</Text>
+          <TouchableOpacity style={styles.shareButton} onPress={handleShareOrder} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="share-outline" size={24} color="white" />
           </TouchableOpacity>
         </View>
 
-        <ScrollView 
+        <ScrollView
           style={styles.content}
+          contentContainerStyle={{ paddingBottom: 24 + Math.max(insets.bottom, 24) }}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -1597,7 +1742,7 @@ const OrderTrackingScreen: React.FC = () => {
                     </TouchableOpacity>
                   )}
                 </View>
-                <TouchableOpacity style={styles.directionsButton}>
+                <TouchableOpacity style={styles.directionsButton} onPress={handleDirectionsToVendor}>
                   <Ionicons name="navigate" size={20} color="#3498DB" />
                   <Text style={styles.directionsText}>Directions</Text>
                 </TouchableOpacity>
@@ -1659,7 +1804,7 @@ const OrderTrackingScreen: React.FC = () => {
                     </TouchableOpacity>
                   )}
                 </View>
-                <TouchableOpacity style={styles.directionsButton}>
+                <TouchableOpacity style={styles.directionsButton} onPress={handleDirectionsToVendor}>
                   <Ionicons name="navigate" size={20} color="#3498DB" />
                   <Text style={styles.directionsText}>Directions</Text>
                 </TouchableOpacity>
@@ -1672,7 +1817,7 @@ const OrderTrackingScreen: React.FC = () => {
             <Text style={styles.sectionTitle}>📦 Order Items ({order.items.length})</Text>
             {order.items.map((item) => (
               <View key={item.id} style={styles.orderItem}>
-                <Image source={{ uri: item.image }} style={styles.itemImage} />
+                {renderItemMedia(item)}
                 <View style={styles.itemDetails}>
                   <Text style={styles.itemName} numberOfLines={2}>
                     {item.name}
@@ -1706,6 +1851,15 @@ const OrderTrackingScreen: React.FC = () => {
         >
           {renderTrackingModal()}
         </Modal>
+
+        <MediaViewerModal
+          visible={mediaViewer.visible}
+          onClose={() => setMediaViewer(prev => ({ ...prev, visible: false }))}
+          type={mediaViewer.type}
+          uri={mediaViewer.uri}
+          uris={mediaViewer.uris}
+          initialIndex={mediaViewer.index}
+        />
       </View>
     );
   }
@@ -1718,14 +1872,15 @@ const OrderTrackingScreen: React.FC = () => {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Order #{order.orderNumber}</Text>
-        <TouchableOpacity style={styles.shareButton} onPress={handleShareOrder}>
+        <Text style={styles.headerTitle} numberOfLines={1}>Order #{order.orderNumber}</Text>
+        <TouchableOpacity style={styles.shareButton} onPress={handleShareOrder} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Ionicons name="share-outline" size={24} color="white" />
         </TouchableOpacity>
       </View>
 
       <ScrollView 
         style={styles.content}
+        contentContainerStyle={{ paddingBottom: 24 + Math.max(insets.bottom, 24) }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1807,7 +1962,7 @@ const OrderTrackingScreen: React.FC = () => {
           <Text style={styles.sectionTitle}>📦 Order Items ({order.items.length})</Text>
           {order.items.map((item) => (
             <View key={item.id} style={styles.orderItem}>
-              <Image source={{ uri: item.image }} style={styles.itemImage} />
+              {renderItemMedia(item)}
               <View style={styles.itemDetails}>
                 <Text style={styles.itemName} numberOfLines={2}>
                   {item.name}
@@ -1834,6 +1989,15 @@ const OrderTrackingScreen: React.FC = () => {
         {/* 11. Additional Actions */}
         {renderAdditionalActions()}
       </ScrollView>
+
+      <MediaViewerModal
+        visible={mediaViewer.visible}
+        onClose={() => setMediaViewer(prev => ({ ...prev, visible: false }))}
+        type={mediaViewer.type}
+        uri={mediaViewer.uri}
+        uris={mediaViewer.uris}
+        initialIndex={mediaViewer.index}
+      />
     </View>
   );
 };
@@ -1859,6 +2023,8 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
+    flex: 1,
+    textAlign: 'center',
   },
   shareButton: {
     padding: 8,
@@ -1939,6 +2105,21 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 200,
     borderRadius: 12,
+  },
+  openMapsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3498DB',
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 12,
+    gap: 8,
+  },
+  openMapsButtonText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   mapPlaceholder: {
     width: '100%',
@@ -2334,6 +2515,24 @@ const styles = StyleSheet.create({
     height: 60,
     borderRadius: 8,
     marginRight: 16,
+  },
+  itemImagePlaceholder: {
+    backgroundColor: '#1a1a1a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  itemVideoBadge: {
+    position: 'absolute',
+    right: 12,
+    bottom: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#FF8A00',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#000',
   },
   itemDetails: {
     flex: 1,

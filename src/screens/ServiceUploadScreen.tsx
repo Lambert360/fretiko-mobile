@@ -45,6 +45,7 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
   const [media, setMedia] = useState<ServiceMedia[]>([]);
   const [tags, setTags] = useState('');
   const [location, setLocation] = useState('');
+  const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [availability, setAvailability] = useState({
     weekdays: false,
     weekends: false,
@@ -219,6 +220,10 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
       if (location.trim()) {
         formData.append('location', location.trim());
         formData.append('service_area', location.trim());
+        if (locationCoords) {
+          formData.append('location_latitude', String(locationCoords.latitude));
+          formData.append('location_longitude', String(locationCoords.longitude));
+        }
       }
       formData.append('availability', JSON.stringify(availability));
       formData.append('tags', JSON.stringify(tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0)));
@@ -562,6 +567,7 @@ const ServiceUploadScreen = ({ navigation }: ServiceUploadScreenProps) => {
         visible={isLocationSelectorVisible}
         selectedLocation={location}
         onLocationSelect={handleLocationSelect}
+        onLocationResolved={(_name, coords) => setLocationCoords(coords)}
         onClose={() => setLocationSelectorVisible(false)}
       />
     </KeyboardAvoidingView>

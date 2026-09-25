@@ -24,9 +24,11 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { useAuth } from '../contexts/AuthContext';
 import { auctionsAPI, auctionSocket, AuctionWithDetails, PublicBidHistoryItem } from '../services/auctionsAPI';
 import { ordersAPI, Order } from '../services/ordersAPI';
+import { playBidSound } from '../services/auctionSoundService';
 import { chatAPI, ChatConversation } from '../services/chatAPI';
 import AdaptiveText from '../components/AdaptiveText';
 import ShareModal from '../components/ShareModal';
+import { AdultContentGate, isAdultContentError } from '../components/AdultContentGate';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -129,6 +131,7 @@ const AuctionDetailsScreen = () => {
   const [auctionOrder, setAuctionOrder] = useState<Order | null>(null);
   const [checkingOrder, setCheckingOrder] = useState(false);
   const [currentItem, setCurrentItem] = useState<any>(null);
+  const [adultRestricted, setAdultRestricted] = useState(false);
 
   // Refs
   const timeUpdateInterval = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -153,7 +156,7 @@ const AuctionDetailsScreen = () => {
     setCheckingOrder(true);
     try {
       // Fetch user's orders
-      const orders = await ordersAPI.getMyOrders();
+      const { orders } = await ordersAPI.getMyOrders({ limit: 50 });
       
       // Find order for this auction (source='auction' and metadata.auction_id matches)
       const order = orders.find(o => 
@@ -175,6 +178,14 @@ const AuctionDetailsScreen = () => {
   const loadAuctionData = async () => {
     try {
       const auctionData = await auctionsAPI.getAuction(auctionId);
+
+      // Live multi-item auctions have their own details screen. Redirect so
+      // deep links, notifications, and any missed call sites land correctly.
+      if (auctionData.auction_type === 'live') {
+        navigation.replace('LiveAuctionDetails' as never, { auctionId } as never);
+        return;
+      }
+
       setAuction(auctionData);
       
       // Calculate time remaining - for upcoming auctions, calculate from start_time
@@ -191,19 +202,9 @@ const AuctionDetailsScreen = () => {
       const nextBid = auctionData.current_bid + auctionData.bid_increment;
       setBidAmount(nextBid.toString());
 
-      // For ended live auctions where user is the winner, fetch the winning item
-      if (auctionData.auction_type === 'live' && auctionData.status === 'sold' && auctionData.winner_id === user?.id) {
-        try {
-          const winningItem = await auctionsAPI.getCurrentItem(auctionId);
-          setCurrentItem(winningItem);
-          console.log(`✅ Loaded winning item for ended live auction ${auctionId}:`, winningItem?.title);
-        } catch (error) {
-          console.error('Error loading winning item:', error);
-          setCurrentItem(null);
-        }
-      } else {
-        setCurrentItem(null);
-      }
+      // Live auctions redirect to LiveAuctionDetails above, so winning-item
+      // lookup only applies there — this screen never displays live auctions.
+      setCurrentItem(null);
 
       // Load bid history
       await loadBidHistory();
@@ -215,8 +216,12 @@ const AuctionDetailsScreen = () => {
 
     } catch (error) {
       console.error('Error loading auction:', error);
-      Alert.alert('Error', 'Failed to load auction details');
-      navigation.goBack();
+      if (isAdultContentError(error)) {
+        setAdultRestricted(true);
+      } else {
+        Alert.alert('Error', 'Failed to load auction details');
+        navigation.goBack();
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -301,11 +306,13 @@ const AuctionDetailsScreen = () => {
 
     // Connect to WebSocket for real-time updates
     auctionSocket.connect();
-    auctionSocket.joinAuction(auctionId, user?.id);
+    // Details context — counted as a details viewer, not a stream watcher.
+    auctionSocket.joinAuction(auctionId, user?.id, 'details');
 
     // Listen for real-time bid updates
     const handleNewBid = (data: any) => {
       if (data.auction_id === auctionId) {
+        playBidSound();
         // Update auction with all statistics from the server
         setAuction(prev => prev ? {
           ...prev,
@@ -363,7 +370,7 @@ const AuctionDetailsScreen = () => {
       if (data.auction_id === auctionId) {
         setAuction(prev => prev ? {
           ...prev,
-          view_count: data.view_count,
+          view_count: data.details_viewers ?? data.view_count,
         } : null);
       }
     };
@@ -609,7 +616,7 @@ const AuctionDetailsScreen = () => {
     if (!auction) return;
 
     try {
-      const shareUrl = `https://fretiko.com/auction/${auction.id}`;
+      const shareUrl = `https://www.fretiko.com/auction/${auction.id}`;
       await Share.share({
         message: `Check out this auction: ${auction.title} - Current bid: ₣${(auction.current_bid || 0).toFixed(2)} on Fretiko!\n\nView on Fretiko: ${shareUrl}`,
         url: shareUrl,
@@ -744,6 +751,10 @@ const AuctionDetailsScreen = () => {
         <Text style={styles.loadingText}>Loading auction...</Text>
       </View>
     );
+  }
+
+  if (adultRestricted) {
+    return <AdultContentGate navigation={navigation} contentLabel="auction" />;
   }
 
   if (!auction) {
@@ -1318,7 +1329,11 @@ const AuctionDetailsScreen = () => {
         onRequestClose={() => setBidModalVisible(false)}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          // Android: adjustResize already keeps this centered modal visible;
+          // KAV's height animation fights the OS resize on keyboard close and
+          // loops the layout (glitching). iOS still needs the padding.
+          behavior="padding"
+          enabled={Platform.OS === 'ios'}
           style={styles.modalOverlay}
         >
           <View style={styles.modalContent}>
@@ -1377,7 +1392,8 @@ const AuctionDetailsScreen = () => {
         onRequestClose={() => setProxyBidModalVisible(false)}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior="padding"
+          enabled={Platform.OS === 'ios'}
           style={styles.modalOverlay}
         >
           <View style={styles.modalContent}>

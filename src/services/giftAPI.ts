@@ -14,7 +14,7 @@ export interface VirtualGift {
   display_lottie_url?: string;
   lottie_config?: any;
   sound_id?: string;
-  sound_url?: string;
+  sound_url?: string | number;
   animation_type?: 'lottie_single' | 'lottie_combo' | 'lottie_overlap';
   created_at: string;
   updated_at: string;

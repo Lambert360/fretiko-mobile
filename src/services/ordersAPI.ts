@@ -60,6 +60,8 @@ export interface OrderItem {
   serviceId?: string;
   name: string;
   image: string;
+  images?: string[];
+  videos?: string[];
   price: number;
   originalPrice?: number;
   quantity: number;
@@ -97,14 +99,27 @@ export interface OrderFilters {
   };
   minAmount?: number;
   maxAmount?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface OrdersPage {
+  orders: Order[];
+  pagination: {
+    limit: number;
+    offset: number;
+    total: number;
+  };
 }
 
 class OrdersAPI {
-  // Get user's orders with optional filtering
-  async getMyOrders(filters?: OrderFilters): Promise<Order[]> {
+  // Get user's orders with optional filtering/pagination.
+  // Always returns an OrdersPage envelope; the backend returns a bare array
+  // for legacy un-paginated calls, which is normalized here.
+  async getMyOrders(filters?: OrderFilters): Promise<OrdersPage> {
     try {
       const params = new URLSearchParams();
-      
+
       if (filters?.status?.length) {
         params.append('status', filters.status.join(','));
       }
@@ -118,10 +133,21 @@ class OrdersAPI {
       if (filters?.maxAmount) {
         params.append('maxAmount', filters.maxAmount.toString());
       }
+      if (filters?.limit !== undefined) {
+        params.append('limit', filters.limit.toString());
+      }
+      if (filters?.offset !== undefined) {
+        params.append('offset', filters.offset.toString());
+      }
 
       const response = await api.get(`/orders?${params.toString()}`);
-      const orders: Order[] = response.data || [];
-      return orders.map(order => {
+      const raw = response.data;
+      const orders: Order[] = Array.isArray(raw) ? raw : (raw?.orders || []);
+      const pagination = Array.isArray(raw)
+        ? { limit: orders.length, offset: 0, total: orders.length }
+        : (raw?.pagination || { limit: filters?.limit || orders.length, offset: filters?.offset || 0, total: orders.length });
+
+      const mapInterstate = (order: any): Order => {
         const interstateMeta = order.metadata?.interstate_delivery;
         const isInterstate = order.delivery_type === 'interstate_delivery' || !!interstateMeta;
         const isInternational = !!interstateMeta?.isInternational;
@@ -138,7 +164,9 @@ class OrdersAPI {
           isInternational,
           interstateCompany,
         };
-      });
+      };
+
+      return { orders: orders.map(mapInterstate), pagination };
     } catch (error) {
       console.error('Error fetching orders:', error);
       throw error;
