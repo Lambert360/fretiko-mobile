@@ -164,17 +164,17 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
   // Filter countries based on search
   useEffect(() => {
     if (selectedCountry) {
-      // Filter states when country is selected
-      if (searchQuery.trim()) {
-        const filtered = allStates.filter(state =>
-          state.name.toLowerCase().includes(searchQuery.toLowerCase())
-        );
-        setFilteredStates(filtered);
-      } else {
-        const countryStates = allStates.filter(state => 
-        state && state.countryCode && selectedCountry && selectedCountry.isoCode && 
-        state.countryCode === selectedCountry.isoCode
+      // Scope to the selected country first — searching allStates
+      // globally returns same-named regions from other countries
+      const countryStates = allStates.filter(state =>
+        state && state.countryCode === selectedCountry.isoCode
       );
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        setFilteredStates(countryStates.filter(state =>
+          state.name.toLowerCase().includes(query)
+        ));
+      } else {
         setFilteredStates(countryStates);
       }
     } else {
@@ -391,7 +391,7 @@ const LocationSelector: React.FC<LocationSelectorProps> = ({
               
               return (
                 <TouchableOpacity
-                  key={state.isoCode || `state-${index}`}
+                  key={`${state.countryCode || selectedCountry?.isoCode}-${state.isoCode || index}`}
                   style={[
                     styles.locationItem,
                     isSelected && styles.selectedLocationItem
